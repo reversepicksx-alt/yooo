@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Image, TouchableOpacity, StyleSheet, Share, Platform,
+  View, Text, Image, TouchableOpacity, StyleSheet, Share, Platform, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
@@ -11,12 +11,32 @@ const PROP_LABELS: Record<string, string> = {
   tackles: 'TACKLES', key_passes: 'KEY PASSES', saves: 'SAVES', interceptions: 'INTS',
   blocks: 'BLOCKS', dribbles: 'DRIBBLES', crosses: 'CROSSES', clearances: 'CLEARANCES',
   goals: 'GOALS', assists: 'ASSISTS', fouls_drawn: 'FOULS WON', fouls_committed: 'FOULS',
-  duels_won: 'DUELS', yellow_cards: 'YC', shots_assisted: 'SHOT ASSISTS',
+  duels_won: 'DUELS', yellow_cards: 'YC', shots_assisted: 'SHOT ASSISTS', goalie_saves: 'SAVES',
 };
 
-function isLive(p: Pick) {
-  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost','dnp'].includes(p.result ?? ''));
+function isSettled(p: Pick) {
+  return p.matchStatus === 'final'
+    || p.status === 'settled'
+    || ['hit', 'miss', 'push', 'won', 'lost', 'dnp'].includes(p.result ?? '');
 }
+
+function isLive(p: Pick) {
+  // Settled picks are never live, even if stale fields say otherwise.
+  if (isSettled(p)) return false;
+  const hasLiveSignal =
+    p.matchStatus === 'live'
+    || p.status === 'live'
+    || (p.elapsed != null && p.elapsed > 0)
+    || (p.currentValue != null)
+    || (p.pace != null && p.pace > 0);
+  // status === 'pending' without a live signal means the game has not started yet.
+  return hasLiveSignal;
+}
+
+function isPending(p: Pick) {
+  return !isSettled(p) && !isLive(p);
+}
+
 function pickWon(p: Pick) { return p.result === 'hit' || p.result === 'won' || p.status === 'won'; }
 function pickLost(p: Pick) { return p.result === 'miss' || p.result === 'lost' || p.status === 'lost'; }
 function pickPush(p: Pick) { return p.result === 'push'; }
@@ -26,96 +46,195 @@ function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   const rec = p.recommendation;
   if (rec === 'OVER' || rec === 'UNDER') return rec;
   const proj = p.projection ?? p.projectedValue;
-  if (proj != null && p.line > 0) return proj < p.line ? 'OVER' : 'UNDER';
+  if (proj != null && p.line > 0) return proj > p.line ? 'OVER' : 'UNDER';
   return null;
 }
 
 function formatNumber(n: number | null | undefined): string {
-  if (n == null) return '—';
+  if (n == null || Number.isNaN(n)) return '—';
   return Number(n).toFixed(n % 1 === 0 ? 0 : 1);
 }
 
-function buildShareText(pick: Pick): string {
-  const dir = getRecDir(pick) ?? pick.recommendation ?? '';
-  const prop = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ').toUpperCase() || 'PROP';
-  const venue = pick.venue === 'away' ? 'AWAY' : 'HOME';
-  const now = pick.actualValue ?? pick.currentValue ?? pick.projectedValue ?? null;
-  const line = typeof pick.line === 'number' ? pick.line : null;
-  const hit = pick.hitPct != null ? `${Math.round(pick.hitPct)}%` : null;
-  let text = `${pick.playerName} ${dir} ${pick.line} ${prop} (${venue})`;
-  if (now != null) text += ` — now ${formatNumber(now)}`;
-  if (line != null) text += ` / line ${formatNumber(line)}`;
-  if (hit) text += ` · ${hit} hit prob`;
-  text += ` via Reverse Picks`;
-  return text;
+function propUnit(propType?: string) {
+  if (!propType) return '';
+  if (['pass_attempts', 'passes', 'tackles', 'clearances', 'duels_won', 'saves', 'goalie_saves', 'interceptions', 'blocks'].includes(propType)) return 'passes';
+  if (['shots', 'shots_on_target', 'shots_assisted'].includes(propType)) return 'shots';
+  if (['goals', 'assists'].includes(propType)) return '';
+  return 'units';
 }
 
 export default function OwnerPickCard({
   pick,
-  onShare,
   onPress,
 }: {
   pick: Pick;
-  onShare?: (pick: Pick) => void;
   onPress?: () => void;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const push = pickPush(pick);
   const dnp = pickDnp(pick);
+  const settled = isSettled(pick);
   const live = isLive(pick);
-  const settled = won || lost || push || dnp;
+  const pending = isPending(pick);
 
   const dir = getRecDir(pick);
   const isOver = dir === 'OVER';
   const recColor = isOver ? Colors.success : Colors.error;
 
-  const nowValue = settled
-    ? (pick.actualValue ?? pick.currentValue ?? null)
-    : (pick.currentValue ?? pick.actualValue ?? null);
-  const paceValue = pick.pace ?? pick.projectedValue ?? pick.projection ?? null;
-  const hitPct = pick.hitPct ?? null;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
+  const projValue = pick.projection ?? pick.projectedValue ?? null;
+  const actualValue = pick.actualValue ?? pick.currentValue ?? null;
+  const livePace = pick.pace ?? null;
+
+  // NOW: live/actual value; for settled picks show actual value.
+  const nowValue = settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
+  const nowLabel = settled ? 'FINAL' : live ? 'NOW' : 'NOW';
+
+  // PACE only when actually live; otherwise PROJ (or DNP).
+  const paceValue = live ? (livePace ?? projValue) : projValue;
+  const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
+  const paceColor = live ? Colors.primary : Colors.textSecondary;
+
+  const hitPct = pick.hitPct ?? null;
 
   const progress = useMemo(() => {
     if (lineValue == null || nowValue == null || lineValue <= 0) return null;
     return Math.max(0, Math.min(100, (nowValue / (lineValue * 2)) * 100));
   }, [lineValue, nowValue]);
 
+  // Match context
+  const venueLower = (pick.venue || '').toLowerCase();
+  const venueKnown = venueLower === 'home' || venueLower === 'away';
+  const homeTeamName = pick.homeTeam || (venueKnown ? (venueLower === 'away' ? pick.opponentName : pick.teamName) : '') || '';
+  const awayTeamName = pick.awayTeam || (venueKnown ? (venueLower === 'away' ? pick.teamName : pick.opponentName) : '') || '';
+  const finalHome = pick.finalHomeGoals;
+  const finalAway = pick.finalAwayGoals;
+  const hasScore = finalHome != null && finalAway != null;
+  const hasActualPoss = pick.homePoss != null && pick.awayPoss != null;
+  const hasProjPoss = pick.projHomePoss != null && pick.projAwayPoss != null;
+  const trustOrient = !!(pick.homeTeam && pick.awayTeam) || venueKnown;
+
+  const showScoreLine = trustOrient && (
+    ((settled || live) && hasScore)
+    || hasActualPoss
+    || hasProjPoss
+  );
+
   const statusBadge = useMemo(() => {
-    if (live && !won && !lost) {
-      return (
-        <View style={styles.badgeLive}>
-          <View style={styles.pulseDot} />
-          <Text style={styles.badgeLiveText}>LIVE</Text>
-        </View>
-      );
-    }
     if (won) return <View style={[styles.badge, { backgroundColor: Colors.success }]}><Text style={styles.badgeText}>HIT</Text></View>;
     if (lost) return <View style={[styles.badge, { backgroundColor: Colors.error }]}><Text style={styles.badgeText}>MISS</Text></View>;
     if (push) return <View style={[styles.badge, { backgroundColor: Colors.push }]}><Text style={styles.badgeText}>PUSH</Text></View>;
     if (dnp) return <View style={[styles.badge, { backgroundColor: Colors.dnp }]}><Text style={styles.badgeText}>DNP</Text></View>;
+    if (live) return (
+      <View style={styles.badgeLive}>
+        <View style={styles.pulseDot} />
+        <Text style={styles.badgeLiveText}>LIVE</Text>
+      </View>
+    );
+    if (pending) return <View style={[styles.badge, { backgroundColor: 'rgba(255,255,255,0.12)' }]}><Text style={[styles.badgeText, { color: '#fff' }]}>PENDING</Text></View>;
     return null;
-  }, [live, won, lost, push, dnp]);
+  }, [won, lost, push, dnp, live, pending]);
 
-  const handleShare = async () => {
-    onShare?.(pick);
-    const text = buildShareText(pick);
-    try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
-        await navigator.share({ title: `${pick.playerName} prop pick`, text });
-      } else {
-        await Share.share({ message: text, title: `${pick.playerName} prop pick` });
-      }
-    } catch {
-      // user cancelled or unsupported
-    }
-  };
+  // Share image generation
+  const [sharing, setSharing] = useState(false);
+  const webRef = useRef<HTMLDivElement | null>(null);
 
-  const venueText = pick.venue === 'away' ? `AWAY` : 'HOME';
+  const venueText = pick.venue === 'away' ? 'AWAY' : 'HOME';
   const teamVenue = `${pick.teamName || 'Team'} · ${venueText}`;
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ').toUpperCase() || 'PROP';
   const elapsed = pick.elapsed ?? (pick as any).matchMinute ?? null;
+
+  const shareText = useMemo(() => {
+    const dir = getRecDir(pick) ?? pick.recommendation ?? '';
+    const venue = pick.venue === 'away' ? 'AWAY' : 'HOME';
+    let text = `${pick.playerName} ${dir} ${pick.line} ${propLabel} (${venue})`;
+    if (nowValue != null) text += ` — ${nowLabel} ${formatNumber(nowValue)}`;
+    if (lineValue != null) text += ` / Line ${formatNumber(lineValue)}`;
+    if (hitPct != null) text += ` · ${Math.round(hitPct)}% hit prob`;
+    text += ' via Reverse Picks';
+    return text;
+  }, [pick, nowValue, lineValue, hitPct, propLabel, nowLabel]);
+
+  const handleShare = async () => {
+    setSharing(true);
+    try {
+      if (Platform.OS === 'web') {
+        await shareWebImage();
+      } else {
+        await shareFallbackText();
+      }
+    } catch (e) {
+      // ignored
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const shareFallbackText = async () => {
+    try {
+      await Share.share({ message: shareText, title: `${pick.playerName} prop pick` });
+    } catch {
+      // user cancelled
+    }
+  };
+
+  const shareWebImage = async () => {
+    // Create a hidden DOM card for capture.
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.style.width = '360px';
+    container.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+    document.body.appendChild(container);
+
+    const cardHTML = renderShareableCardHTML(pick, {
+      won, lost, push, dnp, live, pending, dir, isOver, recColor,
+      nowValue, nowLabel, paceValue, paceLabel, paceColor, hitPct, lineValue,
+      progress, hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
+      hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed, venueText,
+    });
+    container.innerHTML = cardHTML;
+
+    // Wait for images to load.
+    await Promise.all(
+      Array.from(container.querySelectorAll('img')).map(
+        (img) => new Promise<void>((resolve) => { img.onload = () => resolve(); img.onerror = () => resolve(); })
+      )
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const html2canvas = (await import('html2canvas')).default;
+    const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
+      scale: 3,
+      backgroundColor: '#0F0F0F',
+      useCORS: true,
+      logging: false,
+    });
+    document.body.removeChild(container);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) return;
+
+    const file = new File([blob], `reverse-picks-${pick.pickId || 'share'}.png`, { type: 'image/png' });
+
+    if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        title: `${pick.playerName} prop pick`,
+        text: shareText,
+      });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    }
+  };
 
   return (
     <TouchableOpacity
@@ -123,7 +242,6 @@ export default function OwnerPickCard({
       onPress={onPress}
       style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}
     >
-      {/* Top row: photo + name/team + share + badge */}
       <View style={styles.topRow}>
         <View style={styles.identity}>
           {pick.ownerPlayerPhoto ? (
@@ -145,16 +263,19 @@ export default function OwnerPickCard({
         </View>
         <View style={styles.actions}>
           <TouchableOpacity onPress={handleShare} style={styles.shareBtn} activeOpacity={0.7}>
-            <Ionicons name="share-outline" size={16} color={Colors.primary} />
+            {sharing ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons name="share-outline" size={16} color={Colors.primary} />
+            )}
           </TouchableOpacity>
           {statusBadge}
         </View>
       </View>
 
-      {/* Stats row */}
       <View style={styles.statsRow}>
         <View style={styles.stat}>
-          <Text style={styles.statLabel}>NOW</Text>
+          <Text style={styles.statLabel}>{nowLabel}</Text>
           <Text style={[styles.statValue, { color: nowValue != null && lineValue != null ? (
             (isOver && nowValue > lineValue) || (!isOver && nowValue < lineValue) ? Colors.success : Colors.error
           ) : Colors.text }]}>
@@ -166,8 +287,8 @@ export default function OwnerPickCard({
           <Text style={styles.statValue}>{formatNumber(lineValue)}</Text>
         </View>
         <View style={styles.stat}>
-          <Text style={styles.statLabel}>PACE</Text>
-          <Text style={[styles.statValue, { color: Colors.primary }]}>{formatNumber(paceValue)}</Text>
+          <Text style={styles.statLabel}>{paceLabel}</Text>
+          <Text style={[styles.statValue, { color: paceColor }]}>{formatNumber(paceValue)}</Text>
         </View>
         <View style={styles.stat}>
           <Text style={styles.statLabel}>HIT%</Text>
@@ -175,7 +296,6 @@ export default function OwnerPickCard({
         </View>
       </View>
 
-      {/* Progress bar */}
       {progress != null && (
         <View style={styles.trackBarOuter}>
           <View style={[styles.trackBarFill, { width: `${progress}%`, backgroundColor: recColor }]} />
@@ -183,7 +303,6 @@ export default function OwnerPickCard({
         </View>
       )}
 
-      {/* Bottom row */}
       <View style={styles.bottomRow}>
         <View style={styles.bottomItem}>
           <Ionicons name="time-outline" size={11} color={Colors.textTertiary} />
@@ -191,8 +310,157 @@ export default function OwnerPickCard({
         </View>
         <Text style={styles.bottomText}>{propLabel}</Text>
       </View>
+
+      {showScoreLine && (
+        <View style={styles.matchCtxBlock}>
+          <Text style={styles.matchCtxLine} numberOfLines={1} ellipsizeMode="tail">
+            {hasScore ? (
+              <>{settled ? 'FT ' : 'LIVE '}{homeTeamName} {finalHome}–{finalAway} {awayTeamName}</>
+            ) : (
+              <>{homeTeamName} vs {awayTeamName}</>
+            )}
+            {hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
+            {hasProjPoss && !hasActualPoss ? ` · Proj ${Math.round(pick.projHomePoss!)}%/${Math.round(pick.projAwayPoss!)}%` : ''}
+            {pick.fixtureId != null ? ` · #${pick.fixtureId}` : ''}
+          </Text>
+        </View>
+      )}
+
+      {settled && (
+        <View style={styles.storyBlock}>
+          <View style={[styles.storyDot, { backgroundColor: won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.dnp }]} />
+          <Text style={styles.storyText} numberOfLines={2}>
+            {buildSettledStory(pick, { won, lost, push, dnp })}
+          </Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
+}
+
+function buildSettledStory(
+  pick: Pick,
+  { won, lost, push, dnp }: { won: boolean; lost: boolean; push: boolean; dnp: boolean }
+) {
+  const line = typeof pick.line === 'number' ? pick.line : null;
+  const actual = pick.actualValue ?? pick.currentValue ?? null;
+  const proj = pick.projection ?? pick.projectedValue ?? null;
+  const poss = pick.homePoss != null && pick.awayPoss != null
+    ? `${Math.round(pick.homePoss)}%/${Math.round(pick.awayPoss)}%`
+    : null;
+  const unit = propUnit(pick.propType);
+
+  let narrative = '';
+  if (dnp) {
+    narrative = 'Did not play — voided.';
+  } else if (push) {
+    narrative = 'Finished exactly on the line.';
+  } else if (won && actual != null && line != null) {
+    const margin = Math.abs(actual - line);
+    narrative = `Beat the line by ${margin.toFixed(1)} ${unit}.`;
+  } else if (lost && actual != null && line != null) {
+    const margin = Math.abs(actual - line);
+    narrative = `Fell short by ${margin.toFixed(1)} ${unit}.`;
+  } else if (proj != null && line != null) {
+    const edge = Math.abs(proj - line);
+    narrative = `Pre-game edge was ${edge.toFixed(1)} ${unit}.`;
+  }
+  if (poss && (won || lost)) narrative += ` Match possession: ${poss}.`;
+  return narrative;
+}
+
+// Hidden DOM card used for html2canvas capture on web.
+function renderShareableCardHTML(
+  pick: Pick,
+  state: Record<string, any>
+) {
+  const {
+    won, lost, push, dnp, live, pending, dir, isOver, recColor,
+    nowValue, nowLabel, paceValue, paceLabel, paceColor, hitPct, lineValue,
+    progress, hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
+    hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed, venueText,
+  } = state;
+  const titleColor = won ? '#39FF14' : lost ? '#FF3B30' : '#FFFFFF';
+  const badgeHTML = won
+    ? `<div style="background:#39FF14;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">HIT</div>`
+    : lost
+    ? `<div style="background:#FF3B30;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">MISS</div>`
+    : push
+    ? `<div style="background:#0A84FF;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">PUSH</div>`
+    : dnp
+    ? `<div style="background:#FF9500;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">DNP</div>`
+    : live
+    ? `<div style="display:flex;align-items:center;background:rgba(255,59,48,0.16);border:1px solid rgba(255,59,48,0.45);padding:2px 6px;border-radius:6px"><span style="width:6px;height:6px;border-radius:3px;background:#FF3B30;margin-right:4px"></span><span style="color:#FF3B30;font-size:9px;font-weight:900">LIVE</span></div>`
+    : pending
+    ? `<div style="background:rgba(255,255,255,0.12);color:#fff;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">PENDING</div>`
+    : '';
+
+  const nowColor = nowValue != null && lineValue != null
+    ? ((isOver && nowValue > lineValue) || (!isOver && nowValue < lineValue) ? '#39FF14' : '#FF3B30')
+    : '#FFFFFF';
+  const paceColorHex = paceColor || '#FFFFFF';
+  const hitColor = hitPct != null ? '#FFFFFF' : 'rgba(255,255,255,0.5)';
+
+  const progressHTML = progress != null
+    ? `<div style="position:relative;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;margin-top:12px"><div style="position:absolute;left:0;top:0;bottom:0;border-radius:3px;width:${progress}%;background:${recColor}"></div><div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:rgba(255,255,255,0.6)"></div></div>`
+    : '';
+
+  const matchCtxHTML = showScoreLine
+    ? `<div style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        ${hasScore ? `${won || lost || push ? 'FT ' : 'LIVE '}${homeTeamName} ${finalHome}–${finalAway} ${awayTeamName}` : `${homeTeamName} vs ${awayTeamName}`}
+        ${hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
+        ${hasProjPoss && !hasActualPoss ? ` · Proj ${Math.round(pick.projHomePoss!)}%/${Math.round(pick.projAwayPoss!)}%` : ''}
+        ${pick.fixtureId != null ? ` · #${pick.fixtureId}` : ''}
+      </div>`
+    : '';
+
+  const story = buildSettledStory(pick, { won, lost, push, dnp });
+  const storyHTML = (won || lost || push || dnp)
+    ? `<div style="display:flex;align-items:flex-start;margin-top:10px"><div style="width:6px;height:6px;border-radius:3px;background:${won ? '#39FF14' : lost ? '#FF3B30' : push ? '#0A84FF' : '#FF9500'};margin-top:5px;margin-right:6px;flex-shrink:0"></div><div style="font-size:11px;color:rgba(255,255,255,0.65);line-height:1.35">${story}</div></div>`
+    : '';
+
+  const photoUrl = pick.ownerPlayerPhoto || '';
+  const teamLogoUrl = pick.ownerTeamLogo || '';
+  const photoHTML = photoUrl
+    ? `<img src="${photoUrl}" style="width:48px;height:48px;border-radius:24px;border:2px solid rgba(57,255,20,0.35);object-fit:cover;background:#1A1A1A" crossorigin="anonymous" />`
+    : `<div style="width:48px;height:48px;border-radius:24px;background:#1A1A1A;border:2px solid rgba(57,255,20,0.35);display:flex;align-items:center;justify-content:center;color:#39FF14;font-size:20px;font-weight:800">${pick.playerName?.charAt(0) || '?'}</div>`;
+  const teamLogoHTML = teamLogoUrl ? `<img src="${teamLogoUrl}" style="width:14px;height:14px;margin-right:5px;object-fit:contain" crossorigin="anonymous" />` : '';
+
+  return `
+    <div style="width:340px;background:#0F0F0F;border-radius:16px;border:1px solid rgba(57,255,20,0.18);padding:14px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="display:flex;align-items:center;flex:1;min-width:0">
+          ${photoHTML}
+          <div style="margin-left:12px;flex:1;min-width:0">
+            <div style="color:${titleColor};font-size:17px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pick.playerName}</div>
+            <div style="display:flex;align-items:center;margin-top:3px">
+              ${teamLogoHTML}
+              <div style="color:rgba(255,255,255,0.5);font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pick.teamName || 'Team'} · ${venueText}</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:10px">
+          ${badgeHTML}
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${nowLabel}</div><div style="color:${nowColor};font-size:18px;font-weight:800">${formatNumber(nowValue)}</div></div>
+        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">LINE</div><div style="color:#fff;font-size:18px;font-weight:800">${formatNumber(lineValue)}</div></div>
+        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${paceLabel}</div><div style="color:${paceColorHex};font-size:18px;font-weight:800">${formatNumber(paceValue)}</div></div>
+        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">HIT%</div><div style="color:${hitColor};font-size:18px;font-weight:800">${hitPct != null ? `${Math.round(hitPct)}%` : '—'}</div></div>
+      </div>
+      ${progressHTML}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <div style="display:flex;align-items:center;color:rgba(255,255,255,0.35);font-size:11px">
+          <span style="margin-right:4px">⏱</span>${elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—')}
+        </div>
+        <div style="color:rgba(255,255,255,0.5);font-size:11px;font-weight:700">${propLabel}</div>
+      </div>
+      ${matchCtxHTML}
+      ${storyHTML}
+      <div style="margin-top:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;letter-spacing:0.5px">REVERSE PICKS</div>
+    </div>
+  `;
 }
 
 const styles = StyleSheet.create({
@@ -280,31 +548,68 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 4,
   },
   stat: { alignItems: 'center', flex: 1 },
-  statLabel: { color: Colors.textTertiary, fontSize: 9, fontWeight: '700', letterSpacing: 0.8, marginBottom: 3 },
-  statValue: { color: '#fff', fontSize: 19, fontWeight: '800' },
-  trackBarOuter: {
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    overflow: 'hidden',
-    marginBottom: 10,
+  statLabel: {
+    color: Colors.textTertiary,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 3,
   },
-  trackBarFill: { height: '100%', borderRadius: 3 },
-  trackBarMarker: {
+  statValue: { fontSize: 18, fontWeight: '800' },
+  trackBarOuter: {
+    position: 'relative',
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 3,
+    marginTop: 10,
+  },
+  trackBarFill: {
     position: 'absolute',
+    left: 0,
     top: 0,
     bottom: 0,
-    width: 1.5,
-    backgroundColor: 'rgba(255,255,255,0.45)',
+    borderRadius: 3,
+  },
+  trackBarMarker: {
+    position: 'absolute',
+    top: -2,
+    bottom: -2,
+    width: 2,
+    backgroundColor: 'rgba(255,255,255,0.6)',
   },
   bottomRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 10,
   },
-  bottomItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  bottomText: { color: Colors.textSecondary, fontSize: 10.5, fontWeight: '700' },
+  bottomItem: { flexDirection: 'row', alignItems: 'center' },
+  bottomText: { color: Colors.textTertiary, fontSize: 11, marginLeft: 4, fontWeight: '600' },
+  matchCtxBlock: { marginTop: 10 },
+  matchCtxLine: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  storyBlock: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 10,
+  },
+  storyDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 5,
+    marginRight: 6,
+  },
+  storyText: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 11,
+    lineHeight: 16,
+    flex: 1,
+  },
 });
