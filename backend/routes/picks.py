@@ -994,21 +994,21 @@ async def list_picks(req: GetPicksRequest):
     return {"picks": picks}
 
 
-@router.post("/picks/matchups")
-async def get_matchups(req: GetPicksRequest):
-    """
-    Fast, dedicated endpoint for the Matchups tab.
-    Returns only SETTLED picks plus pre-computed unique filter options.
-    No live-settle side effects, no repair passes, no projection backfill.
-    """
-    session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
+# In-memory cache for /picks/matchups: email -> {ts, result}. TTL 60s.
+_matchups_cache: dict[str, dict] = {}
+MATCHUPS_CACHE_TTL = 60
+
+
+async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
+    """Fetch settled picks with a small retry loop to survive transient Atlas blips."""
+    from config import OWNER_EMAIL
+    session = await db.sessions.find_one({"email": email.lower(), "session_token": token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    from config import OWNER_EMAIL
     query: dict = {"status": "settled"}
-    if req.email.lower() != OWNER_EMAIL:
-        query["email"] = req.email.lower()
+    if email.lower() != OWNER_EMAIL:
+        query["email"] = email.lower()
 
     projection = {
         "_id": 0,
@@ -1031,7 +1031,17 @@ async def get_matchups(req: GetPicksRequest):
         "timestamp": 1,
     }
 
-    picks = await db.picks.find(query, projection).sort("timestamp", -1).to_list(None)
+    last_error = None
+    for attempt in range(3):
+        try:
+            picks = await db.picks.find(query, projection).sort("timestamp", -1).to_list(None)
+            break
+        except Exception as e:
+            last_error = e
+            print(f"[MATCHUPS] DB attempt {attempt + 1} failed for {email.lower()}: {e}")
+            await aio.sleep(0.5 * (attempt + 1))
+    else:
+        raise HTTPException(status_code=503, detail=f"Database temporarily unavailable: {last_error}")
 
     # Normalise result names for the UI
     for p in picks:
@@ -1065,6 +1075,25 @@ async def get_matchups(req: GetPicksRequest):
             "results": ["Hit", "Miss", "Push", "DNP"],
         },
     }
+
+
+@router.post("/picks/matchups")
+async def get_matchups(req: GetPicksRequest):
+    """
+    Fast, dedicated endpoint for the Matchups tab.
+    Returns only SETTLED picks plus pre-computed unique filter options.
+    No live-settle side effects, no repair passes, no projection backfill.
+    Cached in-memory for 60s to survive Atlas replica-set blips.
+    """
+    cache_key = req.email.lower()
+    now = _time_mod.monotonic()
+    cached = _matchups_cache.get(cache_key)
+    if cached and (now - cached["ts"]) < MATCHUPS_CACHE_TTL:
+        return cached["result"]
+
+    result = await _fetch_matchups_with_retry(req.email, req.token)
+    _matchups_cache[cache_key] = {"ts": now, "result": result}
+    return result
 
 
 @router.get("/picks/analysis")

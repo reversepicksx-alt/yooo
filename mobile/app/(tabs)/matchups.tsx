@@ -77,7 +77,9 @@ export default function MatchupsScreen() {
     queryKey: ['matchups', session?.email],
     queryFn: async () => (session ? getMatchups(session.email, session.token) : { picks: [], options: { players: [], opponents: [], positions: [], propTypes: [], leagues: [], results: [] } }),
     enabled: !!session,
-    staleTime: 30000,
+    staleTime: 60000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
 
   const picks = data?.picks || [];

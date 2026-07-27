@@ -198,10 +198,10 @@ _EFFECTIVE_MONGO_URL: str = MONGO_URL if MONGO_URL else _local_url
 import sys as _sys
 print(f"[CONFIG] MongoDB target: {'Atlas' if 'mongodb+srv' in _EFFECTIVE_MONGO_URL else 'localhost'}", file=_sys.stderr, flush=True)
 _DB_NAME = DB_NAME or "reversepicks"
-# serverSelectionTimeoutMS=3000 → MongoDB failures fast-fail in 3s, not 30s.
-# Without this, create_session() (two try/except'd Mongo calls) blocks for ~60s
-# when localhost:27017 is unreachable, blowing past the 15s client timeout.
-mongo_client = AsyncIOMotorClient(_EFFECTIVE_MONGO_URL, serverSelectionTimeoutMS=3000)
+# serverSelectionTimeoutMS=10000 → give Atlas replica-set elections room to
+# settle before fast-failing, while still not blocking the 15s client timeout.
+# 3s was too aggressive during transient Atlas primary stepdowns.
+mongo_client = AsyncIOMotorClient(_EFFECTIVE_MONGO_URL, serverSelectionTimeoutMS=10000, retryWrites=True)
 db = mongo_client[_DB_NAME]
 
 # ── Prop type aliases (for scan) ──
