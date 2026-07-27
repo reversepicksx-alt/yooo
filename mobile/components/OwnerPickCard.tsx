@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { Pick } from '@/lib/api';
 
+// ─── helpers ────────────────────────────────────────────────────────────────
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'PASSES', passes: 'PASSES', shots: 'SHOTS', shots_on_target: 'SOT',
   tackles: 'TACKLES', key_passes: 'KEY PASSES', saves: 'SAVES', interceptions: 'INTS',
@@ -15,83 +16,74 @@ const PROP_LABELS: Record<string, string> = {
 };
 
 function isSettled(p: Pick) {
-  return p.matchStatus === 'final'
-    || p.status === 'settled'
+  return p.matchStatus === 'final' || p.status === 'settled'
     || ['hit', 'miss', 'push', 'won', 'lost', 'dnp'].includes(p.result ?? '');
 }
-
 function isLive(p: Pick) {
-  // Settled picks are never live, even if stale fields say otherwise.
   if (isSettled(p)) return false;
-  // A pick is only live if there is concrete in-match evidence.
-  // Trusting backend status='live' alone caused false positives for future matches.
-  const hasLiveSignal =
-    (p.matchStatus === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null || (p.pace != null && p.pace > 0)))
-    || (p.status === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null || (p.pace != null && p.pace > 0)))
-    || (p.elapsed != null && p.elapsed > 0)
-    || (p.currentValue != null)
-    || (p.pace != null && p.pace > 0);
-  return hasLiveSignal;
+  return !!(
+    (p.matchStatus === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null))
+    || (p.status === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null))
+    || (p.elapsed != null && p.elapsed > 0) || p.currentValue != null
+    || (p.pace != null && p.pace > 0)
+  );
 }
-
-function isPending(p: Pick) {
-  return !isSettled(p) && !isLive(p);
-}
-
+function isPending(p: Pick) { return !isSettled(p) && !isLive(p); }
 function pickWon(p: Pick) { return p.result === 'hit' || p.result === 'won' || p.status === 'won'; }
 function pickLost(p: Pick) { return p.result === 'miss' || p.result === 'lost' || p.status === 'lost'; }
 function pickPush(p: Pick) { return p.result === 'push'; }
 function pickDnp(p: Pick) { return p.result === 'dnp'; }
-
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
-  const rec = p.recommendation;
-  if (rec === 'OVER' || rec === 'UNDER') return rec;
+  if (p.recommendation === 'OVER' || p.recommendation === 'UNDER') return p.recommendation;
   const proj = p.projection ?? p.projectedValue;
   if (proj != null && p.line > 0) return proj > p.line ? 'OVER' : 'UNDER';
   return null;
 }
-
-function formatNumber(n: number | null | undefined): string {
+function fmt(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return '—';
   return Number(n).toFixed(n % 1 === 0 ? 0 : 1);
 }
-
-function propUnit(propType?: string) {
-  if (!propType) return '';
-  if (['pass_attempts', 'passes', 'tackles', 'clearances', 'duels_won', 'saves', 'goalie_saves', 'interceptions', 'blocks'].includes(propType)) return 'passes';
-  if (['shots', 'shots_on_target', 'shots_assisted'].includes(propType)) return 'shots';
-  if (['goals', 'assists'].includes(propType)) return '';
-  return 'units';
-}
-
 function formatMatchTime(iso?: string): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
   const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  if (isToday) return `Today, ${timeStr}`;
-  if (isTomorrow) return `Tomorrow, ${timeStr}`;
-  const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${dateStr}, ${timeStr}`;
+  if (d.toDateString() === now.toDateString()) return `Today · ${timeStr}`;
+  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow · ${timeStr}`;
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${timeStr}`;
 }
 
+// ─── Status badge ────────────────────────────────────────────────────────────
+function StatusPill({ won, lost, push, dnp, live, pending }: Record<string, boolean>) {
+  if (won) return <View style={[pill.root, { backgroundColor: '#39FF14' }]}><Text style={[pill.txt, { color: '#000' }]}>HIT ✓</Text></View>;
+  if (lost) return <View style={[pill.root, { backgroundColor: '#FF3B30' }]}><Text style={[pill.txt, { color: '#fff' }]}>MISS</Text></View>;
+  if (push) return <View style={[pill.root, { backgroundColor: '#0A84FF' }]}><Text style={[pill.txt, { color: '#fff' }]}>PUSH</Text></View>;
+  if (dnp) return <View style={[pill.root, { backgroundColor: '#FF9500' }]}><Text style={[pill.txt, { color: '#fff' }]}>DNP</Text></View>;
+  if (live) return (
+    <View style={[pill.root, pill.live]}>
+      <View style={pill.dot} />
+      <Text style={[pill.txt, { color: '#FF3B30' }]}>LIVE</Text>
+    </View>
+  );
+  if (pending) return <View style={[pill.root, pill.pending]}><Text style={[pill.txt, { color: 'rgba(255,255,255,0.7)' }]}>PENDING</Text></View>;
+  return null;
+}
+const pill = StyleSheet.create({
+  root: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  live: { backgroundColor: 'rgba(255,59,48,0.12)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.4)' },
+  pending: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+  dot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#FF3B30', marginRight: 5 },
+  txt: { fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+});
+
+// ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick,
-  onPress,
-  onTrack,
-  onDelete,
-  onPlayerPress,
+  pick, onPress, onTrack, onDelete, onPlayerPress,
 }: {
-  pick: Pick;
-  onPress?: () => void;
-  onTrack?: () => void;
-  onDelete?: () => void;
-  onPlayerPress?: (pick: Pick) => void;
+  pick: Pick; onPress?: () => void; onTrack?: () => void;
+  onDelete?: () => void; onPlayerPress?: (pick: Pick) => void;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
@@ -103,22 +95,18 @@ export default function OwnerPickCard({
 
   const dir = getRecDir(pick);
   const isOver = dir === 'OVER';
-  const recColor = isOver ? Colors.success : Colors.error;
+  const isUnder = dir === 'UNDER';
+  // Accent: green=OVER/HIT, red=UNDER/MISS, blue=push, amber=dnp, dim=pending
+  const accentColor = won ? '#39FF14' : lost ? '#FF3B30' : push ? '#0A84FF' : dnp ? '#FF9500'
+    : isOver ? '#39FF14' : isUnder ? '#FF3B30' : 'rgba(255,255,255,0.18)';
 
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
   const projValue = pick.projection ?? pick.projectedValue ?? null;
   const actualValue = pick.actualValue ?? pick.currentValue ?? null;
   const livePace = pick.pace ?? null;
-
-  // NOW: live/actual value; for settled picks show actual value.
   const nowValue = settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
-  const nowLabel = settled ? 'FINAL' : live ? 'NOW' : 'NOW';
-
-  // PACE only when actually live; otherwise PROJ (or DNP).
   const paceValue = live ? (livePace ?? projValue) : projValue;
   const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
-  const paceColor = live ? Colors.primary : Colors.text;
-
   const hitPct = pick.hitPct ?? null;
 
   const progress = useMemo(() => {
@@ -126,7 +114,6 @@ export default function OwnerPickCard({
     return Math.max(0, Math.min(100, (nowValue / (lineValue * 2)) * 100));
   }, [lineValue, nowValue]);
 
-  // Match context
   const venueLower = (pick.venue || '').toLowerCase();
   const venueKnown = venueLower === 'home' || venueLower === 'away';
   const homeTeamName = pick.homeTeam || (venueKnown ? (venueLower === 'away' ? pick.opponentName : pick.teamName) : '') || '';
@@ -137,546 +124,384 @@ export default function OwnerPickCard({
   const hasActualPoss = pick.homePoss != null && pick.awayPoss != null;
   const hasProjPoss = pick.projHomePoss != null && pick.projAwayPoss != null;
   const trustOrient = !!(pick.homeTeam && pick.awayTeam) || venueKnown;
+  const showScoreLine = trustOrient && (((settled || live) && hasScore) || hasActualPoss || hasProjPoss);
 
-  const showScoreLine = trustOrient && (
-    ((settled || live) && hasScore)
-    || hasActualPoss
-    || hasProjPoss
-  );
-
-  const statusBadge = useMemo(() => {
-    if (won) return <View style={[styles.badge, { backgroundColor: Colors.success }]}><Text style={styles.badgeText}>HIT</Text></View>;
-    if (lost) return <View style={[styles.badge, { backgroundColor: Colors.error }]}><Text style={styles.badgeText}>MISS</Text></View>;
-    if (push) return <View style={[styles.badge, { backgroundColor: Colors.push }]}><Text style={styles.badgeText}>PUSH</Text></View>;
-    if (dnp) return <View style={[styles.badge, { backgroundColor: Colors.dnp }]}><Text style={styles.badgeText}>DNP</Text></View>;
-    if (live) return (
-      <View style={styles.badgeLive}>
-        <View style={styles.pulseDot} />
-        <Text style={styles.badgeLiveText}>LIVE</Text>
-      </View>
-    );
-    if (pending) return <View style={[styles.badge, { backgroundColor: 'rgba(255,255,255,0.12)' }]}><Text style={[styles.badgeText, { color: '#fff' }]}>PENDING</Text></View>;
-    return null;
-  }, [won, lost, push, dnp, live, pending]);
-
-  // Share image generation
-  const [sharing, setSharing] = useState(false);
-  const [photoFailed, setPhotoFailed] = useState(false);
-  const webRef = useRef<HTMLDivElement | null>(null);
-
-  const venueText = pick.venue === 'away' ? 'AWAY' : 'HOME';
-  const teamVenue = `${pick.teamName || 'Team'} · ${venueText}`;
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ').toUpperCase() || 'PROP';
+  const venueTag = pick.venue === 'away' ? 'AWAY' : 'HOME';
   const elapsed = pick.elapsed ?? (pick as any).matchMinute ?? null;
   const matchTime = !settled ? formatMatchTime(pick.fixtureDate) : '';
-  const scriptType = dir ? `${dir} ${propLabel}` : propLabel;
+  const dirLabel = dir ? `${dir} ${propLabel}` : propLabel;
+  const nowTrackColor = nowValue != null && lineValue != null
+    ? ((isOver && nowValue > lineValue) || (!isUnder && !isOver)) ? Colors.primary
+      : ((isOver && nowValue < lineValue) || (isUnder && nowValue > lineValue)) ? Colors.error : Colors.primary
+    : Colors.text;
 
-  const shareText = useMemo(() => {
-    const dir = getRecDir(pick) ?? pick.recommendation ?? '';
-    const venue = pick.venue === 'away' ? 'AWAY' : 'HOME';
-    let text = `${pick.playerName} ${dir} ${pick.line} ${propLabel} (${venue})`;
-    if (matchTime) text += ` — ${matchTime}`;
-    if (nowValue != null) text += ` — ${nowLabel} ${formatNumber(nowValue)}`;
-    if (lineValue != null) text += ` / Line ${formatNumber(lineValue)}`;
-    if (hitPct != null) text += ` · ${Math.round(hitPct)}% hit prob`;
-    text += ' via Reverse Picks';
-    return text;
-  }, [pick, nowValue, lineValue, hitPct, propLabel, nowLabel, matchTime]);
+  const [sharing, setSharing] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
+
+  const shareText = `${pick.playerName} ${dir ?? ''} ${pick.line} ${propLabel} · ${venueTag}\n${matchTime || (elapsed != null ? `${elapsed}'` : '')}\nvia @Reversepickss`;
 
   const handleShare = async () => {
     setSharing(true);
     try {
-      if (Platform.OS === 'web') {
-        await shareWebImage();
-      } else {
-        await shareFallbackText();
-      }
-    } catch (e) {
-      // ignored
-    } finally {
-      setSharing(false);
-    }
-  };
-
-  const shareFallbackText = async () => {
-    try {
-      await Share.share({ message: shareText, title: `${pick.playerName} prop pick` });
-    } catch {
-      // user cancelled
-    }
+      if (Platform.OS === 'web') await shareWebImage();
+      else await Share.share({ message: shareText, title: `${pick.playerName} pick` });
+    } catch { /* user cancelled */ } finally { setSharing(false); }
   };
 
   const shareWebImage = async () => {
-    // Create a hidden DOM card for capture.
     const container = document.createElement('div');
-    container.style.position = 'fixed';
-    container.style.left = '-9999px';
-    container.style.top = '0';
-    container.style.width = '360px';
-    container.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:380px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif';
     document.body.appendChild(container);
-
-    const cardHTML = renderShareableCardHTML(pick, {
-      won, lost, push, dnp, live, pending, dir, isOver, recColor,
-      nowValue, nowLabel, paceValue, paceLabel, paceColor, hitPct, lineValue,
-      progress, hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
-      hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed, venueText,
-      matchTime, scriptType,
+    container.innerHTML = buildShareHTML(pick, {
+      won, lost, push, dnp, live, pending, dir, isOver, accentColor,
+      nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
+      hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
+      hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed,
+      venueTag, matchTime, dirLabel,
     });
-    container.innerHTML = cardHTML;
-
-    // Wait for images to load.
     await Promise.all(
       Array.from(container.querySelectorAll('img')).map(
-        (img) => new Promise<void>((resolve) => { img.onload = () => resolve(); img.onerror = () => resolve(); })
+        img => new Promise<void>(res => { img.onload = () => res(); img.onerror = () => res(); })
       )
     );
-    await new Promise((r) => setTimeout(r, 150));
-
+    await new Promise(r => setTimeout(r, 180));
     const html2canvas = (await import('html2canvas')).default;
     const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
-      scale: 3,
-      backgroundColor: '#0F0F0F',
-      useCORS: true,
-      logging: false,
+      scale: 3, backgroundColor: null, useCORS: true, logging: false,
     });
     document.body.removeChild(container);
-
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
     if (!blob) return;
-
-    const file = new File([blob], `reverse-picks-${pick.pickId || 'share'}.png`, { type: 'image/png' });
-
-    if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [file] })) {
-      await navigator.share({
-        files: [file],
-        title: `${pick.playerName} prop pick`,
-        text: shareText,
-      });
+    const file = new File([blob], `rp-${pick.pickId || 'pick'}.png`, { type: 'image/png' });
+    if ((navigator as any).canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: shareText });
     } else {
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
+      const a = Object.assign(document.createElement('a'), { href: url, download: file.name });
+      document.body.appendChild(a); a.click();
       setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
     }
   };
 
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <TouchableOpacity
-      activeOpacity={onPress ? 0.85 : 1}
+      activeOpacity={onPress ? 0.82 : 1}
       onPress={onPress}
-      style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}
+      style={styles.card}
     >
-      <View style={styles.topRow}>
-        <View style={styles.identity}>
-          {pick.ownerPlayerPhoto ? (
-            <Image
-              source={{ uri: pick.ownerPlayerPhoto }}
-              style={styles.photo}
-              onError={() => setPhotoFailed(true)}
-            />
-          ) : null}
-          {(!pick.ownerPlayerPhoto || photoFailed) && (
-            <View style={[styles.photoPlaceholder, pick.ownerPlayerPhoto && photoFailed ? styles.photoOverlay : null]}>
-              <Text style={styles.photoInitial}>{pick.playerName?.charAt(0) || '?'}</Text>
-            </View>
-          )}
-          <View style={styles.nameBlock}>
-            <TouchableOpacity activeOpacity={0.7} onPress={() => onPlayerPress?.(pick)} disabled={!onPlayerPress}>
+      {/* Left accent stripe — color = direction / result */}
+      <View style={[styles.stripe, { backgroundColor: accentColor }]} />
+
+      <View style={styles.inner}>
+        {/* ── Top row: identity + badge ─────────────────────── */}
+        <View style={styles.topRow}>
+          <TouchableOpacity style={styles.identity} activeOpacity={0.7}
+            onPress={() => onPlayerPress?.(pick)} disabled={!onPlayerPress}>
+            {pick.ownerPlayerPhoto && !photoFailed ? (
+              <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.avatar}
+                onError={() => setPhotoFailed(true)} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarFallback]}>
+                <Text style={styles.avatarLetter}>{pick.playerName?.charAt(0) || '?'}</Text>
+              </View>
+            )}
+            <View style={styles.nameBlock}>
               <Text style={styles.playerName} numberOfLines={1}>{pick.playerName}</Text>
-            </TouchableOpacity>
-            <View style={styles.teamRow}>
-              {pick.ownerTeamLogo ? (
-                <Image source={{ uri: pick.ownerTeamLogo }} style={styles.teamLogo} />
-              ) : null}
-              <Text style={styles.teamVenue} numberOfLines={1}>{teamVenue}</Text>
+              <View style={styles.subRow}>
+                {pick.ownerTeamLogo ? (
+                  <Image source={{ uri: pick.ownerTeamLogo }} style={styles.teamCrest} />
+                ) : null}
+                <Text style={styles.subText} numberOfLines={1}>
+                  {pick.teamName || 'Team'}
+                  <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
+                </Text>
+              </View>
             </View>
-          </View>
-        </View>
-        <View style={styles.actions}>
-          {Platform.OS === 'web' && onDelete && (
-            // @ts-ignore raw DOM button intentional
-            <button
-              type="button"
-              onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
-              onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
-              onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
-              onTouchStart={(e: React.TouchEvent) => e.stopPropagation()}
-              style={{ all: 'unset', cursor: 'pointer', padding: '3px 5px', borderRadius: 5, display: 'inline-flex', alignItems: 'center' }}
-              aria-label="Delete pick"
-            >
-              <Ionicons name="trash-outline" size={16} color={Colors.error} />
-            </button>
-          )}
-          <TouchableOpacity onPress={handleShare} style={styles.shareBtn} activeOpacity={0.7}>
-            {sharing ? (
-              <ActivityIndicator size="small" color={Colors.primary} />
-            ) : (
-              <Ionicons name="share-outline" size={16} color={Colors.primary} />
-            )}
           </TouchableOpacity>
-          {statusBadge}
-        </View>
-      </View>
 
-      <View style={styles.statsRow}>
-        {!pending && (
-          <View style={styles.stat}>
-            <Text style={styles.statLabel}>{nowLabel}</Text>
-            <Text style={[styles.statValue, { color: nowValue != null && lineValue != null ? (
-              (isOver && nowValue > lineValue) || (!isOver && nowValue < lineValue) ? Colors.success : Colors.error
-            ) : Colors.text }]}>
-              {formatNumber(nowValue)}
-            </Text>
-          </View>
-        )}
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>LINE</Text>
-          <Text style={styles.statValue}>{formatNumber(lineValue)}</Text>
-        </View>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>{paceLabel}</Text>
-          <Text style={[styles.statValue, { color: paceColor }]}>{formatNumber(paceValue)}</Text>
-        </View>
-        {live && projValue != null && (
-          <View style={styles.stat}>
-            <Text style={styles.statLabel}>PROJ</Text>
-            <Text style={[styles.statValue, { color: Colors.text }]}>{formatNumber(projValue)}</Text>
-          </View>
-        )}
-        {!pending && (
-          <View style={styles.stat}>
-            <Text style={styles.statLabel}>HIT%</Text>
-            <Text style={styles.statValue}>{hitPct != null ? `${Math.round(hitPct)}%` : '—'}</Text>
-          </View>
-        )}
-      </View>
-
-      {progress != null && (
-        <View style={styles.trackBarOuter}>
-          <View style={[styles.trackBarFill, { width: `${progress}%`, backgroundColor: recColor }]} />
-          <View style={[styles.trackBarMarker, { left: '50%' }]} />
-        </View>
-      )}
-
-      <View style={styles.bottomRow}>
-        <View style={styles.bottomItem}>
-          <Ionicons name={matchTime ? "calendar-outline" : "time-outline"} size={11} color={Colors.textTertiary} />
-          <Text style={styles.bottomText}>
-            {matchTime || (elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—'))}
-          </Text>
-        </View>
-        <Text style={[styles.bottomText, { color: recColor, fontWeight: '800' }]}>{scriptType}</Text>
-      </View>
-
-      {live && !won && !lost && pick.sport === 'soccer' && onTrack && (
-        <TouchableOpacity onPress={onTrack} style={styles.trackBtn} activeOpacity={0.7}>
-          <Ionicons name="pulse" size={12} color={Colors.primary} />
-          <Text style={styles.trackBtnText}>Track Live</Text>
-        </TouchableOpacity>
-      )}
-
-      {showScoreLine && (
-        <View style={styles.matchCtxBlock}>
-          <Text style={styles.matchCtxLine} numberOfLines={1} ellipsizeMode="tail">
-            {hasScore ? (
-              <>{settled ? 'FT ' : 'LIVE '}{homeTeamName} {finalHome}–{finalAway} {awayTeamName}</>
-            ) : (
-              <>{homeTeamName} vs {awayTeamName}</>
+          <View style={styles.rightCluster}>
+            {Platform.OS === 'web' && onDelete && (
+              // @ts-ignore
+              <button type="button"
+                onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+                onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+                onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+                style={{ all: 'unset', cursor: 'pointer', padding: '3px 5px', display: 'inline-flex', alignItems: 'center' }}>
+                <Ionicons name="trash-outline" size={14} color={Colors.error} />
+              </button>
             )}
-            {hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
-            {hasProjPoss && !hasActualPoss ? ` · Proj ${Math.round(pick.projHomePoss!)}%/${Math.round(pick.projAwayPoss!)}%` : ''}
-            {pick.fixtureId != null ? ` · #${pick.fixtureId}` : ''}
-          </Text>
+            <TouchableOpacity onPress={handleShare} style={styles.shareBtn} activeOpacity={0.7}>
+              {sharing
+                ? <ActivityIndicator size="small" color={Colors.primary} />
+                : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
+            </TouchableOpacity>
+            <StatusPill won={won} lost={lost} push={push} dnp={dnp} live={live} pending={pending} />
+          </View>
         </View>
-      )}
 
+        {/* ── Direction banner ──────────────────────────────── */}
+        {dir && (
+          <View style={[styles.dirBanner, { borderColor: accentColor + '40', backgroundColor: accentColor + '10' }]}>
+            <Text style={[styles.dirText, { color: accentColor }]}>{dirLabel}</Text>
+            {hitPct != null && (
+              <Text style={[styles.hitPctText, { color: accentColor }]}>{Math.round(hitPct)}% hit prob</Text>
+            )}
+          </View>
+        )}
+
+        {/* ── Stats row ────────────────────────────────────── */}
+        <View style={styles.statsRow}>
+          {!pending && nowValue != null && (
+            <View style={styles.statBlock}>
+              <Text style={styles.statLbl}>{settled ? 'FINAL' : live ? 'NOW' : 'NOW'}</Text>
+              <Text style={[styles.statVal, {
+                color: nowValue != null && lineValue != null
+                  ? ((isOver && nowValue >= lineValue) || (isUnder && nowValue <= lineValue)) ? '#39FF14' : '#FF3B30'
+                  : Colors.text
+              }]}>{fmt(nowValue)}</Text>
+            </View>
+          )}
+          <View style={styles.statBlock}>
+            <Text style={styles.statLbl}>LINE</Text>
+            <Text style={styles.statVal}>{fmt(lineValue)}</Text>
+          </View>
+          <View style={styles.statBlock}>
+            <Text style={styles.statLbl}>{paceLabel}</Text>
+            <Text style={[styles.statVal, { color: live ? Colors.primary : Colors.text }]}>{fmt(paceValue)}</Text>
+          </View>
+        </View>
+
+        {/* ── Progress track ─────────────────────────────── */}
+        {progress != null && (
+          <View style={styles.track}>
+            <View style={[styles.trackFill, { width: `${progress}%` as any, backgroundColor: accentColor }]} />
+            <View style={styles.trackMid} />
+          </View>
+        )}
+
+        {/* ── Bottom row ─────────────────────────────────── */}
+        <View style={styles.footRow}>
+          <Text style={styles.footTime} numberOfLines={1}>
+            {matchTime || (elapsed != null ? `${elapsed}'` : live ? '● LIVE' : '')}
+          </Text>
+          {showScoreLine && (
+            <Text style={styles.footScore} numberOfLines={1}>
+              {hasScore
+                ? `${settled ? 'FT ' : ''}${homeTeamName} ${finalHome}–${finalAway} ${awayTeamName}`
+                : `${homeTeamName} vs ${awayTeamName}`}
+              {hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
+            </Text>
+          )}
+        </View>
+
+        {/* ── Track live btn ─────────────────────────────── */}
+        {live && !won && !lost && pick.sport === 'soccer' && onTrack && (
+          <TouchableOpacity onPress={onTrack} style={styles.liveBtn} activeOpacity={0.7}>
+            <Ionicons name="pulse" size={11} color={Colors.primary} />
+            <Text style={styles.liveBtnText}>Track Live</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </TouchableOpacity>
   );
 }
 
-function buildSettledStory(
-  pick: Pick,
-  { won, lost, push, dnp }: { won: boolean; lost: boolean; push: boolean; dnp: boolean }
-) {
-  const line = typeof pick.line === 'number' ? pick.line : null;
-  const actual = pick.actualValue ?? pick.currentValue ?? null;
-  const proj = pick.projection ?? pick.projectedValue ?? null;
-  const poss = pick.homePoss != null && pick.awayPoss != null
-    ? `${Math.round(pick.homePoss)}%/${Math.round(pick.awayPoss)}%`
-    : null;
-  const unit = propUnit(pick.propType);
-
-  let narrative = '';
-  if (dnp) {
-    narrative = 'Did not play — voided.';
-  } else if (push) {
-    narrative = 'Finished exactly on the line.';
-  } else if (won && actual != null && line != null) {
-    const margin = Math.abs(actual - line);
-    narrative = `Beat the line by ${margin.toFixed(1)} ${unit}.`;
-  } else if (lost && actual != null && line != null) {
-    const margin = Math.abs(actual - line);
-    narrative = `Fell short by ${margin.toFixed(1)} ${unit}.`;
-  } else if (proj != null && line != null) {
-    const edge = Math.abs(proj - line);
-    narrative = `Pre-game edge was ${edge.toFixed(1)} ${unit}.`;
-  }
-  if (poss && (won || lost)) narrative += ` Match possession: ${poss}.`;
-  return narrative;
-}
-
-// Hidden DOM card used for html2canvas capture on web.
-function renderShareableCardHTML(
-  pick: Pick,
-  state: Record<string, any>
-) {
+// ─── Share card HTML (broadcast / intel style) ───────────────────────────────
+function buildShareHTML(pick: Pick, s: Record<string, any>): string {
   const {
-    won, lost, push, dnp, live, pending, dir, isOver, recColor,
-    nowValue, nowLabel, paceValue, paceLabel, paceColor, hitPct, lineValue,
-    progress, hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
-    hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed, venueText,
-    matchTime, scriptType,
-  } = state;
-  const titleColor = won ? '#39FF14' : lost ? '#FF3B30' : '#FFFFFF';
-  const badgeHTML = won
-    ? `<div style="background:#39FF14;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">HIT</div>`
-    : lost
-    ? `<div style="background:#FF3B30;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">MISS</div>`
-    : push
-    ? `<div style="background:#0A84FF;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">PUSH</div>`
-    : dnp
-    ? `<div style="background:#FF9500;color:#000;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">DNP</div>`
-    : live
-    ? `<div style="display:flex;align-items:center;background:rgba(255,59,48,0.16);border:1px solid rgba(255,59,48,0.45);padding:2px 6px;border-radius:6px"><span style="width:6px;height:6px;border-radius:3px;background:#FF3B30;margin-right:4px"></span><span style="color:#FF3B30;font-size:9px;font-weight:900">LIVE</span></div>`
-    : pending
-    ? `<div style="background:rgba(255,255,255,0.12);color:#fff;padding:3px 8px;border-radius:6px;font-size:9px;font-weight:900">PENDING</div>`
-    : '';
-
-  const nowColor = nowValue != null && lineValue != null
-    ? ((isOver && nowValue > lineValue) || (!isOver && nowValue < lineValue) ? '#39FF14' : '#FF3B30')
-    : '#FFFFFF';
-  const paceColorHex = paceColor || '#FFFFFF';
-  const hitColor = hitPct != null ? '#FFFFFF' : 'rgba(255,255,255,0.5)';
-
-  const progressHTML = progress != null
-    ? `<div style="position:relative;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;margin-top:12px"><div style="position:absolute;left:0;top:0;bottom:0;border-radius:3px;width:${progress}%;background:${recColor}"></div><div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:rgba(255,255,255,0.6)"></div></div>`
-    : '';
-
-  const matchCtxHTML = showScoreLine
-    ? `<div style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-        ${hasScore ? `${won || lost || push ? 'FT ' : 'LIVE '}${homeTeamName} ${finalHome}–${finalAway} ${awayTeamName}` : `${homeTeamName} vs ${awayTeamName}`}
-        ${hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
-        ${hasProjPoss && !hasActualPoss ? ` · Proj ${Math.round(pick.projHomePoss!)}%/${Math.round(pick.projAwayPoss!)}%` : ''}
-        ${pick.fixtureId != null ? ` · #${pick.fixtureId}` : ''}
-      </div>`
-    : '';
-
-  const story = buildSettledStory(pick, { won, lost, push, dnp });
-  const storyHTML = (won || lost || push || dnp)
-    ? `<div style="display:flex;align-items:flex-start;margin-top:10px"><div style="width:6px;height:6px;border-radius:3px;background:${won ? '#39FF14' : lost ? '#FF3B30' : push ? '#0A84FF' : '#FF9500'};margin-top:5px;margin-right:6px;flex-shrink:0"></div><div style="font-size:11px;color:rgba(255,255,255,0.65);line-height:1.35">${story}</div></div>`
-    : '';
+    won, lost, push, dnp, live, pending, dir, isOver, accentColor,
+    nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
+    hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
+    hasActualPoss, showScoreLine, propLabel, elapsed,
+    venueTag, matchTime, dirLabel,
+  } = s;
 
   const photoUrl = pick.ownerPlayerPhoto || '';
-  const teamLogoUrl = pick.ownerTeamLogo || '';
-  const photoHTML = photoUrl
-    ? `<img src="${photoUrl}" style="width:48px;height:48px;border-radius:24px;border:2px solid rgba(57,255,20,0.35);object-fit:cover;background:#1A1A1A" crossorigin="anonymous" />`
-    : `<div style="width:48px;height:48px;border-radius:24px;background:#1A1A1A;border:2px solid rgba(57,255,20,0.35);display:flex;align-items:center;justify-content:center;color:#39FF14;font-size:20px;font-weight:800">${pick.playerName?.charAt(0) || '?'}</div>`;
-  const teamLogoHTML = teamLogoUrl ? `<img src="${teamLogoUrl}" style="width:14px;height:14px;margin-right:5px;object-fit:contain" crossorigin="anonymous" />` : '';
+  const teamLogo = pick.ownerTeamLogo || '';
+  const accent = accentColor;
+
+  // Status label
+  const statusLabel = won ? 'HIT ✓' : lost ? 'MISS' : push ? 'PUSH' : dnp ? 'DNP' : live ? '● LIVE' : pending ? 'PENDING' : '';
+  const statusBg = won ? '#39FF14' : lost ? '#FF3B30' : push ? '#0A84FF' : dnp ? '#FF9500'
+    : live ? 'rgba(255,59,48,0.18)' : 'rgba(255,255,255,0.1)';
+  const statusColor = won ? '#000' : '#fff';
+
+  // Progress bar
+  const progHTML = progress != null
+    ? `<div style="position:relative;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;margin:12px 0 0">
+        <div style="position:absolute;left:0;top:0;bottom:0;border-radius:3px;width:${progress}%;background:${accent}"></div>
+        <div style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:rgba(255,255,255,0.5)"></div>
+       </div>` : '';
+
+  // Score / context
+  const ctxHTML = showScoreLine
+    ? `<div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:8px;white-space:nowrap;overflow:hidden">
+        ${hasScore ? `${won||lost||push?'FT ':''}${homeTeamName} ${finalHome}–${finalAway} ${awayTeamName}` : `${homeTeamName} vs ${awayTeamName}`}
+        ${hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
+       </div>` : '';
+
+  const timeStr = matchTime || (elapsed != null ? `${elapsed}'` : live ? '● LIVE' : '');
+
+  // Stat blocks
+  const statBlockHTML = (label: string, value: string, color = '#fff') =>
+    `<div style="flex:1;text-align:center">
+      <div style="font-size:8px;font-weight:700;letter-spacing:0.8px;color:rgba(255,255,255,0.35);margin-bottom:4px">${label}</div>
+      <div style="font-size:22px;font-weight:900;color:${color};line-height:1">${value}</div>
+     </div>`;
+
+  const nowColor = nowValue != null && lineValue != null
+    ? ((isOver && nowValue >= lineValue) ? '#39FF14' : '#FF3B30') : '#fff';
+
+  let statsHTML = '';
+  if (!pending && nowValue != null) statsHTML += statBlockHTML(won || !live ? 'FINAL' : 'NOW', fmt(nowValue), nowColor);
+  statsHTML += statBlockHTML('LINE', fmt(lineValue));
+  statsHTML += statBlockHTML(paceLabel, fmt(paceValue), live ? '#39FF14' : '#fff');
+  if (hitPct != null) statsHTML += statBlockHTML('HIT%', `${Math.round(hitPct)}%`);
 
   return `
-    <div style="width:340px;background:#0F0F0F;border-radius:16px;border:1px solid rgba(57,255,20,0.18);padding:14px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div style="display:flex;align-items:center;flex:1;min-width:0">
-          ${photoHTML}
-          <div style="margin-left:12px;flex:1;min-width:0">
-            <div style="color:${titleColor};font-size:17px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pick.playerName}</div>
-            <div style="display:flex;align-items:center;margin-top:3px">
-              ${teamLogoHTML}
-              <div style="color:rgba(255,255,255,0.5);font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pick.teamName || 'Team'} · ${venueText}</div>
-            </div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-left:10px">
-          ${badgeHTML}
-        </div>
+<div style="width:380px;background:#080808;border-radius:18px;overflow:hidden;position:relative;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif">
+  <!-- Left accent bar -->
+  <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${accent}"></div>
+
+  <!-- Player photo blurred background (right 45%) -->
+  ${photoUrl ? `<div style="position:absolute;right:0;top:0;bottom:0;width:45%;overflow:hidden">
+    <img src="${photoUrl}" crossorigin="anonymous"
+      style="width:100%;height:100%;object-fit:cover;object-position:top center;filter:blur(0px) brightness(0.35)" />
+    <div style="position:absolute;inset:0;background:linear-gradient(to right,#080808 0%,transparent 100%)"></div>
+  </div>` : ''}
+
+  <div style="position:relative;padding:18px 18px 16px 20px">
+    <!-- Top row: branding + status -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:7px">
+        <div style="width:8px;height:8px;border-radius:4px;background:${accent}"></div>
+        <span style="font-size:10px;font-weight:900;letter-spacing:1.5px;color:rgba(255,255,255,0.5)">REVERSE PICKS</span>
       </div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-        ${!pending ? `<div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${nowLabel}</div><div style="color:${nowColor};font-size:18px;font-weight:800">${formatNumber(nowValue)}</div></div>` : ''}
-        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">LINE</div><div style="color:#fff;font-size:18px;font-weight:800">${formatNumber(lineValue)}</div></div>
-        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${paceLabel}</div><div style="color:${paceColorHex};font-size:18px;font-weight:800">${formatNumber(paceValue)}</div></div>
-        ${!pending ? `<div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">HIT%</div><div style="color:${hitColor};font-size:18px;font-weight:800">${hitPct != null ? `${Math.round(hitPct)}%` : '—'}</div></div>` : ''}
-      </div>
-      ${progressHTML}
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-        <div style="display:flex;align-items:center;color:rgba(255,255,255,0.35);font-size:11px">
-          <span style="margin-right:4px">${matchTime ? '📅' : '⏱'}</span>${matchTime || (elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—'))}
-        </div>
-        <div style="color:${recColor || 'rgba(255,255,255,0.5)'};font-size:11px;font-weight:800">${scriptType || propLabel}</div>
-      </div>
-      ${matchCtxHTML}
-      ${storyHTML}
-      <div style="margin-top:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;letter-spacing:0.5px">REVERSE PICKS</div>
-      <div style="margin-top:4px;text-align:center;color:rgba(255,255,255,0.15);font-size:8px;font-weight:500">Player &amp; team images © API-Football / respective rights holders · for informational use only</div>
+      ${statusLabel ? `<div style="background:${statusBg};color:${statusColor};padding:3px 10px;border-radius:20px;font-size:9px;font-weight:900;letter-spacing:0.8px">${statusLabel}</div>` : ''}
     </div>
-  `;
+
+    <!-- Player identity -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;max-width:58%">
+      ${photoUrl
+        ? `<img src="${photoUrl}" crossorigin="anonymous" style="width:44px;height:44px;border-radius:22px;object-fit:cover;border:2px solid ${accent};flex-shrink:0"/>`
+        : `<div style="width:44px;height:44px;border-radius:22px;background:#1A1A1A;border:2px solid ${accent};display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:${accent};flex-shrink:0">${pick.playerName?.charAt(0) || '?'}</div>`}
+      <div style="min-width:0">
+        <div style="font-size:20px;font-weight:900;color:#fff;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pick.playerName}</div>
+        <div style="display:flex;align-items:center;gap:5px;margin-top:3px">
+          ${teamLogo ? `<img src="${teamLogo}" crossorigin="anonymous" style="width:13px;height:13px;object-fit:contain"/>` : ''}
+          <span style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.45)">${pick.teamName || ''}</span>
+          <span style="font-size:11px;font-weight:800;color:${accent}">· ${venueTag}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Direction banner -->
+    ${dir ? `<div style="background:${accent}18;border:1px solid ${accent}35;border-radius:8px;padding:7px 12px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:14px;font-weight:900;color:${accent};letter-spacing:0.5px">${dirLabel}</span>
+      ${hitPct != null ? `<span style="font-size:11px;font-weight:700;color:${accent}80">${Math.round(hitPct)}% hit prob</span>` : ''}
+    </div>` : ''}
+
+    <!-- Stats -->
+    <div style="display:flex;gap:0;margin-bottom:2px">${statsHTML}</div>
+
+    ${progHTML}
+
+    <!-- Footer -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+      <span style="font-size:10px;color:rgba(255,255,255,0.3);font-weight:600">${timeStr}</span>
+      <span style="font-size:8px;color:rgba(255,255,255,0.15);font-weight:500">Images © API-Football · informational use only</span>
+    </div>
+    ${ctxHTML}
+  </div>
+</div>`;
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#0F0F0F',
+    flexDirection: 'row',
+    backgroundColor: '#0A0A0A',
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.18)',
-    padding: 6,
     marginBottom: 5,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  cardWon: { borderColor: 'rgba(57,255,20,0.45)' },
-  cardLost: { borderColor: 'rgba(255,59,48,0.35)' },
+  stripe: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderTopLeftRadius: 10,
+    borderBottomLeftRadius: 10,
+  },
+  inner: { flex: 1, padding: 8 },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  identity: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 },
-  photo: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.35)',
+  identity: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  avatar: {
+    width: 30, height: 30, borderRadius: 15,
     backgroundColor: '#1A1A1A',
+    borderWidth: 1.5, borderColor: 'rgba(57,255,20,0.3)',
   },
-  photoPlaceholder: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#1A1A1A',
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoOverlay: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-  },
-  photoInitial: { color: Colors.primary, fontSize: 12, fontWeight: '800' },
-  nameBlock: { marginLeft: 6, flex: 1 },
-  playerName: { color: '#fff', fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
-  teamRow: { flexDirection: 'row', alignItems: 'center' },
-  teamLogo: { width: 11, height: 11, marginRight: 3 },
-  teamVenue: { color: Colors.textSecondary, fontSize: 9, fontWeight: '600' },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  avatarLetter: { color: Colors.primary, fontSize: 13, fontWeight: '900' },
+  nameBlock: { marginLeft: 7, flex: 1 },
+  playerName: { color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: -0.3 },
+  subRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1 },
+  teamCrest: { width: 11, height: 11, marginRight: 4 },
+  subText: { color: 'rgba(255,255,255,0.4)', fontSize: 9.5, fontWeight: '600' },
+  rightCluster: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   shareBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: 'rgba(57,255,20,0.10)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    alignItems: 'center', justifyContent: 'center',
   },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
+  dirBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderRadius: 7,
+    paddingHorizontal: 9, paddingVertical: 5,
+    marginBottom: 7,
   },
-  badgeText: { color: '#000', fontSize: 9, fontWeight: '900' },
-  badgeLive: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,59,48,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,59,48,0.45)',
-    paddingHorizontal: 6,
-    paddingVertical: 2.5,
-    borderRadius: 6,
-  },
-  pulseDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.error,
-    marginRight: 4,
-  },
-  badgeLiveText: { color: Colors.error, fontSize: 9, fontWeight: '900' },
+  dirText: { fontSize: 11, fontWeight: '900', letterSpacing: 0.4 },
+  hitPctText: { fontSize: 9, fontWeight: '700', opacity: 0.7 },
   statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 2,
+    justifyContent: 'flex-start',
+    gap: 16,
+    marginBottom: 4,
   },
-  stat: { alignItems: 'center', flex: 1 },
-  statLabel: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 8,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  statValue: { fontSize: 12, fontWeight: '800', color: Colors.text },
-  trackBarOuter: {
+  statBlock: { alignItems: 'center' },
+  statLbl: { color: 'rgba(255,255,255,0.35)', fontSize: 7.5, fontWeight: '700', letterSpacing: 0.6, marginBottom: 1 },
+  statVal: { fontSize: 14, fontWeight: '900', color: '#fff', letterSpacing: -0.3 },
+  track: {
     position: 'relative',
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 2,
-    marginTop: 6,
-  },
-  trackBarFill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    borderRadius: 3,
-  },
-  trackBarMarker: {
-    position: 'absolute',
-    top: -2,
-    bottom: -2,
-    width: 2,
-    backgroundColor: 'rgba(255,255,255,0.6)',
-  },
-  bottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  bottomItem: { flexDirection: 'row', alignItems: 'center' },
-  bottomText: { color: Colors.textTertiary, fontSize: 11, marginLeft: 3, fontWeight: '600' },
-  matchCtxBlock: { marginTop: 4 },
-  matchCtxLine: {
-    color: 'rgba(255,255,255,0.65)',
-    fontSize: 9,
-    fontWeight: '600',
-  },
-  trackBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     marginTop: 4,
-    paddingVertical: 3,
-    paddingHorizontal: 6,
-    borderRadius: 5,
-    backgroundColor: 'rgba(57,255,20,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.25)',
+    marginBottom: 4,
   },
-  trackBtnText: {
-    color: Colors.primary,
-    fontSize: 9,
-    fontWeight: '800',
-    marginLeft: 3,
+  trackFill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 2 },
+  trackMid: { position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1.5, backgroundColor: 'rgba(255,255,255,0.4)' },
+  footRow: { marginTop: 4, gap: 2 },
+  footTime: { color: 'rgba(255,255,255,0.3)', fontSize: 9, fontWeight: '600' },
+  footScore: { color: 'rgba(255,255,255,0.25)', fontSize: 8.5, fontWeight: '500' },
+  liveBtn: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+    marginTop: 5, paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 5, gap: 4,
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.2)',
   },
+  liveBtnText: { color: Colors.primary, fontSize: 9, fontWeight: '800' },
 });
