@@ -155,8 +155,8 @@ export default function OwnerPickCard({
   const [shareSheetVisible, setShareSheetVisible] = useState(false);
   const pendingBlobRef = useRef<Blob | null>(null);
 
-  const tweetText = `${pick.playerName} ${dir ?? ''} ${pick.line} ${propLabel} · ${venueTag}\n${matchTime || (elapsed != null ? `${elapsed}'` : '')}\n📲 ${APP_STORE_URL}\nvia @Reversepickss`;
-  const nativeShareText = `${pick.playerName} ${dir ?? ''} ${pick.line} ${propLabel} · ${venueTag}\n${matchTime || (elapsed != null ? `${elapsed}'` : '')}\n📲 Download Reverse Picks: ${APP_STORE_URL}\nvia @Reversepickss`;
+  const tweetText = `${APP_STORE_URL}\nvia @Reversepickss`;
+  const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss`;
 
   const handleShare = async () => {
     setSharing(true);
@@ -203,25 +203,33 @@ export default function OwnerPickCard({
 
   const handleSaveImage = async () => {
     setShareSheetVisible(false);
+    await shareImageFile();
+  };
+
+  const shareImageFile = async (includeText?: string) => {
     const blob = pendingBlobRef.current;
     if (!blob) return;
     const fileName = `reversepicks-${pick.playerName?.replace(/\s+/g, '-') || 'pick'}.png`;
     const file = new File([blob], fileName, { type: 'image/png' });
-    // iOS Safari: use share sheet so user can tap "Save Image"
-    if ((navigator as any).canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); return; } catch {}
+    const shareData: any = { files: [file] };
+    if (includeText) shareData.text = includeText;
+    if ((navigator as any).canShare?.(shareData)) {
+      try { await navigator.share(shareData); } catch {}
+      return;
     }
-    // Desktop / Android fallback: direct download
+    // Fallback: download image; if Post-to-X, also open X web composer
     const url = URL.createObjectURL(blob);
     const a = Object.assign(document.createElement('a'), { href: url, download: fileName });
     document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    if (includeText) {
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(includeText)}`, '_blank', 'noopener,noreferrer');
+    }
   };
 
-  const handleShareToX = () => {
+  const handleShareToX = async () => {
     setShareSheetVisible(false);
-    const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    await shareImageFile(tweetText);
   };
 
   // ─── Render ────────────────────────────────────────────────────────────────
