@@ -749,7 +749,13 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     possessionMultiplier: raw.matchDominance?.multiplier,
     possessionTeamAvg: raw.matchDominance?.teamSeasonAvg ?? undefined,
     possessionOppAvg: raw.matchDominance?.oppSeasonAvg ?? undefined,
-    moneyline: raw.matchupOverview?.moneyline ?? undefined,
+    moneyline: raw.matchupOverview?.moneyline
+      ? {
+          home: String(raw.matchupOverview.moneyline.home),
+          draw: String(raw.matchupOverview.moneyline.draw || ''),
+          away: String(raw.matchupOverview.moneyline.away),
+        }
+      : undefined,
     expectedGameType: raw.matchupOverview?.expectedGameType ?? undefined,
     favorite: raw.matchupOverview?.favorite ?? undefined,
     keyMatchupFactor: raw.matchupOverview?.keyMatchupFactor ?? undefined,
@@ -782,7 +788,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
     tacticalBreakdown: raw.tacticalBreakdown || undefined,
-    keyFactors: Array.isArray(raw.keyFactors) ? (raw.keyFactors as string[]) : undefined,
+    keyFactors: Array.isArray((raw as any).keyFactors) ? ((raw as any).keyFactors as string[]) : undefined,
     qualitySignal: (raw as any).qualitySignal || undefined,
     currentOppTier: (raw as any).currentOppTier || undefined,
     currentOppRank: (raw as any).currentOppRank ?? undefined,
@@ -867,6 +873,7 @@ export interface Pick {
   awayPoss?: number | null;
   projHomePoss?: number | null;
   projAwayPoss?: number | null;
+  oppAvgPoss?: number | null;
   // AI analysis fields (persisted for offline analysis modal)
   sharpSummary?: string;
   reasoning?: string;
@@ -927,6 +934,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     awayPoss: (p.awayPoss as number) ?? null,
     projHomePoss: (p.projHomePoss as number) ?? null,
     projAwayPoss: (p.projAwayPoss as number) ?? null,
+    oppAvgPoss: (p.oppAvgPoss as number) ?? null,
     // AI analysis fields persisted on pick
     sharpSummary: (p.sharpSummary as string) || undefined,
     reasoning: (p.reasoning as string) || undefined,
@@ -1146,10 +1154,10 @@ export async function getMatchScript(params: {
     return {
       available: false,
       noCleanScript: true,
-      primaryScript: null,
+      primaryScript: undefined,
       isFavorable: false,
       explanation: 'Could not reach the server to load the match script. Pull to refresh or try again shortly.',
-      tacticalModifier: null,
+      tacticalModifier: undefined,
       expectedEffects: [],
       reason: 'request_failed',
     };
@@ -2335,5 +2343,42 @@ export interface LiveEvent {
 
 export async function fetchFixtureEvents(fixtureId: number): Promise<{ fixtureId: number; events: LiveEvent[] }> {
   return apiCall(`/api/live/fixture-events?fixtureId=${fixtureId}`);
+}
+
+export interface PlayerAdvancedStats {
+  playerId: number;
+  season: number;
+  appearances: number;
+  minutes: number;
+  minutesPerGame: number;
+  xG: number;
+  xA: number;
+  goals: number;
+  assists: number;
+  shots: number;
+  shotsOnTarget: number;
+  keyPasses: number;
+  passes: number;
+  passAccuracy: number;
+  tackles: number;
+  dribbles: number;
+  dribbleSuccess: number;
+  fouls: number;
+  yellowCards: number;
+  redCards: number;
+}
+
+export async function getPlayerAdvancedStats(playerId: number, season?: number): Promise<PlayerAdvancedStats> {
+  const url = season ? `/api/players/${playerId}/advanced-stats?season=${season}` : `/api/players/${playerId}/advanced-stats`;
+  return apiCall(url);
+}
+
+export async function getTeamSeasonPossession(teamId: number, leagueId?: number, season?: number): Promise<{ teamId: number; avgPossession: number | null; count: number }> {
+  let url = `/api/teams/${teamId}/season-possession`;
+  const params = new URLSearchParams();
+  if (leagueId) params.append('leagueId', String(leagueId));
+  if (season) params.append('season', String(season));
+  if (params.toString()) url += `?${params.toString()}`;
+  return apiCall(url);
 }
 

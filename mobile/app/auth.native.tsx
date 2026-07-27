@@ -818,6 +818,15 @@ const styles = StyleSheet.create({
   },
   btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   btnText:  { color: '#000', fontWeight: '800', fontSize: 15, letterSpacing: 0.5 },
+  verifyBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Colors.radius,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verifyBtnDisabled: { opacity: 0.45 },
+  verifyBtnText: { color: '#000', fontWeight: '800', fontSize: 15, letterSpacing: 0.5 },
   biometricBtn: {
     backgroundColor: 'transparent',
     borderRadius: Colors.radius,

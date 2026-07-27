@@ -440,6 +440,130 @@ Pick a REAL player from these actual fixtures. Be specific and data-driven."""
     return result
 
 
+@router.get("/players/{player_id}/advanced-stats")
+async def player_advanced_stats(player_id: int, season: int = CURRENT_SEASON):
+    """Return advanced per-90 stats for a player from API-Football.
+
+    Caches for 6 h. Includes expected goals, expected assists, shots, key passes,
+    passes, tackles, and minutes — the most useful signals for player prop analysis.
+    """
+    cache_key = f"adv_stats_{player_id}_{season}"
+    try:
+        cached = await db.player_advanced_stats.find_one({"_key": cache_key}, {"_id": 0})
+        if cached and (datetime.now(timezone.utc).timestamp() - (cached.get("_ts") or 0)) < 6 * 3600:
+            return cached.get("stats")
+    except Exception:
+        pass
+
+    data = await api_football_request("players", {"id": player_id, "season": season})
+    if not data:
+        return {}
+
+    stats = {
+        "playerId": player_id,
+        "season": season,
+        "appearances": 0,
+        "minutes": 0,
+        "minutesPerGame": 0,
+        "xG": 0,
+        "xA": 0,
+        "goals": 0,
+        "assists": 0,
+        "shots": 0,
+        "shotsOnTarget": 0,
+        "keyPasses": 0,
+        "passes": 0,
+        "passAccuracy": 0,
+        "tackles": 0,
+        "dribbles": 0,
+        "dribbleSuccess": 0,
+        "fouls": 0,
+        "yellowCards": 0,
+        "redCards": 0,
+    }
+
+    for entry in data:
+        for stat in entry.get("statistics", []):
+            games = stat.get("games", {})
+            apps = games.get("appearences") or games.get("appearances") or 0
+            mins = games.get("minutes") or 0
+            if not apps or not mins:
+                continue
+            stats["appearances"] += apps
+            stats["minutes"] += mins
+            stats["minutesPerGame"] = round(stats["minutes"] / stats["appearances"], 1)
+
+            def per90(raw):
+                if raw is None or raw == "":
+                    return 0
+                try:
+                    return round(float(str(raw).replace("%", "")) / (mins / 90), 2)
+                except Exception:
+                    return 0
+
+            stats["goals"] += int(games.get("goals") or 0)
+            stats["assists"] += int(games.get("assists") or 0)
+            stats["yellowCards"] += int(games.get("yellow_cards") or 0)
+            stats["redCards"] += int(games.get("red_cards") or 0)
+
+            shots = stat.get("shots", {})
+            stats["shots"] += int(shots.get("total") or 0)
+            stats["shotsOnTarget"] += int(shots.get("on") or 0)
+
+            passes = stat.get("passes", {})
+            stats["passes"] += int(passes.get("total") or 0)
+            stats["keyPasses"] += int(passes.get("key") or 0)
+            stats["passAccuracy"] = max(stats["passAccuracy"], int(passes.get("accuracy") or 0))
+
+            tackles = stat.get("tackles", {})
+            stats["tackles"] += int(tackles.get("total") or 0)
+
+            dribbles = stat.get("dribbles", {})
+            stats["dribbles"] += int(dribbles.get("attempts") or 0)
+            stats["dribbleSuccess"] = max(stats["dribbleSuccess"], int(dribbles.get("success") or 0))
+
+            fouls = stat.get("fouls", {})
+            stats["fouls"] += int(fouls.get("committed") or 0)
+
+            # Expected goals/assists are under the "goals" object in some API-Football responses
+            expected = stat.get("goals", {})
+            stats["xG"] += float(expected.get("expected") or 0)
+            stats["xA"] += float(expected.get("assists_expected") or expected.get("expected_assists") or 0)
+
+    # Convert cumulative to per-90
+    if stats["minutes"] > 0:
+        stats["xG"] = round(stats["xG"] / (stats["minutes"] / 90), 2)
+        stats["xA"] = round(stats["xA"] / (stats["minutes"] / 90), 2)
+        stats["goals"] = round(stats["goals"] / (stats["minutes"] / 90), 2)
+        stats["assists"] = round(stats["assists"] / (stats["minutes"] / 90), 2)
+        stats["shots"] = round(stats["shots"] / (stats["minutes"] / 90), 2)
+        stats["shotsOnTarget"] = round(stats["shotsOnTarget"] / (stats["minutes"] / 90), 2)
+        stats["keyPasses"] = round(stats["keyPasses"] / (stats["minutes"] / 90), 2)
+        stats["passes"] = round(stats["passes"] / (stats["minutes"] / 90), 2)
+        stats["tackles"] = round(stats["tackles"] / (stats["minutes"] / 90), 2)
+        stats["dribbles"] = round(stats["dribbles"] / (stats["minutes"] / 90), 2)
+        stats["fouls"] = round(stats["fouls"] / (stats["minutes"] / 90), 2)
+
+    try:
+        await db.player_advanced_stats.update_one(
+            {"_key": cache_key},
+            {"$set": {"_key": cache_key, "stats": stats, "_ts": datetime.now(timezone.utc).timestamp()}},
+            upsert=True
+        )
+    except Exception:
+        pass
+    return stats
+
+
+@router.get("/teams/{team_id}/season-possession")
+async def team_season_possession(team_id: int, leagueId: int = Query(None), season: int = Query(None)):
+    """Return a team's season-average possession % for a given league/season."""
+    from routes.picks import _get_team_avg_possession
+    effective_season = season or CURRENT_SEASON
+    avg = await _get_team_avg_possession(team_id, leagueId, effective_season)
+    return {"teamId": team_id, "avgPossession": avg, "count": None}
+
+
 @router.get("/live/fixture-events")
 async def fixture_events(fixtureId: int = Query(..., gt=0)):
     """Return live match events (goals, cards, substitutions) from API-Football.

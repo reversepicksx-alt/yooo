@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { View, Image, StyleSheet, Platform, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withDelay,
-  withSequence, withSpring, Easing,
+  withSequence, withSpring, Easing, SharedValue,
 } from 'react-native-reanimated';
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -98,7 +98,7 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
       bolt4.value = mkFlash(90);
 
       // Expanding electric rings (3 waves)
-      const mkRing = (scl: Animated.SharedValue<number>, opc: Animated.SharedValue<number>, delay: number) => {
+      const mkRing = (scl: SharedValue<number>, opc: SharedValue<number>, delay: number) => {
         scl.value = withDelay(delay, withTiming(3.5, { duration: 900, easing: Easing.out(Easing.cubic) }));
         opc.value = withDelay(delay, withSequence(
           withTiming(0.85, { duration: 80 }),

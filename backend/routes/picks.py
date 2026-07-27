@@ -887,6 +887,8 @@ async def list_picks(req: GetPicksRequest):
                         p["homePoss"] = upd.get("homePoss")
                     if upd.get("awayPoss") is not None:
                         p["awayPoss"] = upd.get("awayPoss")
+                    if upd.get("oppAvgPoss") is not None:
+                        p["oppAvgPoss"] = upd.get("oppAvgPoss")
                     if upd.get("result") and upd["result"] != "pending":
                         p["status"] = "settled"
                         p["result"] = upd["result"]
@@ -2511,6 +2513,63 @@ async def _fetch_fixture_possession(fixture_id: int, home_id: int, away_id: int)
         return (None, None)
 
 
+async def _get_team_avg_possession(team_id: int, league_id: int, season: int = CURRENT_SEASON) -> Optional[float]:
+    """Return the team's season-average possession % from API-Football fixtures.
+
+    Uses a short-lived cache (6 h) so repeated live-updates of the same opponent
+    do not hammer the API. Returns None when the team/fixtures/stats are unavailable.
+    """
+    if not team_id or not league_id:
+        return None
+
+    cache_key = f"team_avg_poss_{team_id}_{league_id}_{season}"
+    try:
+        cached = await db.team_avg_poss.find_one({"_key": cache_key}, {"_id": 0, "value": 1, "_ts": 1})
+        if cached and (datetime.now(timezone.utc).timestamp() - (cached.get("_ts") or 0)) < 6 * 3600:
+            return cached.get("value")
+    except Exception:
+        pass
+
+    try:
+        fixtures = await api_football_request("fixtures", {
+            "team": team_id,
+            "league": league_id,
+            "season": season,
+            "status": "FT",
+        })
+        if not fixtures:
+            return None
+
+        values = []
+        for fx in fixtures[:15]:  # last 15 finished fixtures
+            fid = fx.get("fixture", {}).get("id")
+            home_id = fx.get("teams", {}).get("home", {}).get("id")
+            away_id = fx.get("teams", {}).get("away", {}).get("id")
+            if not fid:
+                continue
+            h_poss, a_poss = await _fetch_fixture_possession(fid, home_id, away_id)
+            if team_id == home_id and h_poss is not None:
+                values.append(h_poss)
+            elif team_id == away_id and a_poss is not None:
+                values.append(a_poss)
+
+        if not values:
+            return None
+        avg = round(sum(values) / len(values), 1)
+        try:
+            await db.team_avg_poss.update_one(
+                {"_key": cache_key},
+                {"$set": {"_key": cache_key, "value": avg, "teamId": team_id, "leagueId": league_id,
+                          "season": season, "_ts": datetime.now(timezone.utc).timestamp()}},
+                upsert=True
+            )
+        except Exception:
+            pass
+        return avg
+    except Exception:
+        return None
+
+
 async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched_players: list | None = None) -> dict:
     """Build the live update response for a soccer pick.
 
@@ -2554,6 +2613,10 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             api_football_request("fixtures/players", {"fixture": fixture_id}),
             _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
         )
+    # Opponent season-average possession for richer post-match context
+    _pick_venue = (pick.get("venue") or "home").lower()
+    _opp_team_id = away_team_id if _pick_venue == "home" else home_team_id
+    opp_avg_poss = await _get_team_avg_possession(_opp_team_id, pick.get("leagueId"), CURRENT_SEASON)
     current_value = None
     minutes_played = 0
     _player_found_in_api = False  # True only when this player appears in fixtures/players response
@@ -2648,6 +2711,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         "finalAwayGoals": away_goals,
         "homePoss": home_poss,
         "awayPoss": away_poss,
+        "oppAvgPoss": opp_avg_poss,
     }
 
     if is_finished:
@@ -2688,6 +2752,8 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 _persist_settlement["homePoss"] = home_poss
             if away_poss is not None:
                 _persist_settlement["awayPoss"] = away_poss
+            if opp_avg_poss is not None:
+                _persist_settlement["oppAvgPoss"] = opp_avg_poss
             await db.picks.update_one(
                 {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
                 {"$set": _persist_settlement}
@@ -2771,6 +2837,8 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             _settle_set["homePoss"] = home_poss
         if away_poss is not None:
             _settle_set["awayPoss"] = away_poss
+        if opp_avg_poss is not None:
+            _settle_set["oppAvgPoss"] = opp_avg_poss
         await db.picks.update_one(
             {"pickId": pick["pickId"], "email": email},
             {"$set": _settle_set}
@@ -3013,6 +3081,9 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     home_team_id = recent.get("teams", {}).get("home", {}).get("id")
     away_team_id = recent.get("teams", {}).get("away", {}).get("id")
     home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
+    _settle_venue = (pick.get("venue") or "home").lower()
+    _settle_opp_id = away_team_id if _settle_venue == "home" else home_team_id
+    settle_opp_avg_poss = await _get_team_avg_possession(_settle_opp_id, pick.get("leagueId"), CURRENT_SEASON)
 
     # DNP / early-sub void guard — players with < 30 min get DNP, not hit/miss
     _DNP_THRESHOLD = 30
@@ -3032,6 +3103,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "finalAwayGoals": away_goals,
             "homePoss": home_poss,
             "awayPoss": away_poss,
+            "oppAvgPoss": settle_opp_avg_poss,
         }
 
     if actual_value is not None:
@@ -3065,6 +3137,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "finalAwayGoals": away_goals,
             "homePoss": home_poss,
             "awayPoss": away_poss,
+            "oppAvgPoss": settle_opp_avg_poss,
         }
 
     return None

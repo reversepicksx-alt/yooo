@@ -73,3 +73,4 @@
 - [NWSL settlement — no player stats from API](nwsl-settlement-no-stats.md) — API-Football fixtures/players returns 0 teams for NWSL (leagueId=254); can't auto-settle. NWSL also uses season=2026, not CURRENT_SEASON=2025. Void as push.
 - [DNP settlement false-positive — minutes=None](dnp-false-positive-minutes-none.md) — minutes=None or 0 from API triggers DNP guard even when player played. Fix: check current_value/stat>0 first; stat evidence beats minutes field.
 - [Knockout ET adjustment](knockout-et-adjustment.md) — WC knockout 50% hit rate (vs 64% group stage); root cause = ET probability ×1.10 never applied. Fix: KO_ET_MULT before P-REFRESH + -8pt UNDER penalty + corrected AI prompt.
+- [Opponent context enrichment](opponent-context-enrichment.md) — Player Profile and pick cards should surface opponent possession and per-90 advanced stats (xG, xA, shots, SOT, key passes, passes, tackles) via cached backend endpoints, not inline in the pick list.

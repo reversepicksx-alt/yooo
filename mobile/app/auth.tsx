@@ -20,7 +20,7 @@ const NO_CODE_EMAILS = new Set([
   'aldk.provided381@8shield.net',
 ]);
 
-const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
+const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 const PLANS = [
   { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
@@ -118,7 +118,7 @@ export default function AuthScreen() {
         const result = await verifyAccess(trimmed);
         if (result.verified && result.session_token) {
           await loginWithResponse({
-            email: result.email,
+            email: result.email || trimmed,
             session_token: result.session_token,
             access_type: result.access_type,
           });

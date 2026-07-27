@@ -2,14 +2,14 @@ import React, { useRef } from 'react';
 import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, SharedValue } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 
 function SwipeLeftAction({
   drag,
   onPress,
 }: {
-  drag: Reanimated.SharedValue<number>;
+  drag: SharedValue<number>;
   onPress: () => void;
 }) {
   const style = useAnimatedStyle(() => ({

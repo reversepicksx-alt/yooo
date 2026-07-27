@@ -260,7 +260,7 @@ export default function FuzzySearchInput({
   };
   const handleSelectNflPlayer = (p: NflPlayer) => {
     onChangeText(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()); dismiss(); setResults([]);
-    onSelectNflPlayer?.(p);
+    onSelectNhlPlayer?.(p);
   };
   const handleSelectStatic = (item: StaticItem) => {
     onChangeText(item.primary); dismiss(); setResults([]);
