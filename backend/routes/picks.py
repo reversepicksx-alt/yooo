@@ -616,6 +616,10 @@ async def list_picks(req: GetPicksRequest):
     is_owner_view = requester_email in OWNER_EMAILS
     picks = await db.picks.find({"email": requester_email}, {"_id": 0}).sort("timestamp", -1).to_list(None)
 
+    # Budget cut: NFL/NBA/MLB are no longer offered; hide them from settled picks too.
+    _HIDDEN_SPORTS = {"mlb", "nba", "nfl"}
+    picks = [p for p in picks if p.get("sport", "soccer") not in _HIDDEN_SPORTS]
+
     def _pick_email(p: dict) -> str:
         return requester_email
 

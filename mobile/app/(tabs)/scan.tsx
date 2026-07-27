@@ -252,10 +252,6 @@ export default function ScanScreen() {
   const [showSportPicker, setShowSportPicker] = useState(false);
   const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
     { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null,         available: true  },
-    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null,         available: true  },
-    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null,         available: false },
-    { sport: 'nfl',    displayName: 'NFL',         icon: 'american-football', label: 'Off Season', available: false },
-    { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: 'Off Season', available: false },
     { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
   ]);
 
