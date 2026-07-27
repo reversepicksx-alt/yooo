@@ -365,12 +365,6 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
   <!-- Left accent bar -->
   <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${accent}"></div>
 
-  <!-- Player photo blurred background (right 45%) -->
-  ${photoUrl ? `<div style="position:absolute;right:0;top:0;bottom:0;width:45%;overflow:hidden">
-    <img src="${photoUrl}" crossorigin="anonymous"
-      style="width:100%;height:100%;object-fit:cover;object-position:top center;filter:blur(0px) brightness(0.35)" />
-    <div style="position:absolute;inset:0;background:linear-gradient(to right,#080808 0%,transparent 100%)"></div>
-  </div>` : ''}
 
   <div style="position:relative;padding:18px 18px 16px 20px">
     <!-- Top row: branding + status -->
