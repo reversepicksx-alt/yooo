@@ -281,14 +281,16 @@ export default function OwnerPickCard({
       </View>
 
       <View style={styles.statsRow}>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>{nowLabel}</Text>
-          <Text style={[styles.statValue, { color: nowValue != null && lineValue != null ? (
-            (isOver && nowValue > lineValue) || (!isOver && nowValue < lineValue) ? Colors.success : Colors.error
-          ) : Colors.text }]}>
-            {formatNumber(nowValue)}
-          </Text>
-        </View>
+        {!pending && (
+          <View style={styles.stat}>
+            <Text style={styles.statLabel}>{nowLabel}</Text>
+            <Text style={[styles.statValue, { color: nowValue != null && lineValue != null ? (
+              (isOver && nowValue > lineValue) || (!isOver && nowValue < lineValue) ? Colors.success : Colors.error
+            ) : Colors.text }]}>
+              {formatNumber(nowValue)}
+            </Text>
+          </View>
+        )}
         <View style={styles.stat}>
           <Text style={styles.statLabel}>LINE</Text>
           <Text style={styles.statValue}>{formatNumber(lineValue)}</Text>
@@ -303,10 +305,12 @@ export default function OwnerPickCard({
             <Text style={[styles.statValue, { color: Colors.text }]}>{formatNumber(projValue)}</Text>
           </View>
         )}
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>HIT%</Text>
-          <Text style={styles.statValue}>{hitPct != null ? `${Math.round(hitPct)}%` : '—'}</Text>
-        </View>
+        {!pending && (
+          <View style={styles.stat}>
+            <Text style={styles.statLabel}>HIT%</Text>
+            <Text style={styles.statValue}>{hitPct != null ? `${Math.round(hitPct)}%` : '—'}</Text>
+          </View>
+        )}
       </View>
 
       {progress != null && (
@@ -457,10 +461,10 @@ function renderShareableCardHTML(
         </div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${nowLabel}</div><div style="color:${nowColor};font-size:18px;font-weight:800">${formatNumber(nowValue)}</div></div>
+        ${!pending ? `<div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${nowLabel}</div><div style="color:${nowColor};font-size:18px;font-weight:800">${formatNumber(nowValue)}</div></div>` : ''}
         <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">LINE</div><div style="color:#fff;font-size:18px;font-weight:800">${formatNumber(lineValue)}</div></div>
         <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">${paceLabel}</div><div style="color:${paceColorHex};font-size:18px;font-weight:800">${formatNumber(paceValue)}</div></div>
-        <div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">HIT%</div><div style="color:${hitColor};font-size:18px;font-weight:800">${hitPct != null ? `${Math.round(hitPct)}%` : '—'}</div></div>
+        ${!pending ? `<div style="text-align:center;flex:1"><div style="color:rgba(255,255,255,0.4);font-size:9px;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">HIT%</div><div style="color:${hitColor};font-size:18px;font-weight:800">${hitPct != null ? `${Math.round(hitPct)}%` : '—'}</div></div>` : ''}
       </div>
       ${progressHTML}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
@@ -576,7 +580,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 3,
   },
-  statValue: { fontSize: 18, fontWeight: '800' },
+  statValue: { fontSize: 18, fontWeight: '800', color: Colors.text },
   trackBarOuter: {
     position: 'relative',
     height: 6,
