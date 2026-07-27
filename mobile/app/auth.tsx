@@ -17,7 +17,7 @@ type Step = 'email' | 'pin' | 'pricing';
 
 /** Emails that bypass all gates — direct login, no PIN / OTP / password. */
 const NO_CODE_EMAILS = new Set([
-  'aldk.provided381@8shield.net',
+  'reversepicksx@gmail.com',
 ]);
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};

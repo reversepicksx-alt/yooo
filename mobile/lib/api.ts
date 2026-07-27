@@ -888,6 +888,10 @@ export interface Pick {
   tacticalAlerts?: string[];
   gameScript?: Record<string, unknown>;
   bayesianMetrics?: Record<string, unknown>;
+  // Owner-only media fields (player photos + team crests from API-Football cache)
+  ownerPlayerPhoto?: string;
+  ownerTeamLogo?: string;
+  ownerOpponentLogo?: string;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -949,6 +953,10 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     tacticalAlerts: (p.tacticalAlerts as string[]) || undefined,
     gameScript: (p.gameScript as Record<string, unknown>) || undefined,
     bayesianMetrics: (p.bayesianMetrics as Record<string, unknown>) || undefined,
+    // Owner-only media fields pass-through
+    ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || undefined,
+    ownerTeamLogo: (p.ownerTeamLogo as string) || undefined,
+    ownerOpponentLogo: (p.ownerOpponentLogo as string) || undefined,
   }));
 }
 

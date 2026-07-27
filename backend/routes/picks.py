@@ -596,6 +596,67 @@ _picks_list_cache: dict[str, dict] = {}   # email → {ts, picks}
 PICKS_LIST_CACHE_TTL = 20                 # seconds
 
 
+# ── Owner-only media enrichment (player photos + team crests) ───────────
+async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
+    """Attach player photo and team crest URLs for the owner account only."""
+    from config import OWNER_EMAILS
+    if requester_email not in OWNER_EMAILS:
+        return
+    player_ids = {p.get("playerId") for p in picks if p.get("playerId")}
+    team_ids = {p.get("teamId") for p in picks if p.get("teamId")}
+    opponent_names = {p.get("opponentName") for p in picks if p.get("opponentName")}
+
+    player_map: dict[int, str] = {}
+    team_map: dict[int, str] = {}
+    opp_map: dict[str, str] = {}
+
+    if player_ids:
+        async for doc in db["cache_players"].find(
+            {"playerId": {"$in": list(player_ids)}},
+            {"_id": 0, "playerId": 1, "photo": 1},
+        ):
+            player_map.setdefault(doc.get("playerId"), doc.get("photo", "") or "")
+
+    if team_ids:
+        async for doc in db["cache_teams"].find(
+            {"teamId": {"$in": list(team_ids)}},
+            {"_id": 0, "teamId": 1, "logo": 1},
+        ):
+            team_map.setdefault(doc.get("teamId"), doc.get("logo", "") or "")
+
+    if opponent_names:
+        names = list(opponent_names)
+        async for doc in db["cache_teams"].find(
+            {"name": {"$in": names}},
+            {"_id": 0, "name": 1, "logo": 1},
+        ):
+            opp_map.setdefault(doc.get("name", "").lower(), doc.get("logo", "") or "")
+        missing = {n.lower() for n in names} - set(opp_map.keys())
+        if missing:
+            async for doc in db["cache_teams"].find(
+                {"nameLower": {"$in": list(missing)}},
+                {"_id": 0, "nameLower": 1, "logo": 1},
+            ):
+                opp_map.setdefault(doc.get("nameLower", "").lower(), doc.get("logo", "") or "")
+
+    for p in picks:
+        p["ownerPlayerPhoto"] = player_map.get(p.get("playerId"), "")
+        p["ownerTeamLogo"] = team_map.get(p.get("teamId"), "")
+        p["ownerOpponentLogo"] = opp_map.get((p.get("opponentName") or "").lower(), "")
+
+    # Backfill missing player photos in the background (owner-only, capped).
+    missing_photo_pids = [pid for pid, url in player_map.items() if not url]
+    if missing_photo_pids:
+        async def _backfill_photos(pids: list[int]):
+            from cache import refresh_player_cache
+            for pid in pids[:10]:
+                try:
+                    await refresh_player_cache(pid)
+                except Exception:
+                    pass
+        aio.ensure_future(_backfill_photos(missing_photo_pids))
+
+
 @router.post("/picks/list")
 async def list_picks(req: GetPicksRequest):
     from config import OWNER_EMAIL, OWNER_EMAILS
@@ -1061,6 +1122,9 @@ async def list_picks(req: GetPicksRequest):
         print(f"[FINAL REFRESH] Outer error: {_fe}")
     # ───────────────────────────────────────────────────────────────────────
 
+    # Owner-only: attach player photos and team crests from API-Football cache.
+    await _enrich_owner_media(picks, requester_email)
+
     # Cache the processed result so rapid re-polls skip the full pipeline
     _picks_list_cache[requester_email] = {"ts": _time_mod.monotonic(), "picks": picks}
     return {"picks": picks}
@@ -1232,6 +1296,9 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         matchups.append(matchup)
 
     matchups.sort(key=lambda x: x["playerName"].lower())
+
+    # Owner-only: attach player photos and team crests from API-Football cache.
+    await _enrich_owner_media(matchups, email.lower())
 
     players = sorted({m["playerName"] for m in matchups})
     opponents = sorted({m["opponentName"] for m in matchups})

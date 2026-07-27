@@ -211,7 +211,7 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
                 "age": p.get("age"),
                 "number": p.get("number"),
                 "position": p.get("position", ""),
-                "photo": "",
+                "photo": p.get("photo", ""),
                 "teamId": team_id,
                 "teamName": team_name,
                 "leagueId": league_id,
@@ -1076,6 +1076,7 @@ async def refresh_player_cache(player_id: int) -> dict:
                 "firstNameClean": fn_clean,
                 "age": player_info.get("age"),
                 "position": position,
+                "photo": player_info.get("photo", "") or "",
                 "_dt": now,
                 "_cachedAt": now.timestamp(),
             }

@@ -26,8 +26,8 @@ API_FOOTBALL_PLAYER_IDS = "https://dashboard.api-football.com/soccer/ids/players
 API_FOOTBALL_TEAM_IDS = "https://dashboard.api-football.com/soccer/ids/teams"
 API_FOOTBALL_LEAGUE_IDS = "https://dashboard.api-football.com/soccer/ids"
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
-# All emails that should receive owner-level access (including personal accounts)
-OWNER_EMAILS = {OWNER_EMAIL, "willmenjivar123@gmail.com"}
+# All emails that should receive owner-level access (only the product owner)
+OWNER_EMAILS = {OWNER_EMAIL}
 # XAI_API_KEY — xAI/Grok removed. Sentinel keeps all "if XAI_API_KEY:" guards
 # truthy so minor-sport route files don't need edits. Real key is gone.
 _gemini_avail = bool(os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY"))

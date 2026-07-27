@@ -19,6 +19,7 @@ import Reanimated, {
   FadeInDown,
 } from 'react-native-reanimated';
 import SwipeablePickRow from '@/components/SwipeablePickRow';
+import OwnerPickCard from '@/components/OwnerPickCard';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
@@ -734,6 +735,7 @@ function SportSectionHeader({
 export default function PicksScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout } = useAuth();
+  const isOwner = session?.accessType?.toLowerCase() === 'owner';
   const qc = useQueryClient();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
@@ -1019,7 +1021,15 @@ export default function PicksScreen() {
           renderItem={({ item }) => {
             const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
             const onDeleteForItem = () => handleDelete(item);
-            const card = tappable ? (
+            const card = isOwner ? (
+              <OwnerPickCard
+                pick={item}
+                onPress={tappable ? () => {
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  handlePickPress(item);
+                } : undefined}
+              />
+            ) : tappable ? (
               <Pressable
                 onPress={() => {
                   try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
@@ -1067,12 +1077,16 @@ export default function PicksScreen() {
             const onDeleteForItem = () => handleDelete(pickItem);
             return (
               <SwipeablePickRow onDelete={onDeleteForItem}>
-                <Pressable
-                  onPress={() => handlePickPress(pickItem)}
-                  style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
-                >
-                  <PickCard pick={pickItem} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(pickItem)} onPlayerPress={handlePlayerPress} />
-                </Pressable>
+                {isOwner ? (
+                  <OwnerPickCard pick={pickItem} onPress={() => handlePickPress(pickItem)} />
+                ) : (
+                  <Pressable
+                    onPress={() => handlePickPress(pickItem)}
+                    style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
+                  >
+                    <PickCard pick={pickItem} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(pickItem)} onPlayerPress={handlePlayerPress} />
+                  </Pressable>
+                )}
               </SwipeablePickRow>
             );
           }}

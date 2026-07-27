@@ -22,7 +22,7 @@ type Step = 'landing' | 'email' | 'owner_pin' | 'code';
 
 /** Emails that bypass OTP entirely — granted direct login. */
 const NO_CODE_EMAILS = new Set([
-  'aldk.provided381@8shield.net',
+  'reversepicksx@gmail.com',
 ]);
 
 function getErrorMessage(e: unknown): string {
