@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -171,8 +171,6 @@ export default function ScanScreen() {
   const [contextsLoading, setContextsLoading] = useState(false);
   const [nextMatchLoading, setNextMatchLoading] = useState(false);
   const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
-  const [matchScript, setMatchScript] = useState<MatchScriptData | null>(null);
-  const [matchScriptLoading, setMatchScriptLoading] = useState(false);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
   const [leagueId, setLeagueId] = useState(0);
@@ -249,7 +247,6 @@ export default function ScanScreen() {
   const [mlbNextMatchLoading, setMlbNextMatchLoading] = useState(false);
 
   // Sport picker modal + server-side sport config
-  const [showSportPicker, setShowSportPicker] = useState(false);
   const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
     { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null,         available: true  },
     { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
@@ -279,43 +276,6 @@ export default function ScanScreen() {
     setDeselectedLogIndices(toDeselect);
   }, [prediction?.playerId]);
 
-  // Match Script Type card — fires as soon as team + opponent + league are all
-  // resolved (i.e. right after a player/match is identified), well before the
-  // user enters a line. Never blocks the rest of the flow on failure.
-  useEffect(() => {
-    const activeContext = selectedContext || (resolvedPlayer ? { teamId: resolvedPlayer.teamId, teamName: resolvedPlayer.teamName, leagueId: resolvedPlayer.leagueId, isNational: false } : null);
-    const teamId = activeContext?.teamId || resolvedPlayer?.teamId || 0;
-    const teamName = activeContext?.teamName || resolvedPlayer?.teamName || '';
-    const opponentId = autoMatch?.opponent?.id || resolvedManualOpponent?.teamId || 0;
-    const opponentName = autoMatch?.opponent?.name || resolvedManualOpponent?.teamName || manualOpponentQuery.trim() || '';
-    const effLeagueId = autoMatch?.leagueId || activeContext?.leagueId || leagueId;
-
-    if (sport !== 'soccer' || !teamId || !opponentId || !teamName || !opponentName) {
-      setMatchScript(null);
-      return;
-    }
-
-    let cancelled = false;
-    setMatchScriptLoading(true);
-    setMatchScript(null);
-    getMatchScript({
-      teamId,
-      opponentId,
-      leagueId: effLeagueId,
-      isHome: venueOverride === 'home',
-      teamName,
-      opponentName,
-      leagueName: autoMatch?.leagueName || leagueQuery,
-    }).then((res) => {
-      if (!cancelled) setMatchScript(res);
-    }).catch(() => {
-      if (!cancelled) setMatchScript(null);
-    }).finally(() => {
-      if (!cancelled) setMatchScriptLoading(false);
-    });
-
-    return () => { cancelled = true; };
-  }, [sport, selectedContext, resolvedPlayer, autoMatch, resolvedManualOpponent, manualOpponentQuery, leagueId, venueOverride]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -1274,38 +1234,6 @@ export default function ScanScreen() {
                 {mode === 'manual' && (
                   <Text style={styles.formEyebrow}>Analyze a Prop</Text>
                 )}
-                {/* Sport selector — tap to switch sport */}
-                <TouchableOpacity
-                  style={styles.sportSelectorBtn}
-                  onPress={() => setShowSportPicker(true)}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <View style={styles.sportSelectorIcon}>
-                      <Ionicons
-                        name={sport === 'cs2' ? 'game-controller' : sport === 'wta' ? 'tennisball' : sport === 'nba' ? 'basketball' : sport === 'nhl' ? 'snow' : sport === 'mlb' ? 'baseball' : 'football'}
-                        size={16}
-                        color={Colors.primary}
-                      />
-                    </View>
-                    <View>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={styles.sportSelectorText}>
-                          {sportsConfig.find(s => s.sport === sport)?.displayName || sport.toUpperCase()}
-                        </Text>
-                        <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: sportsConfig.find(s => s.sport === sport)?.available ? '#39FF14' : '#ff3b3b' }} />
-                      </View>
-                      <Text style={[styles.sportSelectorSub, { color: sportsConfig.find(s => s.sport === sport)?.available ? Colors.primary : '#ff3b3b' }]}>
-                        {sportsConfig.find(s => s.sport === sport)?.available
-                          ? 'Predict'
-                          : (sportsConfig.find(s => s.sport === sport)?.label || 'Unavailable')}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.sportSelectorChangePill}>
-                    <Text style={styles.sportSelectorChange}>CHANGE</Text>
-                  </View>
-                </TouchableOpacity>
                 {analyzeError && (
                   <View style={styles.inlineError}>
                     <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -1383,9 +1311,7 @@ export default function ScanScreen() {
               value={playerQuery}
               onChangeText={(t) => {
                 setPlayerQuery(t);
-                setMatchScript(null);
-                setMatchScriptLoading(false);
-                if (!t) {
+                                if (!t) {
                   setResolvedPlayer(null);
                   setAutoMatch(null);
                   setSelectedContext(null);
@@ -1566,79 +1492,6 @@ export default function ScanScreen() {
             })()}
             {contextsLoading && (
               <ActivityIndicator size="small" color={Colors.primary} style={{ alignSelf: 'flex-start', marginBottom: 8 }} />
-            )}
-
-            {/* ── Match Script Type card — appears as soon as team+opponent+league are known ── */}
-            {matchScriptLoading && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a' }}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Reading match script…</Text>
-              </View>
-            )}
-            {matchScript && !matchScript.available && !matchScriptLoading && (
-              <View style={{
-                marginBottom: 12, padding: 12, borderRadius: 10, borderWidth: 1,
-                backgroundColor: '#111', borderColor: '#2a2a2a',
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <Ionicons name="analytics-outline" size={13} color={Colors.textSecondary} />
-                  <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.5, color: Colors.textSecondary }}>
-                    MATCH SCRIPT
-                  </Text>
-                </View>
-                <Text style={{ color: Colors.textTertiary, fontSize: 12, lineHeight: 17 }}>
-                  {matchScript.explanation || 'No market data available yet for this fixture.'}
-                </Text>
-              </View>
-            )}
-            {matchScript?.available && !matchScriptLoading && (
-              <View style={{
-                marginBottom: 12, padding: 12, borderRadius: 10, borderWidth: 1,
-                backgroundColor: matchScript.noCleanScript ? 'rgba(240,165,0,0.06)' : (matchScript.isFavorable ? 'rgba(57,255,20,0.07)' : '#111'),
-                borderColor: matchScript.noCleanScript ? 'rgba(240,165,0,0.35)' : (matchScript.isFavorable ? 'rgba(57,255,20,0.3)' : '#2a2a2a'),
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <Ionicons
-                    name={matchScript.noCleanScript ? 'warning-outline' : (matchScript.isFavorable ? 'checkmark-circle' : 'analytics-outline')}
-                    size={13}
-                    color={matchScript.noCleanScript ? '#f0a500' : (matchScript.isFavorable ? Colors.primary : Colors.textSecondary)}
-                  />
-                  <Text style={{
-                    fontSize: 11, fontWeight: '700', letterSpacing: 0.5,
-                    color: matchScript.noCleanScript ? '#f0a500' : (matchScript.isFavorable ? Colors.primary : Colors.textSecondary),
-                  }}>
-                    MATCH SCRIPT
-                  </Text>
-                  {matchScript.noCleanScript && (
-                    <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: 'rgba(240,165,0,0.15)' }}>
-                      <Text style={{ color: '#f0a500', fontSize: 9, fontWeight: '700' }}>NO CLEAN SCRIPT</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>
-                  {matchScript.primaryScript}
-                </Text>
-                {!!matchScript.tacticalModifier && (
-                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '600', marginBottom: 5 }}>
-                    {matchScript.tacticalModifier}
-                  </Text>
-                )}
-                {!!matchScript.explanation && (
-                  <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginBottom: 6 }}>
-                    {matchScript.explanation}
-                  </Text>
-                )}
-                {!!matchScript.expectedEffects?.length && (
-                  <View style={{ gap: 3 }}>
-                    {matchScript.expectedEffects.map((effect, idx) => (
-                      <View key={idx} style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start' }}>
-                        <Text style={{ color: Colors.textTertiary, fontSize: 11, lineHeight: 16 }}>•</Text>
-                        <Text style={{ color: Colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1 }}>{effect}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
             )}
 
             {/* ── Auto-filled next match card ── */}
@@ -5145,39 +4998,6 @@ export default function ScanScreen() {
         title="Correct League"
       />
 
-      {/* ── Sport Picker Modal ── */}
-      <Modal visible={showSportPicker} transparent animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowSportPicker(false)} activeOpacity={1}>
-          <View style={[styles.modalSheet, { width: 300, gap: 0 }]}>
-            <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Select Sport</Text>
-            {sportsConfig
-              .filter(s => !['cs2', 'nhl'].includes(s.sport))
-              .sort((a, b) => (b.available ? 1 : 0) - (a.available ? 1 : 0))
-              .map(s => (
-              <TouchableOpacity
-                key={s.sport}
-                style={[styles.modalItem, sport === s.sport && styles.modalItemActive, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
-                onPress={() => {
-                  setSport(s.sport as Sport);
-                  setShowSportPicker(false);
-                  Haptics.selectionAsync();
-                }}
-              >
-                <Ionicons name={s.icon as any} size={18} color={sport === s.sport ? Colors.primary : Colors.textSecondary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.modalItemText, sport === s.sport && styles.modalItemTextActive, { fontSize: 15 }]}>{s.displayName}</Text>
-                  {!s.available && s.label && (
-                    <Text style={{ color: '#ff3b3b', fontSize: 10, fontWeight: '600', letterSpacing: 0.3, marginTop: 1 }}>{s.label.toUpperCase()}</Text>
-                  )}
-                </View>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.available ? '#39FF14' : '#ff3b3b', marginLeft: 4 }} />
-                {sport === s.sport && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 6 }} />}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
       {/* CS2 Prop Picker Modal */}
       <Modal visible={cs2ShowPropPicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setCs2ShowPropPicker(false)}>
@@ -5526,48 +5346,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // Sport selector uses modal (2×2 grid) — sportTab styles removed
-  sportSelectorBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#111111',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginBottom: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.18)',
-  },
-  sportSelectorIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    backgroundColor: 'rgba(57,255,20,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.15)',
-  },
-  sportSelectorText: { fontSize: 14, fontWeight: '700', color: Colors.text, letterSpacing: 0.3 },
-  sportSelectorSub: { fontSize: 10, color: Colors.textTertiary, fontWeight: '500', marginTop: 2 },
-  sportSelectorChangePill: {
-    backgroundColor: 'rgba(57,255,20,0.08)',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.15)',
-  },
-  sportSelectorChange: { fontSize: 11, color: Colors.primary, fontWeight: '700', letterSpacing: 0.3 },
-  sportPickerSheet: {
-    backgroundColor: '#111111',
-    borderRadius: 20,
-    padding: 20,
-    width: 280,
-    borderWidth: 1,
-    borderColor: '#222',
-  },
   propPickerSheet: {
     backgroundColor: '#111111', borderRadius: 20, padding: 16,
     width: 300, maxHeight: 420, borderWidth: 1, borderColor: '#222',

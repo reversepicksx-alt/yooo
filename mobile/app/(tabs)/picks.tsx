@@ -35,7 +35,6 @@ import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, Pick } f
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
-type SportKey = 'soccer' | 'mlb' | 'cs2';
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -44,32 +43,6 @@ const PROP_LABELS: Record<string, string> = {
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', duels_won: 'Duels Won',
   yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
-};
-
-const MLB_PROP_SET = new Set([
-  'pitcher_strikeouts', 'innings_pitched', 'hits_allowed', 'earned_runs',
-  'walks_allowed', 'pitches_thrown', 'batters_faced', 'hits', 'home_runs',
-  'rbi', 'walks', 'strikeouts', 'runs', 'total_bases', 'stolen_bases',
-  'doubles', 'plate_appearances', 'hitter_fantasy_points',
-]);
-
-const CS2_PROP_SET = new Set([
-  'maps_1_2_kills', 'maps_1_2_headshots', 'maps_1_2_deaths',
-  'maps_1_2_assists', 'maps_1_2_adr', 'map3_kills', 'map3_headshots',
-  'map3_deaths', 'map3_assists', 'map3_adr', 'kills', 'headshots',
-  'deaths', 'adr', 'mvps', 'rating', 'headshot_pct',
-]);
-
-function getSport(p: Pick): SportKey {
-  if (p.sport === 'mlb' || MLB_PROP_SET.has(p.propType)) return 'mlb';
-  if (p.sport === 'cs2' || CS2_PROP_SET.has(p.propType)) return 'cs2';
-  return 'soccer';
-}
-
-const SPORT_META: Record<SportKey, { label: string; icon: string }> = {
-  soccer: { label: 'Soccer', icon: '⚽' },
-  mlb:    { label: 'MLB',    icon: '⚾' },
-  cs2:    { label: 'CS2',    icon: '🎮' },
 };
 
 const LEAGUE_LABELS: Record<number, string> = {
@@ -128,434 +101,6 @@ function PulsingDot() {
   return <Reanimated.View style={[{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: Colors.primary }, style]} />;
 }
 
-
-function PickCard({ pick, onDelete, onTrack, onPlayerPress }: { pick: Pick; onDelete?: () => void; onTrack?: () => void; onPlayerPress?: (pick: Pick) => void }) {
-  const won = pickWon(pick);
-  const lost = pickLost(pick);
-  const live = isLive(pick);
-
-  const push = pickPush(pick);
-  const dnp = pickDnp(pick);
-  const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.push : dnp ? Colors.dnp : Colors.textTertiary;
-
-  const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
-  const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
-  // Position/role label is only meaningful for soccer. CS2 and MLB don't have
-  // tactical roles like "Box-to-Box" — those leaked in from the soccer
-  // position resolver. Suppress the label entirely for non-soccer picks.
-  const cardSport = getSport(pick);
-  const posLabel = cardSport === 'soccer'
-    ? [pick.position, pick.role].filter(Boolean).join(' · ')
-    : '';
-  const leagueLabel = getLeagueLabel(pick.leagueId);
-
-  const settled = won || lost || push;
-  const nowValue = settled
-    ? (pick.actualValue ?? (pick as { currentValue?: number | null }).currentValue ?? null)
-    : ((pick as { currentValue?: number | null }).currentValue ?? pick.actualValue ?? null);
-  const projValue = pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? null;
-  const livePace = (pick as { pace?: number | null }).pace;
-  const matchStatus = (pick as { matchStatus?: string }).matchStatus;
-  const hasLiveData = matchStatus === 'live' || (livePace != null && livePace > 0) || nowValue != null;
-  const paceValue = settled ? projValue : (livePace != null && livePace > 0 ? livePace : projValue);
-  const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
-  const lineValue = typeof pick.line === 'number' ? pick.line : null;
-
-  // Always show OVER or UNDER — never PASS. For historical PASS picks,
-  // use the flipped direction (fade the model: lean OVER → show UNDER, lean UNDER → show OVER).
-  const rec = pick.recommendation;
-  const effectiveDir: 'OVER' | 'UNDER' | null =
-    rec === 'OVER' ? 'OVER'
-    : rec === 'UNDER' ? 'UNDER'
-    : projValue != null && lineValue != null
-      ? (projValue < lineValue ? 'OVER' : 'UNDER')   // flipped: fade the model's lean
-      : null;
-  const isOver = effectiveDir === 'OVER';
-  const isUnder = effectiveDir === 'UNDER';
-  const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
-
-  const trackValue = nowValue ?? paceValue ?? null;
-  const trackDistance = lineValue != null && lineValue > 0 && trackValue != null
-    ? Math.max(0, Math.min(2, trackValue / lineValue))
-    : null;
-  const trackFillPct = trackDistance != null
-    ? Math.max(6, Math.min(94, (trackDistance / 2) * 100))
-    : null;
-  const trackMarkerPct = 50;
-  const progressFillPct = lineValue != null && trackValue != null
-    ? Math.max(0, Math.min(100, (trackValue / Math.max(lineValue * 2, 1)) * 100))
-    : null;
-  const trackColor = won
-    ? Colors.success
-    : lost
-    ? Colors.error
-    : push
-    ? Colors.push
-    : dnp
-    ? Colors.dnp
-    : trackValue != null && lineValue != null
-    ? ((isOver && trackValue > lineValue) || (isUnder && trackValue < lineValue) ? Colors.success : Colors.error)
-    : Colors.textSecondary;
-  const paceColor = trackValue != null ? Colors.primary : Colors.textSecondary;
-
-  const nowLabel = (won || lost || push) ? 'FINAL' : dnp ? 'DNP' : (hasLiveData ? 'NOW' : null);
-  const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ');
-
-  // Determine home/away team labels.
-  // PREFERRED path: backend resolved fixture → both `homeTeam` and `awayTeam` set.
-  // FALLBACK path: legacy picks may only have `teamName`/`opponentName`/`venue`/`matchScore`.
-  //   We orient using `venue` ('home' = subject team is home; 'away' = subject is away).
-  //   If `venue` is missing/unknown we cannot trust orientation, so we hide the score line
-  //   (prevents showing wrong winner color or flipping goals).
-  const venueLower = (pick.venue || '').toLowerCase();
-  const venueKnown = venueLower === 'home' || venueLower === 'away';
-  const hasFixtureNames = !!(pick.homeTeam && pick.awayTeam);
-  const homeTeamName = pick.homeTeam
-    || (venueKnown ? (venueLower === 'away' ? pick.opponentName : pick.teamName) : '')
-    || '';
-  const awayTeamName = pick.awayTeam
-    || (venueKnown ? (venueLower === 'away' ? pick.teamName : pick.opponentName) : '')
-    || '';
-  // Resolve final goals — prefer explicit fields, otherwise parse legacy `matchScore` string.
-  // Note: `matchScore` is stored player-perspective ("subject_goals-opp_goals"), NOT home-away.
-  // We can only re-orient correctly when venue is known.
-  let finalHome: number | null | undefined = pick.finalHomeGoals;
-  let finalAway: number | null | undefined = pick.finalAwayGoals;
-  if ((finalHome == null || finalAway == null)
-      && venueKnown
-      && typeof pick.matchScore === 'string') {
-    const m = pick.matchScore.match(/^(\d+)\s*[-–]\s*(\d+)$/);
-    if (m) {
-      const subject = parseInt(m[1], 10);
-      const opp = parseInt(m[2], 10);
-      if (!Number.isNaN(subject) && !Number.isNaN(opp)) {
-        if (venueLower === 'away') {
-          finalHome = opp; finalAway = subject;
-        } else {
-          finalHome = subject; finalAway = opp;
-        }
-      }
-    }
-  }
-  const homePoss = pick.homePoss;
-  const awayPoss = pick.awayPoss;
-  const projHomePoss = pick.projHomePoss;
-  const projAwayPoss = pick.projAwayPoss;
-  const hasActualPoss = homePoss != null && awayPoss != null;
-  const hasProjPoss = projHomePoss != null && projAwayPoss != null;
-  // Render the match-context block when we have either a trustable score OR a
-  // possession projection to compare against. Projected possession alone is
-  // enough to surface the "model said 60% — real was 48%" edge story.
-  const trustOrient = hasFixtureNames || venueKnown;
-  const showScoreLine = trustOrient && (
-    ((settled || (live && hasLiveData)) && finalHome != null && finalAway != null)
-    || hasActualPoss
-    || hasProjPoss
-  );
-  const haveScoreNumbers = finalHome != null && finalAway != null;
-  const subjectWon = settled && finalHome != null && finalAway != null && venueKnown && (
-    (venueLower === 'home' && finalHome > finalAway) ||
-    (venueLower === 'away' && finalAway > finalHome)
-  );
-  const subjectLost = settled && finalHome != null && finalAway != null && venueKnown && (
-    (venueLower === 'home' && finalHome < finalAway) ||
-    (venueLower === 'away' && finalAway < finalHome)
-  );
-  const homeColor = subjectWon && venueLower === 'home' ? Colors.success
-    : subjectLost && venueLower === 'home' ? Colors.error
-    : Colors.text;
-  const awayColor = subjectWon && venueLower === 'away' ? Colors.success
-    : subjectLost && venueLower === 'away' ? Colors.error
-    : Colors.text;
-
-  return (
-    <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
-      {/* Row 1: player name left | [trash] [badge] right — all inline */}
-      <View style={styles.cardTopRow}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => {
-            onPlayerPress?.(pick);
-          }}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
-        >
-          <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
-        </TouchableOpacity>
-        <View style={styles.cardRight}>
-          {/* WEB-ONLY trash — inline with badge so it adds ZERO extra rows */}
-          {Platform.OS === 'web' && onDelete && (
-            // @ts-ignore raw DOM button intentional for reliable click
-            <button
-              type="button"
-              onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
-              onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
-              onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
-              onTouchStart={(e: React.TouchEvent) => e.stopPropagation()}
-              style={{ all: 'unset', cursor: 'pointer', padding: '3px 5px', borderRadius: 5, display: 'inline-flex', alignItems: 'center' }}
-              aria-label="Delete pick"
-            >
-              <Ionicons name="trash-outline" size={12} color={Colors.error} />
-            </button>
-          )}
-          {live && !won && !lost && hasLiveData && (
-            <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(300) : undefined} style={styles.liveBadge}>
-              <PulsingDot />
-              <Text style={styles.liveText}>LIVE</Text>
-            </Reanimated.View>
-          )}
-          {live && !won && !lost && !hasLiveData && (
-            <View style={styles.pendingBadge}>
-              <Ionicons name="time-outline" size={9} color={Colors.textSecondary} />
-              <Text style={styles.pendingText}>PENDING</Text>
-            </View>
-          )}
-          {won && (
-            <View style={styles.wonBadge}>
-              <Ionicons name="checkmark" size={9} color="#000" />
-              <Text style={styles.wonText}>HIT</Text>
-            </View>
-          )}
-          {lost && (
-            <View style={styles.lostBadge}>
-              <Ionicons name="close" size={9} color={Colors.error} />
-              <Text style={styles.lostText}>MISS</Text>
-            </View>
-          )}
-          {push && !won && !lost && (
-            <View style={styles.pushBadge}>
-              <Ionicons name="remove-outline" size={9} color={Colors.push} />
-              <Text style={styles.pushText}>PUSH</Text>
-            </View>
-          )}
-          {dnp && (
-            <View style={styles.dnpBadge}>
-              <Ionicons name="close" size={9} color={Colors.dnp} />
-              <Text style={styles.dnpText}>DNP</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Row 2: meta + pick pill left | inline stats right */}
-      <View style={styles.cardRow2}>
-        <View style={styles.cardRow2Left}>
-          <Text style={styles.cardMeta} numberOfLines={1}>
-            {[leagueLabel, pick.teamName, posLabel || null, pick.opponentName
-              ? (pick.venue === 'away' ? `@ ${pick.opponentName}` : `vs ${pick.opponentName}`)
-              : null]
-              .filter(Boolean).join(' · ')}
-          </Text>
-          {effectiveDir && (
-            <View style={styles.pickRow}>
-              <View style={[styles.recPill, { backgroundColor: isOver ? Colors.successDim : isUnder ? Colors.errorDim : Colors.cardSecondary }]}>
-                <Text style={[styles.recPillText, { color: recColor }]}>{effectiveDir}</Text>
-              </View>
-              <Text style={styles.pickDetail} numberOfLines={1}>
-                {propLabel} · {pick.line}
-              </Text>
-              {(() => {
-                // Confidence badge — visible on every live + settled card.
-                // Color comes from the level the model assigned at pick-time.
-                //
-                // The backend stores confidenceScore as 0-100 (real model
-                // output) PLUS a categorical level word. When the AI fails to
-                // produce a real score the backend falls back to exactly 50 as
-                // a placeholder — showing "50%" then is misleading because it
-                // looks like a coin-flip when really it just means "no score
-                // available". So when the score is the 50 placeholder (or
-                // missing entirely) we display the level word only; otherwise
-                // we show both ("85% STRONG").
-                const confRaw = typeof pick.confidence === 'number' ? pick.confidence : null;
-                const lvlRaw = (pick.confidenceLevel || '').trim();
-                if (confRaw == null && !lvlRaw) return null;
-                const lvl = lvlRaw.toLowerCase();
-                const confColor =
-                  lvl.startsWith('strong') || lvl.startsWith('high') ? Colors.success
-                  : lvl.startsWith('weak') || lvl.startsWith('low') ? Colors.textTertiary
-                  : Colors.primary; // medium / unknown
-                const confPct = confRaw == null
-                  ? null
-                  : Math.round(confRaw > 1 ? confRaw : confRaw * 100);
-                const isPlaceholder = confPct === 50; // backend default
-                const showPct = confPct != null && !isPlaceholder;
-                const confLabel = showPct
-                  ? `${confPct}%${lvlRaw ? ' ' + lvlRaw.toUpperCase() : ''}`
-                  : lvlRaw.toUpperCase();
-                if (!confLabel) return null;
-                return (
-                  <View style={[styles.confBadge, { borderColor: confColor }]}>
-                    <Text style={[styles.confBadgeText, { color: confColor }]} numberOfLines={1}>
-                      {confLabel}
-                    </Text>
-                  </View>
-                );
-              })()}
-              {pick.coinFlip && (
-                <View style={styles.coinFlipBadge}>
-                  <Text style={styles.coinFlipText}>~</Text>
-                </View>
-              )}
-            </View>
-          )}
-        </View>
-        {/* Inline stats: NOW (if live/settled) and PROJ */}
-        <View style={styles.inlineStats}>
-          {nowLabel && nowValue != null && (
-            <View style={styles.inlineStat}>
-              <Text style={[styles.inlineVal, { color: trackColor }]}>{Number(nowValue).toFixed(0)}</Text>
-              <Text style={styles.inlineLbl}>{nowLabel}</Text>
-            </View>
-          )}
-          {paceValue != null && (
-            <View style={styles.inlineStat}>
-              <Text style={[styles.inlineVal, { color: Colors.primary }]}>{Number(paceValue).toFixed(0)}</Text>
-              <Text style={styles.inlineLbl}>{paceLabel}</Text>
-            </View>
-          )}
-          {hitPct != null && (
-            <View style={styles.inlineStat}>
-              <Text style={[styles.inlineVal, { color: Colors.textSecondary }]}>{Math.round(hitPct)}%</Text>
-              <Text style={styles.inlineLbl}>HIT</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Thin progress bar — only visible when live/settled with real data */}
-      {lineValue != null && nowValue != null && (() => {
-        const fillPct = Math.max(0, Math.min(100, (nowValue / Math.max(lineValue * 2, 1)) * 100));
-        return (
-          <View style={styles.trackBarOuter}>
-            <View style={[styles.trackBarFill, { width: `${fillPct}%`, backgroundColor: trackColor }]} />
-            <View style={[styles.trackBarMarker, { left: `${trackMarkerPct}%` }]} />
-          </View>
-        );
-      })()}
-
-      {/* Match context — single compact line: score + poss + fixture ID merged */}
-      {(showScoreLine || pick.fixtureId != null) && (
-        <View style={styles.matchCtxBlock}>
-          <Text style={styles.matchCtxLine} numberOfLines={1} ellipsizeMode="tail">
-            {showScoreLine ? (
-              <>
-                {haveScoreNumbers ? `${settled ? 'FT' : 'LIVE'} ` : ''}
-                {haveScoreNumbers
-                  ? `${homeTeamName || 'Home'} ${finalHome}–${finalAway} ${awayTeamName || 'Away'}`
-                  : `${homeTeamName || 'Home'} vs ${awayTeamName || 'Away'}`}
-                {hasActualPoss ? `  ·  ${homePoss}/${awayPoss}%` : ''}
-                {hasProjPoss && !hasActualPoss ? `  ·  Proj ${Math.round(projHomePoss as number)}/${Math.round(projAwayPoss as number)}%` : ''}
-                {hasActualPoss && hasProjPoss ? (() => {
-                  const delta = Math.abs((projHomePoss as number) - (homePoss as number));
-                  return ` Δ${delta.toFixed(0)}`;
-                })() : ''}
-                {pick.fixtureId != null ? `  ·  #${pick.fixtureId}` : ''}
-              </>
-            ) : (
-              pick.fixtureId != null ? `#${pick.fixtureId}` : ''
-            )}
-          </Text>
-        </View>
-      )}
-
-      {/* Live possession bar — mini pitch visualization for live soccer */}
-      {live && !won && !lost && cardSport === 'soccer' && hasActualPoss && (
-        <View style={styles.possBarBlock}>
-          <View style={styles.possBarTrack}>
-            <View style={[styles.possBarHome, { width: `${homePoss as number}%`, backgroundColor: Colors.primary }]} />
-            <View style={[styles.possBarAway, { flex: 1, backgroundColor: Colors.textTertiary }]} />
-          </View>
-          <View style={styles.possBarLabels}>
-            <Text style={styles.possBarLabel}>{homeTeamName || 'Home'} {homePoss}%</Text>
-            <Text style={styles.possBarLabel}>{awayTeamName || 'Away'} {awayPoss}%</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Live track button — open full match tracker for live soccer */}
-      {live && !won && !lost && cardSport === 'soccer' && onTrack && (
-        <TouchableOpacity onPress={onTrack} style={styles.trackBtn} activeOpacity={0.7}>
-          <Ionicons name="pulse" size={12} color={Colors.primary} />
-          <Text style={styles.trackBtnText}>Track Live</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Live pace-divergence warning — fires when the in-match trend is running
-          strongly against the pick's recommendation (e.g. opponent parks the bus
-          after an early goal and the subject's pass volume balloons past a
-          projected UNDER). Distinct from the quiet PACE/HIT inline numbers above —
-          this is an explicit, hard-to-miss alert. */}
-      {live && !won && !lost && pick.paceMismatch && pick.paceWarning && (
-        <View style={styles.paceWarningBanner}>
-          <Ionicons name="warning-outline" size={12} color={Colors.dnp} />
-          <Text style={styles.paceWarningText} numberOfLines={2}>{pick.paceWarning}</Text>
-        </View>
-      )}
-
-      {/* Settled pick story — adds color and narrative for soccer results */}
-      {settled && cardSport === 'soccer' && (
-        <SettledStory pick={pick} won={won} lost={lost} push={push} dnp={dnp} />
-      )}
-
-    </View>
-  );
-}
-
-function SettledStory({
-  pick,
-  won,
-  lost,
-  push,
-  dnp,
-}: {
-  pick: Pick;
-  won: boolean;
-  lost: boolean;
-  push: boolean;
-  dnp: boolean;
-}) {
-  const line = typeof pick.line === 'number' ? pick.line : null;
-  const actual = pick.actualValue ?? (pick as any).currentValue ?? null;
-  const proj = pick.projection ?? pick.projectedValue ?? null;
-  const poss = pick.homePoss != null && pick.awayPoss != null
-    ? `${Math.round(pick.homePoss)}%/${Math.round(pick.awayPoss)}%`
-    : null;
-
-  let narrative = '';
-  if (dnp) {
-    narrative = `Did not play — voided.`;
-  } else if (push) {
-    narrative = `Finished exactly on the line.`;
-  } else if (won && actual != null && line != null) {
-    const margin = Math.abs(actual - line);
-    narrative = `Beat the line by ${margin.toFixed(1)} ${propUnit(pick.propType)}.`;
-  } else if (lost && actual != null && line != null) {
-    const margin = Math.abs(actual - line);
-    narrative = `Fell short by ${margin.toFixed(1)} ${propUnit(pick.propType)}.`;
-  } else if (proj != null && line != null) {
-    const edge = Math.abs(proj - line);
-    narrative = `Pre-game edge was ${edge.toFixed(1)} ${propUnit(pick.propType)}.`;
-  }
-
-  if (poss && (won || lost)) {
-    narrative += ` Match possession: ${poss}.`;
-  }
-
-  const color = won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.dnp;
-  return (
-    <View style={styles.storyBlock}>
-      <View style={[styles.storyDot, { backgroundColor: color }]} />
-      <Text style={styles.storyText} numberOfLines={2}>{narrative}</Text>
-    </View>
-  );
-}
-
-function propUnit(propType?: string) {
-  if (!propType) return '';
-  if (['pass_attempts', 'passes', 'tackles', 'clearances', 'duels_won', 'saves', 'goalie_saves'].includes(propType)) return 'passes';
-  if (['shots', 'shots_on_target'].includes(propType)) return 'shots';
-  if (['goals', 'assists'].includes(propType)) return '';
-  return 'units';
-}
 
 function RecordBar({ picks }: { picks: Pick[] }) {
   const hits = picks.filter(pickWon).length;
@@ -670,72 +215,11 @@ function renderAnalysisBlocks(text: string, rec: string) {
   return blocks;
 }
 
-function SportSectionHeader({
-  sport, picks, expanded, onToggle,
-}: {
-  sport: SportKey; picks: Pick[]; expanded: boolean; onToggle: () => void;
-}) {
-  const { label, icon } = SPORT_META[sport];
-  const hits   = picks.filter(pickWon).length;
-  const misses = picks.filter(pickLost).length;
-  const pushes = picks.filter(pickPush).length;
-  const total  = hits + misses;
-  const winPct = total > 0 ? Math.round((hits / total) * 100) : null;
-  const pctColor = winPct == null ? Colors.textTertiary
-    : winPct >= 60 ? Colors.success
-    : winPct >= 50 ? Colors.primary
-    : Colors.error;
 
-  return (
-    <TouchableOpacity
-      onPress={onToggle}
-      activeOpacity={0.75}
-      style={secStyles.header}
-    >
-      <View style={secStyles.headerLeft}>
-        <Text style={secStyles.headerIcon}>{icon}</Text>
-        <Text style={secStyles.headerLabel}>{label}</Text>
-        <View style={secStyles.countPill}>
-          <Text style={secStyles.countText}>{picks.length}</Text>
-        </View>
-      </View>
-      <View style={secStyles.headerRight}>
-        <View style={secStyles.headerStats}>
-          <Text style={[secStyles.statNum, { color: Colors.success }]}>
-            {hits}<Text style={secStyles.statLbl}>H</Text>
-          </Text>
-          <Text style={secStyles.statDiv}> · </Text>
-          <Text style={[secStyles.statNum, { color: Colors.error }]}>
-            {misses}<Text style={secStyles.statLbl}>M</Text>
-          </Text>
-          {pushes > 0 && (
-            <>
-              <Text style={secStyles.statDiv}> · </Text>
-              <Text style={[secStyles.statNum, { color: Colors.textTertiary }]}>
-                {pushes}<Text style={secStyles.statLbl}>P</Text>
-              </Text>
-            </>
-          )}
-          <Text style={secStyles.statDiv}>  </Text>
-          <Text style={[secStyles.winPct, { color: pctColor }]}>
-            {winPct != null ? `${winPct}%` : '—'}
-          </Text>
-        </View>
-        <Ionicons
-          name={expanded ? 'chevron-up' : 'chevron-down'}
-          size={14}
-          color={Colors.textSecondary}
-          style={{ marginLeft: 6 }}
-        />
-      </View>
-    </TouchableOpacity>
-  );
-}
 
 export default function PicksScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout } = useAuth();
-  const isOwner = session?.accessType?.toLowerCase() === 'owner';
   const qc = useQueryClient();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
@@ -750,17 +234,6 @@ export default function PicksScreen() {
   const [aiOpen, setAiOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
-  const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
-  const toggleSport = useCallback((sport: SportKey) => {
-    setExpandedSports(prev => {
-      const next = new Set(prev);
-      if (next.has(sport)) next.delete(sport);
-      else next.add(sport);
-      return next;
-    });
-  }, []);
-
   const sessionErrCount = useRef(0);
   const picksRef = useRef<Pick[]>([]);
   const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
@@ -883,27 +356,6 @@ export default function PicksScreen() {
   const live = filteredPicks.filter(isLive);
   const history = filteredPicks.filter(isSettled);
 
-  // Split history into sport buckets (Soccer → MLB → CS2 order)
-  const SPORT_ORDER: SportKey[] = ['soccer', 'mlb', 'cs2'];
-  const bySport: Record<SportKey, Pick[]> = { soccer: [], mlb: [], cs2: [] };
-  for (const p of history) bySport[getSport(p)].push(p);
-
-  // Build flat accordion list: header items + pick items for expanded sections
-  type AccordionItem =
-    | { type: 'header'; sport: SportKey }
-    | { type: 'pick';   sport: SportKey; pick: Pick };
-
-  const accordionData: AccordionItem[] = [];
-  for (const sport of SPORT_ORDER) {
-    if (bySport[sport].length === 0) continue;
-    accordionData.push({ type: 'header', sport });
-    if (expandedSports.has(sport)) {
-      for (const pick of bySport[sport]) {
-        accordionData.push({ type: 'pick', sport, pick });
-      }
-    }
-  }
-
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
@@ -1021,26 +473,17 @@ export default function PicksScreen() {
           renderItem={({ item }) => {
             const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
             const onDeleteForItem = () => handleDelete(item);
-            const card = isOwner ? (
+            const card = (
               <OwnerPickCard
                 pick={item}
                 onPress={tappable ? () => {
                   try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
                   handlePickPress(item);
                 } : undefined}
+                onTrack={() => setLiveTrackerPick(item)}
+                onDelete={onDeleteForItem}
+                onPlayerPress={handlePlayerPress}
               />
-            ) : tappable ? (
-              <Pressable
-                onPress={() => {
-                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                  handlePickPress(item);
-                }}
-                style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
-              >
-                <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} onPlayerPress={handlePlayerPress} />
-              </Pressable>
-            ) : (
-              <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} onPlayerPress={handlePlayerPress} />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
           }}
@@ -1049,44 +492,23 @@ export default function PicksScreen() {
           showsVerticalScrollIndicator={false}
         />
       ) : (
-        /* ── HISTORY: collapsible sport accordion ── */
+        /* ── HISTORY: flat list of settled picks ── */
         <FlatList
-          data={accordionData}
+          data={history}
           initialNumToRender={12}
           maxToRenderPerBatch={15}
-          keyExtractor={(item, i) =>
-            item.type === 'header'
-              ? `hdr-${item.sport}`
-              : `pick-${(item as { type: 'pick'; pick: Pick; sport: SportKey }).pick.pickId || i}`
-          }
+          keyExtractor={(item, i) => `pick-${item.pickId || item._id || item.id || i}`}
           renderItem={({ item }) => {
-            if (item.type === 'header') {
-              return (
-                <SportSectionHeader
-                  sport={item.sport}
-                  picks={bySport[item.sport]}
-                  expanded={expandedSports.has(item.sport)}
-                  onToggle={() => {
-                    try { Haptics.selectionAsync(); } catch {}
-                    toggleSport(item.sport);
-                  }}
-                />
-              );
-            }
-            const pickItem = item.pick;
-            const onDeleteForItem = () => handleDelete(pickItem);
+            const onDeleteForItem = () => handleDelete(item);
             return (
               <SwipeablePickRow onDelete={onDeleteForItem}>
-                {isOwner ? (
-                  <OwnerPickCard pick={pickItem} onPress={() => handlePickPress(pickItem)} />
-                ) : (
-                  <Pressable
-                    onPress={() => handlePickPress(pickItem)}
-                    style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
-                  >
-                    <PickCard pick={pickItem} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(pickItem)} onPlayerPress={handlePlayerPress} />
-                  </Pressable>
-                )}
+                <OwnerPickCard
+                  pick={item}
+                  onPress={() => handlePickPress(item)}
+                  onTrack={() => setLiveTrackerPick(item)}
+                  onDelete={onDeleteForItem}
+                  onPlayerPress={handlePlayerPress}
+                />
               </SwipeablePickRow>
             );
           }}
@@ -1452,7 +874,7 @@ export default function PicksScreen() {
         picks={picks.map((p, i) => ({
           id: p.pickId || p._id || p.id || String(i),
           status: ((p.result || 'pending') as any),
-          sport: getSport(p),
+          sport: 'soccer',
           type: getRecDir(p)?.toLowerCase() as any,
           date: p.createdAt || p.settledAt || new Date().toISOString(),
         }))}

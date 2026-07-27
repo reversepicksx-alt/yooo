@@ -1226,9 +1226,9 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid session")
 
     # ── SOCCER ONLY. This tab is for soccer matchups, period. ───────────────
+    # All subscribers can see the aggregated matchup history from the full
+    # settled-picks dataset so the tab is actually useful.
     query: dict = {"status": "settled", "sport": "soccer"}
-    if email.lower() != OWNER_EMAIL:
-        query["email"] = email.lower()
 
     projection = {
         "_id": 0,
