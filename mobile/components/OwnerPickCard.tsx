@@ -17,6 +17,7 @@ async function fetchAsDataUri(url: string): Promise<string> {
   } catch { return ''; }
 }
 import { Ionicons } from '@expo/vector-icons';
+import { captureRef } from 'react-native-view-shot';
 import Colors from '@/constants/colors';
 import { Pick } from '@/lib/api';
 
@@ -153,7 +154,9 @@ export default function OwnerPickCard({
   const [sharing, setSharing] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [shareSheetVisible, setShareSheetVisible] = useState(false);
+  const [captureMode, setCaptureMode] = useState(false);
   const pendingBlobRef = useRef<Blob | null>(null);
+  const cardRef = useRef<View>(null);
 
   const tweetText = `${APP_STORE_URL}\nvia @Reversepickss`;
   const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss`;
@@ -165,9 +168,24 @@ export default function OwnerPickCard({
         await generateShareImage();
         setShareSheetVisible(true);
       } else {
-        await Share.share({ message: nativeShareText, title: `${pick.playerName} pick` });
+        await handleNativeShareImage();
       }
     } catch { /* cancelled */ } finally { setSharing(false); }
+  };
+
+  const handleNativeShareImage = async () => {
+    try {
+      setCaptureMode(true);
+      // Let the buttons disappear before capture
+      await new Promise(r => setTimeout(r, 80));
+      const uri = await captureRef(cardRef, { format: 'png', quality: 1 });
+      await Share.share({ url: uri, message: nativeShareText, title: `${pick.playerName} pick` });
+    } catch {
+      // fallback to text-only if capture fails
+      await Share.share({ message: nativeShareText, title: `${pick.playerName} pick` });
+    } finally {
+      setCaptureMode(false);
+    }
   };
 
   const generateShareImage = async () => {
@@ -235,6 +253,7 @@ export default function OwnerPickCard({
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <TouchableOpacity
+      ref={cardRef}
       activeOpacity={onPress ? 0.82 : 1}
       onPress={onPress}
       style={styles.card}
@@ -270,7 +289,7 @@ export default function OwnerPickCard({
           </TouchableOpacity>
 
           <View style={styles.rightCluster}>
-            {Platform.OS === 'web' && onDelete && (
+            {Platform.OS === 'web' && onDelete && !captureMode && (
               // @ts-ignore
               <button type="button"
                 onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
@@ -280,11 +299,13 @@ export default function OwnerPickCard({
                 <Ionicons name="trash-outline" size={14} color={Colors.error} />
               </button>
             )}
-            <TouchableOpacity onPress={handleShare} style={styles.shareBtn} activeOpacity={0.7}>
-              {sharing
-                ? <ActivityIndicator size="small" color={Colors.primary} />
-                : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
-            </TouchableOpacity>
+            {!captureMode && (
+              <TouchableOpacity onPress={handleShare} style={styles.shareBtn} activeOpacity={0.7}>
+                {sharing
+                  ? <ActivityIndicator size="small" color={Colors.primary} />
+                  : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
+              </TouchableOpacity>
+            )}
             <StatusPill won={won} lost={lost} push={push} dnp={dnp} live={live} pending={pending} />
           </View>
         </View>
