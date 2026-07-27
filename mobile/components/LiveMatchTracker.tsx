@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Animated, Dimensions } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Animated, Dimensions, ActivityIndicator } from 'react-native';
 import Svg, { Rect, Circle, Line, Path, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { Pick } from '@/lib/api';
+import { Pick, fetchFixtureEvents, LiveEvent } from '@/lib/api';
 import Colors from '@/constants/colors';
 
 interface LiveMatchTrackerProps {
@@ -13,16 +13,10 @@ interface LiveMatchTrackerProps {
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-const MOCK_EVENTS = [
-  { id: '1', time: "12'", type: "goal", team: "home", text: "Goal - L. Messi" },
-  { id: '2', time: "34'", type: "yellow", team: "away", text: "Yellow Card - S. Ramos" },
-  { id: '3', time: "45'", type: "half", text: "Half Time" },
-  { id: '4', time: "67'", type: "sub", team: "home", text: "Substitution - Home Team" },
-  { id: '5', time: "78'", type: "red", team: "away", text: "Red Card - Casemiro" },
-];
-
 export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTrackerProps) {
-  const [matchTime, setMatchTime] = useState(78);
+  const [events, setEvents] = useState<LiveEvent[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -42,17 +36,83 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
     ).start();
   }, [pulseAnim]);
 
+  const loadEvents = useCallback(async () => {
+    if (!pick.fixtureId) return;
+    setLoadingEvents(true);
+    setEventsError(null);
+    try {
+      const data = await fetchFixtureEvents(pick.fixtureId);
+      setEvents(data.events || []);
+    } catch (e) {
+      setEventsError('Could not load live events');
+    } finally {
+      setLoadingEvents(false);
+    }
+  }, [pick.fixtureId]);
+
+  useEffect(() => {
+    if (visible) {
+      loadEvents();
+    } else {
+      setEvents([]);
+      setEventsError(null);
+    }
+  }, [visible, loadEvents]);
+
   const currentValue = pick.currentValue ?? pick.actualValue ?? 0;
   const progressPercent = Math.min((currentValue / (pick.line || 1)) * 100, 100);
   const isCovering = currentValue >= pick.line;
 
-  const homeTeam = pick.teamName || "Home";
-  const awayTeam = pick.opponentName || "Away";
+  const homeTeam = pick.homeTeam || pick.teamName || 'Home';
+  const awayTeam = pick.awayTeam || pick.opponentName || 'Away';
+
+  // Parse matchScore "2 - 1" or "2-1"
+  const scoreParts = (pick.matchScore || '0 - 0').split(/\s*-\s*/);
+  const homeGoals = parseInt(scoreParts[0] || '0', 10) || 0;
+  const awayGoals = parseInt(scoreParts[1] || '0', 10) || 0;
+
+  const isFinal = pick.matchStatus === 'final' || pick.status === 'settled' || ['hit', 'miss', 'push', 'dnp'].includes(pick.result || '');
+  const isLive = !isFinal && (pick.matchStatus === 'live' || pick.status === 'live' || pick.status === 'pending');
+  const elapsed = pick.elapsed ?? 0;
+  const matchTime = isFinal ? 'FT' : elapsed ? `${pick.period || ''}${elapsed}'` : pick.matchStatus ? pick.matchStatus.toUpperCase() : 'LIVE';
+
+  const homePoss = pick.homePoss ?? pick.projHomePoss ?? 50;
+  const awayPoss = pick.awayPoss ?? pick.projAwayPoss ?? (100 - homePoss);
+  const normalizedHomePoss = homePoss / (homePoss + awayPoss || 100) * 100;
+  const normalizedAwayPoss = 100 - normalizedHomePoss;
+
+  const pace = pick.pace ?? 0;
+  const hitPct = pick.hitPct ?? 0;
+
+  // Build timeline from real events + inferred match boundaries
+  const timeline: LiveEvent[] = [];
+  if (!isLive && !isFinal && events.length === 0) {
+    timeline.push({ id: 'pre', time: '0\'', type: 'start', text: 'Match scheduled' });
+  } else {
+    timeline.push({ id: 'start', time: '0\'', type: 'start', text: 'Kick-off' });
+    if (isLive && elapsed >= 45) {
+      timeline.push({ id: 'ht', time: '45\'', type: 'half', text: 'Half-time' });
+    }
+    if (events.length > 0) {
+      events.forEach((ev, idx) => {
+        timeline.push({
+          id: `${ev.elapsed}-${idx}`,
+          time: ev.time,
+          type: ev.type,
+          text: formatEventText(ev),
+        });
+      });
+    } else if (isLive) {
+      timeline.push({ id: 'live', time: matchTime, type: 'info', text: 'No major events reported yet' });
+    }
+    if (isFinal) {
+      timeline.push({ id: 'ft', time: 'FT', type: 'half', text: `Full-time: ${homeGoals} - ${awayGoals}` });
+    }
+  }
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
             <Ionicons name="chevron-down" size={28} color={Colors.text} />
@@ -62,105 +122,93 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Live Score */}
           <View style={styles.scoreBoard}>
             <View style={styles.teamScore}>
               <Text style={styles.teamName} numberOfLines={1}>{homeTeam}</Text>
-              <Text style={styles.scoreText}>2</Text>
+              <Text style={styles.scoreText}>{homeGoals}</Text>
             </View>
             <View style={styles.timeContainer}>
-              <Animated.View style={[styles.liveDot, { opacity: pulseAnim }]} />
-              <Text style={styles.timeText}>{matchTime}'</Text>
+              {isLive && <Animated.View style={[styles.liveDot, { opacity: pulseAnim }]} />}
+              <Text style={[styles.timeText, isFinal && { color: Colors.textSecondary }]}>{matchTime}</Text>
             </View>
             <View style={styles.teamScore}>
-              <Text style={styles.scoreText}>1</Text>
+              <Text style={styles.scoreText}>{awayGoals}</Text>
               <Text style={styles.teamName} numberOfLines={1}>{awayTeam}</Text>
             </View>
           </View>
 
-          {/* Mini Pitch */}
           <View style={styles.pitchContainer}>
             <Text style={styles.sectionTitle}>Field Activity</Text>
             <View style={styles.pitchWrapper}>
               <Svg width="100%" height={200} viewBox="0 0 100 65">
                 <Defs>
-                  <RadialGradient id="heat1" cx="50%" cy="50%" rx="50%" ry="50%">
-                    <Stop offset="0%" stopColor={Colors.primary} stopOpacity="0.4" />
+                  <RadialGradient id="heatHome" cx="50%" cy="50%" rx="50%" ry="50%">
+                    <Stop offset="0%" stopColor={Colors.primary} stopOpacity="0.25" />
                     <Stop offset="100%" stopColor={Colors.primary} stopOpacity="0" />
                   </RadialGradient>
-                  <RadialGradient id="heat2" cx="50%" cy="50%" rx="50%" ry="50%">
-                    <Stop offset="0%" stopColor={Colors.error} stopOpacity="0.4" />
+                  <RadialGradient id="heatAway" cx="50%" cy="50%" rx="50%" ry="50%">
+                    <Stop offset="0%" stopColor={Colors.error} stopOpacity="0.25" />
                     <Stop offset="100%" stopColor={Colors.error} stopOpacity="0" />
                   </RadialGradient>
                 </Defs>
 
-                {/* Field Background */}
                 <Rect x="0" y="0" width="100" height="65" fill="#0A150A" />
-                
-                {/* Field Lines */}
                 <Rect x="0" y="0" width="100" height="65" stroke={Colors.border} strokeWidth="0.5" fill="none" />
                 <Line x1="50" y1="0" x2="50" y2="65" stroke={Colors.border} strokeWidth="0.5" />
                 <Circle cx="50" cy="32.5" r="9.15" stroke={Colors.border} strokeWidth="0.5" fill="none" />
                 <Circle cx="50" cy="32.5" r="0.5" fill={Colors.border} />
-                
-                {/* Left Penalty Area */}
                 <Rect x="0" y="13.84" width="16.5" height="37.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
                 <Rect x="0" y="24.84" width="5.5" height="15.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
                 <Circle cx="11" cy="32.5" r="0.5" fill={Colors.border} />
                 <Path d="M 16.5 25.5 A 9.15 9.15 0 0 1 16.5 39.5" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                
-                {/* Right Penalty Area */}
                 <Rect x="83.5" y="13.84" width="16.5" height="37.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
                 <Rect x="94.5" y="24.84" width="5.5" height="15.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
                 <Circle cx="89" cy="32.5" r="0.5" fill={Colors.border} />
                 <Path d="M 83.5 25.5 A 9.15 9.15 0 0 0 83.5 39.5" stroke={Colors.border} strokeWidth="0.5" fill="none" />
 
-                {/* Mock Heat Map for Player */}
-                <Circle cx="70" cy="20" r="15" fill="url(#heat1)" />
-                <Circle cx="80" cy="35" r="20" fill="url(#heat1)" />
-                <Circle cx="65" cy="45" r="12" fill="url(#heat1)" />
+                {/* Possession heat zones — left/right biased by actual possession split */}
+                <Circle cx={35 - normalizedHomePoss * 0.15} cy="32.5" r={10 + normalizedHomePoss * 0.12} fill="url(#heatHome)" />
+                <Circle cx={65 + normalizedAwayPoss * 0.15} cy="32.5" r={10 + normalizedAwayPoss * 0.12} fill="url(#heatAway)" />
 
-                {/* Mock Player Positions */}
-                <Circle cx="60" cy="25" r="1.5" fill={Colors.primary} />
-                <Circle cx="72" cy="32" r="1.5" fill={Colors.primary} />
-                <Circle cx="80" cy="40" r="1.5" fill={Colors.primary} />
-                
-                <Circle cx="65" cy="30" r="1.5" fill={Colors.error} />
-                <Circle cx="75" cy="45" r="1.5" fill={Colors.error} />
-                <Circle cx="85" cy="20" r="1.5" fill={Colors.error} />
-
-                {/* Ball */}
-                <Circle cx="72" cy="32" r="0.8" fill="#FFFFFF" />
+                {/* Player dot — always in the attacking half on the team with more possession */}
+                <Circle cx={homePoss >= awayPoss ? 65 : 35} cy="32.5" r="2" fill={Colors.primary} />
               </Svg>
             </View>
           </View>
 
-          {/* Possession Bar */}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Possession</Text>
             <View style={styles.possessionRow}>
-              <Text style={styles.possessionText}>60%</Text>
+              <Text style={styles.possessionText}>{Math.round(normalizedHomePoss)}%</Text>
               <View style={styles.possessionBar}>
-                <View style={[styles.possessionFill, { width: '60%', backgroundColor: Colors.primary }]} />
-                <View style={[styles.possessionFill, { width: '40%', backgroundColor: Colors.error }]} />
+                <View style={[styles.possessionFill, { width: `${normalizedHomePoss}%`, backgroundColor: Colors.primary }]} />
+                <View style={[styles.possessionFill, { width: `${normalizedAwayPoss}%`, backgroundColor: Colors.error }]} />
               </View>
-              <Text style={styles.possessionText}>40%</Text>
+              <Text style={styles.possessionText}>{Math.round(normalizedAwayPoss)}%</Text>
             </View>
+            {(pick.homePoss || pick.awayPoss) ? (
+              <Text style={styles.possessionNote}>Live stats from the fixture</Text>
+            ) : (
+              <Text style={styles.possessionNote}>Projected possession — live data unavailable</Text>
+            )}
           </View>
 
-          {/* Player Stat vs Line Progress */}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>{pick.playerName} - {pick.propType}</Text>
             <View style={styles.progressHeader}>
               <Text style={styles.progressValues}>
                 <Text style={styles.currentValue}>{currentValue}</Text> / {pick.line}
               </Text>
-              {isCovering && (
+              {isCovering ? (
                 <View style={styles.coveringBadge}>
                   <Ionicons name="checkmark-circle" size={14} color={Colors.success} />
                   <Text style={styles.coveringText}>Covering</Text>
                 </View>
-              )}
+              ) : isLive ? (
+                <View style={styles.behindBadge}>
+                  <Text style={styles.behindText}>Behind</Text>
+                </View>
+              ) : null}
             </View>
             <View style={styles.progressBarBg}>
               <View 
@@ -173,14 +221,56 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
                 ]} 
               />
             </View>
+
+            {(pace > 0 || hitPct > 0) && (
+              <View style={styles.paceRow}>
+                {pace > 0 && (
+                  <View style={styles.paceItem}>
+                    <Text style={styles.paceLabel}>Pace</Text>
+                    <Text style={styles.paceValue}>{pace.toFixed(1)}x</Text>
+                  </View>
+                )}
+                {hitPct > 0 && (
+                  <View style={styles.paceItem}>
+                    <Text style={styles.paceLabel}>Live Hit %</Text>
+                    <Text style={styles.paceValue}>{Math.round(hitPct)}%</Text>
+                  </View>
+                )}
+                {pick.paceMismatch && (
+                  <View style={[styles.paceItem, styles.paceWarning]}>
+                    <Ionicons name="warning" size={12} color={Colors.warning} />
+                    <Text style={styles.paceWarningText}>{pick.paceWarning || 'Pace mismatch'}</Text>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
 
-          {/* Key Events Timeline */}
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Key Events</Text>
+            <View style={styles.eventsHeader}>
+              <Text style={styles.sectionTitle}>Key Events</Text>
+              {pick.fixtureId && (
+                <TouchableOpacity onPress={loadEvents} disabled={loadingEvents}>
+                  {loadingEvents ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <Ionicons name="refresh" size={18} color={Colors.primary} />
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {eventsError && (
+              <Text style={styles.eventsError}>{eventsError}</Text>
+            )}
+
+            {!pick.fixtureId && isLive && (
+              <Text style={styles.eventsEmpty}>Fixture link not yet assigned. Live events will appear once the match is matched.</Text>
+            )}
+
             <View style={styles.timeline}>
-              {MOCK_EVENTS.map((event, index) => {
-                const isLast = index === MOCK_EVENTS.length - 1;
+              {timeline.map((event, index) => {
+                const isLast = index === timeline.length - 1;
                 return (
                   <View key={event.id} style={styles.timelineItem}>
                     <View style={styles.timelineLeft}>
@@ -190,12 +280,18 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
                       <View style={[
                         styles.timelineDot,
                         event.type === 'goal' && { backgroundColor: Colors.success },
+                        event.type === 'own_goal' && { backgroundColor: Colors.error },
+                        event.type === 'penalty' && { backgroundColor: Colors.success },
                         event.type === 'red' && { backgroundColor: Colors.error },
                         event.type === 'yellow' && { backgroundColor: '#FFD60A' },
                         event.type === 'sub' && { backgroundColor: Colors.push },
                         event.type === 'half' && { backgroundColor: Colors.textSecondary },
+                        event.type === 'start' && { backgroundColor: Colors.primary },
+                        event.type === 'var' && { backgroundColor: Colors.warning },
+                        event.type === 'injury' && { backgroundColor: Colors.error },
                       ]}>
-                        {event.type === 'goal' && <Ionicons name="football" size={10} color="#000" />}
+                        {(event.type === 'goal' || event.type === 'penalty') && <Ionicons name="football" size={10} color="#000" />}
+                        {event.type === 'own_goal' && <Text style={styles.ogIcon}>OG</Text>}
                       </View>
                       {!isLast && <View style={styles.timelineLine} />}
                     </View>
@@ -207,11 +303,33 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
               })}
             </View>
           </View>
-
         </ScrollView>
       </View>
     </Modal>
   );
+}
+
+function formatEventText(ev: LiveEvent): string {
+  switch (ev.type) {
+    case 'goal':
+      return ev.assistName ? `Goal — ${ev.playerName} (assist: ${ev.assistName})` : `Goal — ${ev.playerName}`;
+    case 'own_goal':
+      return `Own Goal — ${ev.playerName}`;
+    case 'penalty':
+      return `Penalty Goal — ${ev.playerName}`;
+    case 'yellow':
+      return `Yellow Card — ${ev.playerName}`;
+    case 'red':
+      return `Red Card — ${ev.playerName}`;
+    case 'sub':
+      return ev.assistName ? `Sub — ${ev.playerName} ↔ ${ev.assistName}` : `Sub — ${ev.playerName}`;
+    case 'var':
+      return `VAR — ${ev.detail || 'Review'}`;
+    case 'injury':
+      return `Injury — ${ev.playerName}`;
+    default:
+      return ev.detail || `${ev.type} — ${ev.playerName}`;
+  }
 }
 
 const styles = StyleSheet.create({
@@ -342,6 +460,12 @@ const styles = StyleSheet.create({
     width: 36,
     textAlign: 'center',
   },
+  possessionNote: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 8,
+    textAlign: 'center',
+  },
   progressHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -372,6 +496,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  behindBadge: {
+    backgroundColor: Colors.errorDim,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  behindText: {
+    color: Colors.error,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   progressBarBg: {
     height: 12,
     backgroundColor: Colors.cardSecondary,
@@ -381,6 +516,54 @@ const styles = StyleSheet.create({
   progressBarFill: {
     height: '100%',
     borderRadius: 6,
+  },
+  paceRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    gap: 12,
+  },
+  paceItem: {
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  paceLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  paceValue: {
+    fontSize: 14,
+    color: Colors.text,
+    fontWeight: '700',
+  },
+  paceWarning: {
+    backgroundColor: Colors.warningDim,
+  },
+  paceWarningText: {
+    fontSize: 12,
+    color: Colors.warning,
+    fontWeight: '700',
+  },
+  eventsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  eventsError: {
+    fontSize: 13,
+    color: Colors.error,
+    marginBottom: 12,
+  },
+  eventsEmpty: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginBottom: 12,
   },
   timeline: {
     marginTop: 8,
@@ -414,6 +597,11 @@ const styles = StyleSheet.create({
     zIndex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ogIcon: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#000',
   },
   timelineLine: {
     width: 2,

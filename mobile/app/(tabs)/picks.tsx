@@ -103,6 +103,16 @@ function pickDnp(p: Pick) {
   return p.result === 'dnp';
 }
 
+function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
+  const rec = p.recommendation;
+  if (rec === 'OVER' || rec === 'UNDER') return rec;
+  const proj = p.projection ?? p.projectedValue;
+  if (proj != null && p.line > 0) {
+    return proj < p.line ? 'OVER' : 'UNDER';
+  }
+  return null;
+}
+
 function PulsingDot() {
   const opacity = useSharedValue(1);
   React.useEffect(() => {
@@ -116,7 +126,7 @@ function PulsingDot() {
 }
 
 
-function PickCard({ pick, onDelete, onTrack }: { pick: Pick; onDelete?: () => void; onTrack?: () => void }) {
+function PickCard({ pick, onDelete, onTrack, onPlayerPress }: { pick: Pick; onDelete?: () => void; onTrack?: () => void; onPlayerPress?: (pick: Pick) => void }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const live = isLive(pick);
@@ -262,9 +272,7 @@ function PickCard({ pick, onDelete, onTrack }: { pick: Pick; onDelete?: () => vo
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => {
-            const all = (picksRef.current || []);
-            const playerPicks = all.filter(p => p.playerName === pick.playerName);
-            setProfilePlayer({ name: pick.playerName, picks: playerPicks });
+            onPlayerPress?.(pick);
           }}
           style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
         >
@@ -463,7 +471,7 @@ function PickCard({ pick, onDelete, onTrack }: { pick: Pick; onDelete?: () => vo
       {/* Live track button — open full match tracker for live soccer */}
       {live && !won && !lost && cardSport === 'soccer' && onTrack && (
         <TouchableOpacity onPress={onTrack} style={styles.trackBtn} activeOpacity={0.7}>
-          <Ionicons name="radial" size={12} color={Colors.primary} />
+          <Ionicons name="pulse" size={12} color={Colors.primary} />
           <Text style={styles.trackBtnText}>Track Live</Text>
         </TouchableOpacity>
       )}
@@ -800,6 +808,11 @@ export default function PicksScreen() {
     picksRef.current = picks;
   }, [picks]);
 
+  const handlePlayerPress = useCallback((pick: Pick) => {
+    const playerPicks = picksRef.current.filter(p => p.playerName === pick.playerName);
+    setProfilePlayer({ name: pick.playerName, picks: playerPicks });
+  }, []);
+
   const deleteMutation = useMutation({
     mutationFn: (pickId: string) => {
       if (!session) throw new Error('Not authenticated');
@@ -983,10 +996,10 @@ export default function PicksScreen() {
                 }}
                 style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
               >
-                <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} />
+                <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} onPlayerPress={handlePlayerPress} />
               </Pressable>
             ) : (
-              <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} />
+              <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} onPlayerPress={handlePlayerPress} />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
           }}
@@ -1027,7 +1040,7 @@ export default function PicksScreen() {
                   onPress={() => handlePickPress(pickItem)}
                   style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
                 >
-                  <PickCard pick={pickItem} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(pickItem)} />
+                  <PickCard pick={pickItem} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(pickItem)} onPlayerPress={handlePlayerPress} />
                 </Pressable>
               </SwipeablePickRow>
             );
@@ -1874,6 +1887,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   socialTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  closeBtn: {
+    padding: 4,
+  },
 
   // Live possession bar
   possBarBlock: {

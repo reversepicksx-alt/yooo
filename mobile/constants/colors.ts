@@ -20,6 +20,8 @@ const Colors = {
   pushDim: 'rgba(10,132,255,0.14)',
   dnp: '#FF9500',
   dnpDim: 'rgba(255,149,0,0.14)',
+  warning: '#FF9500',
+  warningDim: 'rgba(255,149,0,0.14)',
   tabBar: '#000000',
   tabBarBorder: 'rgba(57,255,20,0.2)',
   overlay: 'rgba(0,0,0,0.85)',

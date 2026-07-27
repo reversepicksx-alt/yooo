@@ -197,7 +197,7 @@ export default function StreaksAchievements({
       id: 'sharp-shooter',
       name: 'Sharp Shooter',
       description: 'Win 65%+ of picks (min 10)',
-      icon: 'bullseye',
+      icon: 'disc',
       color: Colors.success,
       earned:
         totalResolvedWithoutPushes >= 10 &&

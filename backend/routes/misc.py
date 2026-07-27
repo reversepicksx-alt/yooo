@@ -2,7 +2,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON, GROK_MODEL, INTERNATIONAL_LEAGUES
@@ -438,3 +438,58 @@ Pick a REAL player from these actual fixtures. Be specific and data-driven."""
 
     await db.potd.update_one({"date": today}, {"$set": result}, upsert=True)
     return result
+
+
+@router.get("/live/fixture-events")
+async def fixture_events(fixtureId: int = Query(..., gt=0)):
+    """Return live match events (goals, cards, substitutions) from API-Football.
+
+    The response is normalised to a simple list so the mobile app can render a
+    timeline without parsing vendor-specific shapes. Quota failures are handled
+    gracefully: an empty list is returned instead of an error page.
+    """
+    raw = await api_football_request("fixtures/events", {"fixture": fixtureId})
+    if not raw:
+        return {"fixtureId": fixtureId, "events": []}
+
+    events = []
+    for item in raw:
+        t = item.get("time", {})
+        elapsed = t.get("elapsed")
+        extra = t.get("extra")
+        ev_type = (item.get("type") or "").lower()
+        detail = (item.get("detail") or "").lower()
+        player = item.get("player", {})
+        assist = item.get("assist", {})
+        team = item.get("team", {})
+        extra_text = f"+{extra}" if extra else ""
+
+        event = {
+            "elapsed": elapsed,
+            "extra": extra,
+            "time": f"{elapsed}{extra_text}'",
+            "type": "unknown",
+            "team": team.get("name", ""),
+            "teamId": team.get("id"),
+            "playerName": player.get("name", ""),
+            "playerId": player.get("id"),
+            "assistName": assist.get("name", ""),
+            "detail": item.get("detail", ""),
+            "comments": item.get("comments"),
+        }
+
+        if ev_type == "goal":
+            event["type"] = "own_goal" if "own" in detail else "penalty" if "penalty" in detail else "goal"
+        elif ev_type == "card":
+            event["type"] = "red" if "red" in detail else "yellow"
+        elif ev_type == "subst":
+            event["type"] = "sub"
+            event["assistName"] = assist.get("name", "")
+        elif ev_type == "var":
+            event["type"] = "var"
+        elif ev_type in {"injury", "injury_time"}:
+            event["type"] = "injury"
+
+        events.append(event)
+
+    return {"fixtureId": fixtureId, "events": events}

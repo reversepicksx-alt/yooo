@@ -849,6 +849,7 @@ export interface Pick {
   matchStatus?: string;
   fixtureId?: number | null;
   createdAt?: string;
+  settledAt?: string;
   sport?: string;
   venue?: string;
   trackingId?: string;
@@ -2314,5 +2315,25 @@ export async function markDmRead(email: string, otherId: string): Promise<{ ok: 
     method: 'PATCH',
     body: JSON.stringify({ email, otherEmail: otherId }),
   });
+}
+
+export interface LiveEvent {
+  id?: string;
+  time: string;
+  type: string;
+  text?: string;
+  elapsed?: number;
+  extra?: number | null;
+  team?: string;
+  teamId?: number;
+  playerName?: string;
+  playerId?: number;
+  assistName?: string;
+  detail?: string;
+  comments?: string | null;
+}
+
+export async function fetchFixtureEvents(fixtureId: number): Promise<{ fixtureId: number; events: LiveEvent[] }> {
+  return apiCall(`/api/live/fixture-events?fixtureId=${fixtureId}`);
 }
 
