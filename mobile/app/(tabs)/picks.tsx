@@ -114,29 +114,6 @@ function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   return null;
 }
 
-type PickFilterKey = 'player' | 'position' | 'opponent' | 'prop' | 'sport' | 'result' | 'league' | 'venue' | 'recommendation';
-type FilterState = Record<PickFilterKey, string[]>;
-type FilterCategory = {
-  key: PickFilterKey;
-  label: string;
-  values: string[];
-  searchable: boolean;
-  formatValue?: (value: string) => string;
-};
-
-const EMPTY_FILTERS: FilterState = {
-  player: [],
-  position: [],
-  opponent: [],
-  prop: [],
-  sport: [],
-  result: [],
-  league: [],
-  venue: [],
-  recommendation: [],
-};
-
-const RESULT_LABELS: Record<string, string> = { hit: 'Hit', miss: 'Miss', push: 'Push', dnp: 'DNP', live: 'Live' };
 
 function PulsingDot() {
   const opacity = useSharedValue(1);
@@ -646,48 +623,6 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   );
 }
 
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <TouchableOpacity onPress={onRemove} style={styles.filterChip}>
-      <Text style={styles.filterChipText}>{label}</Text>
-      <Ionicons name="close" size={12} color={Colors.primary} />
-    </TouchableOpacity>
-  );
-}
-
-function getFilterValueLabel(category: FilterCategory | null, value: string) {
-  if (!category) return value;
-  return category.formatValue ? category.formatValue(value) : value;
-}
-
-function getPickFilterValue(pick: Pick, key: PickFilterKey) {
-  switch (key) {
-    case 'player':
-      return pick.playerName || '';
-    case 'position':
-      return pick.position || '';
-    case 'opponent':
-      return pick.opponentName || '';
-    case 'prop':
-      return pick.propType || '';
-    case 'sport':
-      return getSport(pick);
-    case 'result':
-      return pick.result === 'hit' || pick.result === 'won' ? 'hit'
-        : pick.result === 'miss' || pick.result === 'lost' ? 'miss'
-        : pick.result === 'push' ? 'push'
-        : pick.result === 'dnp' ? 'dnp'
-        : isLive(pick) ? 'live'
-        : '';
-    case 'league':
-      return pick.leagueName || getLeagueLabel(pick.leagueId) || '';
-    case 'venue':
-      return (pick.venue || '').toLowerCase();
-    case 'recommendation':
-      return (getRecDir(pick) || '').toLowerCase();
-  }
-}
-
 function renderAnalysisBlocks(text: string, rec: string) {
   const isOver = rec === 'OVER';
   const isUnder = rec === 'UNDER';
@@ -813,11 +748,6 @@ export default function PicksScreen() {
   const [aiOpen, setAiOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [filterCategory, setFilterCategory] = useState<PickFilterKey | null>(null);
-  const [filterSearch, setFilterSearch] = useState('');
-  const [filterResultsOpen, setFilterResultsOpen] = useState(false);
-  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
   const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
   const toggleSport = useCallback((sport: SportKey) => {
@@ -946,79 +876,7 @@ export default function PicksScreen() {
       ].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    const matches = (key: PickFilterKey, value: string) => filters[key].length === 0 || filters[key].includes(value);
-    const sport = getSport(p);
-    const result = p.result === 'hit' || p.result === 'won' ? 'hit'
-      : p.result === 'miss' || p.result === 'lost' ? 'miss'
-      : p.result === 'push' ? 'push'
-      : p.result === 'dnp' ? 'dnp'
-      : isLive(p) ? 'live'
-      : '';
-    return matches('player', p.playerName || '')
-      && matches('position', p.position || '')
-      && matches('opponent', p.opponentName || '')
-      && matches('prop', p.propType || '')
-      && matches('sport', sport)
-      && matches('result', result)
-      && matches('league', p.leagueName || getLeagueLabel(p.leagueId) || '')
-      && matches('venue', (p.venue || '').toLowerCase())
-      && matches('recommendation', (getRecDir(p) || '').toLowerCase());
-  }), [picks, searchQuery, filters]);
-  const activeFilterCount = Object.values(filters).reduce((sum, arr) => sum + arr.length, 0);
-  const uniqueValues = useMemo(() => {
-    const uniq = (vals: Array<string | null | undefined>) => [...new Set(vals.map(v => v?.trim()).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b));
-    return {
-      players: uniq(picks.map(p => p.playerName)),
-      positions: uniq(picks.map(p => p.position)),
-      opponents: uniq(picks.map(p => p.opponentName)),
-      props: uniq(picks.map(p => p.propType)),
-      leagues: uniq(picks.map(p => p.leagueName || getLeagueLabel(p.leagueId))),
-    };
-  }, [picks]);
-  const filterCategories = useMemo<FilterCategory[]>(() => ([
-    { key: 'player', label: 'Player', values: uniqueValues.players, searchable: true },
-    { key: 'position', label: 'Position', values: uniqueValues.positions, searchable: false },
-    { key: 'opponent', label: 'Opponent', values: uniqueValues.opponents, searchable: true },
-    { key: 'prop', label: 'Prop', values: uniqueValues.props, searchable: true, formatValue: (v) => PROP_LABELS[v] || v.replace(/_/g, ' ') },
-    { key: 'sport', label: 'Sport', values: ['soccer', 'mlb', 'cs2'], searchable: false, formatValue: (v) => SPORT_META[v as SportKey].label },
-    { key: 'result', label: 'Result', values: ['hit', 'miss', 'push', 'dnp', 'live'], searchable: false, formatValue: (v) => RESULT_LABELS[v] ?? v },
-    { key: 'league', label: 'League', values: uniqueValues.leagues, searchable: true },
-    { key: 'venue', label: 'Venue', values: ['home', 'away'], searchable: false, formatValue: (v) => v.charAt(0).toUpperCase() + v.slice(1) },
-    { key: 'recommendation', label: 'Recommendation', values: ['over', 'under'], searchable: false, formatValue: (v) => v.toUpperCase() },
-  ]), [uniqueValues]);
-  const activeFilterItems = useMemo(() => Object.entries(filters).flatMap(([key, values]) => {
-    const category = filterCategories.find((c) => c.key === key);
-    return values.map((value) => ({
-      key: `${key}:${value}`,
-      filterKey: key as PickFilterKey,
-      value,
-      label: `${category?.label ?? key}: ${category?.formatValue ? category.formatValue(value) : value}`,
-    }));
-  }), [filters, filterCategories]);
-  const activeFilterCategory = useMemo(() => filterCategories.find((c) => c.key === filterCategory) ?? null, [filterCategory, filterCategories]);
-  const filterResultStats = useMemo(() => {
-    const total = filteredPicks.length;
-    const hits = filteredPicks.filter(pickWon).length;
-    const misses = filteredPicks.filter(pickLost).length;
-    const pushes = filteredPicks.filter(pickPush).length;
-    const dnps = filteredPicks.filter(pickDnp).length;
-    const settled = hits + misses + pushes + dnps;
-    const winRate = settled > 0 ? Math.round((hits / settled) * 100) : null;
-    const lineValues = filteredPicks.map((p) => p.line).filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
-    const avgLine = lineValues.length > 0 ? lineValues.reduce((sum, value) => sum + value, 0) / lineValues.length : null;
-    return { total, hits, misses, pushes, dnps, settled, winRate, avgLine };
-  }, [filteredPicks]);
-  const filterResultGroups = useMemo(() => {
-    const grouped = new Map<string, Pick[]>();
-    for (const pick of filteredPicks) {
-      const key = pick.playerName || 'Unknown Player';
-      const existing = grouped.get(key);
-      if (existing) existing.push(pick);
-      else grouped.set(key, [pick]);
-    }
-    return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filteredPicks]);
-  const activeFilterSummary = useMemo(() => activeFilterItems.slice(0, 6), [activeFilterItems]);
+  }), [picks, searchQuery]);
   const live = filteredPicks.filter(isLive);
   const history = filteredPicks.filter(isSettled);
 
@@ -1070,7 +928,7 @@ export default function PicksScreen() {
           </View>
         </View>
 
-        {/* Search + filter */}
+        {/* Search */}
         <View style={styles.searchRow}>
           <View style={styles.searchBar}>
             <Ionicons name="search" size={16} color={Colors.textTertiary} />
@@ -1089,31 +947,7 @@ export default function PicksScreen() {
               </TouchableOpacity>
             )}
           </View>
-          <TouchableOpacity onPress={() => setFilterOpen(true)} style={styles.filterBtn} activeOpacity={0.75}>
-            <Ionicons name="options" size={18} color={Colors.text} />
-            {activeFilterCount > 0 && (
-              <View style={styles.filterBadge}>
-                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
         </View>
-
-        {/* Active filter chips */}
-        {activeFilterCount > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-            <TouchableOpacity onPress={() => setFilters(EMPTY_FILTERS)} style={styles.clearChip}>
-              <Text style={styles.clearChipText}>Clear all</Text>
-            </TouchableOpacity>
-            {activeFilterItems.map((item) => (
-              <FilterChip
-                key={item.key}
-                label={item.label}
-                onRemove={() => setFilters((prev) => ({ ...prev, [item.filterKey]: prev[item.filterKey].filter((v) => v !== item.value) }))}
-              />
-            ))}
-          </ScrollView>
-        )}
 
         {/* Live / History tabs */}
         <View style={styles.tabToggle}>
@@ -1591,276 +1425,6 @@ export default function PicksScreen() {
         </View>
       </Modal>
 
-      <Modal visible={filterOpen} animationType="slide" transparent onRequestClose={() => setFilterOpen(false)}>
-        <View style={styles.filterOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setFilterOpen(false)} />
-          <View style={styles.filterSheet}>
-            <View style={styles.filterHeader}>
-              <Text style={styles.filterTitle}>Filters</Text>
-              <View style={styles.filterHeaderActions}>
-                <TouchableOpacity onPress={() => { setFilters(EMPTY_FILTERS); setFilterCategory(null); setFilterSearch(''); }}>
-                  <Text style={styles.filterHeaderActionText}>Reset</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setFilterOpen(false)}>
-                  <Ionicons name="close" size={22} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.filterSheetContent}>
-              <View style={styles.filterActiveBlock}>
-                <Text style={styles.filterSectionLabel}>Active filters</Text>
-                {activeFilterItems.length > 0 ? (
-                  <View style={styles.filterActiveChips}>
-                    {activeFilterItems.map((item) => (
-                      <FilterChip
-                        key={item.key}
-                        label={item.label}
-                        onRemove={() => setFilters((prev) => ({ ...prev, [item.filterKey]: prev[item.filterKey].filter((v) => v !== item.value) }))}
-                      />
-                    ))}
-                  </View>
-                ) : (
-                  <Text style={styles.filterEmptySelected}>No active filters</Text>
-                )}
-              </View>
-
-              <View style={styles.filterCategoryList}>
-                <Text style={styles.filterSectionLabel}>Categories</Text>
-                {filterCategories.map((category) => {
-                  const selectedCount = filters[category.key].length;
-                  return (
-                    <TouchableOpacity
-                      key={category.key}
-                      onPress={() => { setFilterCategory(category.key); setFilterSearch(''); }}
-                      style={styles.filterCategoryRow}
-                      activeOpacity={0.75}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.filterCategoryTitle}>{category.label}</Text>
-                        <Text style={styles.filterCategorySummary}>
-                          {selectedCount > 0 ? `${selectedCount} selected` : 'None'}
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {activeFilterCategory && (
-                <View style={styles.filterSubView}>
-                  <View style={styles.filterSubHeader}>
-                    <TouchableOpacity onPress={() => { setFilterCategory(null); setFilterSearch(''); }} style={styles.filterBackBtn}>
-                      <Ionicons name="arrow-back" size={18} color={Colors.text} />
-                      <Text style={styles.filterBackText}>Back</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.filterSubTitle}>{activeFilterCategory.label}</Text>
-                    <View style={{ width: 64 }} />
-                  </View>
-
-                  <View style={styles.filterSelectedWrap}>
-                    {filters[activeFilterCategory.key].length > 0 ? (
-                      <View style={styles.filterActiveChips}>
-                        {filters[activeFilterCategory.key].map((value) => (
-                          <FilterChip
-                            key={`${activeFilterCategory.key}:${value}`}
-                            label={getFilterValueLabel(activeFilterCategory, value)}
-                            onRemove={() => setFilters((prev) => ({
-                              ...prev,
-                              [activeFilterCategory.key]: prev[activeFilterCategory.key].filter((v) => v !== value),
-                            }))}
-                          />
-                        ))}
-                      </View>
-                    ) : (
-                      <Text style={styles.filterEmptySelected}>No selections yet</Text>
-                    )}
-                  </View>
-
-                  {activeFilterCategory.searchable && (
-                    <View style={styles.filterSearchBar}>
-                      <Ionicons name="search" size={16} color={Colors.textTertiary} />
-                      <TextInput
-                        value={filterSearch}
-                        onChangeText={setFilterSearch}
-                        placeholder={`Search ${activeFilterCategory.label.toLowerCase()}s`}
-                        placeholderTextColor={Colors.textTertiary}
-                        style={styles.filterSearchInput}
-                      />
-                      {filterSearch.length > 0 && (
-                        <TouchableOpacity onPress={() => setFilterSearch('')}>
-                          <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
-
-                  <View style={styles.filterOptionsList}>
-                    {(() => {
-                      const q = filterSearch.trim().toLowerCase();
-                      const values = activeFilterCategory.searchable
-                        ? (q.length > 0 ? activeFilterCategory.values.filter((value) => getFilterValueLabel(activeFilterCategory, value).toLowerCase().includes(q)) : [])
-                        : activeFilterCategory.values;
-                      if (activeFilterCategory.searchable && q.length === 0) {
-                        return <Text style={styles.filterEmptySelected}>Type to search options</Text>;
-                      }
-                      if (values.length === 0) {
-                        return <Text style={styles.filterEmptySelected}>No matching results</Text>;
-                      }
-                      return values.map((value) => {
-                        const selected = filters[activeFilterCategory.key].includes(value);
-                        const display = getFilterValueLabel(activeFilterCategory, value);
-                        return activeFilterCategory.searchable ? (
-                          <TouchableOpacity
-                            key={value}
-                            onPress={() => setFilters((prev) => ({
-                              ...prev,
-                              [activeFilterCategory.key]: selected
-                                ? prev[activeFilterCategory.key].filter((v) => v !== value)
-                                : [...prev[activeFilterCategory.key], value],
-                            }))}
-                            style={styles.filterCheckRow}
-                            activeOpacity={0.75}
-                          >
-                            <View style={[styles.filterCheckBox, selected && styles.filterCheckBoxActive]}>
-                              {selected && <Ionicons name="checkmark" size={12} color="#000" />}
-                            </View>
-                            <Text style={styles.filterCheckLabel}>{display}</Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <TouchableOpacity
-                            key={value}
-                            onPress={() => setFilters((prev) => ({
-                              ...prev,
-                              [activeFilterCategory.key]: selected
-                                ? prev[activeFilterCategory.key].filter((v) => v !== value)
-                                : [...prev[activeFilterCategory.key], value],
-                            }))}
-                            style={[styles.filterChipOption, selected && styles.filterChipOptionActive]}
-                            activeOpacity={0.75}
-                          >
-                            <Text style={[styles.filterChipOptionText, selected && styles.filterChipOptionTextActive]}>
-                              {display}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      });
-                    })()}
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => { setFilterOpen(false); setFilterCategory(null); setFilterSearch(''); setFilterResultsOpen(true); }}
-                    style={styles.reviewBtn}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.reviewBtnText}>Review</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={filterResultsOpen} animationType="slide" transparent onRequestClose={() => setFilterResultsOpen(false)}>
-        <View style={styles.filterResultsOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setFilterResultsOpen(false)} />
-          <View style={styles.filterResultsSheet}>
-            <View style={styles.filterResultsHeader}>
-              <TouchableOpacity onPress={() => setFilterResultsOpen(false)} style={styles.closeBtn}>
-                <Ionicons name="arrow-back" size={18} color={Colors.text} />
-              </TouchableOpacity>
-              <Text style={styles.filterResultsTitle}>Filter Results</Text>
-              <TouchableOpacity onPress={() => setFilterResultsOpen(false)} style={styles.closeBtn}>
-                <Ionicons name="close" size={18} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.filterResultsContent}>
-              <View style={styles.filterResultsSummaryCard}>
-                <Text style={styles.filterResultsSectionLabel}>Active filters</Text>
-                {activeFilterItems.length > 0 ? (
-                  <View style={styles.filterResultsChips}>
-                    {activeFilterSummary.map((item) => (
-                      <View key={item.key} style={styles.filterResultsChip}>
-                        <Text style={styles.filterResultsChipText}>{item.label}</Text>
-                      </View>
-                    ))}
-                    {activeFilterItems.length > activeFilterSummary.length && (
-                      <Text style={styles.filterResultsMoreText}>+{activeFilterItems.length - activeFilterSummary.length} more</Text>
-                    )}
-                  </View>
-                ) : (
-                  <Text style={styles.filterResultsEmpty}>No filters applied.</Text>
-                )}
-              </View>
-
-              <View style={styles.filterResultsStatsGrid}>
-                <StatTile label="Total" value={String(filterResultStats.total)} />
-                <StatTile label="Hits" value={String(filterResultStats.hits)} accent={Colors.success} />
-                <StatTile label="Misses" value={String(filterResultStats.misses)} accent={Colors.error} />
-                <StatTile label="Pushes" value={String(filterResultStats.pushes)} accent={Colors.push} />
-                <StatTile label="DNPs" value={String(filterResultStats.dnps)} accent={Colors.dnp} />
-                <StatTile label="Win rate" value={filterResultStats.winRate != null ? `${filterResultStats.winRate}%` : '—'} accent={Colors.primary} />
-                <StatTile label="Avg line" value={filterResultStats.avgLine != null ? filterResultStats.avgLine.toFixed(1) : '—'} accent={Colors.accent} />
-              </View>
-
-              <View style={styles.filterResultsList}>
-                {filterResultGroups.length > 0 ? filterResultGroups.map(([player, playerPicks]) => {
-                  const hits = playerPicks.filter(pickWon).length;
-                  const misses = playerPicks.filter(pickLost).length;
-                  const pushes = playerPicks.filter(pickPush).length;
-                  const dnps = playerPicks.filter(pickDnp).length;
-                  const settled = hits + misses + pushes + dnps;
-                  const avgLineValues = playerPicks.map((p) => p.line).filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
-                  const avgLine = avgLineValues.length > 0 ? avgLineValues.reduce((sum, value) => sum + value, 0) / avgLineValues.length : null;
-                  return (
-                    <View key={player} style={styles.playerGroupCard}>
-                      <View style={styles.playerGroupHeader}>
-                        <Text style={styles.playerGroupTitle}>{player}</Text>
-                        <Text style={styles.playerGroupSummary}>
-                          {playerPicks.length} picks, {hits} hits{avgLine != null ? `, avg line ${avgLine.toFixed(1)}` : ''}
-                        </Text>
-                      </View>
-                      {playerPicks.map((pick) => {
-                        const rec = (getRecDir(pick) || '').toUpperCase();
-                        return (
-                          <View key={pick.pickId || pick._id || pick.id || `${player}-${pick.propType}-${pick.line}`} style={styles.playerPickRow}>
-                            <View style={styles.playerPickMain}>
-                              <Text style={styles.playerPickMeta} numberOfLines={1}>
-                                {getLeagueLabel(pick.leagueId) || pick.leagueName || 'League unknown'} · {pick.position || '—'} · {(pick.venue || '').toUpperCase() || '—'}
-                              </Text>
-                              <Text style={styles.playerPickLine}>
-                                {PROP_LABELS[pick.propType] || pick.propType || 'Prop'} · Line {pick.line != null ? pick.line : '—'}{rec ? ` · ${rec}` : ''}
-                              </Text>
-                            </View>
-                            <View style={styles.playerPickResultWrap}>
-                              <Text style={[
-                                styles.playerPickResult,
-                                pickWon(pick) ? { color: Colors.success } : pickLost(pick) ? { color: Colors.error } : pickPush(pick) ? { color: Colors.push } : { color: Colors.textSecondary },
-                              ]}>
-                                {RESULT_LABELS[pick.result || ''] || (isLive(pick) ? 'Live' : 'Pending')}
-                              </Text>
-                            </View>
-                          </View>
-                        );
-                      })}
-                      <Text style={styles.playerGroupFooter}>
-                        {settled > 0 ? `${settled} settled, ${hits} hits, ${misses} misses${pushes ? `, ${pushes} pushes` : ''}${dnps ? `, ${dnps} DNPs` : ''}` : 'No settled results yet'}
-                      </Text>
-                    </View>
-                  );
-                }) : (
-                  <View style={styles.filterResultsEmptyState}>
-                    <Ionicons name="search-outline" size={28} color={Colors.textTertiary} />
-                    <Text style={styles.filterResultsEmptyTitle}>No matching picks</Text>
-                    <Text style={styles.filterResultsEmptyBody}>Adjust your filters and try again.</Text>
-                  </View>
-                )}
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
       {/* ── Live Match Tracker ── */}
       {liveTrackerPick && (
         <LiveMatchTracker pick={liveTrackerPick} visible={!!liveTrackerPick} onClose={() => setLiveTrackerPick(null)} />
@@ -2114,94 +1678,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderSubtle,
   },
   searchInput: { flex: 1, color: Colors.text, fontSize: 15, padding: 0, height: 20 },
-  filterBtn: {
-    width: 46,
-    height: 46,
-    borderRadius: 12,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterBadge: {
-    position: 'absolute',
-    right: -6,
-    top: -6,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  filterBadgeText: { color: Colors.background, fontSize: 11, fontWeight: '800' },
   chipRow: { gap: 8, paddingVertical: 2 },
   clearChip: { backgroundColor: Colors.primaryDim, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   clearChipText: { color: Colors.primary, fontWeight: '700', fontSize: 12 },
-  filterChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.card, borderRadius: 999,
-    paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.borderSubtle,
-  },
-  filterChipText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
-  filterOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: Colors.overlay },
-  filterSheet: {
-    maxHeight: '80%',
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: Colors.radiusLg,
-    borderTopRightRadius: Colors.radiusLg,
-    paddingTop: 12,
-    paddingHorizontal: 16,
-  },
-  filterSheetContent: { paddingBottom: 24, gap: 18 },
-  filterHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
-  filterTitle: { color: Colors.text, fontSize: 18, fontWeight: '800' },
-  filterHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  filterHeaderActionText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
-  filterSectionLabel: { color: Colors.textSecondary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
-  filterActiveBlock: { gap: 10 },
-  filterActiveChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filterCategoryList: { gap: 10 },
-  filterCategoryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-  },
-  filterCategoryTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
-  filterCategorySummary: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
-  filterSubView: {
-    gap: 12,
-    paddingTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderSubtle,
-  },
-  filterSubHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  filterBackBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, width: 64 },
-  filterBackText: { color: Colors.text, fontSize: 13, fontWeight: '700' },
-  filterSubTitle: { color: Colors.text, fontSize: 16, fontWeight: '800' },
-  filterSelectedWrap: { gap: 8 },
-  filterEmptySelected: { color: Colors.textTertiary, fontSize: 12 },
-  filterSearchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-  },
-  filterSearchInput: { flex: 1, color: Colors.text, fontSize: 14, padding: 0, height: 20 },
-  filterOptionsList: { gap: 8 },
   reviewBtn: {
     marginTop: 8,
     backgroundColor: Colors.primary,
@@ -2210,43 +1689,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   reviewBtnText: { color: '#000', fontSize: 15, fontWeight: '900', letterSpacing: 0.4 },
-  filterResultsOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: Colors.overlay },
-  filterResultsSheet: {
-    maxHeight: '88%',
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: Colors.radiusLg,
-    borderTopRightRadius: Colors.radiusLg,
-    paddingTop: 12,
-  },
-  filterResultsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  filterResultsTitle: { color: Colors.text, fontSize: 18, fontWeight: '800' },
-  filterResultsContent: { paddingHorizontal: 16, paddingBottom: 28, gap: 14 },
-  filterResultsSectionLabel: { color: Colors.textSecondary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
-  filterResultsSummaryCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    gap: 10,
-  },
-  filterResultsChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filterResultsChip: {
-    backgroundColor: Colors.cardSecondary,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  filterResultsChipText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
-  filterResultsMoreText: { color: Colors.textTertiary, fontSize: 12, alignSelf: 'center' },
-  filterResultsEmpty: { color: Colors.textTertiary, fontSize: 13 },
-  filterResultsStatsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statTile: {
     width: '31%',
     backgroundColor: Colors.card,
@@ -2285,43 +1727,6 @@ const styles = StyleSheet.create({
   playerPickResultWrap: { alignItems: 'flex-end' },
   playerPickResult: { fontSize: 12, fontWeight: '800' },
   playerGroupFooter: { color: Colors.textSecondary, fontSize: 11, fontWeight: '600' },
-  filterResultsEmptyState: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    gap: 6,
-  },
-  filterResultsEmptyTitle: { color: Colors.text, fontSize: 16, fontWeight: '800' },
-  filterResultsEmptyBody: { color: Colors.textSecondary, fontSize: 13, textAlign: 'center' },
-  filterCheckRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-  },
-  filterCheckBox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.cardSecondary,
-  },
-  filterCheckBoxActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  filterCheckLabel: { color: Colors.text, fontSize: 13, fontWeight: '600' },
-  filterChipOption: {
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
-    backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.borderSubtle,
-  },
-  filterChipOptionActive: { backgroundColor: Colors.primaryDim, borderColor: Colors.primary },
-  filterChipOptionText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
-  filterChipOptionTextActive: { color: Colors.primary },
   tabToggle: {
     flexDirection: 'row',
     backgroundColor: Colors.card,

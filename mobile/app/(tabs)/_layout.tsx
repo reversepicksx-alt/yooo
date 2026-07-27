@@ -78,6 +78,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="matchups"
+        options={{
+          title: 'Matchups',
+          href: '/(tabs)/matchups',
+          tabBarIcon: ({ focused }) => <TabIcon name="git-compare" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
         name="community"
         options={{
           title: 'Reverse Chat',
