@@ -12,9 +12,64 @@ from config import API_FOOTBALL_BASE, api_semaphore, get_dynamic_api_key
 # hundreds of rejected requests. The breaker resets at midnight UTC.
 # State is persisted to disk so server restarts on the same day don't re-burn calls.
 import os as _os
+import time as _time
+import hashlib as _hashlib
+from collections import OrderedDict as _OrderedDict
+from config import API_DAILY_SOFT_LIMIT
 
 _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
 _quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
+_daily_call_date: str | None = None
+_daily_call_count = 0
+_response_cache: "_OrderedDict[str, tuple[float, list]]" = _OrderedDict()
+_CACHE_TTLS = {
+    "leagues": 86400,
+    "teams": 21600,
+    "players": 21600,
+    "players/squads": 21600,
+    "fixtures": 120,
+    "fixtures/statistics": 45,
+    "fixtures/events": 45,
+    "fixtures/players": 45,
+    "fixtures/lineups": 120,
+    "odds": 120,
+}
+
+
+def _request_cache_key(endpoint: str, params: dict | None) -> str:
+    raw = endpoint + "|" + json.dumps(params or {}, sort_keys=True, default=str)
+    return _hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _cached_response(endpoint: str, key: str):
+    item = _response_cache.get(key)
+    if not item:
+        return None
+    created, value = item
+    if _time.monotonic() - created >= _CACHE_TTLS.get(endpoint, 60):
+        _response_cache.pop(key, None)
+        return None
+    _response_cache.move_to_end(key)
+    return value
+
+
+def _store_response(endpoint: str, key: str, value):
+    # Empty responses may be caused by a transient provider error. Do not
+    # cache them as if they were authoritative "no data" answers.
+    if not value:
+        return
+    _response_cache[key] = (_time.monotonic(), value)
+    _response_cache.move_to_end(key)
+    while len(_response_cache) > 512:
+        _response_cache.popitem(last=False)
+
+
+def _reset_daily_budget_if_needed():
+    global _daily_call_date, _daily_call_count
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _daily_call_date != today:
+        _daily_call_date = today
+        _daily_call_count = 0
 
 
 def _load_breaker_from_disk() -> str | None:
@@ -72,8 +127,19 @@ def is_quota_exhausted() -> bool:
 
 
 async def api_football_request(endpoint: str, params: dict = None):
+    global _daily_call_count
     # Short-circuit immediately if today's quota is already known to be gone
     if _quota_tripped():
+        return []
+
+    cache_key = _request_cache_key(endpoint, params)
+    cached = _cached_response(endpoint, cache_key)
+    if cached is not None:
+        return cached
+
+    _reset_daily_budget_if_needed()
+    if _daily_call_count >= API_DAILY_SOFT_LIMIT:
+        print(f"[API-SPORTS] Soft daily budget reached ({API_DAILY_SOFT_LIMIT}); skipping {endpoint}")
         return []
 
     key = get_dynamic_api_key()
@@ -86,13 +152,17 @@ async def api_football_request(endpoint: str, params: dict = None):
         # the breaker while we were waiting, bail out immediately.
         if _quota_tripped():
             return []
-        for attempt in range(3):
+        for attempt in range(2):
             try:
+                _daily_call_count += 1
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.get(f"{API_FOOTBALL_BASE}/{endpoint}", headers=headers, params=params or {})
                     if resp.status_code == 429:
-                        await aio.sleep(1.5 * (attempt + 1))
-                        continue
+                        # A 429 has already consumed a request. Retrying from
+                        # every caller multiplies the quota burn, so fail
+                        # fast and let cache/fallback logic handle it.
+                        print(f"[API-SPORTS] 429 for {endpoint}; no retry")
+                        return []
                     if resp.status_code != 200:
                         body_lower = resp.text.lower()
                         if "suspended" in body_lower or "free plans do not have access" in body_lower:
@@ -130,9 +200,11 @@ async def api_football_request(endpoint: str, params: dict = None):
                             print(f"[API-SPORTS] Rate limit persisted after retries for {endpoint} — returning empty, caller should fall back.")
                             return []
                         raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
-                    return data.get("response", [])
+                    result = data.get("response", [])
+                    _store_response(endpoint, cache_key, result)
+                    return result
             except httpx.TimeoutException:
-                if attempt < 4:
+                if attempt < 1:
                     continue
                 print(f"[API-SPORTS] Timeout persisted after retries for {endpoint} — returning empty, caller should fall back.")
                 return []

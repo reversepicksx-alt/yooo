@@ -253,12 +253,16 @@ async def _run_startup_tasks():
     # from settled picks every few hours so it never goes stale.
     asyncio.create_task(_cheat_sheet_loop())
 
-    # Bulk player-stats prefetch — caches all players from recent fixtures so
-    # predictions never hit "no data". Runs on startup then every 24h.
-    from data_prefetch import data_prefetch_loop, backfill_fixture_metadata
-    asyncio.create_task(data_prefetch_loop())
-    # Backfill home/away metadata for any uncovered fixtures (no-op if already done)
-    asyncio.create_task(backfill_fixture_metadata(max_fixtures=500))
+    # Bulk player-stats prefetch is intentionally opt-in. It can consume
+    # hundreds of API-Football calls before a user makes a request; predictions
+    # now fill the cache on demand instead.
+    from config import API_BULK_PREFETCH_ENABLED
+    if API_BULK_PREFETCH_ENABLED:
+        from data_prefetch import data_prefetch_loop, backfill_fixture_metadata
+        asyncio.create_task(data_prefetch_loop())
+        asyncio.create_task(backfill_fixture_metadata(max_fixtures=100))
+    else:
+        print("[PREFETCH] Disabled by default — using on-demand cache fills")
 
     # Atlas storage guard: purge stale cached data every 6 hours so the free-tier
     # 512 MB cap is never hit. Predictions are regenerated on demand (7-day TTL).

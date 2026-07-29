@@ -188,8 +188,13 @@ TOP_5_LEAGUES = [39, 140, 135, 78, 61]
 # to force re-resolution of any cached positions on next predict call ──
 POSITION_PROMPT_VERSION = 6
 
-# ── Rate limiter ──
-api_semaphore = aio.Semaphore(10)
+# ── API-Football protection ──
+# Keep background traffic opt-in. User-triggered searches/predictions and
+# active-pick polling use the shared client, while bulk jobs stay disabled
+# unless explicitly enabled in the environment.
+api_semaphore = aio.Semaphore(4)
+API_BULK_PREFETCH_ENABLED = os.environ.get("ENABLE_API_BULK_PREFETCH", "").lower() in {"1", "true", "yes"}
+API_DAILY_SOFT_LIMIT = int(os.environ.get("API_DAILY_SOFT_LIMIT", "700"))
 
 # ── Chat sessions (in-memory) ──
 chat_sessions: dict = {}
