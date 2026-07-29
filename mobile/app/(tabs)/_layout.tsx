@@ -80,9 +80,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="matchups"
         options={{
-          title: 'Matchups',
-          href: '/(tabs)/matchups',
-          tabBarIcon: ({ focused }) => <TabIcon name="git-compare" focused={focused} />,
+          // Temporarily hidden for all users while the matchup history screen
+          // is redesigned for performance. The route remains available for
+          // development and can be restored by removing this href override.
+          href: null,
         }}
       />
       <Tabs.Screen
