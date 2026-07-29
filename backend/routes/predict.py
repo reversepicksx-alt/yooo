@@ -7089,17 +7089,28 @@ Analyze ALL data thoroughly. Return JSON only."""
         # Any gate (GK narrow edge, home-GK fade, etc.) may flip the recommendation
         # without touching projectedValue — this guard realigns the number so the UI
         # never shows "Projection: 30, Line: 29.5 — UNDER" or vice-versa.
+        #
+        # FIX: use the actual Bayesian posterior mean (real_bayes["posteriorMean"])
+        # instead of the hardcoded "line ± 0.5" anchor.  The old anchor caused the
+        # displayed projection to track the sportsbook line perfectly (proj = line - 0.5
+        # regardless of player stats) whenever a gate flipped the recommendation.
+        # The posterior mean is computed independently from game logs and only lightly
+        # fused with the line (20%), so it reflects the player's actual statistical level.
         _cg_rec  = str(prediction.get("recommendation", "")).lower()
         _cg_proj = prediction.get("projectedValue")
+        _cg_bayes_mean = (real_bayes or {}).get("posteriorMean")
         if _cg_proj is not None and req.line and req.line > 0:
             if _cg_rec == "under" and _cg_proj > req.line:
-                _cg_fixed = round((req.line - 0.5) * 2) / 2
+                # Prefer the real posterior mean; fall back to line-0.5 only if unavailable
+                _cg_fixed = round(_cg_bayes_mean, 1) if _cg_bayes_mean is not None else round((req.line - 0.5) * 2) / 2
                 prediction["projectedValue"] = _cg_fixed
-                print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} (rec=UNDER, was above line {req.line})")
+                print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} "
+                      f"(rec=UNDER, was above line {req.line}; using posterior={'real' if _cg_bayes_mean is not None else 'line-anchor'})")
             elif _cg_rec == "over" and _cg_proj < req.line:
-                _cg_fixed = round((req.line + 0.5) * 2) / 2
+                _cg_fixed = round(_cg_bayes_mean, 1) if _cg_bayes_mean is not None else round((req.line + 0.5) * 2) / 2
                 prediction["projectedValue"] = _cg_fixed
-                print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} (rec=OVER, was below line {req.line})")
+                print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} "
+                      f"(rec=OVER, was below line {req.line}; using posterior={'real' if _cg_bayes_mean is not None else 'line-anchor'})")
 
         # ── BAYESIAN TRUTH OVERRIDE ──────────────────────────────────────────
         # By user directive: the Bayesian Monte-Carlo probability is the
@@ -7159,15 +7170,23 @@ Analyze ALL data thoroughly. Return JSON only."""
                     f"confirms genuine {_bt_dir.upper()} signal, not a coin flip"
                 )
 
-            # If direction flipped, the projected value must be on the right
-            # side of the line for visual consistency. Use the closer half-
-            # integer offset like CONSISTENCY GUARD did.
+            # If direction flipped, align projectedValue with the new direction.
+            # Use the actual Bayesian posterior mean — NOT "line ± 0.5" — so the
+            # projection reflects the player's real statistical level independent
+            # of what the sportsbook set the line to.
             if _bt_old_rec != _bt_dir:
                 _bt_proj = prediction.get("projectedValue", req.line)
+                _bt_posterior = (real_bayes or {}).get("posteriorMean")
                 if _bt_dir == "under" and _bt_proj > req.line:
-                    prediction["projectedValue"] = round((req.line - 0.5) * 2) / 2
+                    _bt_fixed = round(_bt_posterior, 1) if _bt_posterior is not None else round((req.line - 0.5) * 2) / 2
+                    prediction["projectedValue"] = _bt_fixed
+                    print(f"[BAYESIAN TRUTH] projectedValue flip UNDER: {_bt_proj} → {_bt_fixed} "
+                          f"({'posterior' if _bt_posterior is not None else 'line-anchor'})")
                 elif _bt_dir == "over" and _bt_proj < req.line:
-                    prediction["projectedValue"] = round((req.line + 0.5) * 2) / 2
+                    _bt_fixed = round(_bt_posterior, 1) if _bt_posterior is not None else round((req.line + 0.5) * 2) / 2
+                    prediction["projectedValue"] = _bt_fixed
+                    print(f"[BAYESIAN TRUTH] projectedValue flip OVER: {_bt_proj} → {_bt_fixed} "
+                          f"({'posterior' if _bt_posterior is not None else 'line-anchor'})")
 
             # ── KNOCKOUT UNDER CONFIDENCE PENALTY ────────────────────────────
             # Even after the ET projection uplift, UNDER bets in knockout games
