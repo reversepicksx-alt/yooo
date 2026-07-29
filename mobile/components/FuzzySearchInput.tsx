@@ -495,7 +495,10 @@ const styles = StyleSheet.create({
   },
   clearBtn: { marginLeft: 4, padding: 2 },
   dropdownInline: {
-    marginTop: 4,
+    position: 'absolute',
+    top: 44,
+    left: 0,
+    right: 0,
     backgroundColor: 'rgba(10,10,10,0.98)', borderRadius: 12,
     borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)',
     overflow: 'hidden',

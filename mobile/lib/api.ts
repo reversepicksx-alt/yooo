@@ -2230,6 +2230,13 @@ export async function sendCommunityMessage(payload: {
   });
 }
 
+export async function sharePickToCommunity(email: string, pick: Pick): Promise<CommunityMessage> {
+  return apiCall('/api/community/share-pick', {
+    method: 'POST',
+    body: JSON.stringify({ email, pick }),
+  });
+}
+
 export async function reactToCommunityMessage(
   messageId: string,
   email: string,

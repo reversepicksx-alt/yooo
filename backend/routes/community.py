@@ -39,6 +39,79 @@ class ReactRequest(BaseModel):
     emoji: str
 
 
+class PickShareRequest(BaseModel):
+    email: str
+    pick: dict
+
+
+def _pick_share_text(pick: dict, automatic: bool = False) -> str:
+    player = pick.get("playerName") or pick.get("player", {}).get("name") or "Unknown player"
+    prop = str(pick.get("propType") or "prop").replace("_", " ").title()
+    rec = str(pick.get("recommendation") or "").upper()
+    line = pick.get("line", "—")
+    confidence = pick.get("confidenceScore", pick.get("confidence", "—"))
+    matchup = pick.get("opponentName") or pick.get("opponent") or ""
+    prefix = "AI TOP PICK" if automatic else "COMMUNITY PICK"
+    parts = [f"{prefix}: {player}", f"{rec} {prop} {line}"]
+    if matchup:
+        parts.append(f"vs {matchup}")
+    if confidence != "—":
+        try:
+            confidence = f"{float(confidence):.0f}%"
+        except (TypeError, ValueError):
+            pass
+        parts.append(f"Confidence {confidence}")
+    return " · ".join(parts)
+
+
+async def create_pick_community_post(email: str, pick: dict, automatic: bool = False) -> dict:
+    """Create an idempotent text post for a saved pick."""
+    email_lower = email.lower().strip()
+    from routes.auth import check_access
+    if not await check_access(email_lower):
+        raise HTTPException(status_code=403, detail="No active subscription")
+    pick_id = str(pick.get("pickId") or pick.get("id") or "")
+    if automatic and pick_id:
+        existing = await db.community_messages.find_one(
+            {"postType": "auto_pick", "pickId": pick_id},
+            {"_id": 1},
+        )
+        if existing:
+            return _serialize(await db.community_messages.find_one({"postType": "auto_pick", "pickId": pick_id}))
+    user = await db.users.find_one({"email": email_lower}, {"_id": 0, "username": 1, "displayName": 1})
+    display_name = (
+        (user or {}).get("username") or (user or {}).get("displayName")
+        or email_lower.split("@")[0].replace(".", " ").replace("_", " ").title()
+    )
+    msg = {
+        "messageId": str(uuid.uuid4()),
+        "email": email_lower,
+        "displayName": display_name,
+        "text": _pick_share_text(pick, automatic),
+        "imageData": None,
+        "mentions": [],
+        "reactions": {},
+        "createdAt": datetime.now(timezone.utc),
+        "postType": "auto_pick" if automatic else "shared_pick",
+        "pickId": pick_id or None,
+        "pickData": {
+            "playerName": pick.get("playerName") or pick.get("player", {}).get("name"),
+            "propType": pick.get("propType"),
+            "line": pick.get("line"),
+            "recommendation": pick.get("recommendation"),
+            "confidence": pick.get("confidenceScore", pick.get("confidence")),
+            "opponentName": pick.get("opponentName") or pick.get("opponent"),
+        },
+    }
+    await db.community_messages.insert_one(msg)
+    return _serialize(msg)
+
+
+@router.post("/api/community/share-pick")
+async def share_pick_to_community(req: PickShareRequest):
+    return await create_pick_community_post(req.email, req.pick, automatic=False)
+
+
 @router.get("/api/community/messages")
 async def get_messages(
     since: Optional[str] = Query(None),

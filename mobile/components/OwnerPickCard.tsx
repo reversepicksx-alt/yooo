@@ -95,10 +95,11 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onPress, onTrack, onDelete, onPlayerPress,
+  pick, onPress, onTrack, onDelete, onPlayerPress, onShareCommunity,
 }: {
   pick: Pick; onPress?: () => void; onTrack?: () => void;
   onDelete?: () => void; onPlayerPress?: (pick: Pick) => void;
+  onShareCommunity?: () => void;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
@@ -372,6 +373,12 @@ export default function OwnerPickCard({
             <Text style={styles.liveBtnText}>Track Live</Text>
           </TouchableOpacity>
         )}
+        {onShareCommunity && !captureMode && (
+          <TouchableOpacity onPress={onShareCommunity} style={styles.communityBtn} activeOpacity={0.7}>
+            <Ionicons name="people-outline" size={12} color={Colors.primary} />
+            <Text style={styles.liveBtnText}>Share with Community</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── Share sheet (web only) ──────────────────────────── */}
@@ -595,6 +602,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(57,255,20,0.2)',
   },
   liveBtnText: { color: Colors.primary, fontSize: 9, fontWeight: '800' },
+  communityBtn: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+    marginTop: 5, paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 5, gap: 4,
+    backgroundColor: 'rgba(57,255,20,0.05)',
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.18)',
+  },
   // Share sheet
   ssOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   ssSheet: {

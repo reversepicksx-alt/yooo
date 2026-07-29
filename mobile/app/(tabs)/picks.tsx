@@ -31,7 +31,7 @@ import SocialFeed from '@/components/SocialFeed';
 import PlayerProfileCard from '@/components/PlayerProfileCard';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
-import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, Pick } from '@/lib/api';
+import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -341,6 +341,16 @@ export default function PicksScreen() {
     }
   }, [deleteMutation]);
 
+  const handleShareCommunity = useCallback(async (pick: Pick) => {
+    if (!session) return;
+    try {
+      await sharePickToCommunity(session.email, pick);
+      Alert.alert('Shared', 'Your pick is now in Reverse Chat.');
+    } catch (e: any) {
+      Alert.alert('Share failed', e?.message || 'Please try again.');
+    }
+  }, [session]);
+
   const handlePickPress = useCallback(async (pick: Pick) => {
     const id = pick.pickId || pick._id || pick.id;
     if (!id || !session) return;
@@ -528,6 +538,7 @@ export default function PicksScreen() {
                 onTrack={() => setLiveTrackerPick(item)}
                 onDelete={onDeleteForItem}
                 onPlayerPress={handlePlayerPress}
+                onShareCommunity={() => handleShareCommunity(item)}
               />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
@@ -553,6 +564,7 @@ export default function PicksScreen() {
                   onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}
                   onPlayerPress={handlePlayerPress}
+                  onShareCommunity={() => handleShareCommunity(item)}
                 />
               </SwipeablePickRow>
             );
