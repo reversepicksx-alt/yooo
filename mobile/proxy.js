@@ -246,7 +246,11 @@ function serveIndex(res, skipLoader) {
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const pathname = parsedUrl.pathname || '/';
-  const skipLoader = parsedUrl.query && (parsedUrl.query.noloader === '1' || parsedUrl.query.shot === '1');
+  // The auth screen must never be covered by the branded splash. After logout
+  // the user is routed here, and a long-running/late splash can otherwise
+  // leave Safari showing only a dark screen instead of the sign-in form.
+  const skipLoader = pathname === '/auth' ||
+    (parsedUrl.query && (parsedUrl.query.noloader === '1' || parsedUrl.query.shot === '1'));
 
   // Always proxy /api/* to FastAPI backend
   if (pathname === '/api' || pathname.startsWith('/api/')) {

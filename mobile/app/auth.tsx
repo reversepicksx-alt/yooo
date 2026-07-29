@@ -296,6 +296,62 @@ export default function AuthScreen() {
     setInfo('');
   };
 
+  // Keep the web entry screen deliberately simple and independent from the
+  // native-oriented centered layout below. Safari can mount the old nested
+  // flex/ScrollView tree without painting its children after a tab logout.
+  if (Platform.OS === 'web' && step === 'email') {
+    return (
+      <View style={styles.webLoginRoot}>
+        <View style={styles.webLoginCard}>
+          <Image source={require('../assets/logo.png')} style={styles.webLoginLogo} resizeMode="contain" />
+          <Text style={styles.webLoginTitle}>REVERSEPICKS</Text>
+          <Text style={styles.webLoginSubtitle}>ELITE PROP INTELLIGENCE</Text>
+          <View style={styles.webLoginInputRow}>
+            <Ionicons name="mail-outline" size={18} color={Colors.textSecondary} />
+            <TextInput
+              style={styles.webLoginInput}
+              placeholder="Enter your email"
+              placeholderTextColor={Colors.textTertiary}
+              value={email}
+              onChangeText={v => { setEmail(v); setError(''); setInfo(''); }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              onSubmitEditing={handleCheckEmail}
+            />
+          </View>
+          {!!info && <InfoBox message={info} />}
+          {!!error && <ErrorBox message={error} />}
+          <TouchableOpacity
+            style={[styles.btn, loading && styles.btnDisabled]}
+            onPress={handleCheckEmail}
+            disabled={loading}
+          >
+            {loading ? <ActivityIndicator color="#000" /> : (
+              <View style={styles.btnInner}>
+                <Ionicons name="flash" size={16} color="#000" />
+                <Text style={styles.btnText}>VERIFY ACCESS</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleShowPricing} style={styles.webLoginSecondary}>
+            <Text style={styles.alreadyPaid}>Subscribe through the App Store</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleAlreadyPaid} disabled={loading} style={styles.webLoginSecondary}>
+            <Text style={styles.webLoginMuted}>Already paid? Verify your payment</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { setSupportSent(false); setSupportName(''); setSupportMessage(''); setSupportError(''); setShowSupport(true); }}
+            style={styles.webLoginSecondary}
+          >
+            <Text style={styles.webLoginMuted}>Contact Support</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   if (step === 'pin') {
     return (
       <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
@@ -653,6 +709,70 @@ function InfoBox({ message }: { message: string }) {
 }
 
 const styles = StyleSheet.create({
+  webLoginRoot: {
+    flex: 1,
+    minHeight: '100vh',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+    padding: 24,
+  },
+  webLoginCard: {
+    width: '100%',
+    maxWidth: 440,
+    alignItems: 'stretch',
+  },
+  webLoginLogo: {
+    width: 112,
+    height: 112,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  webLoginTitle: {
+    color: Colors.text,
+    fontSize: 25,
+    fontWeight: '900',
+    letterSpacing: 5,
+    textAlign: 'center',
+  },
+  webLoginSubtitle: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 3,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 30,
+  },
+  webLoginInputRow: {
+    height: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    borderRadius: Colors.radius,
+    marginBottom: 12,
+  },
+  webLoginInput: {
+    flex: 1,
+    minWidth: 0,
+    color: Colors.text,
+    fontSize: 16,
+    outlineWidth: 0,
+  } as any,
+  webLoginSecondary: {
+    alignItems: 'center',
+    paddingVertical: 9,
+  },
+  webLoginMuted: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    textDecorationLine: 'underline',
+  },
   root: {
     flex: 1,
     backgroundColor: Colors.background,

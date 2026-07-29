@@ -77,3 +77,4 @@
 - [Knockout ET adjustment](knockout-et-adjustment.md) — WC knockout 50% hit rate (vs 64% group stage); root cause = ET probability ×1.10 never applied. Fix: KO_ET_MULT before P-REFRESH + -8pt UNDER penalty + corrected AI prompt.
 - [Opponent context enrichment](opponent-context-enrichment.md) — Player Profile and pick cards should surface opponent possession and per-90 advanced stats (xG, xA, shots, SOT, key passes, passes, tackles) via cached backend endpoints, not inline in the pick list.
 - [Automatic Community pick images](automatic-community-pick-images.md) — Capture the rendered highest-confidence active OwnerPickCard, then server-validate and attach its image to the idempotent auto post.
+- [Web auth route split](web-auth-route-split.md) — Safari can mount shared auth after logout but paint only its dark background; use a dedicated auth.web.tsx route for reliable web sign-in.

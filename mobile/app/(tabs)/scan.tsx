@@ -4886,7 +4886,7 @@ export default function ScanScreen() {
                 <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
                 <Text style={styles.inlineErrorText}>{saveError}</Text>
                 {saveError.toLowerCase().includes('session') && (
-                  <TouchableOpacity onPress={logout} style={{ marginLeft: 8 }}>
+                   <TouchableOpacity onPress={async () => { await logout(); router.replace('/auth'); }} style={{ marginLeft: 8 }}>
                     <Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '700' }}>Sign Out</Text>
                   </TouchableOpacity>
                 )}

@@ -637,10 +637,17 @@ export default function AccountScreen() {
   };
 
   const handleLogout = async () => {
+    const goToSignIn = () => {
+      // Do not rely on the tab layout's async auth guard after clearing the
+      // session. On web that can leave the protected tab shell mounted on a
+      // dark screen while the redirect is still settling.
+      router.replace('/auth');
+    };
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && !window.confirm('Sign out of Reverse Picks?')) return;
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       await logout();
+      goToSignIn();
     } else {
       Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
         { text: 'Cancel', style: 'cancel' },
@@ -650,6 +657,7 @@ export default function AccountScreen() {
           onPress: async () => {
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             await logout();
+            goToSignIn();
           },
         },
       ]);
