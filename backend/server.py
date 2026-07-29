@@ -523,6 +523,16 @@ async def _overdue_subscription_sweep():
     await _retire_stripe_subscriptions_once()
     while True:
         try:
+            # Keep retrying the live Stripe shutdown until every listed
+            # subscription has been processed. A transient Stripe/API error
+            # must not leave a recurring subscription untouched forever.
+            retirement_marker = await db.settings.find_one(
+                {"key": "stripe_retirement_complete", "value": "true"},
+                {"_id": 0, "value": 1},
+            )
+            if not retirement_marker:
+                await _retire_stripe_subscriptions_once()
+
             from datetime import date as date_type, datetime, timezone
 
             now = datetime.now(timezone.utc)
@@ -591,7 +601,7 @@ async def _retire_stripe_subscriptions_once():
         stripe.api_key = key
         processed = 0
         failed = 0
-        for status in ("active", "trialing", "past_due", "unpaid", "incomplete"):
+        for status in ("active", "trialing", "past_due", "unpaid", "incomplete", "paused"):
             for sub in stripe.Subscription.list(
                 status=status, limit=100
             ).auto_paging_iter():

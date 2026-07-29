@@ -292,6 +292,11 @@ class ChangePlanRequest(BaseModel):
 
 @router.post("/change-plan")
 async def change_plan(req: ChangePlanRequest):
+    if STRIPE_RETIRED:
+        raise HTTPException(
+            status_code=410,
+            detail="Stripe plan changes are no longer available. Stripe subscriptions are being retired; use Apple through the Reverse Picks app.",
+        )
     plan_key = req.new_plan_key.lower()
     if plan_key not in STRIPE_PLANS:
         raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
