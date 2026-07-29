@@ -18,6 +18,42 @@ from models import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# Stripe Dashboard screenshots supplied on 2026-07-29. These are explicit
+# last-access dates for the visible accounts. Two of the 16 dashboard rows
+# were clipped in the screenshots, so they remain governed by their stored
+# Stripe period end instead of being guessed here.
+STRIPE_SCREENSHOT_CUTOFFS = {
+    "tuckersneakerbot@gmail.com": "2026-08-03",
+    "jahiemcooper1516@gmail.com": "2026-08-02",
+    "eddiecane372@gmail.com": "2026-08-01",
+    "jujumobley@icloud.com": "2026-07-31",
+    "isaiahmccowan@gmail.com": "2026-08-23",
+    "miguel7893@icloud.com": "2026-08-05",
+    "justinrsanders9107@gmail.com": "2026-07-31",
+    "potabil50@gmail.com": "2026-08-01",
+    "maldonadoivan209@gmail.com": "2026-07-29",
+    "gerald.alfonseca03@gmail.com": "2026-07-31",
+    "alphonsobruton@gmail.com": "2026-07-31",
+    "ryanamosun26@gmail.com": "2026-07-31",
+    "tristanobannon21@gmail.com": "2026-07-29",
+    "yahirpalacios45@gmail.com": "2026-08-02",
+    "sylvester.jared@gmail.com": "2026-08-01",
+    "caloc01.ch@gmail.com": "2026-07-31",
+}
+
+
+def _screenshot_stripe_access_expired(email_lower: str) -> bool:
+    """Return true only after the account's listed final calendar day."""
+    cutoff_raw = STRIPE_SCREENSHOT_CUTOFFS.get(email_lower)
+    if not cutoff_raw:
+        return False
+    try:
+        from datetime import date
+        return date.today() > date.fromisoformat(cutoff_raw)
+    except (TypeError, ValueError):
+        return True
+
+
 # ── Owner passphrase (stored as secret, never in code) ────────────────────────
 OWNER_CODE = os.environ.get("OWNER_ACCESS_CODE", "").strip()
 OWNER_PIN  = os.environ.get("OWNER_PIN", "").strip()
@@ -245,6 +281,8 @@ async def create_session(email: str, access_type: str) -> str:
 
 # ── Web access check (Stripe / manual grants) ────────────────────────
 async def _check_access_local(email_lower: str):
+    if _screenshot_stripe_access_expired(email_lower):
+        return None
     if email_lower in OWNER_EMAILS:
         return "Owner"
     if email_lower in LIFETIME_SUB_EMAILS:

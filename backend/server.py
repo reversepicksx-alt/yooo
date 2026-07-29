@@ -554,7 +554,9 @@ async def _overdue_subscription_sweep():
                     cpe_date = date_type.fromisoformat(str(cpe_raw)[:10])
                 except Exception:
                     continue
-                if cpe_date > date_type.today():
+                # A dashboard "Cancels <date>" date is the final access
+                # calendar day; expire beginning the next day.
+                if cpe_date >= date_type.today():
                     continue
 
                 days_overdue = (date_type.today() - cpe_date).days
