@@ -1189,7 +1189,7 @@ async def _try_settle_bdl(pick: dict, sport: str) -> bool:
 async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
     from utils import api_football_request, is_quota_exhausted
-    from config import CURRENT_SEASON
+    from config import CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON
 
     if is_quota_exhausted():
         return  # Don't burn quota on settlement checks when there's nothing left
@@ -1283,7 +1283,10 @@ async def _run_auto_settlement():
             try:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-                next_s = CURRENT_SEASON + 1  # MLS and other calendar-year leagues use next year label
+                team_picks = [p for p in soccer_picks if p.get("teamId") == tid]
+                _is_nwsl_team = any(p.get("leagueId") == NWSL_LEAGUE_ID for p in team_picks)
+                _soccer_seasons = [NWSL_SEASON] if _is_nwsl_team else [CURRENT_SEASON, CURRENT_SEASON + 1]
+                _soccer_league = NWSL_LEAGUE_ID if _is_nwsl_team else None
 
                 # Also cover dates of the oldest pending pick for this team
                 # so picks from 3+ days ago don't fall out of the "last 3" window
@@ -1311,15 +1314,36 @@ async def _run_auto_settlement():
                 date_fix_calls = []
                 for pd in set(pick_dates):
                     if pd not in (today, yesterday):
-                        date_fix_calls.append(api_football_request("fixtures", {"team": tid, "date": pd, "season": CURRENT_SEASON}))
+                        date_fix_calls.append(
+                            api_football_request(
+                                "fixtures",
+                                {
+                                    "team": tid,
+                                    "date": pd,
+                                    "season": _soccer_seasons[0],
+                                    **({"league": _soccer_league} if _soccer_league else {}),
+                                },
+                            )
+                        )
 
                 _fx_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
                 _fx_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 settle_batches = await asyncio.gather(
-                    api_football_request("fixtures", {"team": tid, "from": _fx_from, "to": _fx_to, "season": CURRENT_SEASON}),
-                    api_football_request("fixtures", {"team": tid, "from": _fx_from, "to": _fx_to, "season": next_s}),
+                    *[
+                        api_football_request(
+                            "fixtures",
+                            {
+                                "team": tid,
+                                "from": _fx_from,
+                                "to": _fx_to,
+                                "season": season,
+                                **({"league": _soccer_league} if _soccer_league else {}),
+                            },
+                        )
+                        for season in _soccer_seasons
+                    ],
                     *date_fix_calls,
-                    return_exceptions=True
+                    return_exceptions=True,
                 )
 
                 all_fixtures = []
@@ -1333,7 +1357,6 @@ async def _run_auto_settlement():
                             seen.add(fid)
                             all_fixtures.append(f)
 
-                team_picks = [p for p in soccer_picks if p.get("teamId") == tid]
                 # Also fetch WC fixtures for this team so WC picks flow through
                 # the normal soccer settlement path (same FT gate, same zero-value
                 # guards) instead of the broken AI fallback.
@@ -1399,12 +1422,29 @@ async def _run_auto_settlement():
 
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-                    next_s = CURRENT_SEASON + 1
+                    _orphan_is_nwsl = any(
+                        p.get("leagueId") == NWSL_LEAGUE_ID
+                        for p in orphan_picks
+                        if p.get("teamName") == team_name
+                    )
+                    _orphan_seasons = [NWSL_SEASON] if _orphan_is_nwsl else [CURRENT_SEASON, CURRENT_SEASON + 1]
+                    _orphan_league = NWSL_LEAGUE_ID if _orphan_is_nwsl else None
                     _ofx_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
                     _ofx_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     orphan_batches = await asyncio.gather(
-                        api_football_request("fixtures", {"team": tid, "from": _ofx_from, "to": _ofx_to, "season": CURRENT_SEASON}),
-                        api_football_request("fixtures", {"team": tid, "from": _ofx_from, "to": _ofx_to, "season": next_s}),
+                        *[
+                            api_football_request(
+                                "fixtures",
+                                {
+                                    "team": tid,
+                                    "from": _ofx_from,
+                                    "to": _ofx_to,
+                                    "season": season,
+                                    **({"league": _orphan_league} if _orphan_league else {}),
+                                },
+                            )
+                            for season in _orphan_seasons
+                        ],
                         return_exceptions=True
                     )
                     all_fixtures = []

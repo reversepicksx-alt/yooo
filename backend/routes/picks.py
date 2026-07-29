@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 
-from config import db, CURRENT_SEASON, STAT_LAMBDA_MAP
+from config import db, CURRENT_SEASON, STAT_LAMBDA_MAP, NWSL_LEAGUE_ID, NWSL_SEASON
 from models import (
     SavePickRequest, GetPicksRequest, DeletePickRequest,
     CorrectPickRequest, LiveUpdateRequest, SettlePicksRequest,
@@ -2535,9 +2535,24 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _team_window(tid: int, from_d: str, to_d: str) -> list:
         """Fetch fixtures for a team across a date window, trying both seasons."""
+        _team_leagues = {p.get("leagueId") for p in picks_no_fid if p.get("teamId") == tid}
+        _is_nwsl = NWSL_LEAGUE_ID in _team_leagues
+        _seasons = [NWSL_SEASON] if _is_nwsl else [2025, 2026]
+        _league = NWSL_LEAGUE_ID if _is_nwsl else None
         window_results = await aio.gather(
-            api_football_request("fixtures", {"team": tid, "from": from_d, "to": to_d, "season": 2025}),
-            api_football_request("fixtures", {"team": tid, "from": from_d, "to": to_d, "season": 2026}),
+            *[
+                api_football_request(
+                    "fixtures",
+                    {
+                        "team": tid,
+                        "from": from_d,
+                        "to": to_d,
+                        "season": season,
+                        **({"league": _league} if _league else {}),
+                    },
+                )
+                for season in _seasons
+            ],
             return_exceptions=True,
         )
         _seen: set = set()
@@ -2552,9 +2567,15 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _league_window(lid: int, from_d: str, to_d: str) -> list:
         """Fetch fixtures for a league across a date window, trying both seasons."""
+        _seasons = [NWSL_SEASON] if lid == NWSL_LEAGUE_ID else [2025, 2026]
         window_results = await aio.gather(
-            api_football_request("fixtures", {"league": lid, "from": from_d, "to": to_d, "season": 2025}),
-            api_football_request("fixtures", {"league": lid, "from": from_d, "to": to_d, "season": 2026}),
+            *[
+                api_football_request(
+                    "fixtures",
+                    {"league": lid, "from": from_d, "to": to_d, "season": season},
+                )
+                for season in _seasons
+            ],
             return_exceptions=True,
         )
         _seen: set = set()
@@ -3600,7 +3621,8 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
 
     # ── Legacy API-Football path for non-BDL leagues ──────────────────────────
     if not team_id:
-        for s in [CURRENT_SEASON, CURRENT_SEASON + 1]:
+        _player_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [CURRENT_SEASON, CURRENT_SEASON + 1]
+        for s in _player_seasons:
             try:
                 pdata = await api_football_request("players", {"id": player_id, "season": s, "league": league_id})
                 if pdata:
@@ -3618,7 +3640,8 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     pick_created = datetime.fromtimestamp(pick_timestamp / 1000, tz=timezone.utc) if isinstance(pick_timestamp, (int, float)) and pick_timestamp else datetime.min.replace(tzinfo=timezone.utc)
 
     recent = None
-    for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+    _fixture_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [CURRENT_SEASON + 1, CURRENT_SEASON]
+    for s in _fixture_seasons:
         try:
             _p_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
             _p_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
