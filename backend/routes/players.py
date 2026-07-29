@@ -4,7 +4,7 @@ import time
 import unicodedata
 from fastapi import APIRouter
 
-from config import CURRENT_SEASON, db
+from config import CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON, db
 from models import PlayerSearchRequest, PlayerRoleResolveRequest
 from utils import api_football_request, is_quota_exhausted
 
@@ -252,7 +252,9 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
 async def search_players(req: PlayerSearchRequest):
     if len(req.query) < 2:
         return {"players": []}
-    season = req.season or CURRENT_SEASON
+    # NWSL is a calendar-year league. Do not let a client/default 2025 season
+    # hide valid 2026 NWSL player IDs from API-Football.
+    season = NWSL_SEASON if req.league_id == NWSL_LEAGUE_ID else (req.season or CURRENT_SEASON)
     query_lower = req.query.lower().strip()
 
     def extract_player(item):
@@ -493,7 +495,9 @@ async def search_players(req: PlayerSearchRequest):
     if req.league_id:
         seasons_to_try = (
             _WC_SEASONS if req.league_id == 1
-            else [season + 1, season, season - 1, season - 2]
+            else ([NWSL_SEASON, NWSL_SEASON - 1, NWSL_SEASON - 2]
+                  if req.league_id == NWSL_LEAGUE_ID
+                  else [season + 1, season, season - 1, season - 2])
         )
 
         async def search_season(s):
@@ -560,7 +564,12 @@ async def search_players(req: PlayerSearchRequest):
             254, 172, 189,           # NWSL, WSL (England Women), A-League Women
         ]
         async def try_league(lid):
-            for s in [season + 1, season]:
+            search_seasons = (
+                [NWSL_SEASON, NWSL_SEASON - 1]
+                if lid == NWSL_LEAGUE_ID
+                else [season + 1, season]
+            )
+            for s in search_seasons:
                 try:
                     data = await api_football_request("players", {"search": req.query, "league": lid, "season": s})
                     if data:

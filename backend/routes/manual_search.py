@@ -1,7 +1,7 @@
 """Manual search routes — fallback when scan doesn't work."""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from config import db, CURRENT_SEASON
+from config import db, CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON
 from utils import api_football_request, strip_accents
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
@@ -49,7 +49,9 @@ class PlayerSearchRequest(BaseModel):
 @router.post("/search-player")
 async def search_player(req: PlayerSearchRequest):
     """Search for players on a specific team. If player_name given, filter by name."""
-    season = CURRENT_SEASON
+    # NWSL uses the 2026 calendar season while the global soccer season
+    # remains 2025 for leagues whose season crosses calendar years.
+    season = NWSL_SEASON if req.league_id == NWSL_LEAGUE_ID else CURRENT_SEASON
     try:
         # Get squad for this team
         data = await api_football_request("players/squads", {"team": req.team_id})

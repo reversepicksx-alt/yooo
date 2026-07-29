@@ -177,6 +177,10 @@ SUPPORTED_LEAGUES = [
 ]
 
 CURRENT_SEASON = 2025
+# NWSL is a calendar-year competition. Keep this explicit instead of changing
+# CURRENT_SEASON, which is also used by European and other soccer leagues.
+NWSL_LEAGUE_ID = 254
+NWSL_SEASON = 2026
 WOMENS_LEAGUE_IDS = {254}
 TOP_5_LEAGUES = [39, 140, 135, 78, 61]
 

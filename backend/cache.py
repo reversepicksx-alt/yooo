@@ -8,7 +8,7 @@ import html as html_module
 import re
 import time
 from datetime import datetime, timezone, timedelta
-from config import db, SUPPORTED_LEAGUES, CURRENT_SEASON
+from config import db, SUPPORTED_LEAGUES, CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON
 from utils import api_football_request
 
 CACHE_TTL_SECONDS    = 7 * 24 * 3600   # 7 days for general data
@@ -760,7 +760,10 @@ async def sync_player_season_stats_for_team(team_id: int, season: int = None, le
     Uses /players?team={id}&season={year} which returns ALL players + stats in one call
     (paginated). Stores in player_season_stats collection.
     """
-    season = season or CURRENT_SEASON
+    season = (
+        NWSL_SEASON if league_id == NWSL_LEAGUE_ID and season is None
+        else (season or CURRENT_SEASON)
+    )
     stored = 0
     try:
         page = 1
