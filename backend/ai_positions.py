@@ -173,6 +173,9 @@ async def resolve_player_role(
         )
 
     if cached and cached.get("specificPosition") and cached.get("role") not in _GENERIC_ROLES:
+        # Manual overrides are permanent — never re-resolve regardless of version or TTL
+        if cached.get("source") == "manual_override":
+            return cached["specificPosition"], cached.get("role", ""), "cache"
         stored_ver = cached.get("promptVersion", 0)
         if stored_ver >= POSITION_PROMPT_VERSION:
             cached_at = cached.get("updatedAt", "")

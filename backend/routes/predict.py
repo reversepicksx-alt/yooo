@@ -4250,13 +4250,16 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 # Check cache (with 30-day expiry and prompt-version check)
                 from config import POSITION_PROMPT_VERSION
                 cached_pos = await db.player_positions.find_one(
-                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1}
+                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1, "source": 1}
                 )
                 cache_valid = False
                 if cached_pos and cached_pos.get("specificPosition"):
+                    # Manual overrides are permanent — never re-resolve regardless of version or TTL
+                    if cached_pos.get("source") == "manual_override":
+                        cache_valid = True
                     # Check prompt version first — stale version always forces re-resolution
-                    stored_version = cached_pos.get("promptVersion", 0)
-                    if stored_version < POSITION_PROMPT_VERSION:
+                    elif cached_pos.get("promptVersion", 0) < POSITION_PROMPT_VERSION:
+                        stored_version = cached_pos.get("promptVersion", 0)
                         print(f"[POS RESOLVE] Prompt version outdated (v{stored_version} < v{POSITION_PROMPT_VERSION}): {req.playerName} — re-resolving")
                         cache_valid = False
                     else:
