@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, View, Text, TouchableOpacity, Linking, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -84,6 +84,29 @@ function RevenueCatSync() {
   return null;
 }
 
+function WebAppDownloadBanner() {
+  if (Platform.OS !== 'web') return null;
+
+  return (
+    <View style={bannerStyles.wrap}>
+      <View style={bannerStyles.copy}>
+        <Text style={bannerStyles.title}>Reverse Picks is now on the App Store</Text>
+        <Text style={bannerStyles.subtitle}>
+          Download the app to subscribe securely through Apple and get the full experience.
+        </Text>
+      </View>
+      <TouchableOpacity
+        accessibilityRole="link"
+        accessibilityLabel="Download Reverse Picks on the App Store"
+        style={bannerStyles.button}
+        onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}
+      >
+        <Text style={bannerStyles.buttonText}>DOWNLOAD THE APP</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 /** Dismiss the HTML loading overlay that the proxy injected before React mounted. */
 function hideWebOverlay() {
   try {
@@ -125,6 +148,7 @@ function AppBoot() {
       <StatusBar style="light" />
       <PushRegistrar />
       <RevenueCatSync />
+      <WebAppDownloadBanner />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="auth" />
@@ -138,6 +162,32 @@ function AppBoot() {
     </>
   );
 }
+
+const bannerStyles = StyleSheet.create({
+  wrap: {
+    zIndex: 1000,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    backgroundColor: '#10251f',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1f8061',
+  },
+  copy: { flex: 1 },
+  title: { color: '#f2f7f4', fontSize: 13, fontWeight: '800' },
+  subtitle: { color: '#a9c7bb', fontSize: 11, marginTop: 2 },
+  button: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 7,
+  },
+  buttonText: { color: '#06110d', fontSize: 10, fontWeight: '900', letterSpacing: 0.4 },
+});
 
 export default function RootLayout() {
   return (

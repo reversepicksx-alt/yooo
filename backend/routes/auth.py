@@ -285,7 +285,14 @@ async def _check_access_local(email_lower: str):
                     if _blocked:
                         return None
         return access_type
-    stripe_sub = await db.stripe_subscriptions.find_one({"email": email_lower, "status": {"$in": ["active", "trialing"]}}, {"_id": 0})
+    stripe_sub = await db.stripe_subscriptions.find_one(
+        {
+            "email": email_lower,
+            "status": {"$in": ["active", "trialing"]},
+            "retiredByMigration": {"$ne": True},
+        },
+        {"_id": 0},
+    )
     if stripe_sub:
         return "Premium (Stripe)"
     stripe_canceled = await db.stripe_subscriptions.find_one({"email": email_lower, "status": "canceled"}, {"_id": 0})
@@ -320,6 +327,13 @@ def _sub_period_end_ts(sub_data: dict):
         return None
 
 async def _check_stripe_live(email_lower: str):
+    # Stripe has been retired as a billing source.  Do not resurrect a
+    # subscription that was not already recorded locally before the cutoff.
+    return None
+
+    # Kept below for historical reference during the transition; unreachable
+    # by design.  Existing local records are still honored by
+    # _check_access_local until their paid-through date expires.
     try:
         key = os.environ.get("STRIPE_SECRET_KEY", "")
         if not key:
@@ -420,13 +434,13 @@ async def check_access(email_lower: str) -> str | None:
 
 
 async def check_web_access(email_lower: str):
-    """Full web access check: local DB + live Stripe fallback."""
+    """Full web access check: local grants and existing Stripe periods only."""
     if not email_lower:
         return None
     result = await _check_access_local(email_lower)
     if result:
         return result
-    return await _check_stripe_live(email_lower)
+    return None
 
 # ── Web endpoints (Stripe / website login) ───────────────────────────
 @router.post("/verify-access")

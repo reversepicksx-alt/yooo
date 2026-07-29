@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import {
-  verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout, linkPayment, contactSupport,
+  verifyAccess, setPassword as apiSetPassword, authLogin, linkPayment, contactSupport,
 } from '@/lib/api';
 
 type Step = 'email' | 'pin' | 'pricing';
@@ -37,7 +37,6 @@ export default function AuthScreen() {
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
@@ -169,43 +168,6 @@ export default function AuthScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleShowPricing = () => {
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) { setError('Enter your email address first.'); return; }
-    setError('');
-    setInfo('');
-    setStep('pricing');
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
-
-  const handleSubscribePlan = async (planKey: string) => {
-    const trimmed = email.trim().toLowerCase();
-    setCheckoutLoading(planKey);
-    setError('');
-    try {
-      const result = await createCheckout(trimmed, planKey);
-      const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
-      if (url) {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          // Save email so we can pre-fill and auto-verify on Stripe redirect return
-          try { window.sessionStorage.setItem('rp_checkout_email', trimmed); } catch {}
-          window.location.href = url;
-        } else {
-          await Linking.openURL(url);
-        }
-        setInfo('Complete payment in the browser. If your card is declined, try a different card or use Cash App Pay / Link in the checkout. Then tap "Already paid?" below.');
-        setStep('email');
-      } else {
-        setError(result.error || 'Could not create checkout. Try again.');
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Checkout failed. Try again.');
-    } finally {
-      setCheckoutLoading(null);
     }
   };
 
@@ -400,41 +362,25 @@ export default function AuthScreen() {
         <View style={styles.pricingContainer}>
           <View style={styles.pricingHero}>
             <Image source={require('../assets/logo.png')} style={styles.pricingLogo} resizeMode="contain" />
-            <Text style={styles.pricingTitle}>CHOOSE YOUR PLAN</Text>
+            <Text style={styles.pricingTitle}>SUBSCRIBE IN THE APP</Text>
           </View>
-
-          {!!error && <ErrorBox message={error} />}
-
-          {PLANS.map(plan => (
+          <View style={styles.appOnlyNotice}>
+            <Ionicons name="logo-apple" size={32} color={Colors.primary} />
+            <Text style={styles.appOnlyTitle}>All new memberships are through Apple</Text>
+            <Text style={styles.appOnlyText}>
+              Download Reverse Picks from the App Store, sign in with this email, and choose your Apple subscription plan there.
+            </Text>
             <TouchableOpacity
-              key={plan.key}
-              style={[styles.planCard, plan.popular && styles.planCardPopular]}
-              onPress={() => handleSubscribePlan(plan.key)}
-              disabled={checkoutLoading !== null}
-              activeOpacity={0.8}
+              style={styles.btn}
+              onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}
+              activeOpacity={0.85}
             >
-              {plan.popular && (
-                <View style={styles.popularBadge}>
-                  <Text style={styles.popularText}>MOST POPULAR</Text>
-                </View>
-              )}
-              <View style={styles.planLeft}>
-                <Text style={styles.planName}>{plan.label}</Text>
-                <Text style={styles.planSub}>{plan.sub}</Text>
-              </View>
-              <View style={styles.planRight}>
-                {checkoutLoading === plan.key
-                  ? <ActivityIndicator color={Colors.primary} size="small" />
-                  : (
-                    <View style={styles.priceRow}>
-                      <Text style={styles.planPrice}>{plan.price}</Text>
-                      <Text style={styles.planUnit}>{plan.unit}</Text>
-                    </View>
-                  )
-                }
+              <View style={styles.btnInner}>
+                <Ionicons name="download-outline" size={16} color="#000" />
+                <Text style={styles.btnText}>DOWNLOAD THE APP</Text>
               </View>
             </TouchableOpacity>
-          ))}
+          </View>
 
           <TouchableOpacity style={styles.backBtn} onPress={goBack} activeOpacity={0.8}>
             <Ionicons name="arrow-back" size={15} color={Colors.text} />
@@ -841,6 +787,18 @@ const styles = StyleSheet.create({
   },
   pricingHero: { alignItems: 'center', marginBottom: 8 },
   pricingLogo: { width: 60, height: 60, marginBottom: 12 },
+  appOnlyNotice: {
+    alignItems: 'center',
+    padding: 22,
+    marginTop: 10,
+    marginBottom: 16,
+    borderRadius: 14,
+    backgroundColor: '#111b18',
+    borderWidth: 1,
+    borderColor: '#245f4d',
+  },
+  appOnlyTitle: { color: Colors.text, fontSize: 17, fontWeight: '800', textAlign: 'center', marginTop: 12 },
+  appOnlyText: { color: Colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: 9, marginBottom: 18 },
   pricingTitle: {
     fontSize: 13,
     fontWeight: '800',

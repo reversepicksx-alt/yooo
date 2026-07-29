@@ -819,7 +819,7 @@ export default function AccountScreen() {
           </>
         )}
 
-        {/* ── Web / Android: existing Stripe management ── */}
+        {/* ── Web / Android: retired Stripe migration notice ── */}
         {showStripeManagement && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
@@ -838,28 +838,24 @@ export default function AccountScreen() {
             ) : subStatus ? (
               <View style={styles.menuGroup}>
                 <MenuRow icon="card-outline" label="Plan" value={subStatus.plan || '—'} />
-                <MenuRow icon="pricetag-outline" label="Price" value={subStatus.planLabel || '—'} />
                 <MenuRow icon="pulse-outline" label="Status" value={statusLabel} valueColor={statusColor} />
-                {subStatus.expiresAt && !isCanceled && (
-                  <MenuRow icon="calendar-outline" label="Next Billing" value={formatDate(subStatus.expiresAt)} />
+                {subStatus.expiresAt && (
+                  <MenuRow icon="calendar-outline" label="Access ends" value={formatDate(subStatus.expiresAt)} />
                 )}
-                {subStatus.cardLast4 && (
-                  <MenuRow icon="wallet-outline" label="Payment" value={`${subStatus.cardBrand || 'Card'} •••• ${subStatus.cardLast4}`} />
-                )}
-                {!isCanceled && (
-                  <MenuRow icon="swap-horizontal-outline" label="Change Plan" onPress={() => setPlanPickerVisible(true)} loading={actionLoading} />
-                )}
-                {isCanceled ? (
-                  <MenuRow
-                    icon="refresh-outline"
-                    label="Resubscribe"
-                    value="Choose a new plan"
-                    onPress={() => setPlanPickerVisible(true)}
-                    loading={actionLoading}
-                  />
-                ) : (
-                  <MenuRow icon="close-circle-outline" label="Cancel Subscription" onPress={handleCancel} danger loading={actionLoading} />
-                )}
+                <View style={{ padding: 14, gap: 6 }}>
+                  <Text style={{ color: Colors.primary, fontWeight: '800', fontSize: 13 }}>
+                    Stripe billing has ended
+                  </Text>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 18 }}>
+                    Your current access remains available until the date above. Download the iOS app and subscribe through Apple to continue.
+                  </Text>
+                  <TouchableOpacity
+                    style={{ marginTop: 6, backgroundColor: Colors.primary, borderRadius: 7, paddingVertical: 10, alignItems: 'center' }}
+                    onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}
+                  >
+                    <Text style={{ color: '#000', fontSize: 11, fontWeight: '900' }}>DOWNLOAD THE APP</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : (
               <View style={[styles.menuGroup, styles.subLoadingWrap]}>

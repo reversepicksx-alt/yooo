@@ -8,6 +8,10 @@ from config import db
 
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
+# Stripe is retired.  Keep the read-only status endpoint and webhook alive long
+# enough to let already-paid periods expire, but never create another checkout.
+STRIPE_RETIRED = True
+
 STRIPE_PLANS = {
     "weekly":    {"name": "Weekly",    "amount": 1500,  "interval": "week",  "interval_count": 1, "label": "$15/week",        "price_id": "price_1TTPgOE5jSGb860HYBTZ6emm"},
     "monthly":   {"name": "Monthly",   "amount": 4999,  "interval": "month", "interval_count": 1, "label": "$49.99/month",    "price_id": "price_1TTPgOE5jSGb860Hco39c7bc"},
@@ -117,6 +121,11 @@ async def _recent_subscription_action_exists(email_lower: str, plan_key: str, ac
 
 @router.post("/create-checkout")
 async def create_checkout(req: CheckoutRequest):
+    if STRIPE_RETIRED:
+        raise HTTPException(
+            status_code=410,
+            detail="Stripe subscriptions are no longer available. Download the Reverse Picks app and subscribe through Apple.",
+        )
     plan_key = req.planKey.lower()
     if plan_key not in STRIPE_PLANS:
         raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
@@ -215,6 +224,11 @@ async def create_checkout(req: CheckoutRequest):
 
 @router.post("/resubscribe-checkout")
 async def resubscribe_checkout(req: CheckoutRequest):
+    if STRIPE_RETIRED:
+        raise HTTPException(
+            status_code=410,
+            detail="Stripe subscriptions are no longer available. Download the Reverse Picks app and subscribe through Apple.",
+        )
     return await create_checkout(req)
 
 
@@ -375,8 +389,15 @@ async def stripe_webhook(request: Request):
         event = _json.loads(payload)
 
     etype = event.get("type", "")
+    retirement = await db.settings.find_one(
+        {"key": "stripe_retirement_complete", "value": "true"},
+        {"_id": 0},
+    )
+    stripe_retired = bool(retirement)
 
     if etype == "checkout.session.completed":
+        if stripe_retired:
+            return {"received": True, "ignored": "stripe_retired"}
         session = event.get("data", {}).get("object", {})
         meta = session.get("metadata") or {}
         email = (session.get("customer_email") or meta.get("email", "")).lower().strip()
@@ -390,6 +411,8 @@ async def stripe_webhook(request: Request):
             await _upsert_stripe_sub(email, stripe_sub_id, plan_key, "active")
 
     elif etype in ("customer.subscription.updated", "customer.subscription.created"):
+        if stripe_retired:
+            return {"received": True, "ignored": "stripe_retired"}
         sub_obj = event.get("data", {}).get("object", {})
         meta = sub_obj.get("metadata") or {}
         email = meta.get("email", "").lower().strip()

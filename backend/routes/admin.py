@@ -172,6 +172,10 @@ class CheckoutLinkRequest(BaseModel):
 async def generate_checkout_link(req: CheckoutLinkRequest):
     """Generate a direct Stripe checkout URL for any client email. Owner-only."""
     await verify_owner(req.adminEmail, req.sessionToken)
+    raise HTTPException(
+        status_code=410,
+        detail="Stripe is retired. New subscriptions must use Apple through the Reverse Picks app.",
+    )
 
     plan_key = req.planKey.lower()
     if plan_key not in STRIPE_PLANS:

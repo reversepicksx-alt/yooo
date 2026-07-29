@@ -517,9 +517,10 @@ Only the JSON array, no markdown."""
 
 
 async def _overdue_subscription_sweep():
-    """Periodically expire Stripe subscribers whose paid period has ended."""
+    """Expire retired Stripe subscribers whose paid period has ended."""
     import asyncio
     await asyncio.sleep(15)
+    await _retire_stripe_subscriptions_once()
     while True:
         try:
             from datetime import date as date_type, datetime, timezone
@@ -566,6 +567,87 @@ async def _overdue_subscription_sweep():
             print(f"[OVERDUE SWEEP] Error: {e}")
 
         await asyncio.sleep(900)
+
+
+async def _retire_stripe_subscriptions_once():
+    """Stop all Stripe renewals without removing already-paid access.
+
+    Active/trialing subscriptions are canceled at period end. Failed or
+    incomplete subscriptions are canceled immediately so Stripe cannot retry
+    charges. The marker makes this safe to run again after a transient error.
+    """
+    marker = await db.settings.find_one(
+        {"key": "stripe_retirement_complete"}, {"_id": 0, "value": 1}
+    )
+    if marker and marker.get("value") == "true":
+        return
+
+    try:
+        import stripe
+        key = os.environ.get("STRIPE_SECRET_KEY", "")
+        if not key:
+            print("[STRIPE RETIREMENT] Stripe key unavailable; will retry")
+            return
+        stripe.api_key = key
+        processed = 0
+        failed = 0
+        for status in ("active", "trialing", "past_due", "unpaid", "incomplete"):
+            for sub in stripe.Subscription.list(
+                status=status, limit=100
+            ).auto_paging_iter():
+                try:
+                    if status in ("active", "trialing"):
+                        updated = stripe.Subscription.modify(
+                            sub.id, cancel_at_period_end=True
+                        )
+                        period_end = (
+                            getattr(updated, "current_period_end", None)
+                            or getattr(sub, "current_period_end", None)
+                        )
+                        fields = {
+                            "status": "canceled",
+                            "retiredByMigration": True,
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }
+                        if period_end:
+                            fields["currentPeriodEnd"] = datetime.fromtimestamp(
+                                int(period_end), tz=timezone.utc
+                            ).isoformat()
+                        await db.stripe_subscriptions.update_one(
+                            {"stripeSubscriptionId": sub.id}, {"$set": fields}
+                        )
+                    else:
+                        stripe.Subscription.cancel(sub.id)
+                        await db.stripe_subscriptions.update_one(
+                            {"stripeSubscriptionId": sub.id},
+                            {"$set": {
+                                "status": "expired",
+                                "expiredReason": "stripe_retired_failed_payment",
+                                "retiredByMigration": True,
+                                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                            }},
+                        )
+                    processed += 1
+                except Exception as sub_error:
+                    failed += 1
+                    print(f"[STRIPE RETIREMENT] Could not process {sub.id}: {sub_error}")
+
+        if failed:
+            print(f"[STRIPE RETIREMENT] Processed {processed}; {failed} failed — retrying")
+            return
+        await db.settings.update_one(
+            {"key": "stripe_retirement_complete"},
+            {"$set": {
+                "key": "stripe_retirement_complete",
+                "value": "true",
+                "processed": processed,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        print(f"[STRIPE RETIREMENT] Complete — {processed} subscription(s) stopped")
+    except Exception as error:
+        print(f"[STRIPE RETIREMENT] Error; will retry: {error}")
 
 
 # ── Legacy alias: /api/search-player ──
