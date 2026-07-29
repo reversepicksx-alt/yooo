@@ -99,7 +99,7 @@ export default function OwnerPickCard({
 }: {
   pick: Pick; onPress?: () => void; onTrack?: () => void;
   onDelete?: () => void; onPlayerPress?: (pick: Pick) => void;
-  onShareCommunity?: () => void;
+  onShareCommunity?: (imageData: string) => void | Promise<void>;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
@@ -186,6 +186,42 @@ export default function OwnerPickCard({
       await Share.share({ message: nativeShareText, title: `${pick.playerName} pick` });
     } finally {
       setCaptureMode(false);
+    }
+  };
+
+  const handleShareCommunity = async () => {
+    if (!onShareCommunity) return;
+    setSharing(true);
+    try {
+      let imageData = '';
+      if (Platform.OS === 'web') {
+        await generateShareImage();
+        const blob = pendingBlobRef.current;
+        if (blob) {
+          imageData = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = String(reader.result || '');
+              resolve(result.includes(',') ? result.split(',')[1] : result);
+            };
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+        }
+      } else {
+        setCaptureMode(true);
+        await new Promise(r => setTimeout(r, 80));
+        // JPEG keeps the payload small and matches Community's existing
+        // base64 image renderer.
+        imageData = await captureRef(cardRef, {
+          format: 'jpg', quality: 0.92, result: 'base64',
+        } as any);
+      }
+      if (!imageData) throw new Error('Could not capture the pick card');
+      await onShareCommunity(imageData);
+    } finally {
+      setCaptureMode(false);
+      setSharing(false);
     }
   };
 
@@ -374,7 +410,7 @@ export default function OwnerPickCard({
           </TouchableOpacity>
         )}
         {onShareCommunity && !captureMode && (
-          <TouchableOpacity onPress={onShareCommunity} style={styles.communityBtn} activeOpacity={0.7}>
+          <TouchableOpacity onPress={handleShareCommunity} style={styles.communityBtn} activeOpacity={0.7}>
             <Ionicons name="people-outline" size={12} color={Colors.primary} />
             <Text style={styles.liveBtnText}>Share with Community</Text>
           </TouchableOpacity>

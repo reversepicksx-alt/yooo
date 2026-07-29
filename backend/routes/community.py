@@ -42,6 +42,7 @@ class ReactRequest(BaseModel):
 class PickShareRequest(BaseModel):
     email: str
     pick: dict
+    imageData: Optional[str] = None
 
 
 def _pick_share_text(pick: dict, automatic: bool = False) -> str:
@@ -64,8 +65,10 @@ def _pick_share_text(pick: dict, automatic: bool = False) -> str:
     return " · ".join(parts)
 
 
-async def create_pick_community_post(email: str, pick: dict, automatic: bool = False) -> dict:
-    """Create an idempotent text post for a saved pick."""
+async def create_pick_community_post(
+    email: str, pick: dict, automatic: bool = False, image_data: Optional[str] = None,
+) -> dict:
+    """Create an idempotent pick post, optionally containing the rendered card."""
     email_lower = email.lower().strip()
     from routes.auth import check_access
     if not await check_access(email_lower):
@@ -88,7 +91,7 @@ async def create_pick_community_post(email: str, pick: dict, automatic: bool = F
         "email": email_lower,
         "displayName": display_name,
         "text": _pick_share_text(pick, automatic),
-        "imageData": None,
+        "imageData": image_data or None,
         "mentions": [],
         "reactions": {},
         "createdAt": datetime.now(timezone.utc),
@@ -109,7 +112,11 @@ async def create_pick_community_post(email: str, pick: dict, automatic: bool = F
 
 @router.post("/api/community/share-pick")
 async def share_pick_to_community(req: PickShareRequest):
-    return await create_pick_community_post(req.email, req.pick, automatic=False)
+    if req.imageData and len(req.imageData) > 5_000_000:
+        raise HTTPException(status_code=413, detail="Pick card is too large")
+    return await create_pick_community_post(
+        req.email, req.pick, automatic=False, image_data=req.imageData,
+    )
 
 
 @router.get("/api/community/messages")

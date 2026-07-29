@@ -341,10 +341,10 @@ export default function PicksScreen() {
     }
   }, [deleteMutation]);
 
-  const handleShareCommunity = useCallback(async (pick: Pick) => {
+  const handleShareCommunity = useCallback(async (pick: Pick, imageData: string) => {
     if (!session) return;
     try {
-      await sharePickToCommunity(session.email, pick);
+      await sharePickToCommunity(session.email, pick, imageData);
       Alert.alert('Shared', 'Your pick is now in Reverse Chat.');
     } catch (e: any) {
       Alert.alert('Share failed', e?.message || 'Please try again.');
@@ -538,7 +538,7 @@ export default function PicksScreen() {
                 onTrack={() => setLiveTrackerPick(item)}
                 onDelete={onDeleteForItem}
                 onPlayerPress={handlePlayerPress}
-                onShareCommunity={() => handleShareCommunity(item)}
+                onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
               />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
@@ -564,7 +564,7 @@ export default function PicksScreen() {
                   onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}
                   onPlayerPress={handlePlayerPress}
-                  onShareCommunity={() => handleShareCommunity(item)}
+                  onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
                 />
               </SwipeablePickRow>
             );
