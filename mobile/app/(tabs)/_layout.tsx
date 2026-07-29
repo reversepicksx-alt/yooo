@@ -53,7 +53,9 @@ export default function TabLayout() {
           paddingTop: 10,
         },
         tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: Colors.textTertiary,
+        // Keep inactive tabs legible on the black mobile shell; Community
+        // should not disappear when My Picks is selected.
+        tabBarInactiveTintColor: Colors.textSecondary,
         tabBarLabelStyle: {
           fontSize: 10,
           fontWeight: '600',
@@ -89,7 +91,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="community"
         options={{
-          title: 'Reverse Chat',
+          title: 'Community',
           tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
         }}
       />
