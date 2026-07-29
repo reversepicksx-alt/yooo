@@ -283,6 +283,11 @@ async def create_session(email: str, access_type: str) -> str:
 async def _check_access_local(email_lower: str):
     if _screenshot_stripe_access_expired(email_lower):
         return None
+    # The retirement marker only prevents renewal/restoration. It must not
+    # remove access that Stripe's dashboard confirms is already paid through
+    # the listed cancellation date.
+    if email_lower in STRIPE_SCREENSHOT_CUTOFFS:
+        return "Premium (Stripe)"
     if email_lower in OWNER_EMAILS:
         return "Owner"
     if email_lower in LIFETIME_SUB_EMAILS:
