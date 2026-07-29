@@ -502,47 +502,10 @@ async def save_pick(req: SavePickRequest):
 
     await db.picks.update_one({"pickId": pick_id, "email": req.email.lower()}, {"$set": doc}, upsert=True)
 
-    # Publish the user's strongest active saved pick once. This is deliberately
-    # best-pick selection on the server so web and native clients behave alike.
-    # It is non-fatal: saving a pick must never fail because Community is busy.
-    try:
-        from routes.community import create_pick_community_post
-
-        active_saved = await db.picks.find({
-            "email": req.email.lower(),
-            "status": {"$in": ["live", "pending"]},
-        }, {"_id": 0}).to_list(None)
-
-        def _best_pick_score(p: dict) -> tuple[float, float, float]:
-            try:
-                confidence = float(p.get("confidenceScore") or p.get("confidence") or 0)
-            except (TypeError, ValueError):
-                confidence = 0.0
-            # Prefer the Bayesian probability in the recommended direction when
-            # available, then confidence. This avoids choosing a high-looking
-            # score whose direction probability is actually weaker.
-            try:
-                rec = str(p.get("recommendation") or "").lower()
-                bayes = float(
-                    (p.get("pOver") if rec == "over" else p.get("pUnder"))
-                    or 0
-                )
-                if 0 < bayes <= 1:
-                    bayes *= 100
-            except (TypeError, ValueError):
-                bayes = 0.0
-            try:
-                edge = abs(float(p.get("projectedValue") or p.get("projection") or 0)
-                           - float(p.get("line") or 0))
-            except (TypeError, ValueError):
-                edge = 0.0
-            return confidence, bayes, edge
-
-        best_saved = max(active_saved, key=_best_pick_score, default=None)
-        if best_saved and _best_pick_score(best_saved)[0] >= 60:
-            await create_pick_community_post(req.email, best_saved, automatic=True)
-    except Exception as exc:
-        print(f"[COMMUNITY AUTO PICK] non-fatal: {exc}")
+    # Automatic Community posting happens from the Picks screen after the
+    # highest-confidence card has been rendered and captured. Do not create a
+    # text-only post here: that could publish a lower pick before the UI has
+    # selected and captured the actual top card image.
 
     # =============================================
     # SLIP CORRELATION ANALYSIS — Same-game risk detection

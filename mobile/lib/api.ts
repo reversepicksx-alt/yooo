@@ -1027,6 +1027,18 @@ export async function savePick(email: string, token: string, pick: Record<string
   });
 }
 
+export async function autoPostPickToCommunity(
+  email: string,
+  token: string,
+  pickId: string,
+  imageData: string,
+) {
+  return apiCall('/api/community/auto-post-pick', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, pickId, imageData }),
+  });
+}
+
 export async function deletePick(email: string, token: string, pickId: string) {
   return apiCall('/api/picks/delete', {
     method: 'POST',

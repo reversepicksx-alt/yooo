@@ -31,7 +31,7 @@ import SocialFeed from '@/components/SocialFeed';
 import PlayerProfileCard from '@/components/PlayerProfileCard';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
-import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, Pick } from '@/lib/api';
+import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, autoPostPickToCommunity, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -237,6 +237,7 @@ export default function PicksScreen() {
   const [imageDisclaimerVisible, setImageDisclaimerVisible] = useState(false);
   const sessionErrCount = useRef(0);
   const picksRef = useRef<Pick[]>([]);
+  const autoPostedImagesRef = useRef<Set<string>>(new Set());
 
   // One-time owner-only image-use disclaimer (shown once per device install)
   const isOwner = session?.accessType === 'Owner';
@@ -348,6 +349,40 @@ export default function PicksScreen() {
       Alert.alert('Shared', 'Your pick is now in Reverse Chat.');
     } catch (e: any) {
       Alert.alert('Share failed', e?.message || 'Please try again.');
+    }
+  }, [session]);
+
+  const highestConfidenceActivePick = useMemo(() => {
+    const active = picks.filter(p =>
+      (p.status === 'live' || p.status === 'pending') &&
+      !['hit', 'miss', 'push', 'won', 'lost', 'dnp'].includes(p.result ?? '')
+    );
+    return active
+      .filter(p => Number(p.confidence ?? 0) >= 60)
+      .sort((a, b) => {
+        const confidence = Number(b.confidence ?? 0) - Number(a.confidence ?? 0);
+        if (confidence) return confidence;
+        const direction = (p: Pick) => {
+          const rec = String(p.recommendation || '').toLowerCase();
+          const bayes = p.bayesianMetrics as { pOver?: number; pUnder?: number } | undefined;
+          const value = Number(rec === 'over' ? bayes?.pOver : bayes?.pUnder);
+          return value <= 1 ? value * 100 : value;
+        };
+        const bayes = direction(b) - direction(a);
+        if (bayes) return bayes;
+        return Math.abs(Number(b.projectedValue ?? b.projection ?? 0) - Number(b.line ?? 0))
+          - Math.abs(Number(a.projectedValue ?? a.projection ?? 0) - Number(a.line ?? 0));
+      })[0] ?? null;
+  }, [picks]);
+
+  const handleAutoPostImage = useCallback(async (pick: Pick, imageData: string) => {
+    if (!session || !pick.pickId || autoPostedImagesRef.current.has(pick.pickId)) return;
+    autoPostedImagesRef.current.add(pick.pickId);
+    try {
+      await autoPostPickToCommunity(session.email, session.token, pick.pickId, imageData);
+    } catch (err) {
+      autoPostedImagesRef.current.delete(pick.pickId);
+      console.warn('[COMMUNITY AUTO POST] failed', err);
     }
   }, [session]);
 
@@ -539,6 +574,9 @@ export default function PicksScreen() {
                 onDelete={onDeleteForItem}
                 onPlayerPress={handlePlayerPress}
                 onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
+                onAutoPostImage={highestConfidenceActivePick?.pickId === item.pickId
+                  ? (imageData) => handleAutoPostImage(item, imageData)
+                  : undefined}
               />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;

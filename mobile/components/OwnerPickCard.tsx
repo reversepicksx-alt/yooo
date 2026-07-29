@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, Share, Platform, ActivityIndicator, Modal,
 } from 'react-native';
@@ -95,11 +95,12 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onPress, onTrack, onDelete, onPlayerPress, onShareCommunity,
+  pick, onPress, onTrack, onDelete, onPlayerPress, onShareCommunity, onAutoPostImage,
 }: {
   pick: Pick; onPress?: () => void; onTrack?: () => void;
   onDelete?: () => void; onPlayerPress?: (pick: Pick) => void;
   onShareCommunity?: (imageData: string) => void | Promise<void>;
+  onAutoPostImage?: (imageData: string) => void | Promise<void>;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
@@ -158,6 +159,7 @@ export default function OwnerPickCard({
   const [captureMode, setCaptureMode] = useState(false);
   const pendingBlobRef = useRef<Blob | null>(null);
   const cardRef = useRef<View>(null);
+  const autoCapturePickRef = useRef<string>('');
 
   const tweetText = `${APP_STORE_URL}\nvia @Reversepickss`;
   const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss`;
@@ -224,6 +226,48 @@ export default function OwnerPickCard({
       setSharing(false);
     }
   };
+
+  // Automatic Community posting uses this exact rendered card, rather than a
+  // text-only server reconstruction. The parent only supplies this callback
+  // to the current highest-confidence active pick.
+  useEffect(() => {
+    if (!onAutoPostImage || !pick.pickId) return;
+    if (autoCapturePickRef.current === pick.pickId) return;
+    autoCapturePickRef.current = pick.pickId;
+    let cancelled = false;
+    (async () => {
+      try {
+        let imageData = '';
+        if (Platform.OS === 'web') {
+          await generateShareImage();
+          const blob = pendingBlobRef.current;
+          if (blob) {
+            imageData = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const result = String(reader.result || '');
+                resolve(result.includes(',') ? result.split(',')[1] : result);
+              };
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(blob);
+            });
+          }
+        } else {
+          setCaptureMode(true);
+          await new Promise(r => setTimeout(r, 100));
+          imageData = await captureRef(cardRef, {
+            format: 'jpg', quality: 0.92, result: 'base64',
+          } as any);
+        }
+        if (!cancelled && imageData) await onAutoPostImage(imageData);
+      } catch (err) {
+        console.warn('[COMMUNITY AUTO IMAGE] capture failed', err);
+      } finally {
+        if (!cancelled) setCaptureMode(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [onAutoPostImage, pick.pickId]);
 
   const generateShareImage = async () => {
     // Pre-fetch all images as base64 — API-Football blocks CORS so canvas would be blank otherwise

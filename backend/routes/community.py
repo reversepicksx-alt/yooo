@@ -45,6 +45,13 @@ class PickShareRequest(BaseModel):
     imageData: Optional[str] = None
 
 
+class AutoPickPostRequest(BaseModel):
+    email: str
+    token: str
+    pickId: str
+    imageData: str
+
+
 def _pick_share_text(pick: dict, automatic: bool = False) -> str:
     player = pick.get("playerName") or pick.get("player", {}).get("name") or "Unknown player"
     prop = str(pick.get("propType") or "prop").replace("_", " ").title()
@@ -77,9 +84,17 @@ async def create_pick_community_post(
     if automatic and pick_id:
         existing = await db.community_messages.find_one(
             {"postType": "auto_pick", "pickId": pick_id},
-            {"_id": 1},
+            {"_id": 1, "imageData": 1},
         )
         if existing:
+            # The save endpoint may create the idempotent caption immediately,
+            # before the Picks screen has finished capturing the rendered card.
+            # Let the later capture upgrade that same post with the real image.
+            if image_data and not existing.get("imageData"):
+                await db.community_messages.update_one(
+                    {"postType": "auto_pick", "pickId": pick_id},
+                    {"$set": {"imageData": image_data}},
+                )
             return _serialize(await db.community_messages.find_one({"postType": "auto_pick", "pickId": pick_id}))
     user = await db.users.find_one({"email": email_lower}, {"_id": 0, "username": 1, "displayName": 1})
     display_name = (
@@ -117,6 +132,67 @@ async def share_pick_to_community(req: PickShareRequest):
     return await create_pick_community_post(
         req.email, req.pick, automatic=False, image_data=req.imageData,
     )
+
+
+@router.post("/api/community/auto-post-pick")
+async def auto_post_pick_to_community(req: AutoPickPostRequest):
+    """Attach the rendered card image to the user's highest-confidence pick.
+
+    The client captures the real OwnerPickCard, while the server remains the
+    authority on which active pick is eligible to publish.
+    """
+    if len(req.imageData) > 5_000_000:
+        raise HTTPException(status_code=413, detail="Pick card is too large")
+    session = await db.sessions.find_one(
+        {"email": req.email.lower().strip(), "session_token": req.token},
+        {"_id": 0},
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    pick = await db.picks.find_one(
+        {"email": req.email.lower().strip(), "pickId": req.pickId},
+        {"_id": 0},
+    )
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+
+    active = await db.picks.find(
+        {
+            "email": req.email.lower().strip(),
+            "status": {"$in": ["live", "pending"]},
+            "result": {"$nin": ["hit", "miss", "push", "won", "lost", "dnp"]},
+        },
+        {"_id": 0},
+    ).to_list(None)
+
+    def score(p: dict) -> tuple[float, float, float]:
+        try:
+            confidence = float(p.get("confidenceScore") or p.get("confidence") or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        try:
+            rec = str(p.get("recommendation") or "").lower()
+            bayes = float((p.get("pOver") if rec == "over" else p.get("pUnder")) or 0)
+            if 0 < bayes <= 1:
+                bayes *= 100
+        except (TypeError, ValueError):
+            bayes = 0.0
+        try:
+            edge = abs(float(p.get("projectedValue") or p.get("projection") or 0) - float(p.get("line") or 0))
+        except (TypeError, ValueError):
+            edge = 0.0
+        return confidence, bayes, edge
+
+    best = max(active, key=score, default=None)
+    if not best or best.get("pickId") != req.pickId or score(best)[0] < 60:
+        return {"ok": True, "posted": False, "reason": "not_highest_qualifying_pick"}
+    return {
+        "ok": True,
+        "posted": True,
+        "post": await create_pick_community_post(
+            req.email, best, automatic=True, image_data=req.imageData,
+        ),
+    }
 
 
 @router.get("/api/community/messages")
