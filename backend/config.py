@@ -104,7 +104,7 @@ LIFETIME_SUB_EMAILS = [
     "banks.kendre@yahoo.com",
     "willmenjivar123@gmail.com",
     "adriano.velasquez10@gmail.com",
-    "kevduran2006@icloud.com",
+    "kevvduran2006@icloud.com",
     "roshensenha24@gmail.com",
     "alicia.thibadeau@gmail.com",
     "esol123@live.com",
