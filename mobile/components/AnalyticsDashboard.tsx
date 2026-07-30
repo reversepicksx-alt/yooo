@@ -174,13 +174,17 @@ export default function AnalyticsDashboard({
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const [period, setPeriod] = useState<Period>('all');
-  const stats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
+  const localStats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
   const { data: ownerData } = useQuery<AnalyticsData>({
     queryKey: ['ownerAnalytics', 'pick-insights', session?.email],
     queryFn: () => getOwnerAnalytics(session!.email, session!.token),
     enabled: visible && !!session,
     staleTime: 60_000,
   });
+  // Insights is the ReversePicks system ledger. Personal picks remain the
+  // source for Live/Settled Picks and are never used for this report when the
+  // owner dataset is available.
+  const stats = (ownerData?.insights ?? localStats) as ReturnType<typeof computeAnalytics>;
 
   const renderTrendChart = () => {
     if (stats.trend.length < 2) return (
@@ -382,11 +386,11 @@ export default function AnalyticsDashboard({
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>
                 <View style={s.chartHeader}>
-                  <Text style={s.chartTitle}>OWNER MODEL HEALTH</Text>
-                  <Text style={s.chartSubtitle}>SOCCER · PRIVATE</Text>
+                  <Text style={s.chartTitle}>REVERSEPICKS MODEL HEALTH</Text>
+                  <Text style={s.chartSubtitle}>ALL USERS · SOCCER</Text>
                 </View>
                 <Text style={s.ownerHealthScope}>
-                  {ownerData.overall.total} settled records · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable · {ownerData.overall.calibrationOnly ?? 0} PASS calibration
+                  {ownerData.scope?.rawSettled ?? ownerData.overall.total} raw rows · {ownerData.overall.total} deduplicated settled events · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable · {ownerData.overall.calibrationOnly ?? 0} PASS calibration
                 </Text>
                 <View style={s.ownerHealthGrid}>
                   <View>
@@ -410,7 +414,7 @@ export default function AnalyticsDashboard({
                   Log loss {ownerData.scorecard.classification.finalConfidence.logLoss?.toFixed(3) ?? '—'} · Brier {ownerData.scorecard.classification.finalConfidence.brierScore?.toFixed(3) ?? '—'} · MAE {ownerData.scorecard.projection.overall.mae?.toFixed(2) ?? '—'} · RMSE {ownerData.scorecard.projection.overall.rmse?.toFixed(2) ?? '—'}
                 </Text>
                 <Text style={s.ownerHealthMeta}>
-                  Duplicate rows removed: {ownerData.scorecard.duplicateRowsRemoved ?? 0} · Scorecard events: {ownerData.scorecard.n}
+                  Duplicate rows removed: {ownerData.scope?.duplicateRowsRemoved ?? ownerData.scorecard.duplicateRowsRemoved ?? 0} · Scorecard events: {ownerData.scorecard.n}
                 </Text>
                 {ownerData.scorecard.classification.calibration.length > 0 && (
                   <Text style={s.ownerHealthMeta}>

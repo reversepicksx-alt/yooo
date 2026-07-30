@@ -347,7 +347,7 @@ export default function AnalyticsTab() {
             <Text style={styles.headerSub}>PRIVATE</Text>
           </View>
           <Text style={styles.headerTitle}>Data Analysis</Text>
-          <Text style={styles.scopeText}>Owner account · soccer · every settled record</Text>
+            <Text style={styles.scopeText}>All users · soccer · deduplicated settled events</Text>
         </View>
 
         {isLoading ? (

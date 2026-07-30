@@ -1,8 +1,9 @@
 """Leakage-conscious evaluation metrics for settled prediction records.
 
 These functions are deliberately pure so the same definitions can be used by
-the API, tests, and offline reports.  A settled pick is deduplicated by
-trackingId because one prediction can be saved by multiple users.
+the API, tests, and offline reports.  A settled pick is deduplicated by the
+shared prediction identity because each user's saved copy receives its own
+trackingId.
 """
 from __future__ import annotations
 
@@ -21,22 +22,33 @@ def _number(value: Any) -> float | None:
 
 
 def _event_key(row: dict) -> str:
-    tracking = row.get("trackingId")
-    if tracking:
-        return str(tracking)
+    recommendation = str(row.get("recommendation") or "").lower()
+    if recommendation == "pass":
+        recommendation = str(row.get("passLeaning") or "pass").lower()
     fixture = row.get("fixtureId")
-    # Legacy rows without tracking IDs can still be deduplicated when the
-    # fixture is known.  Do not merge separate fixtures just because the same
-    # player and market were used again.
     if fixture:
-        return "|".join(str(row.get(key, "")) for key in (
-            "playerName", "sport", "propType", "line", "recommendation",
-            "fixtureId",
-        ))
-    return "|".join(str(row.get(key, "")) for key in (
-        "playerName", "sport", "propType", "line", "recommendation",
-        "venue", "timestamp",
-    ))
+        parts = [str(row.get(key, "")) for key in (
+            "sport", "fixtureId", "playerId", "playerName", "teamId",
+            "opponentId", "propType", "line",
+        )]
+        return "|".join([*parts, recommendation])
+    # Older records may lack fixtureId.  Use the most specific available
+    # event context; a time bucket prevents separate saves by different users
+    # from becoming duplicate events while retaining distinct match days.
+    fixture_date = row.get("fixtureDate") or row.get("matchDate")
+    if fixture_date:
+        parts = [str(row.get(key, "")) for key in (
+            "sport", "fixtureDate", "playerId", "playerName", "teamId",
+            "opponentId", "propType", "line",
+        )]
+        return "|".join([*parts, recommendation])
+    timestamp = str(row.get("timestamp") or row.get("createdAt") or "")
+    timestamp_bucket = timestamp[:16] if timestamp else ""
+    parts = [str(row.get(key, "")) for key in (
+        "sport", "playerId", "playerName", "teamId", "opponentId",
+        "propType", "line", "venue", timestamp_bucket,
+    )]
+    return "|".join([*parts, recommendation])
 
 
 def dedupe_prediction_rows(rows: list[dict]) -> list[dict]:

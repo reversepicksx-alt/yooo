@@ -59,7 +59,7 @@ from routes.notifications import router as notifications_router
 from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from routes.sports_config import router as sports_config_router
 from cache import seed_cache, background_refresh_loop
-from model_metrics import build_scorecard
+from model_metrics import build_scorecard, dedupe_prediction_rows
 
 app.include_router(auth_router)
 app.include_router(revenuecat_webhook_router)
@@ -702,7 +702,7 @@ async def trigger_calibration(sport: str = "soccer"):
 
 @app.post("/api/admin/analytics")
 async def owner_analytics(payload: dict = Body(...)):
-    """Owner-only soccer scorecard for the authenticated owner's own records."""
+    """ReversePicks system-wide soccer scorecard, owner-authenticated."""
     from config import db
     from collections import defaultdict
 
@@ -716,29 +716,42 @@ async def owner_analytics(payload: dict = Body(...)):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    # The dashboard is deliberately narrower than the user's general picks
-    # list: every settled soccer record for this account, including pushes,
-    # DNPs, and calibration-only PASS observations.
+    # Authentication identifies who may view this private system report.  It
+    # must not scope the data to that person's picks: ReversePicks calibration
+    # is learned from the entire settled soccer population.
     settled_filter = {
-        "email": email,
         "sport": "soccer",
         "status": "settled",
     }
-    match_filter = {**settled_filter, "result": {"$in": ["hit", "miss"]}}
+    raw_rows = await db.picks.find(
+        settled_filter,
+        {
+            "_id": 0, "trackingId": 1, "playerName": 1, "sport": 1,
+            "propType": 1, "line": 1, "recommendation": 1, "venue": 1,
+            "position": 1, "leagueId": 1, "leagueName": 1,
+            "playerId": 1, "teamId": 1, "opponentId": 1,
+            "fixtureId": 1, "fixtureDate": 1, "matchDate": 1,
+            "timestamp": 1, "createdAt": 1, "settledAt": 1,
+            "result": 1, "confidenceScore": 1, "rawConfidence": 1,
+            "confidenceLevel": 1, "projectedValue": 1, "projection": 1,
+            "actualValue": 1, "passOutcome": 1, "isCalibrationOnly": 1,
+        },
+    ).to_list(100000)
+    deduped_rows = dedupe_prediction_rows(raw_rows)
+    actionable_rows = [
+        row for row in deduped_rows
+        if str(row.get("result") or "").lower() in {"hit", "miss"}
+    ]
 
     def pct(h, t):
         return round(h / t * 100, 1) if t > 0 else 0.0
 
     async def group_by(field: str):
-        pipeline = [
-            {"$match": match_filter},
-            {"$group": {"_id": {"key": f"${field}", "result": "$result"}, "count": {"$sum": 1}}},
-        ]
-        rows = await db.picks.aggregate(pipeline).to_list(200)
         buckets: dict = defaultdict(lambda: {"hit": 0, "miss": 0})
-        for r in rows:
-            key = r["_id"].get("key") or "Unknown"
-            buckets[key][r["_id"]["result"]] += r["count"]
+        for row in actionable_rows:
+            key = row.get(field) or "Unknown"
+            result = str(row.get("result") or "").lower()
+            buckets[str(key)][result] += 1
         out = []
         for k, v in buckets.items():
             t = v["hit"] + v["miss"]
@@ -746,25 +759,23 @@ async def owner_analytics(payload: dict = Body(...)):
                         "total": t, "winPct": pct(v["hit"], t)})
         return sorted(out, key=lambda x: -x["winPct"])
 
-    total_settled = await db.picks.count_documents(settled_filter)
-    total_hits = await db.picks.count_documents({**settled_filter, "result": "hit"})
-    total_misses = await db.picks.count_documents({**settled_filter, "result": "miss"})
-    total_pushes = await db.picks.count_documents({**settled_filter, "result": "push"})
-    total_dnps = await db.picks.count_documents({**settled_filter, "result": "dnp"})
-    total_passes = await db.picks.count_documents({
-        **settled_filter,
-        "$or": [
-            {"recommendation": "pass"},
-            {"recommendation": "PASS"},
-            {"isCalibrationOnly": True},
-        ],
-    })
+    total_settled = len(deduped_rows)
+    total_hits = sum(str(row.get("result") or "").lower() == "hit" for row in deduped_rows)
+    total_misses = sum(str(row.get("result") or "").lower() == "miss" for row in deduped_rows)
+    total_pushes = sum(str(row.get("result") or "").lower() == "push" for row in deduped_rows)
+    total_dnps = sum(str(row.get("result") or "").lower() == "dnp" for row in deduped_rows)
+    total_passes = sum(
+        str(row.get("recommendation") or "").lower() == "pass"
+        or bool(row.get("isCalibrationOnly"))
+        for row in deduped_rows
+    )
 
     # Streak: last N settled picks in chronological order
-    recent_raw = await db.picks.find(
-        match_filter,
-        {"_id": 0, "result": 1, "playerName": 1, "timestamp": 1}
-    ).sort("timestamp", -1).to_list(20)
+    recent_raw = sorted(
+        actionable_rows,
+        key=lambda row: str(row.get("settledAt") or row.get("timestamp") or ""),
+        reverse=True,
+    )[:20]
     recent_streak = []
     for p in reversed(recent_raw):
         recent_streak.append({"result": p.get("result"), "name": p.get("playerName", "")})
@@ -793,16 +804,12 @@ async def owner_analytics(payload: dict = Body(...)):
     }
 
     async def group_by_league():
-        pipeline = [
-            {"$match": match_filter},
-            {"$group": {"_id": {"key": "$leagueId", "result": "$result"}, "count": {"$sum": 1}}},
-        ]
-        rows = await db.picks.aggregate(pipeline).to_list(200)
         buckets: dict = defaultdict(lambda: {"hit": 0, "miss": 0})
-        for r in rows:
-            key = r["_id"].get("key")
+        for row in actionable_rows:
+            key = row.get("leagueId")
             name = LEAGUE_NAMES.get(key, f"League {key}") if key else "Unknown"
-            buckets[name][r["_id"]["result"]] += r["count"]
+            result = str(row.get("result") or "").lower()
+            buckets[name][result] += 1
         out = []
         for k, v in buckets.items():
             t = v["hit"] + v["miss"]
@@ -819,11 +826,10 @@ async def owner_analytics(payload: dict = Body(...)):
 
     # ── Brier Score + ROI by confidence tier ─────────────────────────────────
     # Fetch settled picks with confidence info (cutoff = post-placeholder-bug era)
-    conf_picks = await db.picks.find(
-        {**settled_filter, "result": {"$in": ["hit", "miss"]},
-         "settledAt": {"$gte": "2026-04-30T00:00:00+00:00"}},
-        {"_id": 0, "result": 1, "confidenceScore": 1, "rawConfidence": 1, "propType": 1}
-    ).to_list(5000)
+    conf_picks = [
+        row for row in actionable_rows
+        if str(row.get("settledAt") or "") >= "2026-04-30T00:00:00+00:00"
+    ]
 
     # Brier Score: mean((prob - outcome)^2), lower = better
     # Use rawConfidence (pre-calibration) so we measure the engine, not the calibrator
@@ -855,18 +861,117 @@ async def owner_analytics(payload: dict = Body(...)):
     # ── Model scorecard: probability + numerical projection quality ─────────
     # Keep these metrics separate from the legacy hit-rate breakdown above.
     # Numeric errors are grouped by sport/prop because their units differ.
-    score_rows = await db.picks.find(
-        settled_filter,
+    scorecard = build_scorecard(deduped_rows)
+
+    def dashboard_groups(field: str, labeler=None):
+        buckets: dict = defaultdict(lambda: {
+            "hit": 0, "miss": 0, "overHit": 0, "overTotal": 0,
+            "underHit": 0, "underTotal": 0,
+        })
+        for row in actionable_rows:
+            raw_key = row.get(field)
+            key = labeler(raw_key) if labeler else (raw_key or "Unknown")
+            key = str(key)
+            result = str(row.get("result") or "").lower()
+            direction_value = str(row.get("recommendation") or "").upper()
+            buckets[key][result] += 1
+            if direction_value == "OVER":
+                buckets[key]["overTotal"] += 1
+                if result == "hit":
+                    buckets[key]["overHit"] += 1
+            elif direction_value == "UNDER":
+                buckets[key]["underTotal"] += 1
+                if result == "hit":
+                    buckets[key]["underHit"] += 1
+        output = []
+        for label, values in buckets.items():
+            total = values["hit"] + values["miss"]
+            output.append({
+                "label": label,
+                "total": total,
+                "rate": pct(values["hit"], total),
+                "overRate": pct(values["overHit"], values["overTotal"]),
+                "underRate": pct(values["underHit"], values["underTotal"]),
+            })
+        return sorted(output, key=lambda item: -item["total"])
+
+    dashboard_sorted = sorted(
+        actionable_rows,
+        key=lambda row: str(row.get("settledAt") or row.get("timestamp") or ""),
+        reverse=True,
+    )
+    daily: dict = defaultdict(lambda: {"hit": 0, "total": 0})
+    for row in actionable_rows:
+        date_value = str(row.get("settledAt") or row.get("timestamp") or "")
+        day = date_value[:10]
+        if len(day) == 10:
+            daily[day]["total"] += 1
+            if str(row.get("result") or "").lower() == "hit":
+                daily[day]["hit"] += 1
+    trend = [
         {
-            "_id": 0, "trackingId": 1, "playerName": 1, "sport": 1,
-            "propType": 1, "line": 1, "recommendation": 1, "venue": 1,
-            "fixtureId": 1, "timestamp": 1, "settledAt": 1,
-            "result": 1, "confidenceScore": 1, "rawConfidence": 1,
-            "projectedValue": 1, "actualValue": 1, "passOutcome": 1,
-            "isCalibrationOnly": 1,
-        },
-    ).to_list(20000)
-    scorecard = build_scorecard(score_rows)
+            "date": day,
+            "rate": pct(values["hit"], values["total"]),
+            "total": values["total"],
+        }
+        for day, values in sorted(daily.items())
+    ]
+    over_rows = [row for row in actionable_rows if str(row.get("recommendation") or "").upper() == "OVER"]
+    under_rows = [row for row in actionable_rows if str(row.get("recommendation") or "").upper() == "UNDER"]
+    tier_definitions = (
+        ("High (≥70%)", 70, 101),
+        ("Medium (60–69%)", 60, 70),
+        ("Low (<60%)", 0, 60),
+    )
+    dashboard_tiers = []
+    for label, lower, upper in tier_definitions:
+        tier_rows = [
+            row for row in actionable_rows
+            if lower <= (float(row.get("confidenceScore") or row.get("rawConfidence") or 0)) < upper
+        ]
+        hits = sum(str(row.get("result") or "").lower() == "hit" for row in tier_rows)
+        dashboard_tiers.append({
+            "tier": label,
+            "hit": hits,
+            "total": len(tier_rows),
+            "rate": pct(hits, len(tier_rows)),
+        })
+    dashboard_leagues = dashboard_groups(
+        "leagueId",
+        lambda value: LEAGUE_NAMES.get(value, f"League {value}") if value else "Unknown",
+    )
+    dashboard_insights = {
+        "total": total_settled,
+        "settled": total_settled,
+        "hits": total_hits,
+        "misses": total_misses,
+        "pushes": total_pushes,
+        "winRate": pct(total_hits, total_hits + total_misses),
+        "currentStreak": streak_count if streak_type == "hit" else 0,
+        "overHit": pct(
+            sum(str(row.get("result") or "").lower() == "hit" for row in over_rows),
+            len(over_rows),
+        ),
+        "underHit": pct(
+            sum(str(row.get("result") or "").lower() == "hit" for row in under_rows),
+            len(under_rows),
+        ),
+        "overTotal": len(over_rows),
+        "underTotal": len(under_rows),
+        "tiers": dashboard_tiers,
+        "trend": trend,
+        "byLeague": dashboard_leagues,
+        "byProp": dashboard_groups("propType"),
+        "bySport": dashboard_groups("sport"),
+        "bestLeagues": sorted(
+            [row for row in dashboard_leagues if row["total"] >= 5],
+            key=lambda row: -row["rate"],
+        )[:3],
+        "worstLeagues": sorted(
+            [row for row in dashboard_leagues if row["total"] >= 5],
+            key=lambda row: row["rate"],
+        )[:3],
+    }
 
     # ROI assumes -110 standard American odds: win=+$100, loss=-$110 per $110 wagered
     confidence_tiers = []
@@ -906,7 +1011,15 @@ async def owner_analytics(payload: dict = Body(...)):
         "brierN": brier_n,
         "confidenceTiers": confidence_tiers,
         "scorecard": scorecard,
-        "scope": {"email": email, "sport": "soccer", "settled": total_settled},
+        "insights": dashboard_insights,
+        "scope": {
+            "access": "owner",
+            "dataset": "all_users",
+            "sport": "soccer",
+            "rawSettled": len(raw_rows),
+            "settled": total_settled,
+            "duplicateRowsRemoved": len(raw_rows) - total_settled,
+        },
     }
 
 

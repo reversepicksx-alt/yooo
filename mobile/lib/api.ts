@@ -1406,6 +1406,44 @@ export interface AnalyticsData {
   brierN: number;
   confidenceTiers: ConfidenceTier[];
   scorecard: ModelScorecard;
+  insights?: SystemInsights;
+  scope?: {
+    access: 'owner';
+    dataset: 'all_users';
+    sport: 'soccer';
+    rawSettled: number;
+    settled: number;
+    duplicateRowsRemoved: number;
+  };
+}
+
+export interface SystemInsightDimension {
+  label: string;
+  total: number;
+  rate: number;
+  overRate: number;
+  underRate: number;
+}
+
+export interface SystemInsights {
+  total: number;
+  settled: number;
+  hits: number;
+  misses: number;
+  pushes: number;
+  winRate: number;
+  currentStreak: number;
+  overHit: number;
+  underHit: number;
+  overTotal: number;
+  underTotal: number;
+  tiers: { tier: string; hit: number; total: number; rate: number }[];
+  trend: { date: string; rate: number; total: number }[];
+  byLeague: SystemInsightDimension[];
+  byProp: SystemInsightDimension[];
+  bySport: SystemInsightDimension[];
+  bestLeagues: SystemInsightDimension[];
+  worstLeagues: SystemInsightDimension[];
 }
 
 export async function getOwnerAnalytics(email: string, token: string): Promise<AnalyticsData> {

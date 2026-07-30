@@ -1,4 +1,4 @@
-from model_metrics import build_scorecard
+from model_metrics import build_scorecard, dedupe_prediction_rows
 
 
 def _row(i, confidence=70, actual=10, projected=8, result="hit"):
@@ -53,3 +53,60 @@ def test_scorecard_has_chronological_holdout_and_prop_breakdown():
     assert scorecard["chronologicalHoldout"]["dateRange"]["from"].startswith("2026-01-09")
     assert scorecard["projection"]["byProp"][0]["sport"] == "soccer"
     assert scorecard["projection"]["byProp"][0]["propType"] == "passes"
+
+
+def test_system_dedupes_same_prediction_across_users_but_not_fixtures():
+    base = _row(1, result="hit")
+    base.update({
+        "trackingId": "TRK-USER-A",
+        "fixtureId": 1001,
+        "playerId": 44,
+        "teamId": 10,
+        "opponentId": 20,
+    })
+    same_prediction_saved_by_another_user = dict(
+        base,
+        trackingId="TRK-USER-B",
+        settledAt="2026-01-02T12:00:00+00:00",
+    )
+    same_market_different_fixture = dict(
+        base,
+        trackingId="TRK-USER-C",
+        fixtureId=1002,
+        settledAt="2026-01-03T12:00:00+00:00",
+    )
+
+    deduped = dedupe_prediction_rows([
+        base,
+        same_prediction_saved_by_another_user,
+        same_market_different_fixture,
+    ])
+
+    assert len(deduped) == 2
+    assert {row["fixtureId"] for row in deduped} == {1001, 1002}
+
+
+def test_pass_copy_uses_avoided_direction_for_system_deduplication():
+    actionable = _row(1, result="hit")
+    actionable.update({
+        "trackingId": "TRK-ACTIONABLE",
+        "fixtureId": 1001,
+        "playerId": 44,
+        "teamId": 10,
+        "opponentId": 20,
+        "recommendation": "under",
+    })
+    calibration_copy = dict(
+        actionable,
+        trackingId="TRK-PASS",
+        recommendation="pass",
+        passLeaning="under",
+        isCalibrationOnly=True,
+        result="pass",
+        settledAt="2026-01-02T12:00:00+00:00",
+    )
+
+    deduped = dedupe_prediction_rows([actionable, calibration_copy])
+
+    assert len(deduped) == 1
+    assert deduped[0]["result"] == "pass"
