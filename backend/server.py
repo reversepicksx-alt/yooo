@@ -59,6 +59,7 @@ from routes.notifications import router as notifications_router
 from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from routes.sports_config import router as sports_config_router
 from cache import seed_cache, background_refresh_loop
+from model_metrics import build_scorecard
 
 app.include_router(auth_router)
 app.include_router(revenuecat_webhook_router)
@@ -822,6 +823,21 @@ async def owner_analytics():
 
     brier_score = round(brier_sum / brier_n, 4) if brier_n >= 10 else None
 
+    # ── Model scorecard: probability + numerical projection quality ─────────
+    # Keep these metrics separate from the legacy hit-rate breakdown above.
+    # Numeric errors are grouped by sport/prop because their units differ.
+    score_rows = await db.picks.find(
+        match_filter,
+        {
+            "_id": 0, "trackingId": 1, "playerName": 1, "sport": 1,
+            "propType": 1, "line": 1, "recommendation": 1, "venue": 1,
+            "fixtureId": 1, "timestamp": 1, "settledAt": 1,
+            "result": 1, "confidenceScore": 1, "rawConfidence": 1,
+            "projectedValue": 1, "actualValue": 1,
+        },
+    ).to_list(20000)
+    scorecard = build_scorecard(score_rows)
+
     # ROI assumes -110 standard American odds: win=+$100, loss=-$110 per $110 wagered
     confidence_tiers = []
     for tier_label, counts in tier_buckets.items():
@@ -855,6 +871,7 @@ async def owner_analytics():
         "brierScore": brier_score,
         "brierN": brier_n,
         "confidenceTiers": confidence_tiers,
+        "scorecard": scorecard,
     }
 
 

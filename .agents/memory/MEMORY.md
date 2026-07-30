@@ -82,4 +82,5 @@
 - [Web auth route split](web-auth-route-split.md) — Safari can mount shared auth after logout but paint only its dark background; use a dedicated auth.web.tsx route for reliable web sign-in.
 - [Passing-prop safeguards](passing-prop-safeguards.md) — rolling deduped pass buckets suppress only evidence-backed directions; possession layers require an explicit real-data flag, not fallback numbers.
 - [Pass projection calibration](pass-projection-calibration.md) — walk-forward residual corrections stay shadow-only until leakage-safe real-history validation proves out-of-sample benefit.
+- [Model scorecard interpretation](model-scorecard-interpretation.md) — separate probability quality from per-prop projection error; descriptive settled-pick splits are not true replay backtests.
 - [Fixture context integrity](fixture-context-integrity.md) — opponent, venue, odds, possession, and narrative must all come from the same verified fixture.

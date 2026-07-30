@@ -7,7 +7,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, AnalyticsBucket, ConfidenceTier } from '@/lib/api';
+import {
+  getOwnerAnalytics, AnalyticsBucket, ConfidenceTier, ModelScorecard,
+} from '@/lib/api';
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts',
@@ -98,6 +100,113 @@ function ConfidenceQualityCard({
 
       {brierScore === null && tiers.length === 0 && (
         <Text style={styles.tierNote}>Not enough post-calibration picks yet (need ≥10).</Text>
+      )}
+    </View>
+  );
+}
+
+function MetricValue({ value, suffix = '' }: { value: number | null | undefined; suffix?: string }) {
+  return (
+    <Text style={styles.modelMetricValue}>
+      {value == null ? '—' : `${value.toFixed(3)}${suffix}`}
+    </Text>
+  );
+}
+
+function ModelScorecardCard({ scorecard }: { scorecard?: ModelScorecard }) {
+  if (!scorecard) return null;
+  const final = scorecard.classification?.finalConfidence;
+  const projection = scorecard.projection?.overall;
+  const holdout = scorecard.chronologicalHoldout;
+  const bins = scorecard.classification?.calibration ?? [];
+  const propGroups = scorecard.projection?.byProp ?? [];
+
+  return (
+    <View style={styles.modelCard}>
+      <View style={styles.sectionHeader}>
+        <Ionicons name="flask-outline" size={14} color={Colors.primary} />
+        <Text style={styles.sectionTitle}>Model Scorecard</Text>
+      </View>
+      <Text style={styles.modelIntro}>
+        Settled prediction quality · n={scorecard.n} · {scorecard.dateRange?.from?.slice(0, 10) ?? '—'} to {scorecard.dateRange?.to?.slice(0, 10) ?? '—'}
+      </Text>
+
+      <View style={styles.modelMetricGrid}>
+        <View style={styles.modelMetric}>
+          <MetricValue value={final?.logLoss} />
+          <Text style={styles.modelMetricLabel}>LOG LOSS</Text>
+        </View>
+        <View style={styles.modelMetric}>
+          <MetricValue value={final?.brierScore} />
+          <Text style={styles.modelMetricLabel}>BRIER</Text>
+        </View>
+        <View style={styles.modelMetric}>
+          <MetricValue value={projection?.mae} />
+          <Text style={styles.modelMetricLabel}>MAE</Text>
+        </View>
+        <View style={styles.modelMetric}>
+          <MetricValue value={projection?.rmse} />
+          <Text style={styles.modelMetricLabel}>RMSE</Text>
+        </View>
+      </View>
+      <Text style={styles.modelFootnote}>{scorecard.projection?.unitsNote}</Text>
+
+      {bins.length > 0 && (
+        <>
+          <Text style={styles.modelSubheading}>CALIBRATION BY CONFIDENCE</Text>
+          <View style={styles.calHeader}>
+            <Text style={[styles.calCell, { flex: 1.2 }]}>BAND</Text>
+            <Text style={styles.calCell}>N</Text>
+            <Text style={styles.calCell}>SAID</Text>
+            <Text style={styles.calCell}>HIT</Text>
+            <Text style={styles.calCell}>GAP</Text>
+          </View>
+          {bins.map((bin) => (
+            <View key={bin.label} style={styles.calRow}>
+              <Text style={[styles.calCell, { flex: 1.2, color: Colors.text }]}>{bin.label}</Text>
+              <Text style={styles.calCell}>{bin.n}</Text>
+              <Text style={styles.calCell}>{bin.predictedPct.toFixed(0)}%</Text>
+              <Text style={styles.calCell}>{bin.observedPct.toFixed(0)}%</Text>
+              <Text style={[styles.calCell, { color: bin.gapPp >= 0 ? Colors.primary : Colors.error }]}>
+                {bin.gapPp >= 0 ? '+' : ''}{bin.gapPp.toFixed(1)}
+              </Text>
+            </View>
+          ))}
+        </>
+      )}
+
+      {holdout && (
+        <View style={styles.holdoutBox}>
+          <Text style={styles.modelSubheading}>CHRONOLOGICAL HOLDOUT</Text>
+          <Text style={styles.holdoutText}>
+            Final 20% of settled events · n={holdout.n} · Log loss {holdout.classification?.logLoss?.toFixed(3) ?? '—'} · Brier {holdout.classification?.brierScore?.toFixed(3) ?? '—'} · MAE {holdout.projection?.mae?.toFixed(2) ?? '—'} · RMSE {holdout.projection?.rmse?.toFixed(2) ?? '—'}
+          </Text>
+          <Text style={styles.modelFootnote}>
+            Descriptive time-split check. Metrics are not interpreted when sample size is too small.
+          </Text>
+        </View>
+      )}
+
+      {propGroups.length > 0 && (
+        <>
+          <Text style={[styles.modelSubheading, { marginTop: 14 }]}>NUMERICAL ERROR BY PROP</Text>
+          <View style={styles.calHeader}>
+            <Text style={[styles.calCell, { flex: 2 }]}>PROP</Text>
+            <Text style={styles.calCell}>N</Text>
+            <Text style={styles.calCell}>MAE</Text>
+            <Text style={styles.calCell}>RMSE</Text>
+          </View>
+          {propGroups.map((group) => (
+            <View key={`${group.sport}-${group.propType}`} style={styles.calRow}>
+              <Text style={[styles.calCell, { flex: 2, color: Colors.text }]} numberOfLines={1}>
+                {group.sport.toUpperCase()} · {PROP_LABELS[group.propType] || group.propType}
+              </Text>
+              <Text style={styles.calCell}>{group.n}</Text>
+              <Text style={styles.calCell}>{group.mae?.toFixed(2) ?? '—'}</Text>
+              <Text style={styles.calCell}>{group.rmse?.toFixed(2) ?? '—'}</Text>
+            </View>
+          ))}
+        </>
       )}
     </View>
   );
@@ -247,6 +356,8 @@ export default function AnalyticsTab() {
               brierN={data.brierN ?? 0}
               tiers={data.confidenceTiers ?? []}
             />
+
+            <ModelScorecardCard scorecard={data.scorecard} />
 
             {/* Key insight callout */}
             <View style={styles.insightCard}>
@@ -471,6 +582,94 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: Colors.textSecondary,
+  },
+
+  // Model scorecard
+  modelCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  modelIntro: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    marginBottom: 12,
+  },
+  modelMetricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderColor: Colors.borderSubtle,
+    marginBottom: 14,
+  },
+  modelMetric: {
+    width: '50%',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  modelMetricValue: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  modelMetricLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  modelSubheading: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    color: Colors.textTertiary,
+    marginBottom: 7,
+  },
+  calHeader: {
+    flexDirection: 'row',
+    paddingBottom: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
+  },
+  calRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.04)',
+  },
+  calCell: {
+    flex: 1,
+    fontSize: 10,
+    color: Colors.textSecondary,
+  },
+  holdoutBox: {
+    backgroundColor: 'rgba(57,255,20,0.04)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.16)',
+    padding: 10,
+    marginTop: 14,
+  },
+  holdoutText: {
+    fontSize: 11,
+    lineHeight: 17,
+    color: Colors.textSecondary,
+  },
+  modelFootnote: {
+    fontSize: 9,
+    lineHeight: 13,
+    color: Colors.textTertiary,
+    marginTop: 6,
   },
 
   // Sections

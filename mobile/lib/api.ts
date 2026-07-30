@@ -1330,6 +1330,54 @@ export interface ConfidenceTier {
   roi: number;
 }
 
+export interface ProbabilityMetrics {
+  n: number;
+  logLoss: number | null;
+  brierScore: number | null;
+}
+
+export interface CalibrationBin {
+  label: string;
+  n: number;
+  predictedPct: number;
+  observedPct: number;
+  gapPp: number;
+}
+
+export interface ProjectionMetrics {
+  n: number;
+  mae: number | null;
+  rmse: number | null;
+  meanError: number | null;
+}
+
+export interface ProjectionGroupMetrics extends ProjectionMetrics {
+  sport: string;
+  propType: string;
+}
+
+export interface ModelScorecard {
+  n: number;
+  dateRange: { from: string | null; to: string | null };
+  classification: {
+    finalConfidence: ProbabilityMetrics;
+    rawConfidence: ProbabilityMetrics;
+    calibration: CalibrationBin[];
+  };
+  projection: {
+    overall: ProjectionMetrics;
+    byProp: ProjectionGroupMetrics[];
+    unitsNote: string;
+  };
+  chronologicalHoldout: {
+    description: string;
+    n: number;
+    dateRange: { from: string | null; to: string | null };
+    classification: ProbabilityMetrics;
+    projection: ProjectionMetrics;
+  };
+}
+
 export interface AnalyticsData {
   overall: { hits: number; misses: number; total: number; winPct: number };
   streak: { type: string | null; count: number };
@@ -1342,6 +1390,7 @@ export interface AnalyticsData {
   brierScore: number | null;
   brierN: number;
   confidenceTiers: ConfidenceTier[];
+  scorecard: ModelScorecard;
 }
 
 export async function getOwnerAnalytics(): Promise<AnalyticsData> {
