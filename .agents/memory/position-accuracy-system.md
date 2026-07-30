@@ -37,5 +37,12 @@ Accepts `{email, token, playerName?, playerId?}`. Deletes entries matching eithe
 - CDM league calibration: n=121 hits vs old LW: n=22 — far better sample
 - Robertson: LB/Wing-Back (correct from cache hit v4)
 
+## Category safety boundary
+The player's API-Football generic category is a hard safety boundary for cached and fallback resolution. A player marked Defender must never inherit an ST/Poacher cache entry; when no trustworthy specific defender position is available, use the conservative CB/Stopper fallback rather than an attacking role.
+
+**Why:** Jonathan de Jesus Alves was correctly identified by the player cache as a Defender, but a versioned AI cache entry incorrectly labeled him ST/Poacher. With Gemini disabled, that stale entry could not safely self-correct.
+
+**How to apply:** Validate cached specific positions against the generic category before returning them from role resolution or using them in prediction math. Keep known corrections keyed by playerId.
+
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.

@@ -4372,8 +4372,24 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                             cache_valid = True  # Legacy cache entries without updatedAt
 
                 if cache_valid:
-                    specific_position = cached_pos["specificPosition"]
-                    player_role = cached_pos.get("role", "")
+                    cached_specific = cached_pos["specificPosition"]
+                    allowed_cached_positions = GENERIC_TO_SPECIFIC.get(player_position)
+                    if (
+                        allowed_cached_positions
+                        and cached_specific not in allowed_cached_positions
+                    ):
+                        # A versioned cache entry is not enough: API-Sports'
+                        # generic category is a hard safety boundary.  A
+                        # Defender must never inherit ST/Poacher math just
+                        # because an earlier AI resolution was wrong.
+                        print(
+                            f"[POS RESOLVE] Category guard: {req.playerName} "
+                            f"{player_position} rejects {cached_specific}/{cached_pos.get('role', '')}"
+                        )
+                        cache_valid = False
+                    else:
+                        specific_position = cached_specific
+                        player_role = cached_pos.get("role", "")
                     valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
                     if valid_roles and (not player_role or player_role not in valid_roles):
                         corrected_role = sorted(valid_roles)[0] if valid_roles else ""
@@ -4526,6 +4542,24 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                         print("[POS RESOLVE] AI returned invalid position")
                 except Exception as e:
                     print(f"[POS RESOLVE] Error: {e}")
+
+                # Gemini is intentionally disabled for credit protection. If
+                # the API category is known but there is no valid specific
+                # cache, use the conservative category default instead of
+                # leaving the engine with a stale or impossible attacking
+                # position.
+                if not specific_position and player_position in GENERIC_TO_SPECIFIC:
+                    category_defaults = {
+                        "Goalkeeper": ("GK", "Shot-Stopper"),
+                        "Defender": ("CB", "Stopper"),
+                        "Midfielder": ("CM", "Box-to-Box"),
+                        "Attacker": ("ST", "Pressing Forward"),
+                    }
+                    specific_position, player_role = category_defaults[player_position]
+                    print(
+                        f"[POS RESOLVE] Category fallback: {req.playerName} "
+                        f"{player_position} → {specific_position} | {player_role}"
+                    )
         else:
             specific_position = player_position
 
