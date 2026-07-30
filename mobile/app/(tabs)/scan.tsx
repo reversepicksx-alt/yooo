@@ -1637,23 +1637,42 @@ export default function ScanScreen() {
               </View>
             )}
 
-            <TouchableOpacity
-              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
-              onPress={phase === 'analyzing' ? reset : handleManualAnalyze}
-              activeOpacity={0.85}
-            >
-              {phase === 'analyzing' ? (
-                <>
-                  <Ionicons name="close-circle-outline" size={16} color="#fff" />
-                  <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="analytics-outline" size={16} color="#000" />
-                  <Text style={styles.predictBtnText}>Analyze</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {(() => {
+              const lineReady = line.trim().length > 0 && !isNaN(parseFloat(line));
+              const playerReady = !!resolvedPlayer || playerQuery.trim().length > 0;
+              const isAnalyzing = phase === 'analyzing';
+              // Show disabled state directly on the button when line is missing —
+              // the normal error message is hidden behind the iOS keyboard on web.
+              const showLineMissing = !isAnalyzing && !lineReady;
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.predictBtn,
+                    isAnalyzing && styles.predictBtnCancel,
+                    showLineMissing && { opacity: 0.55, backgroundColor: '#222' },
+                  ]}
+                  onPress={isAnalyzing ? reset : handleManualAnalyze}
+                  activeOpacity={0.85}
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Ionicons name="close-circle-outline" size={16} color="#fff" />
+                      <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
+                    </>
+                  ) : showLineMissing ? (
+                    <>
+                      <Ionicons name="create-outline" size={16} color="#888" />
+                      <Text style={[styles.predictBtnText, { color: '#888' }]}>Enter a line to analyze</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="analytics-outline" size={16} color="#000" />
+                      <Text style={styles.predictBtnText}>Analyze</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              );
+            })()}
           </View>
         )}
 
