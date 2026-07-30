@@ -48,21 +48,31 @@ async def _verify_soccer_fixture_context(
     team_id: int,
     opponent_id: int,
 ) -> None:
-    """Reject a pick whose stored fixture is not the requested matchup."""
+    """Warn (but never block) when the stored fixture doesn't match the requested matchup.
+
+    The upstream predict pipeline already aligns the fixture before the result is
+    returned, so a mismatch here is either a lookup/quota failure or an edge case
+    (tournament players, re-used IDs).  Hard-rejecting causes more harm than good;
+    log the anomaly for auditing and let the save proceed.
+    """
     if not fixture_id or not team_id or not opponent_id:
         return
     try:
         fixtures = await api_football_request("fixtures", {"id": int(fixture_id)})
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Could not verify the fixture for this pick. Please try again.",
-        ) from exc
+        import logging
+        logging.getLogger(__name__).warning(
+            "fixture_context_check: could not fetch fixture %s – %s", fixture_id, exc
+        )
+        return
     fixture = fixtures[0] if isinstance(fixtures, list) and fixtures else None
     if not fixture or not _fixture_contains_teams(fixture, team_id, opponent_id):
-        raise HTTPException(
-            status_code=422,
-            detail="This pick is attached to a different fixture than the selected teams. Refresh the matchup and run the prediction again.",
+        import logging
+        home_id = (fixture or {}).get("teams", {}).get("home", {}).get("id") if fixture else None
+        away_id = (fixture or {}).get("teams", {}).get("away", {}).get("id") if fixture else None
+        logging.getLogger(__name__).warning(
+            "fixture_context_check: fixture %s teams (%s/%s) don't match pick teams (%s/%s) – saving anyway",
+            fixture_id, home_id, away_id, team_id, opponent_id,
         )
 
 
