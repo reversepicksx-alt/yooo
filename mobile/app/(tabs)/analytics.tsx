@@ -120,6 +120,38 @@ function ModelScorecardCard({ scorecard }: { scorecard?: ModelScorecard }) {
   const holdout = scorecard.chronologicalHoldout;
   const bins = scorecard.classification?.calibration ?? [];
   const propGroups = scorecard.projection?.byProp ?? [];
+  const activeSafeguards = [
+    {
+      title: 'Fixture and venue verification',
+      text: 'The player, opponent, home/away side and odds now come from the same verified fixture. This prevents the model from explaining the right player in the wrong game context.',
+      status: 'ACTIVE',
+    },
+    {
+      title: 'Confidence honesty checks',
+      text: 'Thin edges, coin-flip projections, historically unsafe prop directions and weak samples can lower confidence or produce PASS instead of forcing a bet.',
+      status: 'ACTIVE',
+    },
+    {
+      title: 'Bayesian math is the final projection',
+      text: 'AI can explain the pick, but it no longer silently changes the numerical projection. That makes the number traceable and repeatable.',
+      status: 'ACTIVE',
+    },
+    {
+      title: 'Calibration is measured, not assumed',
+      text: 'The scorecard compares what confidence said with what actually happened using log loss, Brier score, calibration gaps, MAE and RMSE.',
+      status: 'MEASURED BELOW',
+    },
+    {
+      title: 'Historical replay validation',
+      text: 'A chronological holdout and replay checks are used to look for future-information leakage. These are evidence checks, not proof that every future pick will win.',
+      status: 'VALIDATING',
+    },
+    {
+      title: 'Data quality and settlement protection',
+      text: 'Full player names are preserved, live fixture IDs are reused, missing player stats are not treated as proof of a DNP, and stale or half-time picks are protected from bad settlement.',
+      status: 'ACTIVE',
+    },
+  ];
 
   return (
     <View style={styles.modelCard}>
@@ -130,6 +162,33 @@ function ModelScorecardCard({ scorecard }: { scorecard?: ModelScorecard }) {
       <Text style={styles.modelIntro}>
         Settled prediction quality · n={scorecard.n} · {scorecard.dateRange?.from?.slice(0, 10) ?? '—'} to {scorecard.dateRange?.to?.slice(0, 10) ?? '—'}
       </Text>
+      <View style={styles.explainerBox}>
+        <Text style={styles.explainerTitle}>What these fixes changed</Text>
+        <Text style={styles.explainerText}>
+          The engine now checks the real fixture, venue, opponent, player role and available data before it trusts a projection. It also compares the model’s confidence with what actually happened, lowers confidence when the edge is too small, and can say PASS instead of forcing a bad side.
+        </Text>
+        <Text style={styles.explainerText}>
+          In plain English: a prediction can still be wrong, but it should be less likely to sound certain when the evidence is weak. The rerun comparisons are not added to this history, so these numbers remain an honest record of settled picks.
+        </Text>
+      </View>
+      <Text style={styles.modelSubheading}>ACTIVE SAFEGUARDS</Text>
+      <View style={styles.safeguardList}>
+        {activeSafeguards.map((item) => (
+          <View key={item.title} style={styles.safeguardRow}>
+            <View style={styles.safeguardDot} />
+            <View style={styles.safeguardCopy}>
+              <View style={styles.safeguardHeading}>
+                <Text style={styles.safeguardTitle}>{item.title}</Text>
+                <Text style={[
+                  styles.safeguardStatus,
+                  item.status === 'VALIDATING' && { color: Colors.warning ?? Colors.accent },
+                ]}>{item.status}</Text>
+              </View>
+              <Text style={styles.safeguardText}>{item.text}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
 
       <View style={styles.modelMetricGrid}>
         <View style={styles.modelMetric}>
@@ -604,6 +663,73 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textTertiary,
     marginBottom: 12,
+  },
+  explainerBox: {
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 11,
+    marginBottom: 14,
+  },
+  explainerTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.text,
+    marginBottom: 5,
+  },
+  explainerText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: Colors.textSecondary,
+    marginBottom: 6,
+  },
+  safeguardList: {
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    marginBottom: 14,
+    overflow: 'hidden',
+  },
+  safeguardRow: {
+    flexDirection: 'row',
+    gap: 9,
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
+  },
+  safeguardDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: Colors.primary,
+    marginTop: 4,
+  },
+  safeguardCopy: { flex: 1 },
+  safeguardHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  safeguardTitle: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  safeguardStatus: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    color: Colors.primary,
+  },
+  safeguardText: {
+    fontSize: 10,
+    lineHeight: 15,
+    color: Colors.textSecondary,
+    marginTop: 3,
   },
   modelMetricGrid: {
     flexDirection: 'row',
