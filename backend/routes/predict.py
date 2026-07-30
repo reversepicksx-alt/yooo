@@ -5661,105 +5661,16 @@ Analyze ALL data thoroughly. Return JSON only."""
             pass
         # ─────────────────────────────────────────────────────────────────────
 
-        # AI synthesis: Gemini primary, secondary fallback (ASYNC DECOUPLED — F5)
-        # If cached AI narrative exists, use it immediately. Otherwise fire AI
-        # as a background task; the frontend polls for completion.
+        # AI synthesis is disabled by emergency credit protection. Existing
+        # cached narratives may still be displayed, but no new Gemini task is
+        # created; the deterministic Bayesian result remains authoritative.
         ai_result = None
         _ai_task = None
         if _pred_cached:
             ai_result = _pred_cached
             print("[AI] Cache hit — narrative available immediately")
         else:
-            # Fire AI synthesis as a background task so we can return math now
-            async def _background_ai_synthesis():
-                """Run Gemini → cache → store result for polling."""
-                _r = None
-                try:
-                    _r = await call_grok()
-                    if _r:
-                        print("[AI-BG] Gemini synthesis succeeded")
-                except Exception as _e:
-                    print(f"[AI-BG] Gemini error: {_e}")
-                if not _r or not isinstance(_r, dict) or not _r.get("tacticalBreakdown"):
-                    try:
-                        _r = await call_gemini()
-                        if _r:
-                            print("[AI-BG] Gemini fallback succeeded")
-                    except Exception as _e:
-                        print(f"[AI-BG] Gemini fallback error: {_e}")
-                if _r and isinstance(_r, dict):
-                    # Cache successful result
-                    try:
-                        await db.ai_response_cache.replace_one(
-                            {"_k": _soc_ck},
-                            {"_k": _soc_ck, "v": _r, "ts": datetime.now(timezone.utc)},
-                            upsert=True,
-                        )
-                        print(f"[PRED CACHE SET] soccer {_soc_ck[:70]}")
-                    except Exception:
-                        pass
-                    # Also store for polling by job key
-                    try:
-                        await db.ai_pending_jobs.replace_one(
-                            {"_k": _soc_ck},
-                            {
-                                "_k": _soc_ck,
-                                "v": _r,
-                                "ts": datetime.now(timezone.utc),
-                                "done": True,
-                                "playerName": req.playerName,
-                                "propType": req.propType,
-                            },
-                            upsert=True,
-                        )
-                    except Exception:
-                        pass
-                    # Write-back real AI text to the saved pick document(s) so the
-                    # analysis modal always shows the full breakdown, not a stale placeholder.
-                    try:
-                        _ai_pick_fields = {}
-                        for _f in ("reasoning", "tacticalBreakdown", "sharpSummary",
-                                   "tacticalAlerts", "keyFactors", "scenarioAnalysis",
-                                   "gameFlowDynamics"):
-                            _fv = _r.get(_f)
-                            if _fv:
-                                _ai_pick_fields[_f] = _fv
-                        if _ai_pick_fields:
-                            _today_start = datetime.now(timezone.utc).replace(
-                                hour=0, minute=0, second=0, microsecond=0)
-                            await db.picks.update_many(
-                                {
-                                    "playerName": req.playerName,
-                                    "propType": req.propType,
-                                    "line": req.line,
-                                    "sport": "soccer",
-                                    "savedAt": {"$gte": _today_start},
-                                },
-                                {"$set": _ai_pick_fields},
-                            )
-                            print(f"[AI-BG] Wrote AI text back to pick(s): {req.playerName} {req.propType}")
-                    except Exception as _ue:
-                        print(f"[AI-BG] Pick write-back error: {_ue}")
-                else:
-                    # Mark as failed so frontend stops polling
-                    try:
-                        await db.ai_pending_jobs.replace_one(
-                            {"_k": _soc_ck},
-                            {
-                                "_k": _soc_ck,
-                                "v": None,
-                                "ts": datetime.now(timezone.utc),
-                                "done": True,
-                                "failed": True,
-                                "playerName": req.playerName,
-                                "propType": req.propType,
-                            },
-                            upsert=True,
-                        )
-                    except Exception:
-                        pass
-            _ai_task = _track_bg_task(aio.create_task(_background_ai_synthesis()))
-            print(f"[AI-ASYNC] Background synthesis fired for {_soc_ck[:70]}")
+            print("[AI DISABLED] Gemini synthesis skipped; returning math-only prediction.")
 
         # If no cached AI and background task is running, seed with math-only result
         if not ai_result:

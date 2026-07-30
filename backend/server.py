@@ -188,6 +188,10 @@ async def _run_startup_tasks():
     async def _check_ai_api():
         import os as _os
         _log = __import__("logging").getLogger("server")
+        from config import GEMINI_AI_ENABLED
+        if not GEMINI_AI_ENABLED:
+            _log.warning("[AI] Gemini disabled by emergency credit protection — math-only mode active.")
+            return
         _key = _os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY", "")
         if not _key:
             _log.warning("[AI] AI_INTEGRATIONS_GEMINI_API_KEY not set — predictions will return empty AI narrative.")

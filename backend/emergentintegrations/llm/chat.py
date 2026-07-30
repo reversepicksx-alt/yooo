@@ -6,6 +6,7 @@ xAI/Grok removed — _send_xai delegates to _send_gemini.
 import os
 import asyncio
 from typing import Optional, List
+from config import GEMINI_AI_ENABLED
 
 
 class ImageContent:
@@ -35,6 +36,8 @@ class LlmChat:
         return self
 
     async def send_message(self, message: UserMessage) -> str:
+        if not GEMINI_AI_ENABLED:
+            return ""
         return await self._send_gemini(message)
 
     async def _send_gemini(self, message: UserMessage) -> str:

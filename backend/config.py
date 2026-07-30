@@ -35,6 +35,9 @@ XAI_API_KEY = "gemini-via-replit" if _gemini_avail else None
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROK_MODEL = "gemini-2.5-flash"
 GROK_REASONING_MODEL = "gemini-2.5-flash"
+# Emergency credit protection: deterministic prediction math stays enabled,
+# but every Gemini/LLM generation path is disabled until explicitly changed.
+GEMINI_AI_ENABLED = False
 # ── Dynamic settings (overridable via admin panel, persisted in MongoDB) ──
 _dynamic_settings = {}
 

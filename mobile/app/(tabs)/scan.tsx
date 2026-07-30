@@ -698,21 +698,10 @@ export default function ScanScreen() {
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      if (sport === 'soccer') {
-        // Do not block the result screen on the optional tactical chat. If it
-        // takes too long or fails, the engine output remains usable.
-        void fetchTacticalChat(result, sig)
-          .then((tacText) => {
-            if (tacText && !sig.aborted) setTacticalAnalysis(tacText);
-          })
-          .catch(() => {});
-      }
-      // Always poll for backend AI narrative when pending (populates sharpSummary/tacticalBreakdown)
-      // even if fetchTacticalChat already returned text for the TACTICAL AI card
-      if (result.aiPending && sport === 'soccer') {
-        setAiNarrativeLoading(true);
-        pollForAiNarrative(req, result);
-      }
+      // Gemini is disabled to protect credits. The displayed result is the
+      // deterministic Bayesian/math-only analysis; do not start chat or
+      // background narrative requests from the client.
+      setAiNarrativeLoading(false);
     } catch (e: unknown) {
       if (e instanceof Error && e.message === '__CANCELLED__') return;
       const msg = e instanceof Error ? e.message : 'Analysis failed — try again';

@@ -9,7 +9,7 @@ import httpx
 import asyncio
 import traceback
 from datetime import datetime, timezone, timedelta
-from config import db
+from config import db, GEMINI_AI_ENABLED
 
 AI_MODEL = "gemini-2.5-flash"
 GEMINI_FLASH = "gemini-2.5-flash"
@@ -43,6 +43,8 @@ async def _ai_call(
     json_mode: bool = False,
 ) -> str:
     """Core AI call — Replit Gemini AI Integration (billed to Replit credits)."""
+    if not GEMINI_AI_ENABLED:
+        return ""
     if not _REPLIT_GEMINI_KEY:
         return ""
     _model = GEMINI_FLASH
@@ -2789,6 +2791,10 @@ Return ONLY a valid JSON object (not an array):
 async def gemini_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
     """Extract prop details from a screenshot using Gemini vision.
     Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}"""
+
+    if not GEMINI_AI_ENABLED:
+        print(f"[SCAN:{sport}] Gemini vision disabled by emergency credit protection")
+        return {}
 
     prompt = _SCAN_PROMPTS.get(sport.lower(), _SCAN_PROMPTS["soccer"])
 
