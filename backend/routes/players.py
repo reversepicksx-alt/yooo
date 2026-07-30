@@ -168,6 +168,36 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
                 ).limit(20).to_list(20)
             docs.extend(il_docs or [])
 
+        # Pass D — first-name fallback for abbreviated/stale cache records.
+        # Some squad-cache entries only contain the short display name
+        # ("Jacy"), while API/profile results contain the full name
+        # ("Jacy Maranhão Oliveira"). A query such as "Jacy Oliveira" must
+        # still surface that cached player instead of returning unrelated
+        # players whose surname happens to be Oliveira.
+        first_part = parts[0]
+        first_name_filt: dict = {
+            "$or": [
+                {"firstNameClean": {"$regex": rf"^{re.escape(first_part)}"}},
+                {"nameClean": {"$regex": rf"^{re.escape(first_part)}(?:\s|$)"}},
+            ]
+        }
+        if effective_league_id:
+            first_name_filt["leagueId"] = effective_league_id
+        first_docs = await db[COL_PLAYERS].find(
+            first_name_filt, {"_id": 0}
+        ).limit(30).to_list(30)
+        if not first_docs and effective_league_id:
+            first_docs = await db[COL_PLAYERS].find(
+                {
+                    "$or": [
+                        {"firstNameClean": {"$regex": rf"^{re.escape(first_part)}"}},
+                        {"nameClean": {"$regex": rf"^{re.escape(first_part)}(?:\s|$)"}},
+                    ]
+                },
+                {"_id": 0},
+            ).limit(30).to_list(30)
+        docs.extend(first_docs or [])
+
     # Deduplicate by playerId: for each player keep the best-ranked entry.
     # Priority: top-5 club leagues > other real leagues > 667 friendlies.
     # leagueId=667 (Friendlies) entries are often "opponent team" artefacts
@@ -351,6 +381,10 @@ async def search_players(req: PlayerSearchRequest):
         reversed_penalty = 1 if is_reversed else 0
 
         first_match = 0 if query_parts and first_norm.startswith(query_parts[0]) else 1
+        # A full first-name prefix is stronger than the generic top-league
+        # preference. For "Jacy Oliveira", the cached short-name record
+        # "Jacy" should beat unrelated top-league players named Oliveira.
+        first_name_match = first_match
         top_league  = 0 if p.get("leagueId") in _TOP5_LEAGUES else 1
         # Initial-match: handles abbreviated names like "R. Jiménez" when the user
         # types "Raul Jimenez". If the stored name's first letter == query first letter,
@@ -358,7 +392,7 @@ async def search_players(req: PlayerSearchRequest):
         stored_initial = name_norm.split()[0][0] if name_norm.split() else ""
         query_initial  = query_parts[0][0] if query_parts else ""
         initial_match  = 0 if (stored_initial and query_initial and stored_initial == query_initial) else 1
-        return (all_match, reversed_penalty, exact_word, top_league, has_team,
+        return (all_match, reversed_penalty, exact_word, first_name_match, top_league, has_team,
                 initial_match, first_match, p["name"])
 
     def _apply_sort_and_quality(player_list):
