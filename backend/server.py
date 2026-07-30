@@ -708,6 +708,9 @@ async def owner_analytics(payload: dict = Body(...)):
 
     email = str(payload.get("email") or "").lower().strip()
     token = str(payload.get("token") or "")
+    period = str(payload.get("period") or "all").lower()
+    if period not in {"all", "30d", "7d"}:
+        raise HTTPException(status_code=400, detail="Invalid analytics period")
     if email not in OWNER_EMAILS:
         raise HTTPException(status_code=403, detail="Owner access required")
     session = await db.sessions.find_one(
@@ -737,6 +740,25 @@ async def owner_analytics(payload: dict = Body(...)):
             "actualValue": 1, "passOutcome": 1, "isCalibrationOnly": 1,
         },
     ).to_list(100000)
+    if period != "all":
+        days = 30 if period == "30d" else 7
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        def in_period(row: dict) -> bool:
+            raw_date = row.get("settledAt") or row.get("timestamp") or row.get("createdAt")
+            if not raw_date:
+                return False
+            try:
+                parsed = raw_date if isinstance(raw_date, datetime) else datetime.fromisoformat(
+                    str(raw_date).replace("Z", "+00:00")
+                )
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed >= cutoff
+            except (TypeError, ValueError):
+                return False
+
+        raw_rows = [row for row in raw_rows if in_period(row)]
     deduped_rows = dedupe_prediction_rows(raw_rows)
     actionable_rows = [
         row for row in deduped_rows
@@ -1016,6 +1038,7 @@ async def owner_analytics(payload: dict = Body(...)):
             "access": "owner",
             "dataset": "all_users",
             "sport": "soccer",
+            "period": period,
             "rawSettled": len(raw_rows),
             "settled": total_settled,
             "duplicateRowsRemoved": len(raw_rows) - total_settled,

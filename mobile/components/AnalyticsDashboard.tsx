@@ -176,8 +176,8 @@ export default function AnalyticsDashboard({
   const [period, setPeriod] = useState<Period>('all');
   const localStats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
   const { data: ownerData } = useQuery<AnalyticsData>({
-    queryKey: ['ownerAnalytics', 'pick-insights', session?.email],
-    queryFn: () => getOwnerAnalytics(session!.email, session!.token),
+    queryKey: ['ownerAnalytics', 'pick-insights', session?.email, period],
+    queryFn: () => getOwnerAnalytics(session!.email, session!.token, period),
     enabled: visible && !!session,
     staleTime: 60_000,
   });

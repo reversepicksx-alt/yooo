@@ -8,3 +8,9 @@ The owner model-health scorecard must authenticate the owner session, then repor
 **Why:** ReversePicks is the calibration owner, not an individual bettor. A personal-email filter made the visible report disagree with system performance, while duplicate saved copies inflated the totals.
 
 **How to apply:** Authenticate with the owner session but query all users. Deduplicate by shared fixture/player/market/direction identity; PASS uses `passLeaning` as its direction. Never merge separate fixtures solely because player, prop, and line match. Keep duplicate removal, result counts, calibration gaps, projection error, and replay/holdout status visible in both the dedicated owner dashboard and the legacy Pick Insights path.
+
+The Insights period controls must filter the system ledger on the server before deduplication and calculation. The selected period belongs in both the API payload and the client query key; otherwise the UI can highlight a different button while continuing to display the all-time chart.
+
+**Why:** The period buttons originally changed only local state, so All Time, Last 30 Days, and Last 7 Days rendered the same all-user chart and totals.
+
+**How to apply:** Accept only `all`, `30d`, or `7d`; apply the cutoff to settledAt/timestamp/createdAt before event deduplication, and refetch when the period changes.

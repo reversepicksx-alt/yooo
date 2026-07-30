@@ -317,7 +317,7 @@ export default function AnalyticsTab() {
 
   const { data, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['ownerAnalytics', session?.email],
-    queryFn: () => getOwnerAnalytics(session!.email, session!.token),
+    queryFn: () => getOwnerAnalytics(session!.email, session!.token, 'all'),
     enabled: !!session,
     staleTime: 60_000,
   });

@@ -1411,6 +1411,7 @@ export interface AnalyticsData {
     access: 'owner';
     dataset: 'all_users';
     sport: 'soccer';
+    period?: 'all' | '30d' | '7d';
     rawSettled: number;
     settled: number;
     duplicateRowsRemoved: number;
@@ -1446,10 +1447,14 @@ export interface SystemInsights {
   worstLeagues: SystemInsightDimension[];
 }
 
-export async function getOwnerAnalytics(email: string, token: string): Promise<AnalyticsData> {
+export async function getOwnerAnalytics(
+  email: string,
+  token: string,
+  period: 'all' | '30d' | '7d' = 'all',
+): Promise<AnalyticsData> {
   return apiCall('/api/admin/analytics', {
     method: 'POST',
-    body: JSON.stringify({ email, token }),
+    body: JSON.stringify({ email, token, period }),
   });
 }
 
