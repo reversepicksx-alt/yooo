@@ -19,7 +19,10 @@ from config import (
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
 from ai_engine import fetch_web_intel, fetch_ai_press_intensity
-from prop_safety_cache import get_prop_safety as _get_prop_safety
+from prop_safety_cache import (
+    get_prop_safety as _get_prop_safety,
+    get_recent_prop_safety as _get_recent_prop_safety,
+)
 import soccer_bdl_client as _bdl_soc
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
 
@@ -1458,7 +1461,14 @@ async def predict(req: PredictionRequest):
         # MATCH DOMINANCE ENGINE: Calculate expected possession & context multiplier
         # Uses opponent-aware formula + odds adjustment for accurate matchup prediction
         # =============================================
-        match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
+        match_dominance = {
+            "expectedPoss": 50.0,
+            "oppExpectedPoss": 50.0,
+            "multiplier": 1.0,
+            "notes": [],
+            "seasonAvgIsReal": False,
+            "hasRealPossData": False,
+        }
 
         # Wave 2: Fetch deep fixture data + Situation Engine in parallel
         # AI digest, web intel, and AI press intensity removed — Gemini is summary-only.
@@ -1852,7 +1862,14 @@ async def predict(req: PredictionRequest):
             For is_neutral=True: uses overall averages for both teams and skips the
             home-venue possession boost (+1.5pp). Used for World Cup / tournament
             games where neither team has a real home-ground advantage."""
-            dom = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": [], "seasonAvgIsReal": False}
+            dom = {
+                "expectedPoss": 50.0,
+                "oppExpectedPoss": 50.0,
+                "multiplier": 1.0,
+                "notes": [],
+                "seasonAvgIsReal": False,
+                "hasRealPossData": False,
+            }
 
             def avg_poss(sl, venue_filter=None):
                 vals = []
@@ -2205,7 +2222,13 @@ async def predict(req: PredictionRequest):
 
                 dom["homePoss"] = home_poss
                 dom["awayPoss"] = away_poss
-                dom["seasonAvgIsReal"] = True
+                # This branch can only be reached when both teams have
+                # possession observations.  Keep this separate from the
+                # expected possession itself: rank-gap and odds-only fallbacks
+                # also produce a number, but their synthetic 50% season
+                # baselines must not activate possession-dependent layers.
+                dom["hasRealPossData"] = bool(team_avg is not None and opp_avg is not None)
+                dom["seasonAvgIsReal"] = dom["hasRealPossData"]
 
                 player_team_poss = dom["expectedPoss"]
                 poss_ratio = player_team_poss / team_avg if team_avg > 0 else 1.0
@@ -7334,6 +7357,64 @@ Analyze ALL data thoroughly. Return JSON only."""
             if prediction.get("projectedValue") is not None and prediction["projectedValue"] > req.line:
                 prediction["projectedValue"] = round((req.line - 0.5) * 2) / 2
             print(f"[HARD BLOCK] clearances OVER → forced UNDER 60% for {req.playerName}")
+
+        # ── RECENT PASS-PROP SUPPRESSION ─────────────────────────────────────
+        # All-time safety is useful for context, but it can hide a short-lived
+        # league/role regime change.  For soccer passing props only, suppress
+        # a direction when the most-specific rolling bucket has at least ten
+        # deduplicated settled events and is at or below a 50% hit rate.
+        # Do not reverse the recommendation: PASS means the model has no
+        # actionable side and protects both the UI and direct save callers.
+        if (
+            str(req.sport or "").lower() == "soccer"
+            and req.propType in {"pass_attempts", "passes"}
+            and prediction.get("recommendation", "").upper() in {"OVER", "UNDER"}
+        ):
+            _pass_dir = prediction["recommendation"].upper()
+            _pass_position = (
+                prediction.get("player", {}).get("position")
+                or prediction.get("position")
+                or req.positionOverride
+                or ""
+            )
+            _recent_pass = _get_recent_prop_safety(
+                req.propType,
+                _pass_dir,
+                league_id=req.leagueId,
+                position=_pass_position,
+            )
+            if (
+                _recent_pass
+                and _recent_pass.get("hitRate") is not None
+                and _recent_pass.get("hitRate") <= 50
+            ):
+                _pass_rate = _recent_pass["hitRate"]
+                _pass_n = _recent_pass["n"]
+                prediction["recommendation"] = "PASS"
+                prediction["passReason"] = (
+                    f"PASS — recent {_pass_dir} pass-prop results in this "
+                    f"league/role bucket are {_pass_rate:.0f}% "
+                    f"({_pass_n} settled events)."
+                )
+                prediction["skipReason"] = "RECENT_PASS_PROP_BUCKET"
+                prediction["skipDetails"] = {
+                    "direction": _pass_dir,
+                    "hitRate": _pass_rate,
+                    "sampleSize": _pass_n,
+                    "windowDays": 45,
+                    "minSampleSize": 10,
+                }
+                prediction["confidenceScore"] = 50
+                prediction["rawConfidence"] = 50
+                prediction["confidenceLevel"] = "Low"
+                prediction["coinFlip"] = False
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    prediction["passReason"] + " No opposite-side recommendation is implied."
+                ]
+                print(
+                    f"[PASS PROP SUPPRESSION] {req.playerName}/{req.propType}: "
+                    f"{_pass_dir} {_pass_rate:.1f}% ({_pass_n}n, rolling 45d)"
+                )
 
         # ── MARKET DISTANCE GUARD ────────────────────────────────────────────
         # When our projection is ≥35% away from the market line, the prior is

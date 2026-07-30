@@ -21,6 +21,7 @@ while a brand-new tournament gets a global tag.
 """
 from __future__ import annotations
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 _MIN_N_SAFE     = 10
@@ -28,6 +29,8 @@ _MIN_N_MODERATE = 8
 _MIN_N_AVOID    = 5
 _MIN_N_LEAGUE   = 5   # child buckets can fire with fewer samples than global
 _MIN_N_POSITION = 3
+_MIN_N_RECENT_PASS = 10
+_ROLLING_DAYS = 45
 
 _RATE_SAFE_HIGH   = 80
 _RATE_SAFE        = 65
@@ -73,7 +76,20 @@ async def refresh_prop_safety(db) -> dict:
             "_dateKey": {
                 "$dateToString": {
                     "format": "%Y-%m-%d",
-                    "date": {"$ifNull": ["$createdAt", {"$toDate": "$_id"}]},
+                    "date": {
+                        "$convert": {
+                            "input": {
+                                "$ifNull": [
+                                    "$timestamp",
+                                    {"$ifNull": ["$createdAt", "$_id"]},
+                                ]
+                            },
+                            "to": "date",
+                            "onError": None,
+                            "onNull": None,
+                        }
+                    },
+                    "onNull": "",
                 }
             },
             "_position": {"$ifNull": ["$position", "$player.position", "any"]},
@@ -94,26 +110,22 @@ async def refresh_prop_safety(db) -> dict:
             "leagueId":      {"$first": "$_leagueId"},
             "position":      {"$first": "$_position"},
         }},
-        # aggregate by prop+direction+league+position
-        {"$group": {
-            "_id": {
-                "propType":      "$propType",
-                "recommendation":"$recommendation",
-                "leagueId":      "$leagueId",
-                "position":      "$position",
-            },
-            "wins":  {"$sum": "$win"},
-            "total": {"$sum": 1},
-        }},
     ]
 
     rows = await db.picks.aggregate(pipe).to_list(None)
 
-    # Build both global and child buckets
+    # Build both all-time and rolling-window buckets from one row per unique
+    # event.  The previous implementation grouped before this point, which
+    # made it impossible to tell whether an apparently bad bucket was still
+    # bad recently or only reflected an old regime.
     new_cache: Dict[str, dict] = {}
     global_stats: Dict[str, dict] = {}
     league_stats: Dict[str, dict] = {}
     pos_stats: Dict[str, dict] = {}
+    recent_global_stats: Dict[str, dict] = {}
+    recent_league_stats: Dict[str, dict] = {}
+    recent_pos_stats: Dict[str, dict] = {}
+    recent_cutoff = datetime.now(timezone.utc).date() - timedelta(days=_ROLLING_DAYS)
 
     def _ensure(d, key):
         if key not in d:
@@ -121,50 +133,74 @@ async def refresh_prop_safety(db) -> dict:
         return d[key]
 
     for r in rows:
-        prop      = (r["_id"].get("propType") or "").strip()
-        direction = (r["_id"].get("recommendation") or "").upper().strip()
+        event_id = r.get("_id") or {}
+        prop      = (r.get("propType") or event_id.get("propType") or "").strip()
+        direction = (r.get("recommendation") or event_id.get("recommendation") or "").upper().strip()
         if not prop or direction not in ("OVER", "UNDER"):
             continue
-        wins   = r["wins"]
-        total  = r["total"]
-        league_id = r["_id"].get("leagueId", 0)
-        position = (r["_id"].get("position") or "any").lower()
-        if total == 0:
-            continue
+        wins   = int(r.get("win", 0))
+        league_id = r.get("leagueId", 0)
+        position = (r.get("position") or "any").lower()
 
         # Global
         g = _ensure(global_stats, f"{prop}|{direction}")
         g["wins"] += wins
-        g["total"] += total
+        g["total"] += 1
 
         # League
         l = _ensure(league_stats, f"{prop}|{direction}|{league_id}")
         l["wins"] += wins
-        l["total"] += total
+        l["total"] += 1
 
         # League + position
         p = _ensure(pos_stats, f"{prop}|{direction}|{league_id}|{position}")
         p["wins"] += wins
-        p["total"] += total
+        p["total"] += 1
 
-    def _finalize(stats, min_n):
+        event_date = event_id.get("date")
+        try:
+            event_date = datetime.strptime(str(event_date), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            event_date = None
+        if event_date and event_date >= recent_cutoff:
+            rg = _ensure(recent_global_stats, f"{prop}|{direction}")
+            rg["wins"] += wins
+            rg["total"] += 1
+            rl = _ensure(recent_league_stats, f"{prop}|{direction}|{league_id}")
+            rl["wins"] += wins
+            rl["total"] += 1
+            rp = _ensure(recent_pos_stats, f"{prop}|{direction}|{league_id}|{position}")
+            rp["wins"] += wins
+            rp["total"] += 1
+
+    def _finalize(stats, min_n, recent_stats=None):
         for key, v in stats.items():
             total = v["total"]
             if total == 0:
                 continue
             hit_rate = round(v["wins"] / total * 100, 1)
             safety = _safety_from_rate(hit_rate, total, min_n)
+            recent = (recent_stats or {}).get(key, {})
+            recent_total = recent.get("total", 0)
+            recent_rate = (
+                round(recent["wins"] / recent_total * 100, 1)
+                if recent_total else None
+            )
             new_cache[key] = {
                 "hitRate": hit_rate,
                 "n":       total,
                 "wins":    v["wins"],
                 "losses":  total - v["wins"],
                 "safety":  safety,
+                "recentHitRate": recent_rate,
+                "recentN": recent_total,
+                "recentWins": recent.get("wins", 0),
+                "recentLosses": recent_total - recent.get("wins", 0),
             }
 
-    _finalize(global_stats, _MIN_N_AVOID)
-    _finalize(league_stats, _MIN_N_LEAGUE)
-    _finalize(pos_stats, _MIN_N_POSITION)
+    _finalize(global_stats, _MIN_N_AVOID, recent_global_stats)
+    _finalize(league_stats, _MIN_N_LEAGUE, recent_league_stats)
+    _finalize(pos_stats, _MIN_N_POSITION, recent_pos_stats)
 
     async with _CACHE_LOCK:
         _CACHE.clear()
@@ -203,6 +239,34 @@ def get_prop_safety(
     # Global fallback
     key = f"{prop_type}|{direction}"
     return _CACHE.get(key)
+
+
+def get_recent_prop_safety(
+    prop_type: str,
+    direction: str,
+    league_id: Optional[int] = None,
+    position: Optional[str] = None,
+    min_n: int = _MIN_N_RECENT_PASS,
+) -> Optional[dict]:
+    """Return the most specific bucket with enough recent settled events."""
+    direction = direction.upper()
+    keys = []
+    if league_id is not None and position:
+        keys.append(f"{prop_type}|{direction}|{league_id}|{position.lower()}")
+    if league_id is not None:
+        keys.append(f"{prop_type}|{direction}|{league_id}")
+    keys.append(f"{prop_type}|{direction}")
+    for key in keys:
+        bucket = _CACHE.get(key)
+        if bucket and bucket.get("recentN", 0) >= min_n:
+            return {
+                **bucket,
+                "hitRate": bucket.get("recentHitRate"),
+                "n": bucket.get("recentN", 0),
+                "wins": bucket.get("recentWins", 0),
+                "losses": bucket.get("recentLosses", 0),
+            }
+    return None
 
 
 def get_all() -> Dict[str, dict]:

@@ -78,3 +78,4 @@
 - [Opponent context enrichment](opponent-context-enrichment.md) — Player Profile and pick cards should surface opponent possession and per-90 advanced stats (xG, xA, shots, SOT, key passes, passes, tackles) via cached backend endpoints, not inline in the pick list.
 - [Automatic Community pick images](automatic-community-pick-images.md) — Capture the rendered highest-confidence active OwnerPickCard, then server-validate and attach its image to the idempotent auto post.
 - [Web auth route split](web-auth-route-split.md) — Safari can mount shared auth after logout but paint only its dark background; use a dedicated auth.web.tsx route for reliable web sign-in.
+- [Passing-prop safeguards](passing-prop-safeguards.md) — rolling deduped pass buckets suppress only evidence-backed directions; possession layers require an explicit real-data flag, not fallback numbers.

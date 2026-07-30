@@ -316,6 +316,9 @@ export interface PredictionResult {
   confidence?: number;
   rawConfidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
+  passReason?: string;
+  skipReason?: string;
+  skipDetails?: { direction?: string; hitRate?: number; sampleSize?: number; windowDays?: number };
   confidenceScore?: number;
   bayesianMetrics?: Record<string, unknown>;
   reasoning?: string;
@@ -693,6 +696,9 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     confidence: raw.confidenceScore,
     rawConfidence: raw.rawConfidence ?? raw.confidenceScore,
     recommendation: rec,
+    passReason: (raw as any).passReason ?? undefined,
+    skipReason: (raw as any).skipReason ?? undefined,
+    skipDetails: (raw as any).skipDetails ?? undefined,
     reasoning: raw.reasoning || undefined,
     confidenceLevel: raw.confidenceLevel,
     confidenceInterval: raw.confidenceInterval,

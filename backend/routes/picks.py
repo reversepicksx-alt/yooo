@@ -282,6 +282,15 @@ async def save_pick(req: SavePickRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
     pick = req.pick
+    # PASS is an explicit no-action result from the prediction engine.  Enforce
+    # this server-side so an old client or a manually crafted request cannot
+    # turn a suppressed recommendation into a tracked pick.
+    if str(pick.get("recommendation") or "").upper() == "PASS":
+        raise HTTPException(
+            status_code=422,
+            detail=pick.get("passReason")
+            or "This recommendation is marked PASS and cannot be saved.",
+        )
     pick_id = pick.get("id") or str(uuid.uuid4())[:8]
     tracking_id = generate_tracking_id()
 

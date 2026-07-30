@@ -1049,6 +1049,10 @@ export default function ScanScreen() {
 
   const handleSavePick = async () => {
     if (!session || !prediction) return;
+    if (prediction.recommendation === 'PASS') {
+      setSaveError(prediction.passReason || 'This recommendation is PASS — there is no actionable side to save.');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -4895,25 +4899,38 @@ export default function ScanScreen() {
 
             </View>{/* end captureContainer */}
 
-            <TouchableOpacity
-              style={[styles.saveBtn, (saving || pickSaved) && { opacity: 0.6 }]}
-              onPress={handleSavePick}
-              disabled={saving || pickSaved}
-              activeOpacity={0.85}
-            >
-              {saving
-                ? <ActivityIndicator color="#000" size="small" />
-                : pickSaved
-                  ? <>
-                      <Ionicons name="checkmark-circle" size={16} color="#000" />
-                      <Text style={styles.saveBtnText}>Saved — Going to Picks…</Text>
-                    </>
-                  : <>
-                      <Ionicons name="bookmark" size={16} color="#000" />
-                      <Text style={styles.saveBtnText}>Save to My Picks</Text>
-                    </>
-              }
-            </TouchableOpacity>
+            {prediction.recommendation === 'PASS' ? (
+              <View style={{
+                marginTop: 10, padding: 12, borderRadius: 10,
+                backgroundColor: 'rgba(255,165,0,0.08)',
+                borderWidth: 1, borderColor: 'rgba(255,165,0,0.35)',
+              }}>
+                <Text style={{ color: '#FFA500', fontSize: 12, fontWeight: '800' }}>PASS — SKIP THIS PROP</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 }}>
+                  {prediction.passReason || 'The recent data does not support an actionable OVER or UNDER.'}
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.saveBtn, (saving || pickSaved) && { opacity: 0.6 }]}
+                onPress={handleSavePick}
+                disabled={saving || pickSaved}
+                activeOpacity={0.85}
+              >
+                {saving
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : pickSaved
+                    ? <>
+                        <Ionicons name="checkmark-circle" size={16} color="#000" />
+                        <Text style={styles.saveBtnText}>Saved — Going to Picks…</Text>
+                      </>
+                    : <>
+                        <Ionicons name="bookmark" size={16} color="#000" />
+                        <Text style={styles.saveBtnText}>Save to My Picks</Text>
+                      </>
+                }
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[styles.saveImgBtn, savingImage && { opacity: 0.6 }]}

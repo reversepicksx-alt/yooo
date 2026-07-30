@@ -124,7 +124,9 @@ export default function OwnerPickCard({
   const nowValue = settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
   const paceValue = live ? (livePace ?? projValue) : projValue;
   const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
-  const hitPct = pick.hitPct ?? null;
+  // hitPct is a live pace estimate.  Once settled, 0/100 is the outcome,
+  // not a model probability; showing it as "hit prob" was misleading.
+  const hitPct = live ? (pick.hitPct ?? null) : null;
 
   const progress = useMemo(() => {
     if (lineValue == null || nowValue == null || lineValue <= 0) return null;
