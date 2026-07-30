@@ -191,9 +191,33 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
                 return []
 
         players = data[0]["players"]
+
+        # Preserve enriched full names: squad endpoint returns abbreviated or
+        # short display names ("Jonathan", "J. Valencia") while search/predict
+        # passes may have stored the complete registered name ("Jonathan de
+        # Jesus Alves"). Since we delete+reinsert below, capture the longest
+        # known name per playerId first and keep it if it's fuller.
+        _pids = [p.get("id") for p in players if p.get("id")]
+        _existing_names: dict = {}
+        try:
+            async for _d in db[COL_PLAYERS].find(
+                {"playerId": {"$in": _pids}}, {"_id": 0, "playerId": 1, "name": 1}
+            ):
+                _nm = (_d.get("name") or "").strip()
+                _pid = _d.get("playerId")
+                if _nm and _pid:
+                    _prev = _existing_names.get(_pid, "")
+                    if (len(_nm.split()), len(_nm)) > (len(_prev.split()), len(_prev)):
+                        _existing_names[_pid] = _nm
+        except Exception:
+            pass
+
         ops = []
         for p in players:
             name = html_module.unescape(p.get("name", ""))
+            _kept = _existing_names.get(p.get("id"), "")
+            if (len(_kept.split()), len(_kept)) > (len(name.strip().split()), len(name.strip())):
+                name = _kept
             # Extract first name from abbreviated display name when possible.
             # Squad endpoint returns abbreviated names like "J. Valencia" — we
             # can only extract the initial here. Player search enriches this with
