@@ -3731,6 +3731,44 @@ export default function ScanScreen() {
                     </View>
                   )}
 
+                  {/* ── L5 / L10 / L15 / SZN Hit-Rate Chips ── */}
+                  {!allSynthetic && effectiveLine != null && (() => {
+                    const allVals = displayLogs.map(g => g.value).filter((v): v is number => v != null);
+                    const chips = [
+                      { label: 'L5',  slice: allVals.slice(-5) },
+                      { label: 'L10', slice: allVals.slice(-10) },
+                      { label: 'L15', slice: allVals.slice(-15) },
+                      { label: 'SZN', slice: allVals },
+                    ].map(({ label, slice }) => {
+                      const over = slice.filter(v => v > effectiveLine!).length;
+                      const pct = slice.length >= 2 ? Math.round(over / slice.length * 100) : null;
+                      return { label, pct, n: slice.length };
+                    }).filter(c => c.n >= 2);
+                    if (chips.length === 0) return null;
+                    return (
+                      <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 16, marginBottom: 10, marginTop: 2 }}>
+                        {chips.map(chip => {
+                          const pct = chip.pct;
+                          const color = pct != null && pct >= 60 ? Colors.success
+                            : pct != null && pct < 42 ? Colors.error : '#888';
+                          return (
+                            <View key={chip.label} style={{
+                              flex: 1, backgroundColor: color + '18', borderRadius: 8,
+                              paddingVertical: 7, paddingHorizontal: 4, alignItems: 'center',
+                              borderWidth: 1, borderColor: color + '35',
+                            }}>
+                              <Text style={{ fontSize: 7, color: '#666', fontWeight: '700', letterSpacing: 0.8 }}>{chip.label}</Text>
+                              <Text style={{ fontSize: 16, fontWeight: '900', color, lineHeight: 20 }}>
+                                {pct != null ? `${pct}%` : '—'}
+                              </Text>
+                              <Text style={{ fontSize: 7, color: '#444' }}>{chip.n}G</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })()}
+
                   {/* ── Filter Tabs ── */}
                   {!allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && (
                     <View style={styles.glTabRow}>
@@ -3783,231 +3821,137 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* ── Interactive Tile Grid ── */}
-                  {!allSynthetic && (
-                    <View style={styles.glGrid}>
-                      {(() => {
-                        const remainder = filteredLogs.length % COLS;
-                        const padCount = remainder === 0 ? 0 : COLS - remainder;
-                        return (
-                          <>
-                            {filteredWithIdx.map(({ log: g, origIdx }, i) => {
-                              const sport = g.sport || 'soccer';
-                              const isSoccer = sport === 'soccer';
-                              const isOver = g.value != null && effectiveLine != null && g.value > effectiveLine;
-                              const isDeselected = deselectedLogIndices.has(origIdx);
-                              // Soccer uses real minutes; NBA/NHL store TOI in minutes; all others = 0
-                              const mins = isSoccer ? (g.minutes || 0) : (sport === 'nba' || sport === 'nhl') ? (g.minutes || 0) : 0;
-                              const isLowMin = isSoccer && mins > 0 && mins < 60;
-                              const tc = tierColor(g.oppTier);
-                              const mc = minsColor(mins);
+                  {/* ── Bar Chart ── */}
+                  {!allSynthetic && (() => {
+                    if (filteredWithIdx.length === 0) return null;
+                    const CHART_H = 112;
+                    const BAR_W = 34;
+                    const BAR_GAP = 5;
+                    const vals = filteredWithIdx.map(({ log: g }) => g.value).filter((v): v is number => v != null);
+                    if (vals.length === 0) return null;
+                    const maxVal = Math.max(...vals, effectiveLine ?? 0) * 1.18;
+                    const lineTopPx = effectiveLine != null && maxVal > 0
+                      ? CHART_H * (1 - effectiveLine / maxVal) : null;
+                    const totalW = filteredWithIdx.length * (BAR_W + BAR_GAP) + 32;
 
-                              // Soccer strips club prefixes; all other sports use abbreviations/short names
-                              const oppRaw = g.opponent || '';
-                              const oppShort = isSoccer
-                                ? (oppRaw || '?').replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase()
-                                : (oppRaw ? oppRaw.toUpperCase().slice(0, 3) : '—');
+                    return (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+                        <View style={{ width: totalW }}>
+                          {/* Chart area */}
+                          <View style={{ height: CHART_H, position: 'relative' }}>
+                            {/* Reference line */}
+                            {lineTopPx != null && (
+                              <View style={{
+                                position: 'absolute', top: lineTopPx, left: 0, right: 0,
+                                height: 1.5, backgroundColor: 'rgba(255,255,255,0.18)', zIndex: 5,
+                              }}>
+                                <Text style={{
+                                  position: 'absolute', right: 0, top: -8,
+                                  fontSize: 7, color: 'rgba(255,255,255,0.35)', fontWeight: '800',
+                                  letterSpacing: 0.5,
+                                }}>{effectiveLine}</Text>
+                              </View>
+                            )}
 
-                              const scoreStr = g.score || '';
+                            {/* Bars */}
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: CHART_H, gap: BAR_GAP }}>
+                              {filteredWithIdx.map(({ log: g, origIdx }, i) => {
+                                const val = g.value;
+                                const isOver = val != null && effectiveLine != null && val > effectiveLine;
+                                const isDesel = deselectedLogIndices.has(origIdx);
+                                const barH = val != null && maxVal > 0 ? Math.max(5, (val / maxVal) * CHART_H) : 5;
+                                const barColor = isDesel
+                                  ? 'rgba(45,45,45,0.7)'
+                                  : isOver ? 'rgba(57,255,20,0.72)' : 'rgba(255,59,48,0.62)';
+                                const glowColor = isDesel ? undefined
+                                  : isOver ? Colors.success : Colors.error;
+                                const tc = tierColor(g.oppTier);
 
-                              // Non-soccer: build a middle line showing W/L + context
-                              const nonSoccerMid: { text: string; color: string } | null = (() => {
-                                if (isSoccer) return null;
-                                const rawWon = (g as any).won ?? (g as any).wonMatch ?? (g as any).wonMap ?? null;
-                                const wl = rawWon === true ? 'W' : rawWon === false ? 'L' : null;
-                                const wlColor = isDeselected ? Colors.textTertiary
-                                  : rawWon === true ? Colors.success
-                                  : rawWon === false ? Colors.error
-                                  : Colors.textSecondary;
-                                // Short date fallback
-                                const dateStr = g.date ? (() => {
-                                  const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
-                                  return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
-                                })() : '';
+                                return (
+                                  <TouchableOpacity
+                                    key={i}
+                                    activeOpacity={0.7}
+                                    onPress={() => {
+                                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                      setDeselectedLogIndices(prev => {
+                                        const nxt = new Set(prev);
+                                        if (nxt.has(origIdx)) nxt.delete(origIdx); else nxt.add(origIdx);
+                                        return nxt;
+                                      });
+                                    }}
+                                    style={{ alignItems: 'center', justifyContent: 'flex-end', width: BAR_W, height: CHART_H }}
+                                  >
+                                    {/* Tier dot above bar */}
+                                    {tc && !isDesel && (
+                                      <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: tc, marginBottom: 2 }} />
+                                    )}
+                                    {/* Value label */}
+                                    {val != null && (
+                                      <Text style={{
+                                        fontSize: 9, fontWeight: '800', lineHeight: 11, marginBottom: 2,
+                                        color: isDesel ? '#333' : isOver ? Colors.success : Colors.error,
+                                      }}>{val}</Text>
+                                    )}
+                                    {/* Bar */}
+                                    <View style={{
+                                      width: BAR_W - 6, height: barH, backgroundColor: barColor,
+                                      borderRadius: 3, borderTopLeftRadius: 4, borderTopRightRadius: 4,
+                                      shadowColor: glowColor, shadowOffset: { width: 0, height: 0 },
+                                      shadowOpacity: isDesel ? 0 : 0.45, shadowRadius: 5,
+                                    }} />
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </View>
 
-                                // MLB: "W 5-3" / "L 2-4"
-                                if (sport === 'mlb') {
-                                  if (wl && scoreStr) return { text: `${wl} ${scoreStr}`, color: wlColor };
-                                  if (wl) return { text: wl + (dateStr ? ` ${dateStr}` : ''), color: wlColor };
-                                  return { text: scoreStr || dateStr || '—', color: Colors.textSecondary };
-                                }
-                                // NBA / NHL: "W" / "L" + minutes
-                                if (sport === 'nba' || sport === 'nhl') {
-                                  const minLabel = sport === 'nhl' ? `${mins}m` : `${mins}`;
-                                  if (wl && mins > 0) return { text: `${wl}  ${minLabel}`, color: wlColor };
-                                  if (wl) return { text: wl, color: wlColor };
-                                  return { text: mins > 0 ? minLabel : (dateStr || '—'), color: Colors.textSecondary };
-                                }
-                                // WTA: "W" / "L" + match score
-                                if (sport === 'wta') {
-                                  const wtaScore = (g as any).score;
-                                  const shortScore = wtaScore ? String(wtaScore).slice(0, 9) : '';
-                                  if (wl && shortScore) return { text: `${wl} ${shortScore}`, color: wlColor };
-                                  if (wl) return { text: wl, color: wlColor };
-                                  return { text: shortScore || dateStr || '—', color: Colors.textSecondary };
-                                }
-                                // CS2: "W" / "L" (map result)
-                                if (sport === 'cs2') {
-                                  if (wl) return { text: wl + (dateStr ? ` ${dateStr}` : ''), color: wlColor };
-                                  return { text: dateStr || '—', color: Colors.textSecondary };
-                                }
-                                // NFL: "WK14" + W/L
-                                if (sport === 'nfl') {
-                                  const week = (g as any).week;
-                                  const wkStr = week != null ? `WK${week}` : '';
-                                  if (wl && wkStr) return { text: `${wl} ${wkStr}`, color: wlColor };
-                                  if (wl) return { text: wl, color: wlColor };
-                                  return { text: wkStr || dateStr || '—', color: Colors.textSecondary };
-                                }
-                                // Generic fallback
-                                return { text: wl || dateStr || '—', color: wlColor };
-                              })();
-
-                              const defSecondary: { val: number | null; label: string } | null =
-                                propT === 'blocks' ? { val: g.blocks ?? null, label: 'BLK' }
-                                : propT === 'interceptions' ? { val: g.interceptions ?? null, label: 'INT' }
-                                : propT === 'tackles' ? { val: g.tackles ?? null, label: 'TKL' }
-                                : propT === 'clearances' ? { val: g.clearances ?? null, label: 'CLR' }
-                                : null;
-
-                              const venueLabel = g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—';
-
+                          {/* Labels: date + opponent */}
+                          <View style={{ flexDirection: 'row', gap: BAR_GAP, marginTop: 5 }}>
+                            {filteredWithIdx.map(({ log: g }, i) => {
+                              const isSoc = (g.sport || 'soccer') === 'soccer';
+                              const dateStr = g.date ? (() => {
+                                const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
+                                return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
+                              })() : '';
+                              const oppRaw = g.opponent || '?';
+                              const oppShort = isSoc
+                                ? oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |sp |ca |cp |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase()
+                                : oppRaw.toUpperCase().slice(0, 3);
+                              const venueC = g.venue === 'home' ? Colors.success : g.venue === 'away' ? '#60A5FA' : '#555';
                               return (
-                                <TouchableOpacity
-                                  key={i}
-                                  activeOpacity={0.65}
-                                  onPress={() => {
-                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    setDeselectedLogIndices(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(origIdx)) next.delete(origIdx); else next.add(origIdx);
-                                      return next;
-                                    });
-                                  }}
-                                  style={[
-                                    styles.glTile,
-                                    { width: tileW, opacity: isDeselected ? 0.25 : 1 },
-                                    isDeselected ? styles.glTileDeselected
-                                      : isOver ? styles.glTileOver : styles.glTileUnder,
-                                  ]}
-                                >
-                                  {tc && <View style={[styles.glTierDot, { backgroundColor: tc }]} />}
-                                  {isLowMin && !isDeselected && <View style={styles.glLowMinDot} />}
-
-                                  {/* ── Stat value ── */}
-                                  <Text style={[styles.glTileVal, {
-                                    color: isDeselected ? Colors.textTertiary : isOver ? Colors.success : Colors.error,
-                                  }]}>
-                                    {g.value != null ? String(g.value) : '—'}
-                                  </Text>
-
-                                  {isSoccer ? (
-                                    <>
-                                      {/* Soccer: score or minutes */}
-                                      {scoreStr ? (
-                                        <Text style={styles.glTileScore}>{scoreStr}</Text>
-                                      ) : (
-                                        <Text style={[styles.glTileMins, isLowMin && !isDeselected && { color: '#FF8C00' }]}>
-                                          {mins > 0 ? `${mins}'` : '—'}
-                                        </Text>
-                                      )}
-                                      <View style={styles.glOppRow}>
-                                        <View style={styles.glVenueBadge}><Text style={styles.glVenueText}>{venueLabel}</Text></View>
-                                        <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
-                                      </View>
-                                      {(g.teamPossession != null || g.opponentPossession != null) && (() => {
-                                        const tp = g.teamPossession ?? (g.opponentPossession != null ? 100 - g.opponentPossession : null);
-                                        const op = g.opponentPossession ?? (g.teamPossession != null ? 100 - g.teamPossession : null);
-                                        if (tp == null) return null;
-                                        const pc = tp >= 55 ? Colors.success : tp < 45 ? Colors.error : Colors.textSecondary;
-                                        return <Text style={[styles.glTilePoss, { color: pc }]}>{tp}%{op != null ? `–${op}%` : ''}</Text>;
-                                      })()}
-                                      {defSecondary && defSecondary.val != null && (
-                                        <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
-                                      )}
-                                      {mins > 0 && (
-                                        <View style={styles.glMinsBarWrap}>
-                                          <View style={[styles.glMinsBarFill, {
-                                            width: `${Math.min(100, (mins / 90) * 100)}%` as any,
-                                            backgroundColor: isDeselected ? '#222' : mc,
-                                          }]} />
-                                        </View>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <>
-                                      {/* All other sports: W/L + context line */}
-                                      {nonSoccerMid && (
-                                        <Text style={[styles.glTileScore, { color: nonSoccerMid.color, fontSize: 8 }]}
-                                          numberOfLines={1}>
-                                          {nonSoccerMid.text}
-                                        </Text>
-                                      )}
-                                      <View style={styles.glOppRow}>
-                                        <View style={styles.glVenueBadge}><Text style={styles.glVenueText}>{venueLabel}</Text></View>
-                                        <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
-                                      </View>
-                                    </>
-                                  )}
-                                </TouchableOpacity>
+                                <View key={i} style={{ width: BAR_W, alignItems: 'center' }}>
+                                  <Text style={{ fontSize: 7, color: '#555', fontWeight: '600', lineHeight: 10 }}>{dateStr}</Text>
+                                  <Text style={{ fontSize: 7, color: venueC, fontWeight: '700', lineHeight: 10 }}>{oppShort}</Text>
+                                </View>
                               );
                             })}
-                            {Array.from({ length: padCount }).map((_, pi) => (
-                              <View key={`pad-${pi}`} style={[styles.glTile, { width: tileW, opacity: 0 }]} pointerEvents="none" />
-                            ))}
-                          </>
-                        );
-                      })()}
-                    </View>
-                  )}
+                          </View>
 
-                  {/* ── Dot Legend — soccer only (OPP STRENGTH / MINUTES BAR / TILE STATE) ── */}
+                          {/* Tap-to-toggle hint */}
+                          <Text style={{ fontSize: 7, color: '#333', textAlign: 'right', marginTop: 3, fontStyle: 'italic' }}>
+                            tap bar to toggle
+                          </Text>
+                        </View>
+                      </ScrollView>
+                    );
+                  })()}
+
+                  {/* ── Compact OPP Strength Legend — soccer only ── */}
                   {prediction.sport === 'soccer' && !allSynthetic && (
-                    <View style={styles.glLegendRow}>
-                      <View style={styles.glLegendGroup}>
-                        <Text style={styles.glLegendTitle}>OPP STRENGTH</Text>
-                        {([
-                          { color: '#FF453A', label: 'Elite' },
-                          { color: '#FF9F0A', label: 'Strong' },
-                          { color: '#0A84FF', label: 'Mid' },
-                          { color: '#34C759', label: 'Weak' },
-                        ] as const).map(({ color, label }) => (
-                          <View key={label} style={styles.glLegendItem}>
-                            <View style={[styles.glLegendDot, { backgroundColor: color }]} />
-                            <Text style={styles.glLegendLabel}>{label}</Text>
-                          </View>
-                        ))}
-                      </View>
-                      <View style={styles.glLegendDivider} />
-                      <View style={styles.glLegendGroup}>
-                        <Text style={styles.glLegendTitle}>MINUTES BAR</Text>
-                        {([
-                          { color: '#39FF14', label: '80+ min' },
-                          { color: '#FFB347', label: '60-79 min' },
-                          { color: '#FF8C00', label: '45-59 min' },
-                          { color: '#FF453A', label: '<45 low' },
-                        ] as const).map(({ color, label }) => (
-                          <View key={label} style={styles.glLegendItem}>
-                            <View style={[styles.glLegendBar, { backgroundColor: color }]} />
-                            <Text style={styles.glLegendLabel}>{label}</Text>
-                          </View>
-                        ))}
-                      </View>
-                      <View style={styles.glLegendDivider} />
-                      <View style={styles.glLegendGroup}>
-                        <Text style={styles.glLegendTitle}>TILE STATE</Text>
-                        <View style={styles.glLegendItem}>
-                          <View style={[styles.glLegendDot, { backgroundColor: '#FF8C00' }]} />
-                          <Text style={styles.glLegendLabel}>Left dot = {'<'}60' play</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: 6, flexWrap: 'wrap' }}>
+                      <Text style={{ fontSize: 7, color: '#444', fontWeight: '700', letterSpacing: 0.6 }}>OPP TIER</Text>
+                      {([
+                        { color: '#FF453A', label: 'Elite' },
+                        { color: '#FF9F0A', label: 'Strong' },
+                        { color: '#0A84FF', label: 'Mid' },
+                        { color: '#34C759', label: 'Weak' },
+                      ] as const).map(({ color, label }) => (
+                        <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }} />
+                          <Text style={{ fontSize: 7, color: '#555' }}>{label}</Text>
                         </View>
-                        <View style={styles.glLegendItem}>
-                          <View style={[styles.glLegendDot, { backgroundColor: '#555' }]} />
-                          <Text style={styles.glLegendLabel}>Dimmed = excluded</Text>
-                        </View>
-                        <Text style={[styles.glLegendLabel, { marginTop: 4, fontStyle: 'italic' }]}>
-                          Tap any tile to toggle it
-                        </Text>
-                      </View>
+                      ))}
                     </View>
                   )}
 
@@ -4952,55 +4896,91 @@ export default function ScanScreen() {
 
             {prediction.recommendation === 'PASS' ? (
               <View style={{
-                marginTop: 10, padding: 12, borderRadius: 10,
+                marginTop: 10, padding: 14, borderRadius: 14,
                 backgroundColor: 'rgba(255,165,0,0.08)',
                 borderWidth: 1, borderColor: 'rgba(255,165,0,0.35)',
               }}>
-                <Text style={{ color: '#FFA500', fontSize: 12, fontWeight: '800' }}>PASS — SKIP THIS PROP</Text>
-                <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 }}>
+                <Text style={{ color: '#FFA500', fontSize: 13, fontWeight: '800', letterSpacing: 0.3 }}>PASS — SKIP THIS PROP</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 5 }}>
                   {prediction.passReason || 'The recent data does not support an actionable OVER or UNDER.'}
                 </Text>
               </View>
             ) : (
               <TouchableOpacity
-                style={[styles.saveBtn, (saving || pickSaved) && { opacity: 0.6 }]}
+                style={[{
+                  backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
+                  borderRadius: 18, paddingVertical: 16, paddingHorizontal: 24,
+                  alignItems: 'center', justifyContent: 'center', marginTop: 10, gap: 1,
+                  shadowColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
+                  shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.45, shadowRadius: 22,
+                  elevation: 10,
+                }, (saving || pickSaved) && { opacity: 0.65 }]}
                 onPress={handleSavePick}
                 disabled={saving || pickSaved}
-                activeOpacity={0.85}
+                activeOpacity={0.82}
               >
-                {saving
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : pickSaved
-                    ? <>
-                        <Ionicons name="checkmark-circle" size={16} color="#000" />
-                        <Text style={styles.saveBtnText}>Saved — Going to Picks…</Text>
-                      </>
-                    : <>
-                        <Ionicons name="bookmark" size={16} color="#000" />
-                        <Text style={styles.saveBtnText}>Save to My Picks</Text>
-                      </>
-                }
+                {saving ? (
+                  <ActivityIndicator color="#000" size="small" />
+                ) : pickSaved ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="checkmark-circle" size={20} color="#000" />
+                    <Text style={{ color: '#000', fontWeight: '800', fontSize: 17 }}>Saved!</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={{ color: 'rgba(0,0,0,0.45)', fontWeight: '700', fontSize: 10, letterSpacing: 2.5, textTransform: 'uppercase' }}>
+                      Save Pick
+                    </Text>
+                    <Text style={{ color: '#000', fontWeight: '900', fontSize: 26, letterSpacing: 0.5, lineHeight: 30 }}>
+                      {prediction.recommendation}{'  '}{prediction.line}
+                    </Text>
+                    {(prediction.pOver != null || prediction.pUnder != null) && (
+                      <Text style={{ color: 'rgba(0,0,0,0.42)', fontWeight: '600', fontSize: 11, marginTop: 1 }}>
+                        {prediction.recommendation === 'OVER'
+                          ? `${(prediction.pOver ?? 0).toFixed(1)}%`
+                          : `${(prediction.pUnder ?? 0).toFixed(1)}%`
+                        } model probability
+                      </Text>
+                    )}
+                  </>
+                )}
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={[styles.saveImgBtn, savingImage && { opacity: 0.6 }]}
-              onPress={handleSaveImage}
-              disabled={savingImage}
-              activeOpacity={0.85}
-            >
-              {savingImage
-                ? <ActivityIndicator color={Colors.primary} size="small" />
-                : <>
-                    <Ionicons name="download-outline" size={16} color={Colors.primary} />
-                    <Text style={styles.saveImgBtnText}>Save to Images</Text>
-                  </>
-              }
-            </TouchableOpacity>
+            {/* Secondary actions row */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <TouchableOpacity
+                style={[{
+                  flex: 1, height: 44, borderRadius: 12, borderWidth: 1.5,
+                  borderColor: Colors.primary, flexDirection: 'row', alignItems: 'center',
+                  justifyContent: 'center', gap: 6,
+                  backgroundColor: 'rgba(57,255,20,0.06)',
+                }, savingImage && { opacity: 0.6 }]}
+                onPress={handleSaveImage}
+                disabled={savingImage}
+                activeOpacity={0.85}
+              >
+                {savingImage
+                  ? <ActivityIndicator color={Colors.primary} size="small" />
+                  : <>
+                      <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                      <Text style={{ color: Colors.primary, fontWeight: '700', fontSize: 13 }}>Save Image</Text>
+                    </>
+                }
+              </TouchableOpacity>
 
-            <TouchableOpacity style={styles.newBtn} onPress={reset}>
-              <Text style={styles.newBtnText}>Analyze Another</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1, height: 44, borderRadius: 12, borderWidth: 1,
+                  borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.03)',
+                }}
+                onPress={reset}
+                activeOpacity={0.85}
+              >
+                <Text style={{ color: Colors.textSecondary, fontWeight: '600', fontSize: 13 }}>Analyze Another</Text>
+              </TouchableOpacity>
+            </View>
           </Reanimated.View>
           </>
         )}
