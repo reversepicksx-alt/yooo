@@ -397,8 +397,45 @@ async def search_players(req: PlayerSearchRequest):
 
     def _apply_sort_and_quality(player_list):
         player_list.sort(key=sort_key)
-        # Drop partial matches when any perfect (all-words) match exists
-        if any(sort_key(p)[0] == 0 for p in player_list):
+        if len(query_parts) > 1:
+            # A multi-word name search is an AND query. Never show a list of
+            # unrelated surname/first-name partials just because the upstream
+            # provider returned something for one token (e.g. "Jonathan
+            # Jesus" must not become a list of players named only Jonathan).
+            def _direct_or_abbreviated_match(p):
+                name_norm = _strip((p.get("name") or "").lower())
+                if all(w in name_norm for w in query_parts):
+                    return True
+                stored_tokens = name_norm.split()
+                first_token = stored_tokens[0] if stored_tokens else ""
+                is_initial = (
+                    len(first_token) <= 2
+                    and first_token.rstrip(".").isalpha()
+                )
+                return (
+                    len(query_parts) >= 2
+                    and is_initial
+                    and first_token.rstrip(".") == query_parts[0][0]
+                    and all(w in name_norm for w in query_parts[1:])
+                )
+
+            direct_matches = [p for p in player_list if _direct_or_abbreviated_match(p)]
+            if direct_matches:
+                # If the canonical full name exists, do not mix in middle-name
+                # or surname-only rescue records such as "J. Alves".
+                player_list = direct_matches
+            else:
+                # Preserve the intentional abbreviated cache behavior for
+                # records such as "Jacy" searched as "Jacy Oliveira", but
+                # only when that short first-name result is unambiguous.
+                q_first = query_parts[0]
+                short_first_matches = [
+                    p for p in player_list
+                    if _strip((p.get("name") or "").lower()).strip() == q_first
+                ]
+                player_list = short_first_matches if len(short_first_matches) == 1 else []
+        elif any(sort_key(p)[0] == 0 for p in player_list):
+            # Drop partial matches when any perfect (all-words) match exists.
             player_list = [p for p in player_list if sort_key(p)[0] == 0]
         return player_list[:15]
 

@@ -223,10 +223,22 @@ export default function FuzzySearchInput({
   const handleChange = (text: string) => {
     onChangeText(text);
     lastQueryRef.current = text;
+    // Invalidate an already-running request immediately. Without this,
+    // typing "Jonathan Jesus" can leave an older "Jesus" response eligible
+    // to overwrite the current dropdown.
+    searchIdRef.current += 1;
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (confirmed) { setResults([]); setShowDropdown(false); return; }
+    // Do not keep displaying results for the previous query while the new
+    // query is waiting for its debounce/request.
+    setResults([]);
+    setShowDropdown(false);
     if (text.length < 2) {
-      setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return;
+      setHasSearched(false); setSearchError(false); return;
     }
     const delay = staticItems ? 60 : DEBOUNCE_MS;
     debounceRef.current = setTimeout(() => {

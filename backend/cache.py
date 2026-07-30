@@ -1060,6 +1060,32 @@ async def refresh_player_cache(player_id: int) -> dict:
             fn_clean = strip_accents(firstname.lower())
             name_lower = fullname.lower()
             name_clean = strip_accents(name_lower)
+
+            # API-Football occasionally returns an abbreviated display name
+            # ("Jonathan") for a player whose cache already has the complete
+            # registered name ("Jonathan de Jesus Alves"). Never collapse the
+            # canonical name during a background refresh, or multi-word search
+            # becomes impossible and falls through to unrelated partials.
+            try:
+                existing_names = await db[COL_PLAYERS].find(
+                    {"playerId": player_id},
+                    {"_id": 0, "name": 1},
+                ).to_list(30)
+                longer_existing = max(
+                    (
+                        (d.get("name") or "").strip()
+                        for d in existing_names
+                        if (d.get("name") or "").strip()
+                    ),
+                    key=lambda value: (len(value.split()), len(value)),
+                    default="",
+                )
+                if len(longer_existing.split()) > len(fullname.split()):
+                    fullname = longer_existing
+                    name_lower = fullname.lower()
+                    name_clean = strip_accents(name_lower)
+            except Exception:
+                pass
             now = datetime.now(timezone.utc)
 
             # Derive position from latest stats if available

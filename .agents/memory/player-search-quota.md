@@ -20,3 +20,10 @@ The sort helpers (`_strip`, `query_parts`, `sort_key`, `_apply_sort_and_quality`
 **Why:** Quota resets at UTC midnight; WC/Copa/UCL are permanent tournament IDs, not ephemeral. The pattern will recur every time the daily quota is exhausted or users search for WC/UCL players.
 
 **How to apply:** In `backend/routes/players.py`: `_TOURNAMENT_LEAGUES` set at module level; `relaxed` param in `_search_players_cache`; `quota_gone = is_quota_exhausted()` at top of handler; sort helpers defined before the cache early-return.
+
+## Strict multi-word search
+Multi-word player queries are strict AND searches. Return only full-name matches or a deliberate abbreviated-initial match; never return first-name-only or surname-only API fallbacks. The mobile search also invalidates in-flight responses on every keystroke.
+
+**Why:** A slower response for an earlier partial query could overwrite the current dropdown, and API fallback results for one token made a query like “Jonathan Jesus” show unrelated Jonathan or Jesús players.
+
+**How to apply:** Keep `_apply_sort_and_quality` strict for 2+ words, preserve only an explicitly unambiguous short-name exception such as “Jacy” → “Jacy Oliveira,” and clear stale UI results while the latest query is debounced/requested.
