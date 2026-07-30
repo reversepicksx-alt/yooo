@@ -206438,48 +206438,58 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                         if (chips.length === 0) return null;
                         return /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
                           style: {
-                            flexDirection: 'row',
-                            gap: 6,
-                            paddingHorizontal: 16,
+                            marginHorizontal: 16,
                             marginBottom: 10,
-                            marginTop: 2
+                            borderRadius: 10,
+                            backgroundColor: '#0D0D0D',
+                            borderWidth: 1,
+                            borderColor: '#1C1C1C',
+                            flexDirection: 'row',
+                            overflow: 'hidden'
                           },
-                          children: chips.map(chip => {
+                          children: chips.map((chip, i) => {
                             const pct = chip.pct;
-                            const color = pct != null && pct >= 60 ? Colors.default.success : pct != null && pct < 42 ? Colors.default.error : '#888';
+                            const color = pct != null && pct >= 60 ? Colors.default.success : pct != null && pct < 42 ? Colors.default.error : '#555';
+                            const isLast = i === chips.length - 1;
                             return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
                               style: {
                                 flex: 1,
-                                backgroundColor: color + '18',
-                                borderRadius: 8,
-                                paddingVertical: 7,
-                                paddingHorizontal: 4,
                                 alignItems: 'center',
-                                borderWidth: 1,
-                                borderColor: color + '35'
+                                paddingVertical: 10,
+                                borderRightWidth: isLast ? 0 : 1,
+                                borderRightColor: '#1C1C1C',
+                                borderTopWidth: 2,
+                                borderTopColor: pct != null && pct >= 60 ? Colors.default.success + '70' : pct != null && pct < 42 ? Colors.default.error + '70' : '#1C1C1C'
                               },
                               children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
                                 style: {
                                   fontSize: 7,
-                                  color: '#666',
+                                  color: '#444',
                                   fontWeight: '700',
-                                  letterSpacing: 0.8
+                                  letterSpacing: 1.2
                                 },
                                 children: chip.label
-                              }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+                              }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
                                 style: {
-                                  fontSize: 16,
+                                  fontSize: 17,
                                   fontWeight: '900',
                                   color,
-                                  lineHeight: 20
+                                  lineHeight: 21,
+                                  fontFamily: 'JetBrainsMono_700Bold'
                                 },
-                                children: pct != null ? `${pct}%` : '—'
+                                children: [pct != null ? `${pct}` : '—', /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+                                  style: {
+                                    fontSize: 10
+                                  },
+                                  children: "%"
+                                })]
                               }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
                                 style: {
                                   fontSize: 7,
-                                  color: '#444'
+                                  color: '#333',
+                                  fontFamily: 'JetBrainsMono_400Regular'
                                 },
-                                children: [chip.n, "G"]
+                                children: [chip.n, "g"]
                               })]
                             }, chip.label);
                           })

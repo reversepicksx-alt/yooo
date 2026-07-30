@@ -5145,6 +5145,36 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             except Exception as _ee:
                 print(f"[POS ENRICH] Batch timeout/error: {_ee}")
 
+        # ── CATEGORY SAFETY VALVE ──────────────────────────────────────────────
+        # Hard override: API-Football generic category is the ground truth.  If a
+        # stale/wrong position cache resolved an attacking role for a player the
+        # API categorises as "Defender", silently correct it here so the AI
+        # narrative NEVER says "playing as a Poacher" for a centre-back.
+        _ATTACKING_ROLES = {
+            "Poacher", "Target Man", "False 9", "Shadow Striker",
+            "Complete Forward", "Pressing Forward",
+        }
+        _ATTACKER_POSITIONS = {"ST", "CF", "SS"}
+        if player_position == "Defender" and (
+            player_role in _ATTACKING_ROLES or specific_position in _ATTACKER_POSITIONS
+        ):
+            print(
+                f"[SAFETY VALVE] Defender {req.playerName} had attacking "
+                f"pos={specific_position}/role={player_role} — correcting to CB/Stopper"
+            )
+            specific_position = specific_position if specific_position not in _ATTACKER_POSITIONS else "CB"
+            player_role = "Stopper"
+            display_position = specific_position
+            display_role = player_role
+            # Also correct the cached entry so this doesn't repeat
+            try:
+                await db.player_positions.update_one(
+                    {"playerId": req.playerId},
+                    {"$set": {"specificPosition": specific_position, "role": player_role}},
+                )
+            except Exception:
+                pass
+
         # POSITION CONTEXT: Compute position-specific baseline from game logs + comparison
         position_context = ""
         position_comp_data = None

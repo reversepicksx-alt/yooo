@@ -3731,7 +3731,7 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* ── L5 / L10 / L15 / SZN Hit-Rate Chips ── */}
+                  {/* ── OVER RATE strip (L5 / L10 / L15 / SZN) ── */}
                   {!allSynthetic && effectiveLine != null && (() => {
                     const allVals = displayLogs.map(g => g.value).filter((v): v is number => v != null);
                     const chips = [
@@ -3746,22 +3746,29 @@ export default function ScanScreen() {
                     }).filter(c => c.n >= 2);
                     if (chips.length === 0) return null;
                     return (
-                      <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 16, marginBottom: 10, marginTop: 2 }}>
-                        {chips.map(chip => {
+                      <View style={{
+                        marginHorizontal: 16, marginBottom: 10, borderRadius: 10,
+                        backgroundColor: '#0D0D0D', borderWidth: 1, borderColor: '#1C1C1C',
+                        flexDirection: 'row', overflow: 'hidden',
+                      }}>
+                        {chips.map((chip, i) => {
                           const pct = chip.pct;
                           const color = pct != null && pct >= 60 ? Colors.success
-                            : pct != null && pct < 42 ? Colors.error : '#888';
+                            : pct != null && pct < 42 ? Colors.error : '#555';
+                          const isLast = i === chips.length - 1;
                           return (
                             <View key={chip.label} style={{
-                              flex: 1, backgroundColor: color + '18', borderRadius: 8,
-                              paddingVertical: 7, paddingHorizontal: 4, alignItems: 'center',
-                              borderWidth: 1, borderColor: color + '35',
+                              flex: 1, alignItems: 'center', paddingVertical: 10,
+                              borderRightWidth: isLast ? 0 : 1, borderRightColor: '#1C1C1C',
+                              borderTopWidth: 2,
+                              borderTopColor: pct != null && pct >= 60 ? Colors.success + '70'
+                                : pct != null && pct < 42 ? Colors.error + '70' : '#1C1C1C',
                             }}>
-                              <Text style={{ fontSize: 7, color: '#666', fontWeight: '700', letterSpacing: 0.8 }}>{chip.label}</Text>
-                              <Text style={{ fontSize: 16, fontWeight: '900', color, lineHeight: 20 }}>
-                                {pct != null ? `${pct}%` : '—'}
+                              <Text style={{ fontSize: 7, color: '#444', fontWeight: '700', letterSpacing: 1.2 }}>{chip.label}</Text>
+                              <Text style={{ fontSize: 17, fontWeight: '900', color, lineHeight: 21, fontFamily: 'JetBrainsMono_700Bold' }}>
+                                {pct != null ? `${pct}` : '—'}<Text style={{ fontSize: 10 }}>%</Text>
                               </Text>
-                              <Text style={{ fontSize: 7, color: '#444' }}>{chip.n}G</Text>
+                              <Text style={{ fontSize: 7, color: '#333', fontFamily: 'JetBrainsMono_400Regular' }}>{chip.n}g</Text>
                             </View>
                           );
                         })}
