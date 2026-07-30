@@ -9,6 +9,7 @@ from config import (
 )
 from models import AdminSettingsRequest, AdminTestKeyRequest
 from pass_projection_calibration import walk_forward_validate
+from model_metrics import build_scorecard, walk_forward_replay
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -914,4 +915,161 @@ async def admin_pass_calibration_validate(req: PassCalValidateRequest):
         "report": report,
         "observations": observations,
         "safeToEnable": safe_to_enable,
+    }
+
+
+# ── Model Replay ────────────────────────────────────────────────────────────────
+
+class ModelReplayRequest(BaseModel):
+    email: str
+    token: str
+    sport: str = ""          # filter to a single sport; empty = all sports
+    limit: int = 50000       # max picks to fetch (safety cap)
+
+
+@router.post("/model-replay")
+async def admin_model_replay(req: ModelReplayRequest):
+    """
+    Run a true out-of-sample historical replay across all settled picks.
+
+    Unlike the descriptive scorecard (which computes metrics over the full
+    corpus of already-settled picks), this endpoint processes picks strictly
+    in chronological order.  Each pick is evaluated against the calibration
+    state built from ONLY the picks settled before it — simulating the
+    information that would have been available at each real prediction moment.
+
+    Returns two top-level sections:
+      • descriptiveScorecard — build_scorecard() output: full-corpus metrics
+                               with a chronological 80/20 time-split holdout.
+                               Labelled clearly as descriptive.
+      • walkForwardReplay    — walk_forward_replay() output: prospective
+                               metrics with leakage violation counts,
+                               per-sport and per-prop breakdowns, and
+                               prospective calibration bins.
+
+    Owner-only.
+    """
+    await verify_owner(req.email, req.token)
+
+    # ── Build query ────────────────────────────────────────────────────────
+    query: dict = {
+        "status": "settled",
+        "result": {"$in": ["hit", "miss"]},
+        "settledAt": {"$ne": None},
+        "voidReason": {"$exists": False},
+    }
+    if req.sport:
+        query["sport"] = req.sport.lower().strip()
+
+    projection = {
+        "_id": 0,
+        "trackingId": 1,
+        "playerName": 1,
+        "sport": 1,
+        "propType": 1,
+        "line": 1,
+        "recommendation": 1,
+        "venue": 1,
+        "fixtureId": 1,
+        "timestamp": 1,
+        "settledAt": 1,
+        "result": 1,
+        "confidenceScore": 1,
+        "rawConfidence": 1,
+        "actualValue": 1,
+        "projectedValue": 1,
+    }
+
+    cursor = db.picks.find(query, projection).sort("settledAt", 1).limit(req.limit)
+    rows = await cursor.to_list(length=req.limit)
+
+    if not rows:
+        return {
+            "success": True,
+            "n": 0,
+            "sport": req.sport or "all",
+            "message": "No eligible settled picks found.",
+            "descriptiveScorecard": None,
+            "walkForwardReplay": None,
+        }
+
+    # ── Run both evaluators ────────────────────────────────────────────────
+    scorecard = build_scorecard(rows)
+    replay = walk_forward_replay(rows)
+
+    # ── Assemble observations ──────────────────────────────────────────────
+    observations = []
+
+    leakage = replay["leakageViolations"]
+    if leakage > 0:
+        observations.append(
+            f"⚠️  {leakage} leakage violation(s) detected — settlement timestamps are "
+            "out of order for that many picks.  Metrics may be optimistic."
+        )
+    else:
+        observations.append("✅ Zero leakage violations — strict chronological order confirmed.")
+
+    n = replay["eligibleSamples"]
+    missing = replay["missingPriorDataEvents"]
+    observations.append(
+        f"ℹ️  {n} eligible samples replayed chronologically. "
+        f"{missing} event(s) had no prior training data (first pick has zero context by definition)."
+    )
+
+    replay_ll = replay["classification"].get("logLoss")
+    replay_bs = replay["classification"].get("brierScore")
+    desc_ll = scorecard["classification"]["finalConfidence"].get("logLoss")
+    desc_bs = scorecard["classification"]["finalConfidence"].get("brierScore")
+
+    if replay_ll is not None and desc_ll is not None:
+        if abs(replay_ll - desc_ll) < 0.01:
+            observations.append(
+                f"✅ Walk-forward log-loss ({replay_ll}) is consistent with descriptive "
+                f"log-loss ({desc_ll}) — no sign of temporal overfitting."
+            )
+        elif replay_ll > desc_ll:
+            observations.append(
+                f"⚠️  Walk-forward log-loss ({replay_ll}) is higher than descriptive "
+                f"log-loss ({desc_ll}) — model may be over-confident on recent picks."
+            )
+        else:
+            observations.append(
+                f"ℹ️  Walk-forward log-loss ({replay_ll}) vs descriptive ({desc_ll})."
+            )
+
+    # Prospective calibration gap summary
+    large_gaps = [
+        b for b in replay["prospectiveCalibration"]
+        if b.get("gapPp") is not None and abs(b["gapPp"]) >= 10
+    ]
+    if large_gaps:
+        gap_labels = ", ".join(
+            f"{b['label']} ({b['gapPp']:+.1f}pp)" for b in large_gaps
+        )
+        observations.append(
+            f"⚠️  Large prospective calibration gaps in bins: {gap_labels}. "
+            "The model's stored confidence was materially mis-calibrated at prediction time."
+        )
+    elif replay["prospectiveCalibration"]:
+        observations.append(
+            "✅ All prospective calibration gaps are within ±10pp."
+        )
+
+    return {
+        "success": True,
+        "n": n,
+        "sport": req.sport or "all",
+        "generatedAt": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).isoformat(),
+        "observations": observations,
+        "descriptiveScorecard": {
+            "description": (
+                "Computed over the full settled-pick corpus. The chronological holdout "
+                "is the final 20 percent of events by settlement time. This is a "
+                "descriptive evaluation of already-generated predictions, not a replay."
+            ),
+            **scorecard,
+        },
+        "walkForwardReplay": replay,
     }

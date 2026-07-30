@@ -1,9 +1,22 @@
 """Leakage-conscious evaluation metrics for settled prediction records.
 
 These functions are deliberately pure so the same definitions can be used by
-the API, tests, and offline reports.  A settled pick is deduplicated by the
-shared prediction identity because each user's saved copy receives its own
-trackingId.
+the API, tests, and offline reports.  A settled pick is deduplicated by
+trackingId because one prediction can be saved by multiple users.
+
+Two distinct evaluation modes are provided:
+
+  build_scorecard()       — descriptive: computes metrics over the full corpus
+                            of already-settled picks.  The chronological holdout
+                            inside is a time-split of existing predictions, NOT a
+                            rerun of the prediction engine.
+
+  walk_forward_replay()   — prospective: processes picks in strict settlement
+                            order.  Every metric is computed using ONLY the picks
+                            that were settled BEFORE the current one.  This
+                            simulates the calibration state that would have
+                            existed at each real prediction moment and is
+                            therefore a true out-of-sample accuracy test.
 """
 from __future__ import annotations
 
@@ -11,8 +24,6 @@ import math
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
-
-
 def _number(value: Any) -> float | None:
     try:
         result = float(value)
@@ -177,7 +188,9 @@ def _projection_groups(rows: list[dict]) -> list[dict]:
         })
     return sorted(output, key=lambda item: (-item["n"], item["sport"], item["propType"]))
 
-
+def _as_sortable_dt(row: dict) -> str:
+    """Return a sortable ISO string for a row, or empty string."""
+    return str(row.get("settledAt") or row.get("timestamp") or "")
 def build_scorecard(rows: list[dict]) -> dict:
     """Build the model scorecard from settled hit/miss rows.
 
@@ -224,4 +237,272 @@ def build_scorecard(rows: list[dict]) -> dict:
             "classification": _probability_metrics(holdout, "confidenceScore"),
             "projection": _error_metrics(holdout),
         },
+    }
+
+def _walk_forward_classification(ordered: list[dict]) -> dict:
+    """Aggregate log-loss and Brier over all rows using stored confidenceScore."""
+    log_loss_sum = 0.0
+    brier_sum = 0.0
+    n = 0
+    for row in ordered:
+        confidence = _number(row.get("confidenceScore"))
+        if confidence is None:
+            continue
+        prob = max(0.0001, min(0.9999, confidence / 100.0))
+        outcome = 1 if row.get("result") == "hit" else 0
+        log_loss_sum += -(outcome * math.log(prob) + (1 - outcome) * math.log(1 - prob))
+        brier_sum += (prob - outcome) ** 2
+        n += 1
+    if not n:
+        return {"n": 0, "logLoss": None, "brierScore": None}
+    return {
+        "n": n,
+        "logLoss": round(log_loss_sum / n, 4),
+        "brierScore": round(brier_sum / n, 4),
+    }
+
+def _bin_label(confidence: float) -> str | None:
+    for label, lo, hi in _BIN_DEFS:
+        if lo <= confidence < hi:
+            return label
+    return None
+
+def walk_forward_replay(rows: list[dict]) -> dict:
+    """True out-of-sample historical replay.
+
+    Every pick is evaluated against the calibration state built exclusively from
+    picks settled *before* it.  No future information is used.
+
+    Returns
+    -------
+    A dict with:
+      eligibleSamples       — total deduped picks
+      evaluatedSamples      — picks with confidenceScore or projectedValue
+      missingPriorDataEvents— picks evaluated when the prior training set was
+                              empty (first event has zero prior context)
+      leakageViolations     — picks where a prior row was found with
+                              settledAt >= current row (data-order anomaly)
+      classification        — prospective log-loss + Brier over all scored picks
+      prospectiveCalibration— calibration bins built walk-forward: the bin
+                              hit rate is computed from ONLY rows seen before
+                              the current pick, showing whether the stored
+                              confidence would have been accurate prospectively
+      projection            — MAE, RMSE, meanError over all picks with
+                              both actualValue and projectedValue
+      bySport               — per-sport classification + projection metrics
+      byProp                — per prop-type projection metrics (sport × propType)
+      dateRange             — first and last settledAt in the corpus
+    """
+    deduped = dedupe_prediction_rows(rows)
+    ordered = _sorted_rows(deduped)
+
+    # Running calibration bins: label → {n, hits}
+    # These accumulate from prior rows and are used to evaluate the current row.
+    running_bins: dict[str, dict] = {
+        label: {"n": 0, "hits": 0} for label, _, _ in _BIN_DEFS
+    }
+
+    # Accumulators for overall metrics
+    log_loss_sum = 0.0
+    brier_sum = 0.0
+    prob_n = 0
+
+    error_abs_sum = 0.0
+    error_sq_sum = 0.0
+    error_signed_sum = 0.0
+    error_n = 0
+
+    leakage_violations = 0
+    missing_prior_data_events = 0
+
+    # Per-sport accumulators: sport → {log_loss, brier, prob_n, abs, sq, signed, reg_n}
+    sport_acc: dict[str, dict] = defaultdict(lambda: {
+        "log_loss": 0.0, "brier": 0.0, "prob_n": 0,
+        "abs": 0.0, "sq": 0.0, "signed": 0.0, "reg_n": 0,
+    })
+    # Per-(sport,prop) for regression breakdown
+    prop_acc: dict[tuple, dict] = defaultdict(lambda: {
+        "abs": 0.0, "sq": 0.0, "signed": 0.0, "n": 0,
+    })
+
+    # Prospective calibration: for each bin, track how each row's outcome
+    # compared against the prior-bin empirical hit rate.
+    prosp_bins: dict[str, dict] = {
+        label: {"n": 0, "priorHitRateSum": 0.0, "hits": 0} for label, _, _ in _BIN_DEFS
+    }
+
+    for index, row in enumerate(ordered):
+        row_dt = _as_sortable_dt(row)
+        sport = str(row.get("sport") or "unknown")
+        prop_type = str(row.get("propType") or "unknown")
+
+        # ── Leakage check ──────────────────────────────────────────────────
+        # Any prior row whose settledAt is >= the current row's is a violation.
+        if index > 0:
+            prior_dts = [_as_sortable_dt(ordered[j]) for j in range(index)]
+            if any(pdt >= row_dt for pdt in prior_dts if pdt):
+                leakage_violations += 1
+
+        if index == 0:
+            missing_prior_data_events += 1
+
+        # ── Classification (log-loss + Brier) ──────────────────────────────
+        confidence = _number(row.get("confidenceScore"))
+        outcome = 1 if row.get("result") == "hit" else 0
+
+        if confidence is not None:
+            prob = max(0.0001, min(0.9999, confidence / 100.0))
+            ll = -(outcome * math.log(prob) + (1 - outcome) * math.log(1 - prob))
+            bs = (prob - outcome) ** 2
+            log_loss_sum += ll
+            brier_sum += bs
+            prob_n += 1
+            sport_acc[sport]["log_loss"] += ll
+            sport_acc[sport]["brier"] += bs
+            sport_acc[sport]["prob_n"] += 1
+
+            # Prospective calibration: find prior bin hit rate, then record
+            label = _bin_label(confidence)
+            if label and running_bins[label]["n"] > 0:
+                prior_rate = running_bins[label]["hits"] / running_bins[label]["n"]
+                prosp_bins[label]["n"] += 1
+                prosp_bins[label]["priorHitRateSum"] += prior_rate * 100.0
+                prosp_bins[label]["hits"] += outcome
+
+        # ── Regression (MAE / RMSE) ────────────────────────────────────────
+        actual = _number(row.get("actualValue"))
+        projected = _number(row.get("projectedValue"))
+        if actual is not None and projected is not None:
+            err = actual - projected
+            error_abs_sum += abs(err)
+            error_sq_sum += err * err
+            error_signed_sum += err
+            error_n += 1
+            sport_acc[sport]["abs"] += abs(err)
+            sport_acc[sport]["sq"] += err * err
+            sport_acc[sport]["signed"] += err
+            sport_acc[sport]["reg_n"] += 1
+            prop_acc[(sport, prop_type)]["abs"] += abs(err)
+            prop_acc[(sport, prop_type)]["sq"] += err * err
+            prop_acc[(sport, prop_type)]["signed"] += err
+            prop_acc[(sport, prop_type)]["n"] += 1
+
+        # ── Update running calibration bins with this row ──────────────────
+        if confidence is not None:
+            label = _bin_label(confidence)
+            if label:
+                running_bins[label]["n"] += 1
+                running_bins[label]["hits"] += outcome
+
+    # ── Assemble prospective calibration output ────────────────────────────
+    calibration_output = []
+    for label, _, _ in _BIN_DEFS:
+        pb = prosp_bins[label]
+        rb = running_bins[label]
+        if not rb["n"]:
+            continue
+        if pb["n"] > 0:
+            prior_predicted = round(pb["priorHitRateSum"] / pb["n"], 1)
+            observed = round(pb["hits"] / pb["n"] * 100, 1)
+        else:
+            prior_predicted = None
+            observed = None
+        # Always include final observed rate for the bin
+        final_observed = round(rb["hits"] / rb["n"] * 100, 1) if rb["n"] else None
+        calibration_output.append({
+            "label": label,
+            "n": rb["n"],
+            "prospectiveN": pb["n"],
+            "priorPredictedPct": prior_predicted,
+            "observedPct": observed,
+            "gapPp": round(observed - prior_predicted, 1) if (prior_predicted is not None and observed is not None) else None,
+            "finalObservedPct": final_observed,
+            "note": ("prospective: priorPredictedPct uses only picks settled before each row; "
+                     "finalObservedPct is the overall hit rate for the bin"),
+        })
+
+    # ── Per-sport summary ──────────────────────────────────────────────────
+    by_sport_output = []
+    for sp, acc in sorted(sport_acc.items()):
+        entry: dict = {"sport": sp}
+        if acc["prob_n"]:
+            entry["classification"] = {
+                "n": acc["prob_n"],
+                "logLoss": round(acc["log_loss"] / acc["prob_n"], 4),
+                "brierScore": round(acc["brier"] / acc["prob_n"], 4),
+            }
+        else:
+            entry["classification"] = {"n": 0, "logLoss": None, "brierScore": None}
+        if acc["reg_n"]:
+            entry["projection"] = {
+                "n": acc["reg_n"],
+                "mae": round(acc["abs"] / acc["reg_n"], 4),
+                "rmse": round(math.sqrt(acc["sq"] / acc["reg_n"]), 4),
+                "meanError": round(acc["signed"] / acc["reg_n"], 4),
+            }
+        else:
+            entry["projection"] = {"n": 0, "mae": None, "rmse": None, "meanError": None}
+        by_sport_output.append(entry)
+
+    # ── Per-prop summary ───────────────────────────────────────────────────
+    by_prop_output = []
+    for (sp, pt), acc in sorted(prop_acc.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+        if not acc["n"]:
+            continue
+        by_prop_output.append({
+            "sport": sp,
+            "propType": pt,
+            "n": acc["n"],
+            "mae": round(acc["abs"] / acc["n"], 4),
+            "rmse": round(math.sqrt(acc["sq"] / acc["n"]), 4),
+            "meanError": round(acc["signed"] / acc["n"], 4),
+        })
+
+    return {
+        "description": (
+            "True out-of-sample walk-forward replay. Each pick is evaluated against "
+            "the calibration state built from ONLY the picks settled before it. "
+            "Separate from the descriptive scorecard which uses the full corpus."
+        ),
+        "eligibleSamples": len(ordered),
+        "evaluatedSamples": max(prob_n, error_n),
+        "missingPriorDataEvents": missing_prior_data_events,
+        "leakageViolations": leakage_violations,
+        "dateRange": _date_range(ordered),
+        "classification": (
+            {
+                "n": prob_n,
+                "logLoss": round(log_loss_sum / prob_n, 4),
+                "brierScore": round(brier_sum / prob_n, 4),
+            }
+            if prob_n else {"n": 0, "logLoss": None, "brierScore": None}
+        ),
+        "prospectiveCalibration": calibration_output,
+        "projection": (
+            {
+                "n": error_n,
+                "mae": round(error_abs_sum / error_n, 4),
+                "rmse": round(math.sqrt(error_sq_sum / error_n), 4),
+                "meanError": round(error_signed_sum / error_n, 4),
+            }
+            if error_n else {"n": 0, "mae": None, "rmse": None, "meanError": None}
+        ),
+        "bySport": by_sport_output,
+        "byProp": by_prop_output,
+    }
+
+def _walk_forward_projection(ordered: list[dict]) -> dict:
+    errors: list[float] = []
+    for row in ordered:
+        actual = _number(row.get("actualValue"))
+        projected = _number(row.get("projectedValue"))
+        if actual is not None and projected is not None:
+            errors.append(actual - projected)
+    if not errors:
+        return {"n": 0, "mae": None, "rmse": None, "meanError": None}
+    return {
+        "n": len(errors),
+        "mae": round(sum(abs(e) for e in errors) / len(errors), 4),
+        "rmse": round(math.sqrt(sum(e * e for e in errors) / len(errors)), 4),
+        "meanError": round(sum(errors) / len(errors), 4),
     }
