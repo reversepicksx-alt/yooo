@@ -8,6 +8,7 @@ from config import (
     get_dynamic_setting, set_dynamic_setting,
 )
 from models import AdminSettingsRequest, AdminTestKeyRequest
+from pass_projection_calibration import walk_forward_validate
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -788,4 +789,129 @@ async def admin_clear_sport_cache(req: ClearSportCacheRequest):
         "deleted": results,
         "total": total,
         "message": f"Cleared {total} cached docs — next request will fetch fresh GOAT-tier data.",
+    }
+
+
+class PassCalValidateRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/pass-calibration-validate")
+async def admin_pass_calibration_validate(req: PassCalValidateRequest):
+    """
+    Run the walk-forward pass-projection calibration evaluator against all
+    eligible settled soccer pass picks in the production database.
+
+    Returns raw vs calibrated MAE, signed bias, direction hit rate, sample
+    counts, and a leakage-violation count.  The mode field confirms whether
+    live calibration is active.  PASS_PROJECTION_CALIBRATION_MODE must be
+    'live' in the environment for corrections to be applied to user-facing
+    projections; it remains 'shadow' by default.
+
+    Eligible picks: soccer, propType in {pass_attempts, passes}, result in
+    {hit, miss}, recommendation in {over, under}, actualValue and
+    projectedValue both set, no voidReason, correctedManually != true.
+    """
+    await verify_owner(req.email, req.token)
+
+    cursor = db.picks.find(
+        {
+            "sport": "soccer",
+            "propType": {"$in": ["pass_attempts", "passes"]},
+            "result": {"$in": ["hit", "miss"]},
+            "recommendation": {"$in": ["over", "under"]},
+            "actualValue": {"$ne": None},
+            "projectedValue": {"$ne": None},
+            "settledAt": {"$ne": None},
+            "voidReason": {"$exists": False},
+            "correctedManually": {"$ne": True},
+        },
+        {
+            "_id": 0,
+            "playerName": 1, "playerNameKey": 1, "fixtureId": 1,
+            "fixtureDate": 1, "matchDate": 1, "opponentName": 1, "opponent": 1,
+            "propType": 1, "line": 1, "recommendation": 1, "leagueId": 1,
+            "position": 1, "role": 1, "actualValue": 1, "projectedValue": 1,
+            "settledAt": 1, "sport": 1, "result": 1,
+        },
+    )
+    rows = await cursor.to_list(length=50000)
+
+    report = walk_forward_validate(rows)
+
+    mode = os.environ.get("PASS_PROJECTION_CALIBRATION_MODE", "shadow").lower()
+    if mode not in {"off", "shadow", "live"}:
+        mode = "shadow"
+
+    # Derive a plain-English recommendation.
+    calibrated_mae = report["calibrated"]["mae"]
+    raw_mae = report["raw"]["mae"]
+    raw_bias = report["raw"]["signedBias"]
+    calibrated_bias = report["calibrated"]["signedBias"]
+    raw_dhr = report["raw"]["directionHitRate"]
+    cal_dhr = report["calibrated"]["directionHitRate"]
+    leakage = report["leakageViolations"]
+    n = report["evaluatedSamples"]
+
+    observations = []
+    if leakage > 0:
+        observations.append(f"⚠️  {leakage} leakage violation(s) — investigate before trusting these results.")
+    else:
+        observations.append("✅ Zero leakage violations.")
+
+    if n < 30:
+        observations.append(f"⚠️  Only {n} evaluated samples — too few for reliable out-of-sample conclusions.")
+    else:
+        observations.append(f"ℹ️  {n} evaluated samples ({report['calibratedSamples']} received a calibration correction).")
+
+    if calibrated_mae is not None and raw_mae is not None:
+        if calibrated_mae < raw_mae:
+            pct = round((raw_mae - calibrated_mae) / raw_mae * 100, 1)
+            observations.append(f"✅ Calibrated MAE ({calibrated_mae}) is {pct}% lower than raw MAE ({raw_mae}).")
+        else:
+            observations.append(f"⚠️  Calibrated MAE ({calibrated_mae}) is NOT lower than raw MAE ({raw_mae}).")
+
+    if calibrated_bias is not None and raw_bias is not None:
+        if abs(calibrated_bias) < abs(raw_bias):
+            observations.append(f"✅ Calibrated signed bias ({calibrated_bias}) is closer to zero than raw ({raw_bias}).")
+        else:
+            observations.append(f"⚠️  Calibrated signed bias ({calibrated_bias}) is NOT closer to zero than raw ({raw_bias}).")
+
+    if raw_dhr is not None and cal_dhr is not None:
+        dhr_drop = round((raw_dhr - cal_dhr) * 100, 1) if cal_dhr < raw_dhr else 0
+        if dhr_drop > 3:
+            observations.append(
+                f"⚠️  Direction hit rate dropped by {dhr_drop}pp after calibration ({raw_dhr} → {cal_dhr}). "
+                "Material deterioration — do NOT enable live mode."
+            )
+        elif cal_dhr >= raw_dhr:
+            observations.append(f"✅ Direction hit rate held or improved ({raw_dhr} → {cal_dhr}).")
+        else:
+            observations.append(f"ℹ️  Direction hit rate change: {raw_dhr} → {cal_dhr} ({dhr_drop}pp drop — within tolerance).")
+
+    safe_to_enable = (
+        leakage == 0
+        and n >= 30
+        and calibrated_mae is not None
+        and raw_mae is not None
+        and calibrated_mae < raw_mae
+        and (raw_dhr is None or cal_dhr is None or (raw_dhr - cal_dhr) <= 0.03)
+    )
+    if safe_to_enable:
+        observations.append(
+            "✅ All criteria met — calibration may be promoted to live mode by setting "
+            "PASS_PROJECTION_CALIBRATION_MODE=live in the environment."
+        )
+    else:
+        observations.append(
+            f"🔒 PASS_PROJECTION_CALIBRATION_MODE remains '{mode}' — criteria not yet met for live promotion."
+        )
+
+    return {
+        "success": True,
+        "mode": mode,
+        "report": report,
+        "observations": observations,
+        "safeToEnable": safe_to_enable,
     }
