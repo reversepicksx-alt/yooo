@@ -88,6 +88,23 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     if not docs and effective_league_id:
         docs = await db[COL_PLAYERS].find(name_filt, {"_id": 0}).limit(20).to_list(20)
 
+    # Pass A2 — sequence regex for exactly-2-word queries.
+    # Catches compound-name players where the query words are non-adjacent.
+    # e.g. "Jonathan Jesus" → /jonathan.*jesus/ matches "Jonathan de Jesus Alves"
+    #      "Van Ven"        → /van.*ven/        matches "Micky van de Ven"
+    # Run ALWAYS (merges with AND hits) so the quality-filter dedup picks the best.
+    if len(parts) == 2:
+        seq_pattern = rf"{re.escape(parts[0])}.*{re.escape(parts[1])}"
+        seq_filt: dict = {"nameClean": {"$regex": seq_pattern}}
+        if effective_league_id:
+            seq_filt["leagueId"] = effective_league_id
+        seq_docs = await db[COL_PLAYERS].find(seq_filt, {"_id": 0}).limit(20).to_list(20)
+        if not seq_docs and effective_league_id:
+            seq_docs = await db[COL_PLAYERS].find(
+                {"nameClean": {"$regex": seq_pattern}}, {"_id": 0}
+            ).limit(20).to_list(20)
+        docs.extend(seq_docs or [])
+
     # Multi-word fallback — runs ALWAYS for 2+ word queries so that abbreviated
     # first-name cache entries (e.g. "J. David" for "Jonathan David") are merged
     # with any all-words AND hits.  Two complementary passes:
@@ -651,6 +668,35 @@ async def search_players(req: PlayerSearchRequest):
         results = await aio.gather(*[try_league(lid) for lid in major_leagues])
         for r in results:
             all_players.extend(r)
+
+    # Strategy 2b — last-word search in major leagues.
+    # When the full query "Jonathan Jesus" returns nothing (because API-Football
+    # does a substring match and "Jonathan Jesus" ≠ "Jonathan de Jesus Alves"),
+    # retry each major league with just the LAST word "Jesus".  The quality
+    # filter downstream keeps "Jonathan de Jesus Alves" because both "jonathan"
+    # and "jesus" appear in his nameClean.
+    if not all_players and not quota_gone and " " in req.query:
+        last_word_q = req.query.strip().split()[-1]
+        if len(last_word_q) >= 3:  # skip trivially short tokens
+            async def try_league_lw(lid):
+                search_seasons_lw = (
+                    [NWSL_SEASON, NWSL_SEASON - 1]
+                    if lid == NWSL_LEAGUE_ID
+                    else [season + 1, season]
+                )
+                for s in search_seasons_lw:
+                    try:
+                        data = await api_football_request(
+                            "players", {"search": last_word_q, "league": lid, "season": s}
+                        )
+                        if data:
+                            return [extract_player(item) for item in data]
+                    except Exception:
+                        continue
+                return []
+            results_2b = await aio.gather(*[try_league_lw(lid) for lid in major_leagues[:10]])
+            for r in results_2b:
+                all_players.extend(r)
 
     # Strategy 3: profiles
     if not all_players and not quota_gone:
