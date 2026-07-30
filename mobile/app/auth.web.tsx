@@ -129,7 +129,7 @@ export default function WebAuthScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    minHeight: '100vh',
+    minHeight: '100vh' as any,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',

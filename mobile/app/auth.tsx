@@ -258,6 +258,8 @@ export default function AuthScreen() {
     }
   };
 
+  const handleShowPricing = () => setStep('pricing');
+
   const handleConfirmPin = async () => {
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPin = ownerPin.trim();
@@ -303,7 +305,7 @@ export default function AuthScreen() {
     return (
       <View style={styles.webLoginRoot}>
         <View style={styles.webLoginCard}>
-          <Image source={require('../assets/logo.png')} style={styles.webLoginLogo} resizeMode="contain" />
+          <Image source={require('../assets/logo.png')} style={styles.webLoginLogo as any} resizeMode="contain" />
           <Text style={styles.webLoginTitle}>REVERSEPICKS</Text>
           <Text style={styles.webLoginSubtitle}>ELITE PROP INTELLIGENCE</Text>
           <View style={styles.webLoginInputRow}>
@@ -357,7 +359,7 @@ export default function AuthScreen() {
       <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
         <View style={styles.inner}>
           <View style={styles.hero}>
-            <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+            <Image source={require('../assets/logo.png')} style={styles.logo as any} resizeMode="contain" />
             <Text style={styles.appName}>REVERSEPICKS</Text>
             <Text style={styles.tagline}>ELITE PROP INTELLIGENCE</Text>
           </View>
@@ -417,7 +419,7 @@ export default function AuthScreen() {
       <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={styles.pricingContainer}>
           <View style={styles.pricingHero}>
-            <Image source={require('../assets/logo.png')} style={styles.pricingLogo} resizeMode="contain" />
+            <Image source={require('../assets/logo.png')} style={styles.pricingLogo as any} resizeMode="contain" />
             <Text style={styles.pricingTitle}>SUBSCRIBE IN THE APP</Text>
           </View>
           <View style={styles.appOnlyNotice}>
@@ -453,7 +455,7 @@ export default function AuthScreen() {
         <View style={styles.hero}>
           <Image
             source={require('../assets/logo.png')}
-            style={styles.logo}
+            style={styles.logo as any}
             resizeMode="contain"
           />
           <Text style={styles.appName}>REVERSEPICKS</Text>
@@ -711,7 +713,7 @@ function InfoBox({ message }: { message: string }) {
 const styles = StyleSheet.create({
   webLoginRoot: {
     flex: 1,
-    minHeight: '100vh',
+    minHeight: '100vh' as any,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
