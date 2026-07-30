@@ -1069,6 +1069,19 @@ export default function ScanScreen() {
       await savePick(session.email, session.token, {
         playerName: prediction.playerName || scanResult?.playerName || playerQuery,
         teamName: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam,
+        // Keep the verified soccer context on the save request.  The backend
+        // needs these top-level fields as well as the original request when
+        // validating and settling a pick; older clients only sent names.
+        teamId: (prediction as any).fixtureTeamId
+          || (prediction as any).teamId
+          || scanResult?.teamId
+          || predictionRequest?.teamId
+          || 0,
+        opponentId: (prediction as any).fixtureOpponentId
+          || (prediction as any).opponentId
+          || scanResult?.opponentId
+          || predictionRequest?.opponentId
+          || 0,
         opponentName: prediction.opponentName || scanResult?.opponentName,
         propType: prediction.propType || scanResult?.propType || propType,
         line: prediction.line ?? scanResult?.line ?? parseFloat(line),
@@ -1090,7 +1103,15 @@ export default function ScanScreen() {
         // fuzzy fixture matching again.  This is the single source of truth
         // for which match this pick belongs to.
         fixtureId: (prediction as any).fixtureId || undefined,
-         fixtureDate: (prediction as any).fixtureDate || undefined,
+        fixtureDate: (prediction as any).fixtureDate || undefined,
+        leagueId: (prediction as any).leagueId || scanResult?.leagueId || leagueId || 0,
+        venue: typeof (prediction as any).isHome === 'boolean'
+          ? ((prediction as any).isHome ? 'home' : 'away')
+          : ((prediction as any).venue
+            || ((prediction as any).playerIsHome === false ? 'away' : (venueOverride || 'home'))),
+        playerIsHome: typeof (prediction as any).isHome === 'boolean'
+          ? (prediction as any).isHome
+          : undefined,
         // Soccer: persist AI analysis on the pick so the analysis modal can show it
         ...(sport === 'soccer' ? {
           sharpSummary:      prediction.sharpSummary  || undefined,
@@ -1152,10 +1173,25 @@ export default function ScanScreen() {
           role: prediction.playerRole || undefined,
         },
         _request: {
-          teamId: prediction.teamId || scanResult?.teamId || 0,
-          opponentId: prediction.opponentId || scanResult?.opponentId || 0,
-          leagueId: prediction.leagueId || scanResult?.leagueId || leagueId || 0,
-          venue: venueOverride || 'home',
+          teamId: (prediction as any).fixtureTeamId
+            || (prediction as any).teamId
+            || scanResult?.teamId
+            || predictionRequest?.teamId
+            || 0,
+          opponentId: (prediction as any).fixtureOpponentId
+            || (prediction as any).opponentId
+            || scanResult?.opponentId
+            || predictionRequest?.opponentId
+            || 0,
+          leagueId: (prediction as any).leagueId
+            || scanResult?.leagueId
+            || predictionRequest?.leagueId
+            || leagueId
+            || 0,
+          venue: typeof (prediction as any).isHome === 'boolean'
+            ? ((prediction as any).isHome ? 'home' : 'away')
+            : (venueOverride || 'home'),
+          fixtureId: (prediction as any).fixtureId || predictionRequest?.fixtureId,
         },
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

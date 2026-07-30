@@ -136,6 +136,7 @@ export default function FuzzySearchInput({
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
   const searchIdRef = useRef(0);
 
@@ -154,6 +155,19 @@ export default function FuzzySearchInput({
     const myId = ++searchIdRef.current;
     setLoading(true);
     setSearchError(false);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    // A rate-limited upstream search must not leave the control looking
+    // permanently busy.  The request itself is ignored if it completes after
+    // this timeout; the user gets an explicit retry affordance instead.
+    searchTimeoutRef.current = setTimeout(() => {
+      if (searchIdRef.current !== myId) return;
+      searchIdRef.current += 1;
+      setLoading(false);
+      setResults([]);
+      setShowDropdown(true);
+      setHasSearched(true);
+      setSearchError(true);
+    }, 12000);
     try {
       let r: any[] = [];
       if (searchType === 'teams') {
@@ -198,6 +212,10 @@ export default function FuzzySearchInput({
       setSearchError(true);
       setHasSearched(true);
     } finally {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
       if (searchIdRef.current === myId) setLoading(false);
     }
   }, [searchType, leagueId, staticItems]);
@@ -216,7 +234,10 @@ export default function FuzzySearchInput({
     }, delay);
   };
 
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  }, []);
 
   const dismiss = () => { setShowDropdown(false); };
 

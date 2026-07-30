@@ -383,10 +383,12 @@ async def save_pick(req: SavePickRequest):
             pick.get("player", {}).get("name") or pick.get("playerName", "")
         ),
         "teamName": pick.get("player", {}).get("team") or pick.get("teamName", ""),
-        "teamId": pick.get("_request", {}).get("teamId", 0),
-        "opponentId": pick.get("_request", {}).get("opponentId", 0),
+        # New clients send the verified IDs at the top level; retain the
+        # request-context fallback for legacy clients.
+        "teamId": pick.get("teamId") or pick.get("_request", {}).get("teamId", 0),
+        "opponentId": pick.get("opponentId") or pick.get("_request", {}).get("opponentId", 0),
         "opponentName": pick.get("opponent") or pick.get("opponentName", ""),
-        "leagueId": pick.get("_request", {}).get("leagueId", 0),
+        "leagueId": pick.get("leagueId") or pick.get("_request", {}).get("leagueId", 0),
         # World Cup picks are tracked separately for calibration — the tournament only
         # happens every 4 years so there's little settled-pick history to trust confidence
         # scores against; keep them isolated until their own sample builds up.
@@ -418,7 +420,7 @@ async def save_pick(req: SavePickRequest):
         "pUnder":          pick.get("pUnder") or (pick.get("bayesianMetrics") or {}).get("pUnder"),
         "priorMean":       pick.get("priorMean") or (pick.get("bayesianMetrics") or {}).get("priorMean"),
         "momentumMean":    pick.get("momentumMean") or (pick.get("bayesianMetrics") or {}).get("momentumMean"),
-        "venue": pick.get("_request", {}).get("venue", "home"),
+        "venue": pick.get("venue") or pick.get("_request", {}).get("venue", "home"),
         "position": pick.get("player", {}).get("position", ""),
         "role": pick.get("player", {}).get("role", ""),
         "status": "live",

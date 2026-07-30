@@ -334,6 +334,7 @@ export interface PredictionResult {
   fixtureId?: number;
   fixtureOpponentId?: number;
   fixtureTeamId?: number;
+  isHome?: boolean;
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
   priorMean?: number;
@@ -779,8 +780,9 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     homeTeam: raw.matchupOverview?.homeTeam ?? undefined,
     awayTeam: raw.matchupOverview?.awayTeam ?? undefined,
     positionComparison: raw.positionComparison ?? undefined,
-    teamId: raw._request?.teamId || (request.teamId as number) || undefined,
-    opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
+    isHome: (raw as any).isHome,
+    teamId: raw.fixtureTeamId || raw._request?.teamId || (request.teamId as number) || undefined,
+    opponentId: raw.fixtureOpponentId || raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
     playerId: raw._request?.playerId || raw.player?.id || undefined,
     playerPosition: raw.player?.position || undefined,
