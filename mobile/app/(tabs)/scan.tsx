@@ -1668,13 +1668,11 @@ export default function ScanScreen() {
               const isAnalyzing = phase === 'analyzing';
               // Show disabled state directly on the button when line is missing —
               // the normal error message is hidden behind the iOS keyboard on web.
-              const showLineMissing = !isAnalyzing && !lineReady;
               return (
                 <TouchableOpacity
                   style={[
                     styles.predictBtn,
                     isAnalyzing && styles.predictBtnCancel,
-                    showLineMissing && { opacity: 0.55, backgroundColor: '#222' },
                   ]}
                   onPress={isAnalyzing ? reset : handleManualAnalyze}
                   activeOpacity={0.85}
@@ -1683,11 +1681,6 @@ export default function ScanScreen() {
                     <>
                       <Ionicons name="close-circle-outline" size={16} color="#fff" />
                       <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
-                    </>
-                  ) : showLineMissing ? (
-                    <>
-                      <Ionicons name="create-outline" size={16} color="#888" />
-                      <Text style={[styles.predictBtnText, { color: '#888' }]}>Enter a line to analyze</Text>
                     </>
                   ) : (
                     <>
@@ -3731,51 +3724,6 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* ── OVER RATE strip (L5 / L10 / L15 / SZN) ── */}
-                  {!allSynthetic && effectiveLine != null && (() => {
-                    const allVals = displayLogs.map(g => g.value).filter((v): v is number => v != null);
-                    const chips = [
-                      { label: 'L5',  slice: allVals.slice(-5) },
-                      { label: 'L10', slice: allVals.slice(-10) },
-                      { label: 'L15', slice: allVals.slice(-15) },
-                      { label: 'SZN', slice: allVals },
-                    ].map(({ label, slice }) => {
-                      const over = slice.filter(v => v > effectiveLine!).length;
-                      const pct = slice.length >= 2 ? Math.round(over / slice.length * 100) : null;
-                      return { label, pct, n: slice.length };
-                    }).filter(c => c.n >= 2);
-                    if (chips.length === 0) return null;
-                    return (
-                      <View style={{
-                        marginHorizontal: 16, marginBottom: 10, borderRadius: 10,
-                        backgroundColor: '#0D0D0D', borderWidth: 1, borderColor: '#1C1C1C',
-                        flexDirection: 'row', overflow: 'hidden',
-                      }}>
-                        {chips.map((chip, i) => {
-                          const pct = chip.pct;
-                          const color = pct != null && pct >= 60 ? Colors.success
-                            : pct != null && pct < 42 ? Colors.error : '#555';
-                          const isLast = i === chips.length - 1;
-                          return (
-                            <View key={chip.label} style={{
-                              flex: 1, alignItems: 'center', paddingVertical: 10,
-                              borderRightWidth: isLast ? 0 : 1, borderRightColor: '#1C1C1C',
-                              borderTopWidth: 2,
-                              borderTopColor: pct != null && pct >= 60 ? Colors.success + '70'
-                                : pct != null && pct < 42 ? Colors.error + '70' : '#1C1C1C',
-                            }}>
-                              <Text style={{ fontSize: 7, color: '#444', fontWeight: '700', letterSpacing: 1.2 }}>{chip.label}</Text>
-                              <Text style={{ fontSize: 17, fontWeight: '900', color, lineHeight: 21, fontFamily: 'JetBrainsMono_700Bold' }}>
-                                {pct != null ? `${pct}` : '—'}<Text style={{ fontSize: 10 }}>%</Text>
-                              </Text>
-                              <Text style={{ fontSize: 7, color: '#333', fontFamily: 'JetBrainsMono_400Regular' }}>{chip.n}g</Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    );
-                  })()}
-
                   {/* ── Filter Tabs ── */}
                   {!allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && (
                     <View style={styles.glTabRow}>
@@ -3827,6 +3775,71 @@ export default function ScanScreen() {
                       )}
                     </View>
                   )}
+
+                  {/* ── OVER RATE strip — updates with ALL / HOME / AWAY filter ── */}
+                  {!allSynthetic && effectiveLine != null && (() => {
+                    // Use filteredLogs so numbers react to the venue filter tabs
+                    const baseVals = filteredLogs.map(g => g.value).filter((v): v is number => v != null);
+                    const chips = [
+                      { label: 'L5',  slice: baseVals.slice(-5) },
+                      { label: 'L10', slice: baseVals.slice(-10) },
+                      { label: 'L15', slice: baseVals.slice(-15) },
+                      { label: 'SZN', slice: baseVals },
+                    ].map(({ label, slice }) => {
+                      const over = slice.filter(v => v > effectiveLine!).length;
+                      const pct = slice.length >= 2 ? Math.round(over / slice.length * 100) : null;
+                      return { label, pct, n: slice.length };
+                    }).filter(c => c.n >= 2);
+                    if (chips.length === 0) return null;
+                    // Badge shown when a venue filter is active
+                    const filterBadge = gameLogFilter !== 'all'
+                      ? (gameLogFilter === 'home' ? 'HOME' : gameLogFilter === 'away' ? 'AWAY' : 'OPP')
+                      : null;
+                    return (
+                      <View style={{
+                        borderTopWidth: 1, borderTopColor: '#181818',
+                        backgroundColor: '#0A0A0A',
+                        flexDirection: 'row', overflow: 'hidden',
+                      }}>
+                        {/* Venue label rotated on the left when a filter is active */}
+                        {filterBadge && (
+                          <View style={{
+                            width: 22, alignItems: 'center', justifyContent: 'center',
+                            borderRightWidth: 1, borderRightColor: '#181818',
+                            backgroundColor: '#111',
+                          }}>
+                            <Text style={{
+                              fontSize: 6, color: Colors.primary, fontWeight: '800',
+                              letterSpacing: 0.6, fontFamily: 'JetBrainsMono_700Bold',
+                              transform: [{ rotate: '-90deg' }],
+                              width: 38, textAlign: 'center',
+                            }}>{filterBadge}</Text>
+                          </View>
+                        )}
+                        {chips.map((chip, i) => {
+                          const pct = chip.pct;
+                          const color = pct != null && pct >= 60 ? Colors.success
+                            : pct != null && pct < 42 ? Colors.error : '#555';
+                          const isLast = i === chips.length - 1;
+                          return (
+                            <View key={chip.label} style={{
+                              flex: 1, alignItems: 'center', paddingVertical: 9,
+                              borderRightWidth: isLast ? 0 : 1, borderRightColor: '#181818',
+                              borderTopWidth: 2,
+                              borderTopColor: pct != null && pct >= 60 ? Colors.success + '70'
+                                : pct != null && pct < 42 ? Colors.error + '70' : '#181818',
+                            }}>
+                              <Text style={{ fontSize: 7, color: '#3a3a3a', fontWeight: '700', letterSpacing: 1.2 }}>{chip.label}</Text>
+                              <Text style={{ fontSize: 17, fontWeight: '900', color, lineHeight: 21, fontFamily: 'JetBrainsMono_700Bold' }}>
+                                {pct != null ? `${pct}` : '—'}<Text style={{ fontSize: 10 }}>%</Text>
+                              </Text>
+                              <Text style={{ fontSize: 7, color: '#2a2a2a', fontFamily: 'JetBrainsMono_400Regular' }}>{chip.n}g</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })()}
 
                   {/* ── Bar Chart ── */}
                   {!allSynthetic && (() => {

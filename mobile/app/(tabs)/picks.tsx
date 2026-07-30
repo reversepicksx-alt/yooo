@@ -320,11 +320,28 @@ export default function PicksScreen() {
       if (!session) throw new Error('Not authenticated');
       return deletePick(session.email, session.token, pickId);
     },
+    onMutate: async (pickId: string) => {
+      // Cancel any outgoing refetches so they don't overwrite our optimistic update
+      await qc.cancelQueries({ queryKey: ['picks', session?.email] });
+      // Snapshot the previous picks in case we need to rollback
+      const previousPicks = qc.getQueryData<Pick[]>(['picks', session?.email]);
+      // Optimistically remove the pick — disappears immediately
+      qc.setQueryData<Pick[]>(['picks', session?.email], (old = []) =>
+        old.filter(p => (p.pickId || (p as any)._id || (p as any).id) !== pickId)
+      );
+      return { previousPicks };
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['picks'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
-    onError: (e: Error) => Alert.alert('Delete failed', e.message),
+    onError: (e: Error, _pickId: string, context: any) => {
+      // Rollback to the snapshot if the server call fails
+      if (context?.previousPicks) {
+        qc.setQueryData(['picks', session?.email], context.previousPicks);
+      }
+      Alert.alert('Delete failed', e.message);
+    },
   });
 
   const handleDelete = useCallback((pick: Pick) => {

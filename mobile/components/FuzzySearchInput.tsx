@@ -238,8 +238,11 @@ export default function FuzzySearchInput({
     setResults([]);
     setShowDropdown(false);
     if (text.length < 2) {
-      setHasSearched(false); setSearchError(false); return;
+      setHasSearched(false); setSearchError(false); setLoading(false); return;
     }
+    // Show the loading spinner immediately — before the debounce fires —
+    // so the user gets instant feedback that something is happening.
+    if (!staticItems) setLoading(true);
     const delay = staticItems ? 60 : DEBOUNCE_MS;
     debounceRef.current = setTimeout(() => {
       if (lastQueryRef.current === text) doSearch(text);

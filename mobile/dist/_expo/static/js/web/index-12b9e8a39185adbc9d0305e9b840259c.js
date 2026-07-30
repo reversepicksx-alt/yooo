@@ -139710,13 +139710,32 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
         if (!session) throw new Error('Not authenticated');
         return (0, _libApi.deletePick)(session.email, session.token, pickId);
       },
+      onMutate: async pickId => {
+        // Cancel any outgoing refetches so they don't overwrite our optimistic update
+        await qc.cancelQueries({
+          queryKey: ['picks', session?.email]
+        });
+        // Snapshot the previous picks in case we need to rollback
+        const previousPicks = qc.getQueryData(['picks', session?.email]);
+        // Optimistically remove the pick — disappears immediately
+        qc.setQueryData(['picks', session?.email], (old = []) => old.filter(p => (p.pickId || p._id || p.id) !== pickId));
+        return {
+          previousPicks
+        };
+      },
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ['picks']
         });
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       },
-      onError: e => Alert.default.alert('Delete failed', e.message)
+      onError: (e, _pickId, context) => {
+        // Rollback to the snapshot if the server call fails
+        if (context?.previousPicks) {
+          qc.setQueryData(['picks', session?.email], context.previousPicks);
+        }
+        Alert.default.alert('Delete failed', e.message);
+      }
     });
     const handleDelete = (0, _react.useCallback)(pick => {
       const id = pick.pickId || pick._id || pick.id;
@@ -203103,12 +203122,8 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                 const isAnalyzing = phase === 'analyzing';
                 // Show disabled state directly on the button when line is missing —
                 // the normal error message is hidden behind the iOS keyboard on web.
-                const showLineMissing = !isAnalyzing && !lineReady;
                 return /*#__PURE__*/(0, _reactJsxRuntime.jsx)(TouchableOpacity.default, {
-                  style: [styles.predictBtn, isAnalyzing && styles.predictBtnCancel, showLineMissing && {
-                    opacity: 0.55,
-                    backgroundColor: '#222'
-                  }],
+                  style: [styles.predictBtn, isAnalyzing && styles.predictBtnCancel],
                   onPress: isAnalyzing ? reset : handleManualAnalyze,
                   activeOpacity: 0.85,
                   children: isAnalyzing ? /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(_reactJsxRuntime.Fragment, {
@@ -203121,17 +203136,6 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                         color: '#fff'
                       }],
                       children: "Cancel"
-                    })]
-                  }) : showLineMissing ? /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(_reactJsxRuntime.Fragment, {
-                    children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoVectorIcons.Ionicons, {
-                      name: "create-outline",
-                      size: 16,
-                      color: "#888"
-                    }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
-                      style: [styles.predictBtnText, {
-                        color: '#888'
-                      }],
-                      children: "Enter a line to analyze"
                     })]
                   }) : /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(_reactJsxRuntime.Fragment, {
                     children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoVectorIcons.Ionicons, {
@@ -206409,92 +206413,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                           style: styles.syntheticNoticeText,
                           children: "Per-game data unavailable for this player. Analysis is based on season averages only."
                         })]
-                      }), !allSynthetic && effectiveLine != null && (() => {
-                        const allVals = displayLogs.map(g => g.value).filter(v => v != null);
-                        const chips = [{
-                          label: 'L5',
-                          slice: allVals.slice(-5)
-                        }, {
-                          label: 'L10',
-                          slice: allVals.slice(-10)
-                        }, {
-                          label: 'L15',
-                          slice: allVals.slice(-15)
-                        }, {
-                          label: 'SZN',
-                          slice: allVals
-                        }].map(({
-                          label,
-                          slice
-                        }) => {
-                          const over = slice.filter(v => v > effectiveLine).length;
-                          const pct = slice.length >= 2 ? Math.round(over / slice.length * 100) : null;
-                          return {
-                            label,
-                            pct,
-                            n: slice.length
-                          };
-                        }).filter(c => c.n >= 2);
-                        if (chips.length === 0) return null;
-                        return /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
-                          style: {
-                            marginHorizontal: 16,
-                            marginBottom: 10,
-                            borderRadius: 10,
-                            backgroundColor: '#0D0D0D',
-                            borderWidth: 1,
-                            borderColor: '#1C1C1C',
-                            flexDirection: 'row',
-                            overflow: 'hidden'
-                          },
-                          children: chips.map((chip, i) => {
-                            const pct = chip.pct;
-                            const color = pct != null && pct >= 60 ? Colors.default.success : pct != null && pct < 42 ? Colors.default.error : '#555';
-                            const isLast = i === chips.length - 1;
-                            return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
-                              style: {
-                                flex: 1,
-                                alignItems: 'center',
-                                paddingVertical: 10,
-                                borderRightWidth: isLast ? 0 : 1,
-                                borderRightColor: '#1C1C1C',
-                                borderTopWidth: 2,
-                                borderTopColor: pct != null && pct >= 60 ? Colors.default.success + '70' : pct != null && pct < 42 ? Colors.default.error + '70' : '#1C1C1C'
-                              },
-                              children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
-                                style: {
-                                  fontSize: 7,
-                                  color: '#444',
-                                  fontWeight: '700',
-                                  letterSpacing: 1.2
-                                },
-                                children: chip.label
-                              }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
-                                style: {
-                                  fontSize: 17,
-                                  fontWeight: '900',
-                                  color,
-                                  lineHeight: 21,
-                                  fontFamily: 'JetBrainsMono_700Bold'
-                                },
-                                children: [pct != null ? `${pct}` : '—', /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
-                                  style: {
-                                    fontSize: 10
-                                  },
-                                  children: "%"
-                                })]
-                              }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
-                                style: {
-                                  fontSize: 7,
-                                  color: '#333',
-                                  fontFamily: 'JetBrainsMono_400Regular'
-                                },
-                                children: [chip.n, "g"]
-                              })]
-                            }, chip.label);
-                          })
-                        });
-                      })(), !allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
+                      }), !allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
                         style: styles.glTabRow,
                         children: [['all', 'home', 'away'].map(f => /*#__PURE__*/(0, _reactJsxRuntime.jsx)(TouchableOpacity.default, {
                           style: [styles.glTab, gameLogFilter === f && styles.glTabActive],
@@ -206537,7 +206456,116 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                             children: "QUALITY"
                           })
                         })]
-                      }), !allSynthetic && (() => {
+                      }), !allSynthetic && effectiveLine != null && (() => {
+                        // Use filteredLogs so numbers react to the venue filter tabs
+                        const baseVals = filteredLogs.map(g => g.value).filter(v => v != null);
+                        const chips = [{
+                          label: 'L5',
+                          slice: baseVals.slice(-5)
+                        }, {
+                          label: 'L10',
+                          slice: baseVals.slice(-10)
+                        }, {
+                          label: 'L15',
+                          slice: baseVals.slice(-15)
+                        }, {
+                          label: 'SZN',
+                          slice: baseVals
+                        }].map(({
+                          label,
+                          slice
+                        }) => {
+                          const over = slice.filter(v => v > effectiveLine).length;
+                          const pct = slice.length >= 2 ? Math.round(over / slice.length * 100) : null;
+                          return {
+                            label,
+                            pct,
+                            n: slice.length
+                          };
+                        }).filter(c => c.n >= 2);
+                        if (chips.length === 0) return null;
+                        // Badge shown when a venue filter is active
+                        const filterBadge = gameLogFilter !== 'all' ? gameLogFilter === 'home' ? 'HOME' : gameLogFilter === 'away' ? 'AWAY' : 'OPP' : null;
+                        return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
+                          style: {
+                            borderTopWidth: 1,
+                            borderTopColor: '#181818',
+                            backgroundColor: '#0A0A0A',
+                            flexDirection: 'row',
+                            overflow: 'hidden'
+                          },
+                          children: [filterBadge && /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
+                            style: {
+                              width: 22,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderRightWidth: 1,
+                              borderRightColor: '#181818',
+                              backgroundColor: '#111'
+                            },
+                            children: /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+                              style: {
+                                fontSize: 6,
+                                color: Colors.default.primary,
+                                fontWeight: '800',
+                                letterSpacing: 0.6,
+                                fontFamily: 'JetBrainsMono_700Bold',
+                                transform: [{
+                                  rotate: '-90deg'
+                                }],
+                                width: 38,
+                                textAlign: 'center'
+                              },
+                              children: filterBadge
+                            })
+                          }), chips.map((chip, i) => {
+                            const pct = chip.pct;
+                            const color = pct != null && pct >= 60 ? Colors.default.success : pct != null && pct < 42 ? Colors.default.error : '#555';
+                            const isLast = i === chips.length - 1;
+                            return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
+                              style: {
+                                flex: 1,
+                                alignItems: 'center',
+                                paddingVertical: 9,
+                                borderRightWidth: isLast ? 0 : 1,
+                                borderRightColor: '#181818',
+                                borderTopWidth: 2,
+                                borderTopColor: pct != null && pct >= 60 ? Colors.default.success + '70' : pct != null && pct < 42 ? Colors.default.error + '70' : '#181818'
+                              },
+                              children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+                                style: {
+                                  fontSize: 7,
+                                  color: '#3a3a3a',
+                                  fontWeight: '700',
+                                  letterSpacing: 1.2
+                                },
+                                children: chip.label
+                              }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
+                                style: {
+                                  fontSize: 17,
+                                  fontWeight: '900',
+                                  color,
+                                  lineHeight: 21,
+                                  fontFamily: 'JetBrainsMono_700Bold'
+                                },
+                                children: [pct != null ? `${pct}` : '—', /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+                                  style: {
+                                    fontSize: 10
+                                  },
+                                  children: "%"
+                                })]
+                              }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
+                                style: {
+                                  fontSize: 7,
+                                  color: '#2a2a2a',
+                                  fontFamily: 'JetBrainsMono_400Regular'
+                                },
+                                children: [chip.n, "g"]
+                              })]
+                            }, chip.label);
+                          })]
+                        });
+                      })(), !allSynthetic && (() => {
                         if (filteredWithIdx.length === 0) return null;
                         const CHART_H = 112;
                         const BAR_W = 34;
@@ -212332,8 +212360,12 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       if (text.length < 2) {
         setHasSearched(false);
         setSearchError(false);
+        setLoading(false);
         return;
       }
+      // Show the loading spinner immediately — before the debounce fires —
+      // so the user gets instant feedback that something is happening.
+      if (!staticItems) setLoading(true);
       const delay = staticItems ? 60 : DEBOUNCE_MS;
       debounceRef.current = setTimeout(() => {
         if (lastQueryRef.current === text) doSearch(text);
