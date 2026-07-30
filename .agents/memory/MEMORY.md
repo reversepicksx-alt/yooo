@@ -79,3 +79,4 @@
 - [Automatic Community pick images](automatic-community-pick-images.md) — Capture the rendered highest-confidence active OwnerPickCard, then server-validate and attach its image to the idempotent auto post.
 - [Web auth route split](web-auth-route-split.md) — Safari can mount shared auth after logout but paint only its dark background; use a dedicated auth.web.tsx route for reliable web sign-in.
 - [Passing-prop safeguards](passing-prop-safeguards.md) — rolling deduped pass buckets suppress only evidence-backed directions; possession layers require an explicit real-data flag, not fallback numbers.
+- [Pass projection calibration](pass-projection-calibration.md) — walk-forward residual corrections stay shadow-only until leakage-safe real-history validation proves out-of-sample benefit.

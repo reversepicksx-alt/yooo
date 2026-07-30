@@ -703,7 +703,8 @@ async def predict(req: PredictionRequest):
                 "pass_attempts": "passes_total", "passes": "passes_total",
                 "shots": "shots_total", "shots_on_target": "shots_on",
                 "tackles": "tackles_total", "key_passes": "passes_key",
-                "saves": "goals_saves", "interceptions": "tackles_interceptions",
+                "saves": "goals_saves", "goalie_saves": "goals_saves",
+                "interceptions": "tackles_interceptions",
                 "blocks": "tackles_blocks", "dribbles": "dribbles_attempts",
                 "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
@@ -1563,7 +1564,8 @@ async def predict(req: PredictionRequest):
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
                 "passes": "passes_total", "shots": "shots_total",
                 "shots_on_target": "shots_on", "tackles": "tackles_total",
-                "key_passes": "passes_key", "saves": "goals_saves",
+                 "key_passes": "passes_key", "saves": "goals_saves",
+                 "goalie_saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
                 "fouls_committed": "fouls_committed", "crosses": "passes_crosses",
@@ -1614,7 +1616,8 @@ async def predict(req: PredictionRequest):
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
                 "passes": "passes_total", "shots": "shots_total",
                 "shots_on_target": "shots_on", "tackles": "tackles_total",
-                "key_passes": "passes_key", "saves": "goals_saves",
+                 "key_passes": "passes_key", "saves": "goals_saves",
+                 "goalie_saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
                 "fouls_committed": "fouls_committed", "crosses": "passes_crosses",
@@ -1801,7 +1804,8 @@ async def predict(req: PredictionRequest):
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
                 "passes": "passes_total", "shots": "shots_total",
                 "shots_on_target": "shots_on", "tackles": "tackles_total",
-                "key_passes": "passes_key", "saves": "goals_saves",
+                 "key_passes": "passes_key", "saves": "goals_saves",
+                 "goalie_saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
                 "fouls_committed": "fouls_committed", "crosses": "passes_crosses",
@@ -4651,7 +4655,7 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
             target_field_map = {
                 "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
                 "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
-                "saves": "goals_saves",
+                "saves": "goals_saves", "goalie_saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
@@ -6363,17 +6367,19 @@ Analyze ALL data thoroughly. Return JSON only."""
             pass  # Math Lock runs after PASS GATE below — see [MATH LOCK] block
 
         # =============================================
-        # POST-PROJECTION DOMINANCE SCALING — SELECTIVE
-        # Negative branch: low-possession team facing a possession monster → scale DOWN.
-        # Positive branch: team expected to dominate well above their own season avg → scale UP.
-        # The positive branch only fires when the OPP CONVERGENCE boost above was NOT
-        # sufficient (i.e., the expected poss gap is very large — a historically rare setup).
-        # In most cases the OPP CONVERGENCE boost inside the Bayesian step already handles it.
+        # POST-PROJECTION DOMINANCE SCALING — NON-PASS PROPS ONLY
+        #
+        # The Bayesian engine owns possession-sensitive pass volume. Applying
+        # match_dominance["multiplier"] again here double-counts possession and
+        # was the source of clustered passing-prop projection errors. Keep this
+        # route-level adjustment disabled for every prop in this set; the
+        # variable remains available for the non-pass tempo/favorite audit below.
         # =============================================
         poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+        _post_dom_props = set()
 
         _is_gk_dom = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or (player_position or "").lower() == "goalkeeper"
-        if req.propType in poss_sensitive and not _is_gk_dom and match_dominance.get("multiplier", 1.0) != 1.0:
+        if req.propType in _post_dom_props and not _is_gk_dom and match_dominance.get("multiplier", 1.0) != 1.0:
             dom_mult = match_dominance["multiplier"]
             team_avg_poss = match_dominance.get("teamSeasonAvg", 50)
             exp_poss      = match_dominance.get("expectedPoss", 50)
@@ -7921,7 +7927,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         gl_target_field_map_check = {
             "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
             "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
-            "saves": "goals_saves",
+            "saves": "goals_saves", "goalie_saves": "goals_saves",
             "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
             "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
             "crosses": "passes_crosses", "clearances": "tackles_clearances",
@@ -8265,7 +8271,8 @@ Analyze ALL data thoroughly. Return JSON only."""
             # Safety net: historical_data path missed — rebuild from final player_game_logs
             _pgl_target_map = {
                 "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-                "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                "tackles": "tackles_total", "key_passes": "passes_key",
+                "saves": "goals_saves", "goalie_saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
@@ -8300,6 +8307,71 @@ Analyze ALL data thoroughly. Return JSON only."""
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
         # positionComparison removed — not shown in UI
+
+        # ── FINAL PASS-PROJECTION CALIBRATION (SHADOW BY DEFAULT) ───────────
+        # This is deliberately the only projection-calibration boundary.  It
+        # runs after Bayesian Truth, H2H, scenario, odds, and route-level
+        # guards, so the extractor measures the projection users actually saw.
+        # PASS suppression and confidence calibration remain separate concerns.
+        if (
+            str(req.sport or "").lower() == "soccer"
+            and req.propType in {"pass_attempts", "passes"}
+            and str(prediction.get("recommendation") or "").lower() in {"over", "under"}
+        ):
+            try:
+                from pass_projection_calibration import ensure_loaded, lookup
+
+                await ensure_loaded(db, datetime.now(timezone.utc))
+                _cal_position = (
+                    prediction.get("player", {}).get("position")
+                    or prediction.get("position")
+                    or specific_position
+                    or req.positionOverride
+                    or ""
+                )
+                _cal_role = (
+                    prediction.get("player", {}).get("role")
+                    or prediction.get("role")
+                    or player_role
+                    or req.roleOverride
+                    or ""
+                )
+                _cal_mean = prediction.get("projectedValue")
+                _pass_calibration = lookup(
+                    req.leagueId,
+                    _cal_position,
+                    _cal_role,
+                    str(prediction.get("recommendation") or "").lower(),
+                    float(_cal_mean) if _cal_mean is not None else None,
+                )
+                _cal_metrics = prediction.setdefault("bayesianMetrics", {})
+                _cal_metrics["passProjectionCalibration"] = _pass_calibration
+
+                if _pass_calibration.get("applied"):
+                    _corrected_mean = round(
+                        float(_cal_mean) * _pass_calibration["multiplier"], 1
+                    )
+                    prediction["projectedValue"] = _corrected_mean
+                    prediction["recommendation"] = (
+                        "over" if _corrected_mean > req.line else "under"
+                    )
+                    _pass_calibration["appliedValue"] = _corrected_mean
+                    _cal_metrics["passProjectionCalibration"] = _pass_calibration
+                    print(
+                        f"[PASS PROJECTION CAL] applied {_cal_mean} → {_corrected_mean} "
+                        f"bucket={_pass_calibration.get('bucket')} "
+                        f"n={_pass_calibration.get('n')}"
+                    )
+            except Exception as _pass_cal_err:
+                prediction.setdefault("bayesianMetrics", {})[
+                    "passProjectionCalibration"
+                ] = {
+                    "found": False,
+                    "mode": os.environ.get("PASS_PROJECTION_CALIBRATION_MODE", "shadow"),
+                    "applied": False,
+                    "error": str(_pass_cal_err)[:240],
+                }
+                print(f"[PASS PROJECTION CAL] application failed: {_pass_cal_err}")
 
         # ── FINAL EDGE-GAP RECOMPUTE ─────────────────────────────────────
         # The engine computes edgeGap from its own posterior, but several

@@ -1752,11 +1752,13 @@ SOCCER_STAT_MAP = {
     "assists": lambda s: s.get("goals", {}).get("assists"),
     "shots_assisted": lambda s: s.get("passes", {}).get("key"),
     "pass_attempts": lambda s: s.get("passes", {}).get("total"),
+    "passes": lambda s: s.get("passes", {}).get("total"),
     "shots": lambda s: s.get("shots", {}).get("total"),
     "shots_on_target": lambda s: s.get("shots", {}).get("on"),
     "tackles": lambda s: s.get("tackles", {}).get("total"),
     "key_passes": lambda s: s.get("passes", {}).get("key"),
     "saves": lambda s: (s.get("goals", {}).get("saves") or 0),
+    "goalie_saves": lambda s: (s.get("goals", {}).get("saves") or 0),
     "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
     "blocks": lambda s: s.get("tackles", {}).get("blocks"),
     "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
@@ -2901,12 +2903,13 @@ async def _build_bdl_soccer_update(
     elapsed        = 0 if is_live else 90
     current_value  = None
     minutes_played = 90 if is_finished else 0
+    minutes_confirmed = not is_finished
 
     if is_finished:
         prop_type  = pick.get("propType", "")
         stat_field = _sbc.BDL_SOCCER_STAT_MAP.get(prop_type)
         if stat_field:
-            current_value, minutes_played = await _sbc.get_player_settled_stat(
+            current_value, minutes_played, minutes_confirmed = await _sbc.get_player_settled_stat_details(
                 league_id, pick.get("playerName", ""), stat_field
             )
 
@@ -2948,7 +2951,7 @@ async def _build_bdl_soccer_update(
     _stat_available    = current_value is not None
     current_value_safe = current_value if current_value is not None else 0
 
-    if not _stat_available and minutes_played >= 30:
+    if not _stat_available and (minutes_confirmed and minutes_played >= 30):
         print(f"[BDL-SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — stat unavailable; deferring")
         update["matchStatus"] = "final"
         return update
@@ -2962,15 +2965,24 @@ async def _build_bdl_soccer_update(
         "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
         "duels_won",
     }
-    if current_value_safe == 0 and pick.get("propType", "") in _BDL_COUNT_PROPS and minutes_played >= 30:
+    if current_value_safe == 0 and pick.get("propType", "") in _BDL_COUNT_PROPS and (
+        not minutes_confirmed or minutes_played >= 30
+    ):
         print(f"[BDL-SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — BDL Tier-2 stat=0 with {minutes_played} min; likely None/missing, deferring")
         update["matchStatus"] = "final"
         return update
 
     _DNP_THRESHOLD = 30
-    if minutes_played < _DNP_THRESHOLD:
+    if minutes_confirmed and minutes_played < _DNP_THRESHOLD:
         result_str        = "dnp"
         update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
+    elif current_value is not None and current_value > 0:
+        # Stat evidence is stronger than a missing/estimated minutes field.
+        result_str = _settle_result(current_value, line, recommendation)
+    elif not minutes_confirmed:
+        # An estimated 90 or missing minutes field cannot prove participation.
+        update["matchStatus"] = "final"
+        return update
     else:
         result_str = _settle_result(current_value_safe, line, recommendation)
 
@@ -3560,10 +3572,10 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         stat_field = _sbc.BDL_SOCCER_STAT_MAP.get(prop_type)
         if not stat_field:
             return None
-        actual_value, minutes_played = await _sbc.get_player_settled_stat(
+        actual_value, minutes_played, minutes_confirmed = await _sbc.get_player_settled_stat_details(
             league_id, pick.get("playerName", ""), stat_field
         )
-        if actual_value is None:
+        if actual_value is None and not (minutes_confirmed and minutes_played < 30):
             return None
         home_goals = match.get("home_score", 0) or 0
         away_goals = match.get("away_score", 0) or 0
@@ -3571,7 +3583,9 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         p_goals    = home_goals if venue == "home" else away_goals
         o_goals    = away_goals if venue == "home" else home_goals
         _DNP_THRESHOLD = 30
-        if minutes_played < _DNP_THRESHOLD and minutes_played > 0:
+        if minutes_confirmed and minutes_played < _DNP_THRESHOLD and not (
+            actual_value is not None and actual_value > 0
+        ):
             return {
                 "pickId": pick.get("id"), "status": "settled", "result": "dnp",
                 "actualValue": actual_value, "minutesPlayed": minutes_played,
@@ -3684,7 +3698,11 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
 
     # DNP / early-sub void guard — players with < 30 min get DNP, not hit/miss
     _DNP_THRESHOLD = 30
-    if minutes_played < _DNP_THRESHOLD and (minutes_played > 0 or actual_value is not None):
+    if minutes_played < _DNP_THRESHOLD and actual_value is not None and actual_value > 0:
+        # A populated positive stat proves the player participated even if the
+        # provider omitted minutes.
+        pass
+    elif minutes_played < _DNP_THRESHOLD and (minutes_played > 0 or actual_value is not None):
         return {
             "pickId": pick.get("id"),
             "status": "settled",

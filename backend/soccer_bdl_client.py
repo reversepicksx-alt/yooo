@@ -105,8 +105,10 @@ def _norm(raw: dict) -> dict:
         seasons/leagues. We pass through whatever is present; the prediction
         pipeline tolerates None values via `if g.get(field) is not None`.
 
-    For minutes_played=None we fall back to appearances*90 so the log is not
-    discarded outright by the minutes>0 filter downstream.
+    For prediction history, minutes_played=None falls back to appearances*90
+    so a valid appearance is not discarded. Settlement must inspect the
+    explicit confirmation marker and must not treat this estimate as DNP
+    evidence.
     """
     gk_saves = (raw.get("goalkeeper_saves") or raw.get("saves") or 0)
     duels_w  = raw.get("duels_won")  or 0
@@ -116,6 +118,7 @@ def _norm(raw: dict) -> dict:
     # This avoids discarding valid stat rows just because minutes is missing.
     raw_mins = raw.get("minutes_played")
     apps     = raw.get("appearances") or 0
+    minutes_estimated = raw_mins is None
     minutes  = int(raw_mins) if raw_mins is not None else (90 if apps >= 1 else 0)
     return {
         "minutes":             minutes,
@@ -162,6 +165,9 @@ def _norm(raw: dict) -> dict:
         # is_home comes directly from player_match_stats and is authoritative —
         # the schedule home_team field may differ (WC format quirk).
         "_is_home_raw":        raw.get("is_home"),
+        "_minutes_estimated":  minutes_estimated,
+        "_minutes_confirmed":  raw_mins is not None,
+        "_bdl_stat_date":      raw.get("date") or raw.get("datetime") or "",
     }
 
 
@@ -553,14 +559,60 @@ async def get_game_logs(
                 reverse=True
             )
 
-            # Sequential mapping: stat row i ↔ team match i (newest-first both sides).
+            # Prefer an explicit match/date join when the provider supplies one.
+            # Some BDL tournament feeds expose a round ID in match_id rather
+            # than the schedule match ID, so sequential newest-first matching
+            # remains the documented fallback for those feeds.
             # Venue uses _is_home_raw from the stat row when present — it is authoritative.
             # The schedule home_team field can disagree with player_match_stats.is_home
             # in tournament formats (e.g. WC group stage scheduling conventions).
             for i, gl in enumerate(logs):
-                if i >= len(all_team_matches):
+                _raw_mid = gl.get("_bdl_match_id")
+                _raw_date = str(gl.get("_bdl_stat_date") or "")[:10]
+                _id_candidates = [
+                    candidate for candidate in all_team_matches
+                    if _raw_mid and str(candidate.get("id")) == str(_raw_mid)
+                ]
+                _date_candidates = [
+                    candidate for candidate in all_team_matches
+                    if _raw_date and str(
+                        candidate.get("date") or candidate.get("datetime") or ""
+                    )[:10] == _raw_date
+                    and (
+                        not gl.get("_bdl_team_id")
+                        or gl.get("_bdl_team_id") in {
+                            candidate.get("home_team_id"),
+                            candidate.get("away_team_id"),
+                            (candidate.get("home_team") or {}).get("id"),
+                            (candidate.get("away_team") or {}).get("id"),
+                        }
+                    )
+                ]
+                _explicit_candidates = _id_candidates or _date_candidates
+                m = _explicit_candidates[0] if _explicit_candidates else None
+                if _id_candidates:
+                    gl["matchJoinMethod"] = "explicit_id"
+                    gl["matchJoinUncertain"] = False
+                elif len(_date_candidates) == 1:
+                    gl["matchJoinMethod"] = "explicit_date_team"
+                    gl["matchJoinUncertain"] = False
+                elif len(_date_candidates) > 1:
+                    gl["matchJoinMethod"] = "ambiguous_date_team"
+                    gl["matchJoinUncertain"] = True
+                elif m is not None:
+                    gl["matchJoinMethod"] = "explicit_date"
+                    gl["matchJoinUncertain"] = True
+                if m is not None:
+                    gl["_match_join_method"] = gl["matchJoinMethod"]
+                    gl["_match_join_uncertain"] = gl["matchJoinUncertain"]
+                elif i < len(all_team_matches):
+                    m = all_team_matches[i]
+                    gl["_match_join_method"] = "sequential_fallback"
+                    gl["matchJoinMethod"] = "sequential_fallback"
+                    gl["matchJoinUncertain"] = True
+                    gl["_match_join_uncertain"] = True
+                else:
                     break
-                m = all_team_matches[i]
                 # WC matches use nested objects; club matches use flat IDs
                 home_id = m.get("home_team_id") or (m.get("home_team") or {}).get("id")
                 away_id = m.get("away_team_id") or (m.get("away_team") or {}).get("id")
@@ -725,6 +777,7 @@ async def get_game_logs(
         gl.pop("_bdl_player_id",  None)
         gl.pop("_real_match_id",  None)
         gl.pop("_is_home_raw",    None)
+        gl.pop("_bdl_stat_date",  None)
 
     return logs, bdl_pid
 
@@ -867,9 +920,11 @@ BDL_SOCCER_STAT_MAP: dict = {
     "shots":           "shots_total",
     "shots_on_target": "shots_on",
     "pass_attempts":   "passes_total",
+    "passes":          "passes_total",
     "key_passes":      "passes_key",
     "shots_assisted":  "passes_key",
     "saves":           "goals_saves",
+    "goalie_saves":    "goals_saves",
     "tackles":         "tackles_total",
     "interceptions":   "tackles_interceptions",
     "blocks":          "tackles_blocks",
@@ -1045,3 +1100,28 @@ async def get_player_settled_stat(
     val  = norm.get(stat_field)
     mins = norm.get("minutes") or 0
     return val, int(mins)
+
+
+async def get_player_settled_stat_details(
+    league_id: int, player_name: str, stat_field: str,
+) -> tuple:
+    """Return (value, minutes, minutes_confirmed) for settlement decisions."""
+    if not is_bdl_league(league_id) or not BDL_KEY:
+        return None, 0, False
+    player = await _find_player(league_id, player_name)
+    if not player or not player.get("id"):
+        return None, 0, False
+    path = LEAGUE_TO_BDL[league_id]
+    result = await _get(
+        f"{path}/player_match_stats",
+        {"player_ids[]": player["id"], "seasons[]": _cur_yr, "per_page": 5},
+    )
+    rows = result.get("data", []) if result else []
+    if not rows:
+        return None, 0, False
+    norm = _norm(rows[0])
+    return (
+        norm.get(stat_field),
+        int(norm.get("minutes") or 0),
+        bool(norm.get("_minutes_confirmed")),
+    )
