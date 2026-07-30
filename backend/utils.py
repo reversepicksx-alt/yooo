@@ -14,6 +14,7 @@ from config import API_FOOTBALL_BASE, api_semaphore, get_dynamic_api_key
 import os as _os
 import time as _time
 import hashlib as _hashlib
+import contextvars as _contextvars
 from collections import OrderedDict as _OrderedDict
 from config import API_DAILY_SOFT_LIMIT
 
@@ -21,6 +22,13 @@ _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
 _quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
 _daily_call_date: str | None = None
 _daily_call_count = 0
+# The local soft budget protects background maintenance work. A request handler
+# can mark its child API calls as priority so a busy startup/settlement job
+# cannot starve an authenticated user prediction. This is deliberately
+# separate from the provider's real quota breaker below.
+_api_request_priority: _contextvars.ContextVar[bool] = _contextvars.ContextVar(
+    "api_request_priority", default=False
+)
 _response_cache: "_OrderedDict[str, tuple[float, list]]" = _OrderedDict()
 _CACHE_TTLS = {
     "leagues": 86400,
@@ -126,6 +134,16 @@ def is_quota_exhausted() -> bool:
     return _quota_tripped()
 
 
+def set_api_request_priority(priority: bool = True):
+    """Mark API-Football calls in the current request context as user priority."""
+    return _api_request_priority.set(priority)
+
+
+def reset_api_request_priority(token):
+    """Restore the previous API-Football request priority context."""
+    _api_request_priority.reset(token)
+
+
 async def api_football_request(endpoint: str, params: dict = None):
     global _daily_call_count
     # Short-circuit immediately if today's quota is already known to be gone
@@ -138,8 +156,8 @@ async def api_football_request(endpoint: str, params: dict = None):
         return cached
 
     _reset_daily_budget_if_needed()
-    if _daily_call_count >= API_DAILY_SOFT_LIMIT:
-        print(f"[API-SPORTS] Soft daily budget reached ({API_DAILY_SOFT_LIMIT}); skipping {endpoint}")
+    if _daily_call_count >= API_DAILY_SOFT_LIMIT and not _api_request_priority.get():
+        print(f"[API-SPORTS] Background soft budget reached ({API_DAILY_SOFT_LIMIT}); skipping {endpoint}")
         return []
 
     key = get_dynamic_api_key()

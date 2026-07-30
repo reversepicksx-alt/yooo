@@ -682,13 +682,10 @@ export default function ScanScreen() {
         sport: sport,
       };
 
-      // Run prediction first; then for soccer pass the FULL Bayesian output to
-      // the tactical chat so it reasons about the engine's numbers, not its own.
+      // Return the mathematical prediction as soon as it is ready. Tactical
+      // prose is optional enrichment and must never hold the result hostage to
+      // a second AI request.
       const result = await predict(req, sig);
-      let tacText = '';
-      if (sport === 'soccer' && !result.error) {
-        tacText = await fetchTacticalChat(result, sig);
-      }
 
       if (result.error) {
         if (inManual) setManualError(result.error); else setAnalyzeError(result.error);
@@ -697,10 +694,19 @@ export default function ScanScreen() {
       }
       setPrediction(result);
       setPredictionRequest(req);
-      setTacticalAnalysis(tacText || result.tacticalBreakdown || null);
+      setTacticalAnalysis(result.tacticalBreakdown || null);
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (sport === 'soccer') {
+        // Do not block the result screen on the optional tactical chat. If it
+        // takes too long or fails, the engine output remains usable.
+        void fetchTacticalChat(result, sig)
+          .then((tacText) => {
+            if (tacText && !sig.aborted) setTacticalAnalysis(tacText);
+          })
+          .catch(() => {});
+      }
       // Always poll for backend AI narrative when pending (populates sharpSummary/tacticalBreakdown)
       // even if fetchTacticalChat already returned text for the TACTICAL AI card
       if (result.aiPending && sport === 'soccer') {

@@ -17,7 +17,10 @@ from config import (
     INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER,
 )
 from models import PredictionRequest
-from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
+from utils import (
+    api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds,
+    decimal_to_american, set_api_request_priority, reset_api_request_priority,
+)
 from ai_engine import fetch_web_intel, fetch_ai_press_intensity
 from prop_safety_cache import (
     get_prop_safety as _get_prop_safety,
@@ -91,6 +94,10 @@ async def predict(req: PredictionRequest):
     access = sess.get("access_type", "")
     if not access or access == "NoSubscription":
         raise HTTPException(status_code=403, detail="Active subscription required")
+    # User-triggered predictions must not be starved by the shared background
+    # soft budget. The provider's actual 429/daily-quota response still trips
+    # the real circuit breaker in utils.py.
+    _priority_token = set_api_request_priority(True)
     try:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         # Prediction cache REMOVED: returning stale cached predictions caused
@@ -8562,6 +8569,8 @@ Analyze ALL data thoroughly. Return JSON only."""
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+    finally:
+        reset_api_request_priority(_priority_token)
 
 
 
