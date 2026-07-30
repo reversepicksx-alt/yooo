@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, OWNER_EMAILS, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
@@ -700,13 +700,31 @@ async def trigger_calibration(sport: str = "soccer"):
     return result
 
 
-@app.get("/api/admin/analytics")
-async def owner_analytics():
-    """Owner-only: return bot performance breakdown by direction, venue, position, prop type."""
+@app.post("/api/admin/analytics")
+async def owner_analytics(payload: dict = Body(...)):
+    """Owner-only soccer scorecard for the authenticated owner's own records."""
     from config import db
     from collections import defaultdict
 
-    match_filter = {"status": "settled", "result": {"$in": ["hit", "miss"]}}
+    email = str(payload.get("email") or "").lower().strip()
+    token = str(payload.get("token") or "")
+    if email not in OWNER_EMAILS:
+        raise HTTPException(status_code=403, detail="Owner access required")
+    session = await db.sessions.find_one(
+        {"email": email, "session_token": token}, {"_id": 0, "email": 1}
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    # The dashboard is deliberately narrower than the user's general picks
+    # list: every settled soccer record for this account, including pushes,
+    # DNPs, and calibration-only PASS observations.
+    settled_filter = {
+        "email": email,
+        "sport": "soccer",
+        "status": "settled",
+    }
+    match_filter = {**settled_filter, "result": {"$in": ["hit", "miss"]}}
 
     def pct(h, t):
         return round(h / t * 100, 1) if t > 0 else 0.0
@@ -728,8 +746,19 @@ async def owner_analytics():
                         "total": t, "winPct": pct(v["hit"], t)})
         return sorted(out, key=lambda x: -x["winPct"])
 
-    total_docs = await db.picks.count_documents(match_filter)
-    total_hits = await db.picks.count_documents({"status": "settled", "result": "hit"})
+    total_settled = await db.picks.count_documents(settled_filter)
+    total_hits = await db.picks.count_documents({**settled_filter, "result": "hit"})
+    total_misses = await db.picks.count_documents({**settled_filter, "result": "miss"})
+    total_pushes = await db.picks.count_documents({**settled_filter, "result": "push"})
+    total_dnps = await db.picks.count_documents({**settled_filter, "result": "dnp"})
+    total_passes = await db.picks.count_documents({
+        **settled_filter,
+        "$or": [
+            {"recommendation": "pass"},
+            {"recommendation": "PASS"},
+            {"isCalibrationOnly": True},
+        ],
+    })
 
     # Streak: last N settled picks in chronological order
     recent_raw = await db.picks.find(
@@ -791,7 +820,7 @@ async def owner_analytics():
     # ── Brier Score + ROI by confidence tier ─────────────────────────────────
     # Fetch settled picks with confidence info (cutoff = post-placeholder-bug era)
     conf_picks = await db.picks.find(
-        {"status": "settled", "result": {"$in": ["hit", "miss"]},
+        {**settled_filter, "result": {"$in": ["hit", "miss"]},
          "settledAt": {"$gte": "2026-04-30T00:00:00+00:00"}},
         {"_id": 0, "result": 1, "confidenceScore": 1, "rawConfidence": 1, "propType": 1}
     ).to_list(5000)
@@ -827,13 +856,14 @@ async def owner_analytics():
     # Keep these metrics separate from the legacy hit-rate breakdown above.
     # Numeric errors are grouped by sport/prop because their units differ.
     score_rows = await db.picks.find(
-        match_filter,
+        settled_filter,
         {
             "_id": 0, "trackingId": 1, "playerName": 1, "sport": 1,
             "propType": 1, "line": 1, "recommendation": 1, "venue": 1,
             "fixtureId": 1, "timestamp": 1, "settledAt": 1,
             "result": 1, "confidenceScore": 1, "rawConfidence": 1,
-            "projectedValue": 1, "actualValue": 1,
+            "projectedValue": 1, "actualValue": 1, "passOutcome": 1,
+            "isCalibrationOnly": 1,
         },
     ).to_list(20000)
     scorecard = build_scorecard(score_rows)
@@ -857,9 +887,13 @@ async def owner_analytics():
     return {
         "overall": {
             "hits": total_hits,
-            "misses": total_docs - total_hits,
-            "total": total_docs,
-            "winPct": pct(total_hits, total_docs),
+            "misses": total_misses,
+            "total": total_settled,
+            "winPct": pct(total_hits, total_hits + total_misses),
+            "pushes": total_pushes,
+            "dnps": total_dnps,
+            "calibrationOnly": total_passes,
+            "actionable": total_hits + total_misses,
         },
         "streak": {"type": streak_type, "count": streak_count},
         "recentForm": recent_streak[:10],
@@ -872,6 +906,7 @@ async def owner_analytics():
         "brierN": brier_n,
         "confidenceTiers": confidence_tiers,
         "scorecard": scorecard,
+        "scope": {"email": email, "sport": "soccer", "settled": total_settled},
     }
 
 

@@ -1044,10 +1044,6 @@ export default function ScanScreen() {
 
   const handleSavePick = async () => {
     if (!session || !prediction) return;
-    if (prediction.recommendation === 'PASS') {
-      setSaveError(prediction.passReason || 'This recommendation is PASS — there is no actionable side to save.');
-      return;
-    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -1076,6 +1072,11 @@ export default function ScanScreen() {
         line: prediction.line ?? scanResult?.line ?? parseFloat(line),
         projection: prediction.projection ?? prediction.bayesianProjection,
         recommendation: prediction.recommendation,
+        passLeaning: (prediction as any).passLeaning
+          || (prediction as any).skipDetails?.direction?.toLowerCase()
+          || undefined,
+        passReason: (prediction as any).passReason || undefined,
+        isCalibrationOnly: prediction.recommendation === 'PASS',
         confidence: prediction.confidence,
         confidenceScore: prediction.confidenceScore ?? (typeof prediction.confidence === 'number' && prediction.confidence <= 1 ? Math.round(prediction.confidence * 100) : prediction.confidence),
         rawConfidence: prediction.rawConfidence ?? prediction.confidenceScore ?? (typeof prediction.confidence === 'number' && prediction.confidence <= 1 ? Math.round(prediction.confidence * 100) : prediction.confidence),
@@ -4914,7 +4915,7 @@ export default function ScanScreen() {
 
             </View>{/* end captureContainer */}
 
-            {prediction.recommendation === 'PASS' ? (
+            {prediction.recommendation === 'PASS' && (
               <View style={{
                 marginTop: 10, padding: 14, borderRadius: 14,
                 backgroundColor: 'rgba(255,165,0,0.08)',
@@ -4925,10 +4926,12 @@ export default function ScanScreen() {
                   {prediction.passReason || 'The recent data does not support an actionable OVER or UNDER.'}
                 </Text>
               </View>
-            ) : (
-              <TouchableOpacity
+            )}
+            <TouchableOpacity
                 style={[{
-                  backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
+                  backgroundColor: prediction.recommendation === 'PASS'
+                    ? '#FFA500'
+                    : prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
                   borderRadius: 18, paddingVertical: 16, paddingHorizontal: 24,
                   alignItems: 'center', justifyContent: 'center', marginTop: 10, gap: 1,
                   shadowColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
@@ -4952,20 +4955,21 @@ export default function ScanScreen() {
                       Save Pick
                     </Text>
                     <Text style={{ color: '#000', fontWeight: '900', fontSize: 26, letterSpacing: 0.5, lineHeight: 30 }}>
-                      {prediction.recommendation}{'  '}{prediction.line}
+                      {prediction.recommendation === 'PASS' ? 'PASS · CALIBRATE' : `${prediction.recommendation}  ${prediction.line}`}
                     </Text>
                     {(prediction.pOver != null || prediction.pUnder != null) && (
                       <Text style={{ color: 'rgba(0,0,0,0.42)', fontWeight: '600', fontSize: 11, marginTop: 1 }}>
                         {prediction.recommendation === 'OVER'
                           ? `${(prediction.pOver ?? 0).toFixed(1)}%`
-                          : `${(prediction.pUnder ?? 0).toFixed(1)}%`
+                          : prediction.recommendation === 'UNDER'
+                            ? `${(prediction.pUnder ?? 0).toFixed(1)}%`
+                            : 'Saved as calibration-only'
                         } model probability
                       </Text>
                     )}
                   </>
                 )}
-              </TouchableOpacity>
-            )}
+            </TouchableOpacity>
 
             {/* Secondary actions row */}
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>

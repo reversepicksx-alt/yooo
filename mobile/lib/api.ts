@@ -316,6 +316,7 @@ export interface PredictionResult {
   confidence?: number;
   rawConfidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
+  passLeaning?: 'OVER' | 'UNDER' | string;
   passReason?: string;
   skipReason?: string;
   skipDetails?: { direction?: string; hitRate?: number; sampleSize?: number; windowDays?: number };
@@ -1359,6 +1360,10 @@ export interface ProjectionGroupMetrics extends ProjectionMetrics {
 
 export interface ModelScorecard {
   n: number;
+  rawN?: number;
+  duplicateRowsRemoved?: number;
+  resultCounts?: Record<string, number>;
+  calibrationOnlyN?: number;
   dateRange: { from: string | null; to: string | null };
   classification: {
     finalConfidence: ProbabilityMetrics;
@@ -1380,7 +1385,16 @@ export interface ModelScorecard {
 }
 
 export interface AnalyticsData {
-  overall: { hits: number; misses: number; total: number; winPct: number };
+  overall: {
+    hits: number;
+    misses: number;
+    total: number;
+    winPct: number;
+    pushes?: number;
+    dnps?: number;
+    calibrationOnly?: number;
+    actionable?: number;
+  };
   streak: { type: string | null; count: number };
   recentForm: { result: string; name: string }[];
   byDirection: AnalyticsBucket[];
@@ -1394,8 +1408,11 @@ export interface AnalyticsData {
   scorecard: ModelScorecard;
 }
 
-export async function getOwnerAnalytics(): Promise<AnalyticsData> {
-  return apiCall('/api/admin/analytics');
+export async function getOwnerAnalytics(email: string, token: string): Promise<AnalyticsData> {
+  return apiCall('/api/admin/analytics', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
 }
 
 export interface PlayerPickRow {

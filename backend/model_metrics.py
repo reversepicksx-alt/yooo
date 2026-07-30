@@ -24,9 +24,18 @@ def _event_key(row: dict) -> str:
     tracking = row.get("trackingId")
     if tracking:
         return str(tracking)
+    fixture = row.get("fixtureId")
+    # Legacy rows without tracking IDs can still be deduplicated when the
+    # fixture is known.  Do not merge separate fixtures just because the same
+    # player and market were used again.
+    if fixture:
+        return "|".join(str(row.get(key, "")) for key in (
+            "playerName", "sport", "propType", "line", "recommendation",
+            "fixtureId",
+        ))
     return "|".join(str(row.get(key, "")) for key in (
-        "playerName", "sport", "propType", "line", "recommendation", "venue",
-        "fixtureId", "timestamp",
+        "playerName", "sport", "propType", "line", "recommendation",
+        "venue", "timestamp",
     ))
 
 
@@ -85,6 +94,11 @@ def _error_metrics(rows: list[dict]) -> dict:
 def _probability_metrics(rows: list[dict], field: str) -> dict:
     scored: list[tuple[float, int]] = []
     for row in rows:
+        # A PASS is a calibration observation, not an actionable directional
+        # prediction.  It must remain in the ledger, but cannot be scored as a
+        # hit or miss without a direction.
+        if str(row.get("recommendation") or "").lower() == "pass":
+            continue
         confidence = _number(row.get(field))
         if confidence is None:
             continue
@@ -118,6 +132,8 @@ def _calibration_bins(rows: list[dict], field: str = "confidenceScore") -> list[
     for label, lower, upper in definitions:
         bucket = []
         for row in rows:
+            if str(row.get("recommendation") or "").lower() == "pass":
+                continue
             confidence = _number(row.get(field))
             if confidence is not None and lower <= confidence < upper:
                 bucket.append(row)
@@ -165,8 +181,19 @@ def build_scorecard(rows: list[dict]) -> dict:
     split = max(1, int(len(ordered) * 0.8)) if ordered else 0
     holdout = ordered[split:] if split < len(ordered) else []
 
+    result_counts = defaultdict(int)
+    calibration_only = 0
+    for row in deduped:
+        result_counts[str(row.get("result") or "unknown").lower()] += 1
+        if str(row.get("recommendation") or "").lower() == "pass":
+            calibration_only += 1
+
     return {
         "n": len(deduped),
+        "rawN": len(rows),
+        "duplicateRowsRemoved": max(0, len(rows) - len(deduped)),
+        "resultCounts": dict(result_counts),
+        "calibrationOnlyN": calibration_only,
         "dateRange": _date_range(ordered),
         "classification": {
             "finalConfidence": _probability_metrics(deduped, "confidenceScore"),

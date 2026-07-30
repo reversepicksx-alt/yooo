@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   getOwnerAnalytics, AnalyticsBucket, ConfidenceTier, ModelScorecard,
 } from '@/lib/api';
@@ -312,10 +313,12 @@ function Section({
 
 export default function AnalyticsTab() {
   const insets = useSafeAreaInsets();
+  const { session } = useAuth();
 
   const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['ownerAnalytics'],
-    queryFn: getOwnerAnalytics,
+    queryKey: ['ownerAnalytics', session?.email],
+    queryFn: () => getOwnerAnalytics(session!.email, session!.token),
+    enabled: !!session,
     staleTime: 60_000,
   });
 
@@ -344,7 +347,7 @@ export default function AnalyticsTab() {
             <Text style={styles.headerSub}>PRIVATE</Text>
           </View>
           <Text style={styles.headerTitle}>Data Analysis</Text>
-          <Text style={styles.scopeText}>All sports · settled prediction scorecard</Text>
+          <Text style={styles.scopeText}>Owner account · soccer · every settled record</Text>
         </View>
 
         {isLoading ? (

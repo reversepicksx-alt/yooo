@@ -84,3 +84,4 @@
 - [Pass projection calibration](pass-projection-calibration.md) — walk-forward residual corrections stay shadow-only until leakage-safe real-history validation proves out-of-sample benefit.
 - [Model scorecard interpretation](model-scorecard-interpretation.md) — separate probability quality from per-prop projection error; descriptive settled-pick splits are not true replay backtests.
 - [Fixture context integrity](fixture-context-integrity.md) — opponent, venue, odds, possession, and narrative must all come from the same verified fixture.
+- [Owner scorecard and PASS calibration](owner-scorecard-pass-calibration.md) — owner soccer analytics must show the complete authenticated ledger; PASS is stored for avoidance calibration, not normal wager ROI.

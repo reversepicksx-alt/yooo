@@ -325,15 +325,6 @@ async def save_pick(req: SavePickRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
     pick = req.pick
-    # PASS is an explicit no-action result from the prediction engine.  Enforce
-    # this server-side so an old client or a manually crafted request cannot
-    # turn a suppressed recommendation into a tracked pick.
-    if str(pick.get("recommendation") or "").upper() == "PASS":
-        raise HTTPException(
-            status_code=422,
-            detail=pick.get("passReason")
-            or "This recommendation is marked PASS and cannot be saved.",
-        )
     pick_id = pick.get("id") or str(uuid.uuid4())[:8]
     tracking_id = generate_tracking_id()
 
@@ -388,6 +379,12 @@ async def save_pick(req: SavePickRequest):
         "teamId": pick.get("teamId") or pick.get("_request", {}).get("teamId", 0),
         "opponentId": pick.get("opponentId") or pick.get("_request", {}).get("opponentId", 0),
         "opponentName": pick.get("opponent") or pick.get("opponentName", ""),
+        # PASS is saved as a calibration observation.  passLeaning stores the
+        # model's original direction so settlement can measure the avoided
+        # outcome without presenting PASS as an actionable wager.
+        "passLeaning": str(pick.get("passLeaning") or "").lower() or None,
+        "passReason": pick.get("passReason") or None,
+        "isCalibrationOnly": str(pick.get("recommendation") or "").upper() == "PASS",
         "leagueId": pick.get("leagueId") or pick.get("_request", {}).get("leagueId", 0),
         # World Cup picks are tracked separately for calibration — the tournament only
         # happens every 4 years so there's little settled-pick history to trust confidence
@@ -531,10 +528,9 @@ async def save_pick(req: SavePickRequest):
             pass
 
     # ── Duplicate-pick guard ─────────────────────────────────────────────────
-    # Same user, same player, same opponent, same prop, same line, same match:
-    # do not store a second pick. Use fixtureId when available; otherwise fall back
-    # to a 7-day window around the pick timestamp so the same fixture can't be
-    # double-saved.
+    # Reject only the same prediction event.  The same player/prop/line can be
+    # a valid new record in a later fixture, so fixtureId is the identity when
+    # present.  Legacy records without a fixture use the timestamp window.
     dup_query = {
         "email": req.email.lower(),
         "playerName": doc["playerName"],
@@ -923,13 +919,16 @@ async def list_picks(req: GetPicksRequest):
 
         # ── Normal result consistency check ──────────────────────────────────
         if p.get("actualValue") is not None:
-            correct = _settle_result(p["actualValue"], p.get("line", 0), p.get("recommendation", "over"))
+            correct, pass_outcome = _settle_pick_result(p["actualValue"], p.get("line", 0), p)
             if correct != p.get("result"):
                 p["result"] = correct
                 print(f"[CONSISTENCY] Correcting {p.get('playerName','')} {p.get('propType','')} → {correct}")
+                updates = {"result": correct}
+                if pass_outcome:
+                    updates["passOutcome"] = pass_outcome
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": pick_email},
-                    {"$set": {"result": correct}}
+                    {"$set": updates}
                 )
 
     # ── CS2 settled-pick data repair ─────────────────────────────────────────
@@ -3029,18 +3028,19 @@ async def _build_bdl_soccer_update(
         return update
 
     _DNP_THRESHOLD = 30
+    pass_outcome = None
     if minutes_confirmed and minutes_played < _DNP_THRESHOLD:
         result_str        = "dnp"
         update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
     elif current_value is not None and current_value > 0:
         # Stat evidence is stronger than a missing/estimated minutes field.
-        result_str = _settle_result(current_value, line, recommendation)
+        result_str, pass_outcome = _settle_pick_result(current_value, line, pick)
     elif not minutes_confirmed:
         # An estimated 90 or missing minutes field cannot prove participation.
         update["matchStatus"] = "final"
         return update
     else:
-        result_str = _settle_result(current_value_safe, line, recommendation)
+        result_str, pass_outcome = _settle_pick_result(current_value_safe, line, pick)
 
     settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
     if result_str == "dnp":
@@ -3049,6 +3049,8 @@ async def _build_bdl_soccer_update(
     update["result"]      = result_str
     update["actualValue"] = current_value_safe
     update["hitPct"]      = settled_hit_pct
+    if pass_outcome:
+        update["passOutcome"] = pass_outcome
 
     _settle_set = {
         "status":         "settled",
@@ -3063,6 +3065,8 @@ async def _build_bdl_soccer_update(
         "awayTeam":       away_team_name,
         "settledAt":      datetime.now(timezone.utc).isoformat(),
     }
+    if pass_outcome:
+        _settle_set["passOutcome"] = pass_outcome
     if update.get("voidReason"):
         _settle_set["voidReason"] = update["voidReason"]
 
@@ -3331,6 +3335,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
     _stat_available = current_value is not None
     line = pick.get("line", 0)
     recommendation = pick.get("recommendation", "over")
+    pass_outcome = None
 
     # Pace (extrapolate to 90 min) — only meaningful when we have a real stat value
     effective_elapsed = max(elapsed, 1)
@@ -3459,7 +3464,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             if current_value is not None and current_value > 0:
                 print(f"[SETTLE] {pick.get('playerName','')} {pick.get('propType','')} "
                       f"— minutes={minutes_played} but stat={current_value} (API minutes unreliable); settling normally")
-                result_str = _settle_result(current_value, line, recommendation)
+                result_str, pass_outcome = _settle_pick_result(current_value, line, pick)
             else:
                 result_str = "dnp"
                 update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
@@ -3470,7 +3475,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                       f"— stat=None at FT; deferring to background loop")
                 update["matchStatus"] = "final"
                 return update
-            result_str = _settle_result(current_value, line, recommendation)
+            result_str, pass_outcome = _settle_pick_result(current_value, line, pick)
         update["result"] = result_str
         update["actualValue"] = current_value
         # Store hitPct so settled pick cards show 100%/0%/50% instead of "—"
@@ -3493,6 +3498,8 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                       "awayTeam": away_team_name,
                       "scenarioBucket": _scen_bucket,
                       "settledAt": datetime.now(timezone.utc).isoformat()}
+        if pass_outcome:
+            _settle_set["passOutcome"] = pass_outcome
         # Persist voidReason to DB so the consistency fixer doesn't re-revert DNP pushes
         if update.get("voidReason"):
             _settle_set["voidReason"] = update["voidReason"]
@@ -3590,6 +3597,26 @@ def _settle_result(current_value, line, recommendation):
         return "miss"
 
 
+def _settle_pick_result(current_value, line, pick):
+    """Return (stored_result, avoided_side_result) for actionable/PASS picks.
+
+    PASS records remain calibration-only in the ledger.  Their original lean
+    is evaluated and stored separately so they can train avoidance analysis
+    without being counted as normal wager wins or losses.
+    """
+    recommendation = str(pick.get("recommendation") or "over").lower()
+    if recommendation == "pass":
+        lean = str(
+            pick.get("passLeaning")
+            or (pick.get("skipDetails") or {}).get("direction")
+            or ""
+        ).lower()
+        if lean in {"over", "under"} and current_value is not None:
+            return "pass", _settle_result(current_value, line, lean)
+        return "pass", None
+    return _settle_result(current_value, line, recommendation), None
+
+
 @router.post("/settle-picks")
 async def settle_picks(req: SettlePicksRequest):
     """Check match results and settle picks that have finished."""
@@ -3651,7 +3678,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                 "awayTeam": match.get("away_team_name", ""),
                 "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
             }
-        result_str = _settle_result(actual_value, pick.get("line", 0), pick.get("recommendation", "over"))
+        result_str, pass_outcome = _settle_pick_result(actual_value, pick.get("line", 0), pick)
         return {
             "pickId": pick.get("id"), "status": "settled", "result": result_str,
             "actualValue": actual_value, "minutesPlayed": minutes_played,
@@ -3659,6 +3686,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "homeTeam": match.get("home_team_name", ""),
             "awayTeam": match.get("away_team_name", ""),
             "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
+            **({"passOutcome": pass_outcome} if pass_outcome else {}),
         }
 
     # ── Legacy API-Football path for non-BDL leagues ──────────────────────────
@@ -3793,7 +3821,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
 
         line = pick.get("line", 0)
         recommendation = pick.get("recommendation", "over")
-        result_str = _settle_result(actual_value, line, recommendation)
+        result_str, pass_outcome = _settle_pick_result(actual_value, line, pick)
         return {
             "pickId": pick.get("id"),
             "status": "settled",
@@ -3809,6 +3837,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "homePoss": home_poss,
             "awayPoss": away_poss,
             "oppAvgPoss": settle_opp_avg_poss,
+            **({"passOutcome": pass_outcome} if pass_outcome else {}),
         }
 
     return None
@@ -3856,7 +3885,7 @@ async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
         return None
 
     actual_value = result["actualValue"]
-    result_str   = _settle_result(actual_value, line, recommendation)
+    result_str, pass_outcome = _settle_pick_result(actual_value, line, pick)
     hit_pct      = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
     now_iso      = datetime.now(timezone.utc).isoformat()
 
@@ -3868,6 +3897,8 @@ async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
         "matchScore":  result.get("matchScore"),
         "settledAt":   now_iso,
     }
+    if pass_outcome:
+        settle_set["passOutcome"] = pass_outcome
 
     await db.picks.update_one(
         {"pickId": pick["pickId"], "email": pick.get("email", "")},
@@ -3964,7 +3995,7 @@ async def _settle_wta_pick(pick: dict) -> Optional[dict]:
         return None
 
     actual_value = result["actualValue"]
-    result_str   = _settle_result(actual_value, line, recommendation)
+    result_str, pass_outcome = _settle_pick_result(actual_value, line, pick)
     hit_pct      = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
     now_iso      = datetime.now(timezone.utc).isoformat()
 
@@ -3976,6 +4007,8 @@ async def _settle_wta_pick(pick: dict) -> Optional[dict]:
         "matchScore":  result.get("matchScore"),
         "settledAt":   now_iso,
     }
+    if pass_outcome:
+        settle_set["passOutcome"] = pass_outcome
 
     await db.picks.update_one(
         {"pickId": pick["pickId"], "email": pick.get("email", "")},

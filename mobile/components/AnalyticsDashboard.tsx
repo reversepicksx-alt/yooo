@@ -6,7 +6,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { Pick } from '@/lib/api';
+import { getOwnerAnalytics, Pick, AnalyticsData } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { useQuery } from '@tanstack/react-query';
 
 const LEAGUE_LABELS: Record<number, string> = {
   39: 'Premier League', 40: 'Championship', 140: 'La Liga', 141: 'La Liga 2',
@@ -170,8 +172,15 @@ export default function AnalyticsDashboard({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { session } = useAuth();
   const [period, setPeriod] = useState<Period>('all');
   const stats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
+  const { data: ownerData } = useQuery<AnalyticsData>({
+    queryKey: ['ownerAnalytics', 'pick-insights', session?.email],
+    queryFn: () => getOwnerAnalytics(session!.email, session!.token),
+    enabled: visible && !!session,
+    staleTime: 60_000,
+  });
 
   const renderTrendChart = () => {
     if (stats.trend.length < 2) return (
@@ -370,6 +379,62 @@ export default function AnalyticsDashboard({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+            {ownerData?.scorecard && (
+              <View style={s.ownerHealthCard}>
+                <View style={s.chartHeader}>
+                  <Text style={s.chartTitle}>OWNER MODEL HEALTH</Text>
+                  <Text style={s.chartSubtitle}>SOCCER · PRIVATE</Text>
+                </View>
+                <Text style={s.ownerHealthScope}>
+                  {ownerData.overall.total} settled records · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable · {ownerData.overall.calibrationOnly ?? 0} PASS calibration
+                </Text>
+                <View style={s.ownerHealthGrid}>
+                  <View>
+                    <Text style={s.ownerHealthValue}>{ownerData.overall.hits}</Text>
+                    <Text style={s.ownerHealthLabel}>HITS</Text>
+                  </View>
+                  <View>
+                    <Text style={[s.ownerHealthValue, { color: Colors.error }]}>{ownerData.overall.misses}</Text>
+                    <Text style={s.ownerHealthLabel}>MISSES</Text>
+                  </View>
+                  <View>
+                    <Text style={s.ownerHealthValue}>{ownerData.overall.pushes ?? 0}</Text>
+                    <Text style={s.ownerHealthLabel}>PUSHES</Text>
+                  </View>
+                  <View>
+                    <Text style={s.ownerHealthValue}>{ownerData.overall.dnps ?? 0}</Text>
+                    <Text style={s.ownerHealthLabel}>DNP</Text>
+                  </View>
+                </View>
+                <Text style={s.ownerHealthMetrics}>
+                  Log loss {ownerData.scorecard.classification.finalConfidence.logLoss?.toFixed(3) ?? '—'} · Brier {ownerData.scorecard.classification.finalConfidence.brierScore?.toFixed(3) ?? '—'} · MAE {ownerData.scorecard.projection.overall.mae?.toFixed(2) ?? '—'} · RMSE {ownerData.scorecard.projection.overall.rmse?.toFixed(2) ?? '—'}
+                </Text>
+                <Text style={s.ownerHealthMeta}>
+                  Duplicate rows removed: {ownerData.scorecard.duplicateRowsRemoved ?? 0} · Scorecard events: {ownerData.scorecard.n}
+                </Text>
+                {ownerData.scorecard.classification.calibration.length > 0 && (
+                  <Text style={s.ownerHealthMeta}>
+                    Calibration gaps: {ownerData.scorecard.classification.calibration
+                      .slice(0, 3)
+                      .map((bin) => `${bin.label} ${bin.gapPp > 0 ? '+' : ''}${bin.gapPp.toFixed(1)}pp`)
+                      .join(' · ')}
+                  </Text>
+                )}
+                {ownerData.scorecard.projection.byProp.length > 0 && (
+                  <View style={s.ownerPropList}>
+                    <Text style={s.ownerHealthLabel}>PROJECTION ERROR BY PROP</Text>
+                    {ownerData.scorecard.projection.byProp.slice(0, 4).map((prop) => (
+                      <Text key={`${prop.sport}-${prop.propType}`} style={s.ownerPropRow}>
+                        {prop.propType.replace(/_/g, ' ')} · n={prop.n} · MAE {prop.mae?.toFixed(2) ?? '—'} · RMSE {prop.rmse?.toFixed(2) ?? '—'}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+                <Text style={s.ownerHealthReplay}>
+                  Replay: {ownerData.scorecard.chronologicalHoldout.n > 0 ? 'historical holdout available' : 'not enough settled events'}
+                </Text>
+              </View>
+            )}
             {renderTrendChart()}
             {renderOverUnder()}
             {renderTierCards()}
@@ -437,6 +502,23 @@ const s = StyleSheet.create({
   },
   summaryNum: { fontSize: 18, fontWeight: '800', color: Colors.text },
   summaryLbl: { fontSize: 9, fontWeight: '700', color: Colors.textTertiary, marginTop: 2, letterSpacing: 0.5 },
+  ownerHealthCard: {
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.25)',
+  },
+  ownerHealthScope: { fontSize: 11, lineHeight: 16, color: Colors.textSecondary, marginBottom: 12 },
+  ownerHealthGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 11 },
+  ownerHealthValue: { fontSize: 18, fontWeight: '800', color: Colors.primary },
+  ownerHealthLabel: { fontSize: 8, fontWeight: '800', letterSpacing: 0.8, color: Colors.textTertiary, marginTop: 2 },
+  ownerHealthMetrics: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
+  ownerHealthMeta: { fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 4 },
+  ownerPropList: { marginTop: 9, gap: 3 },
+  ownerPropRow: { fontSize: 10, color: Colors.textSecondary, lineHeight: 14, textTransform: 'capitalize' },
+  ownerHealthReplay: { fontSize: 10, color: Colors.primary, marginTop: 6, fontWeight: '700' },
   chartCard: {
     backgroundColor: Colors.card,
     borderRadius: 14,
