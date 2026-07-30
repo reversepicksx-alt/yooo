@@ -46,7 +46,10 @@ export default function IntelScreen() {
     <View style={[styles.root, { paddingTop: topPad }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Intel</Text>
-        <Text style={styles.headerSub}>Market insights & edge picks</Text>
+        <Text style={styles.headerSub}>Soccer market insights & edge picks</Text>
+        {data?.total != null && (
+          <Text style={styles.scopeText}>{data.total.toLocaleString()} settled soccer picks</Text>
+        )}
       </View>
 
       <ScrollView
@@ -141,6 +144,7 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingBottom: 16 },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   headerSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
+  scopeText: { fontSize: 11, color: Colors.textTertiary, marginTop: 4 },
   body: { paddingHorizontal: 20, paddingBottom: 40 },
   center: { alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 12 },
   loadingText: { color: Colors.textSecondary, fontSize: 14 },

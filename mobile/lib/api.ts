@@ -1083,6 +1083,7 @@ export async function generateMatchReview(email: string, token: string, pickId: 
 }
 
 export interface IntelDashboard {
+  total?: number;
   topPicks?: unknown[];
   insights?: string;
   marketTrends?: unknown[];

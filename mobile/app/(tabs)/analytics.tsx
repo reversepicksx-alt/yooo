@@ -285,6 +285,7 @@ export default function AnalyticsTab() {
             <Text style={styles.headerSub}>PRIVATE</Text>
           </View>
           <Text style={styles.headerTitle}>Data Analysis</Text>
+          <Text style={styles.scopeText}>All sports · settled prediction scorecard</Text>
         </View>
 
         {isLoading ? (
@@ -449,6 +450,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.text,
     letterSpacing: -0.3,
+  },
+  scopeText: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 4,
   },
 
   empty: {
