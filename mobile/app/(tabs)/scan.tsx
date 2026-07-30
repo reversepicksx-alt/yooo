@@ -1084,6 +1084,7 @@ export default function ScanScreen() {
         // fuzzy fixture matching again.  This is the single source of truth
         // for which match this pick belongs to.
         fixtureId: (prediction as any).fixtureId || undefined,
+         fixtureDate: (prediction as any).fixtureDate || undefined,
         // Soccer: persist AI analysis on the pick so the analysis modal can show it
         ...(sport === 'soccer' ? {
           sharpSummary:      prediction.sharpSummary  || undefined,

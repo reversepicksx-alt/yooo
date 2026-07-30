@@ -331,6 +331,9 @@ export interface PredictionResult {
   fixtureDate?: string;
   opponentName?: string;
   opponent?: string;
+  fixtureId?: number;
+  fixtureOpponentId?: number;
+  fixtureTeamId?: number;
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
   priorMean?: number;
@@ -521,6 +524,10 @@ interface RawPrediction {
   aiProjection?: number;
   bayesianComponent?: number;
   opponent?: string;
+  fixtureId?: number;
+  fixtureDate?: string;
+  fixtureOpponentId?: number;
+  fixtureTeamId?: number;
   _request?: {
     teamId?: number;
     opponentId?: number;
@@ -692,6 +699,10 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     opponentName: raw.opponent || (request.opponentName as string) || '',
     propType: raw.propType || (request.propType as string) || '',
     line: raw.line ?? (request.line as number) ?? 0,
+    fixtureId: raw.fixtureId,
+    fixtureDate: raw.fixtureDate,
+    fixtureOpponentId: raw.fixtureOpponentId,
+    fixtureTeamId: raw.fixtureTeamId,
     projection: raw.projectedValue,
     confidence: raw.confidenceScore,
     rawConfidence: raw.rawConfidence ?? raw.confidenceScore,

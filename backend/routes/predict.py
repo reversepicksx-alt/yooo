@@ -59,6 +59,29 @@ def _track_bg_task(task):
     return task
 
 
+def _fixture_matchup(fixture: dict, team_id: int) -> dict | None:
+    """Return the canonical matchup for team_id from an API-Football fixture."""
+    home = fixture.get("teams", {}).get("home", {}) or {}
+    away = fixture.get("teams", {}).get("away", {}) or {}
+    if home.get("id") == team_id:
+        player_team, opponent = home, away
+        player_is_home = True
+    elif away.get("id") == team_id:
+        player_team, opponent = away, home
+        player_is_home = False
+    else:
+        return None
+    if not player_team.get("id") or not opponent.get("id"):
+        return None
+    return {
+        "fixtureTeamId": player_team.get("id"),
+        "fixtureTeamName": player_team.get("name", ""),
+        "fixtureOpponentId": opponent.get("id"),
+        "fixtureOpponentName": opponent.get("name", ""),
+        "playerIsHome": player_is_home,
+    }
+
+
 @router.post("/predict")
 async def predict(req: PredictionRequest):
     from routes.auth import verify_session
@@ -350,14 +373,18 @@ async def predict(req: PredictionRequest):
 
                 fid = fixture_match.get("fixture", {}).get("id")
                 result = {}
+                canonical_matchup = _fixture_matchup(fixture_match, actual_team_id)
+                if not canonical_matchup:
+                    # Never attach odds/context from a fixture that does not
+                    # actually contain the requested player's team.
+                    return None
+                result.update(canonical_matchup)
                 if fid:
                     result["fixtureId"] = fid
                 # Tag whether the player's team is the API-Football fixture's home team.
                 # Used later to normalise moneyline home/away keys so they always
                 # correspond to real_matchup.homeTeam / awayTeam regardless of
                 # how API-Football labels the fixture.
-                fixture_home_id = fixture_match.get("teams", {}).get("home", {}).get("id")
-                result["playerIsHome"] = (fixture_home_id == actual_team_id)
                 # Extract competition context (league/cup name + round)
                 match_round = fixture_match.get("league", {}).get("round", "")
                 match_league = fixture_match.get("league", {}).get("name", "")
@@ -419,6 +446,39 @@ async def predict(req: PredictionRequest):
 
         _is_bdl_league = False  # API-Football is the primary soccer data source
 
+        # Resolve the actual fixture before launching opponent-dependent
+        # requests. Previously get_match_odds() could fall back to the team's
+        # next fixture while leaving the stale requested opponent in req. That
+        # produced contradictory cards such as Corinthians vs Bahia when the
+        # actual fixture was Corinthians vs Athletico.
+        match_odds_prefetched = None
+        if not ai_only_mode and actual_team_id and not _is_bdl_league:
+            match_odds_prefetched = await get_match_odds()
+            _fixture_opp_id = (match_odds_prefetched or {}).get("fixtureOpponentId")
+            _fixture_opp_name = (match_odds_prefetched or {}).get("fixtureOpponentName")
+            _fixture_team_name = (match_odds_prefetched or {}).get("fixtureTeamName")
+            if _fixture_opp_id and _fixture_opp_name:
+                if (
+                    _fixture_opp_id != req.opponentId
+                    or _fixture_opp_name.strip().lower() != (req.opponentName or "").strip().lower()
+                ):
+                    print(
+                        f"[FIXTURE CONTEXT ALIGN] requested={req.opponentName}({req.opponentId}) "
+                        f"→ actual={_fixture_opp_name}({_fixture_opp_id}) "
+                        f"fixture={(match_odds_prefetched or {}).get('fixtureId')}"
+                    )
+                req = req.model_copy(update={
+                    "opponentId": _fixture_opp_id,
+                    "opponentName": _fixture_opp_name,
+                    "teamName": _fixture_team_name or req.teamName,
+                    "venue": "home" if (match_odds_prefetched or {}).get("playerIsHome") else "away",
+                })
+                actual_team_id = (match_odds_prefetched or {}).get("fixtureTeamId") or actual_team_id
+
+        # Recompute after canonical fixture alignment.
+        safe_team_id = actual_team_id if actual_team_id and actual_team_id != 0 else None
+        safe_opp_id = req.opponentId if req.opponentId and req.opponentId != 0 else None
+
         if ai_only_mode:
             print(f"[AI-ONLY] Running in AI-only mode for {req.playerName} — teamId={actual_team_id}, opponentId={req.opponentId}")
 
@@ -454,7 +514,7 @@ async def predict(req: PredictionRequest):
 
             standings_task = get_standings_multi_season()
             fixtures_task = get_recent_fixtures_fast(actual_team_id, 40)
-            odds_task = get_match_odds()
+            odds_task = aio.sleep(0, result=match_odds_prefetched)
 
         import time as _t
         _t0 = _t.time()
@@ -7823,6 +7883,11 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["homeTeam"]     = real_matchup["homeTeam"]
         prediction["awayTeam"]     = real_matchup["awayTeam"]
         prediction["isHome"]       = _is_home
+        if match_odds and match_odds.get("fixtureId"):
+            prediction["fixtureId"] = match_odds["fixtureId"]
+            prediction["fixtureDate"] = match_odds.get("matchDate", "")
+            prediction["fixtureTeamId"] = match_odds.get("fixtureTeamId")
+            prediction["fixtureOpponentId"] = match_odds.get("fixtureOpponentId")
 
         # 5. Deterministic keyMatchupFactor — MUST align with computed possession numbers.
         # Overrides AI-generated text to prevent contradictions like "Liverpool dominates
@@ -8257,6 +8322,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
         prediction["_request"] = req.model_dump()
+        if match_odds and match_odds.get("fixtureId"):
+            prediction["_request"]["fixtureId"] = match_odds["fixtureId"]
 
         # Attach match stat data for frontend heat maps/visualizations
         if team_fixture_stats:

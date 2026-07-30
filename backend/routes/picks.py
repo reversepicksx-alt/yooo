@@ -33,6 +33,39 @@ def _bdl_live_lock(pick_id: str) -> aio.Lock:
 
 router = APIRouter(prefix="/api", tags=["picks"])
 
+
+def _fixture_contains_teams(fixture: dict, team_id: int, opponent_id: int) -> bool:
+    home_id = (fixture.get("teams", {}).get("home", {}) or {}).get("id")
+    away_id = (fixture.get("teams", {}).get("away", {}) or {}).get("id")
+    return (
+        home_id and away_id
+        and {int(home_id), int(away_id)} == {int(team_id), int(opponent_id)}
+    )
+
+
+async def _verify_soccer_fixture_context(
+    fixture_id: int,
+    team_id: int,
+    opponent_id: int,
+) -> None:
+    """Reject a pick whose stored fixture is not the requested matchup."""
+    if not fixture_id or not team_id or not opponent_id:
+        return
+    try:
+        fixtures = await api_football_request("fixtures", {"id": int(fixture_id)})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify the fixture for this pick. Please try again.",
+        ) from exc
+    fixture = fixtures[0] if isinstance(fixtures, list) and fixtures else None
+    if not fixture or not _fixture_contains_teams(fixture, team_id, opponent_id):
+        raise HTTPException(
+            status_code=422,
+            detail="This pick is attached to a different fixture than the selected teams. Refresh the matchup and run the prediction again.",
+        )
+
+
 # ── CS2 settle cooldown ────────────────────────────────────────────────────
 # Tracks the last time we ATTEMPTED to settle each CS2 pick (by pickId).
 # If the match wasn't ready yet, we wait CS2_SETTLE_COOLDOWN_SEC before
@@ -317,6 +350,17 @@ async def save_pick(req: SavePickRequest):
         sport = "wta"
     else:
         sport = "soccer"
+
+    if sport == "soccer":
+        _save_request = pick.get("_request") or {}
+        _save_team_id = pick.get("teamId") or _save_request.get("teamId") or 0
+        _save_opp_id = pick.get("opponentId") or _save_request.get("opponentId") or 0
+        _save_fixture_id = pick.get("fixtureId") or _save_request.get("fixtureId") or 0
+        await _verify_soccer_fixture_context(
+            int(_save_fixture_id or 0),
+            int(_save_team_id or 0),
+            int(_save_opp_id or 0),
+        )
 
     doc = {
         "pickId": pick_id,

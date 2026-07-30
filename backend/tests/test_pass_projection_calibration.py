@@ -4,6 +4,7 @@ import pytest
 
 from config import STAT_FIELD_MAP
 from routes.picks import SOCCER_STAT_MAP
+from routes.predict import _fixture_matchup
 from pass_projection_calibration import (
     _cache,
     _event_key,
@@ -121,3 +122,17 @@ def test_walk_forward_validation_reports_metrics_without_leakage():
     assert report["calibrated"]["mae"] <= report["raw"]["mae"]
     assert report["raw"]["signedBias"] == -5.0
     assert report["directionSamples"] == 12
+
+
+def test_fixture_matchup_uses_actual_fixture_opponent():
+    fixture = {
+        "fixture": {"id": 12345},
+        "teams": {
+            "home": {"id": 131, "name": "Corinthians"},
+            "away": {"id": 134, "name": "Athletico-PR"},
+        },
+    }
+    matchup = _fixture_matchup(fixture, 131)
+    assert matchup["fixtureOpponentId"] == 134
+    assert matchup["fixtureOpponentName"] == "Athletico-PR"
+    assert matchup["playerIsHome"] is True
