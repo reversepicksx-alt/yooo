@@ -144,6 +144,73 @@ def reset_api_request_priority(token):
     _api_request_priority.reset(token)
 
 
+async def priority_api_football_request(endpoint: str, params: dict = None):
+    """Run one interactive request above the maintenance soft budget."""
+    token = set_api_request_priority(True)
+    try:
+        return await api_football_request(endpoint, params)
+    finally:
+        reset_api_request_priority(token)
+
+
+_LIVE_FIXTURE_STATUSES = frozenset({"1H", "HT", "2H", "ET", "BT", "P", "LIVE"})
+_FINISHED_FIXTURE_STATUSES = frozenset(
+    {"FT", "AET", "PEN", "ABD", "AWD", "WO", "CANC", "PST"}
+)
+
+
+def _fixture_kickoff(fixture: dict):
+    """Return a fixture kickoff as an aware UTC datetime, or None."""
+    raw = (fixture.get("fixture", {}) or {}).get("date")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def select_next_fixture(
+    fixtures: list | None,
+    team_id: int | None = None,
+    skip_leagues: set[int] | frozenset[int] | None = None,
+    now: datetime | None = None,
+) -> dict | None:
+    """Return the nearest verified live/upcoming fixture, never a finished one."""
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(timezone.utc)
+    skipped = skip_leagues or set()
+    candidates = []
+    for fixture in fixtures or []:
+        if not isinstance(fixture, dict):
+            continue
+        teams = fixture.get("teams", {}) or {}
+        home = teams.get("home", {}) or {}
+        away = teams.get("away", {}) or {}
+        if team_id:
+            try:
+                if int(home.get("id", 0) or 0) != int(team_id) and int(away.get("id", 0) or 0) != int(team_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        if (fixture.get("league", {}) or {}).get("id", 0) in skipped:
+            continue
+        status = str((fixture.get("fixture", {}) or {}).get("status", {}).get("short", "") or "").upper()
+        if status in _FINISHED_FIXTURE_STATUSES:
+            continue
+        kickoff = _fixture_kickoff(fixture)
+        if status in _LIVE_FIXTURE_STATUSES:
+            candidates.append((0, kickoff or now_utc, fixture))
+        elif kickoff is not None and kickoff >= now_utc:
+            candidates.append((1, kickoff, fixture))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2] if candidates else None
+
+
 async def api_football_request(endpoint: str, params: dict = None):
     global _daily_call_count
     # Short-circuit immediately if today's quota is already known to be gone

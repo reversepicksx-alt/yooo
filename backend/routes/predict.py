@@ -20,6 +20,7 @@ from models import PredictionRequest
 from utils import (
     api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds,
     decimal_to_american, set_api_request_priority, reset_api_request_priority,
+    select_next_fixture,
 )
 from ai_engine import fetch_web_intel, fetch_ai_press_intensity
 from prop_safety_cache import (
@@ -346,20 +347,25 @@ async def predict(req: PredictionRequest):
                         pass
 
                     if next_fixtures:
-                        # Find fixtures against this specific opponent
-                        opponent_matches = []
-                        for nf in next_fixtures:
-                            home_id = nf.get("teams", {}).get("home", {}).get("id")
-                            away_id = nf.get("teams", {}).get("away", {}).get("id")
-                            if req.opponentId in (home_id, away_id):
-                                opponent_matches.append(nf)
-
-                        if opponent_matches:
-                            # Pick the SOONEST one (first in list — API returns date-ascending)
-                            fixture_match = opponent_matches[0]
-                        else:
-                            # No opponent match found — take team's next match as fallback
-                            fixture_match = next_fixtures[0]
+                        # Never trust API response order or the requested
+                        # opponent as the matchup identity.  OCR/search context
+                        # can be stale, and today's response can include an old
+                        # finished fixture.  Use only the nearest live/future
+                        # fixture containing the player's team.
+                        fixture_match = select_next_fixture(next_fixtures, actual_team_id)
+                        if fixture_match:
+                            actual_opp_id = (
+                                fixture_match.get("teams", {})
+                                .get("away", {})
+                                .get("id")
+                                if fixture_match.get("teams", {}).get("home", {}).get("id") == actual_team_id
+                                else fixture_match.get("teams", {}).get("home", {}).get("id")
+                            )
+                            if req.opponentId and actual_opp_id != req.opponentId:
+                                print(
+                                    f"[NEXT FIXTURE ALIGN] requested={req.opponentName}({req.opponentId}) "
+                                    f"→ nearest verified fixture opponentId={actual_opp_id}"
+                                )
                 except Exception:
                     pass
 
@@ -371,7 +377,7 @@ async def predict(req: PredictionRequest):
                             "next": 2,
                         })
                         if h2h:
-                            fixture_match = h2h[0]
+                            fixture_match = select_next_fixture(h2h, actual_team_id)
                     except Exception:
                         pass
 
@@ -461,6 +467,14 @@ async def predict(req: PredictionRequest):
         match_odds_prefetched = None
         if not ai_only_mode and actual_team_id and not _is_bdl_league:
             match_odds_prefetched = await get_match_odds()
+            if not match_odds_prefetched:
+                # Do not analyze a stale OCR/manual opponent when the current
+                # fixture cannot be verified.  A clear retry is safer than a
+                # polished prediction for the wrong game.
+                raise HTTPException(
+                    status_code=409,
+                    detail="Could not verify the player's current or next fixture. Please retry shortly.",
+                )
             _fixture_opp_id = (match_odds_prefetched or {}).get("fixtureOpponentId")
             _fixture_opp_name = (match_odds_prefetched or {}).get("fixtureOpponentName")
             _fixture_team_name = (match_odds_prefetched or {}).get("fixtureTeamName")

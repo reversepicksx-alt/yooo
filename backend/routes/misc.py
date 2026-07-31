@@ -6,7 +6,13 @@ from fastapi import APIRouter, Query
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON, GROK_MODEL, INTERNATIONAL_LEAGUES
-from utils import api_football_request
+from utils import (
+    api_football_request,
+    priority_api_football_request,
+    select_next_fixture,
+    _LIVE_FIXTURE_STATUSES,
+    _FINISHED_FIXTURE_STATUSES,
+)
 from cache import COL_PLAYERS, COL_NATIONAL
 
 router = APIRouter(prefix="/api", tags=["misc"])
@@ -17,7 +23,27 @@ _CONTEXT_CACHE_TTL_H = 12  # hours
 
 # Collection for caching team next-match results
 COL_NEXT_MATCH_CACHE = "next_match_cache"
-_NEXT_MATCH_TTL_H = 1  # 1 hour — short enough to pick up schedule changes
+_NEXT_MATCH_TTL_H = 0.25  # 15 min; never let a schedule change linger for hours
+
+
+def _cached_match_is_active(result: dict, now: datetime) -> bool:
+    """Only reuse cached match identity while its fixture is live/upcoming."""
+    if not result or not result.get("found"):
+        return True
+    status = str(result.get("statusShort", "") or "").upper()
+    if status in _FINISHED_FIXTURE_STATUSES:
+        return False
+    if status in _LIVE_FIXTURE_STATUSES:
+        return True
+    try:
+        kickoff = datetime.fromisoformat(str(result.get("date", "")).replace("Z", "+00:00"))
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=timezone.utc)
+        else:
+            kickoff = kickoff.astimezone(timezone.utc)
+        return kickoff >= now
+    except (TypeError, ValueError):
+        return False
 
 
 @router.get("/players/{player_id}/contexts")
@@ -150,16 +176,19 @@ async def team_next_match(team_id: int):
     """
     # ── Cache check ───────────────────────────────────────────────────────────
     now = datetime.now(timezone.utc)
-    _stale_cached_result = None  # saved for quota-exhausted fallback below
     try:
         cached = await db[COL_NEXT_MATCH_CACHE].find_one({"teamId": team_id})
         if cached:
             age_h = (now - cached["cachedAt"].replace(tzinfo=timezone.utc)
                      if cached["cachedAt"].tzinfo is None
                      else now - cached["cachedAt"]).total_seconds() / 3600
-            _stale_cached_result = cached["result"]  # save regardless of age
             if age_h < _NEXT_MATCH_TTL_H:
-                return cached["result"]
+                cached_result = cached["result"]
+                # A cached active matchup is safe only while its fixture is
+                # still future/live.  Old cache records without a status are
+                # intentionally rejected once their kickoff has passed.
+                if _cached_match_is_active(cached_result, now):
+                    return cached_result
     except Exception:
         pass
 
@@ -176,8 +205,8 @@ async def team_next_match(team_id: int):
         # API-Football "date" requires season for some leagues; try multiple
         # seasons in parallel (current club season 2025-26 + WC 2026 + prev 2025).
         today_results = await asyncio.gather(
-            api_football_request("fixtures", {"team": team_id, "date": today_str, "season": 2025}),
-            api_football_request("fixtures", {"team": team_id, "date": today_str, "season": 2026}),
+            priority_api_football_request("fixtures", {"team": team_id, "date": today_str, "season": 2025}),
+            priority_api_football_request("fixtures", {"team": team_id, "date": today_str, "season": 2026}),
             return_exceptions=True,
         )
         today_fixtures = []
@@ -192,20 +221,15 @@ async def team_next_match(team_id: int):
         today_fixtures = []
 
     # Accept any non-friendly fixture today (scheduled, live, or just finished)
-    fx = None
-    for candidate in (today_fixtures or []):
-        lid = candidate.get("league", {}).get("id", 0)
-        if lid not in _SKIP_LEAGUES:
-            fx = candidate
-            break
+    fx = select_next_fixture(today_fixtures, team_id, _SKIP_LEAGUES, now)
 
     # ── 1. Upcoming fixtures ──────────────────────────────────────────────────
     if not fx:
         # Fetch general next-20 AND WC 2026 specifically in parallel.
         try:
             fixtures, wc_fixtures = await asyncio.gather(
-                api_football_request("fixtures", {"team": team_id, "next": 20}),
-                api_football_request("fixtures", {"team": team_id, "league": 1, "season": 2026, "next": 5}),
+                priority_api_football_request("fixtures", {"team": team_id, "next": 20}),
+                priority_api_football_request("fixtures", {"team": team_id, "league": 1, "season": 2026, "next": 5}),
                 return_exceptions=True,
             )
             if isinstance(fixtures, Exception):
@@ -226,11 +250,7 @@ async def team_next_match(team_id: int):
                     _seen_fids.add(_fid)
                     _all_upcoming.append(_f)
 
-        for candidate in _all_upcoming:
-            lid = candidate.get("league", {}).get("id", 0)
-            if lid not in _SKIP_LEAGUES:
-                fx = candidate
-                break
+        fx = select_next_fixture(_all_upcoming, team_id, _SKIP_LEAGUES, now)
 
     result = None
     if fx:
@@ -257,7 +277,7 @@ async def team_next_match(team_id: int):
         effective_is_home = raw_is_home
         if league_id in INTERNATIONAL_LEAGUES and fixture_id:
             try:
-                odds_data = await api_football_request("odds", {"fixture": fixture_id})
+                odds_data = await priority_api_football_request("odds", {"fixture": fixture_id})
                 favorite_side = None
                 if odds_data:
                     for bk in odds_data[0].get("bookmakers", [])[:1]:
@@ -287,12 +307,13 @@ async def team_next_match(team_id: int):
             "leagueName": league.get("name", ""),
             "date":       fx.get("fixture", {}).get("date", ""),
             "fixtureId":  fixture_id,
+            "statusShort": fx.get("fixture", {}).get("status", {}).get("short", ""),
         }
 
     if result is None:
         # ── 2. No upcoming fixture — use last completed matches for league info ─
         try:
-            last_fixtures = await api_football_request("fixtures", {"team": team_id, "last": 10})
+            last_fixtures = await priority_api_football_request("fixtures", {"team": team_id, "last": 10})
         except Exception:
             last_fixtures = None
 
@@ -311,16 +332,6 @@ async def team_next_match(team_id: int):
                     break
 
     if result is None:
-        # ── Quota-exhausted / API-down fallback: serve stale cache ────────────
-        # When every API call returns nothing (quota blown, transient error),
-        # returning {"found":false} breaks the UI for everyone.  A stale cached
-        # result from earlier today is almost always still correct — fixtures
-        # don't change minute-to-minute.  Mark it stale so callers know.
-        if _stale_cached_result and _stale_cached_result.get("found"):
-            print(f"[NEXT-MATCH STALE FALLBACK] team={team_id} serving cached result (API unavailable)")
-            stale = dict(_stale_cached_result)
-            stale["stale"] = True
-            return stale
         result = {"found": False}
 
     # ── Cache the result ──────────────────────────────────────────────────────
