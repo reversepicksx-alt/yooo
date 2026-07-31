@@ -32,6 +32,38 @@ import soccer_bdl_client as _bdl_soc
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
+# H2H history is intentionally broader than the current-season prediction
+# window. The player-specific pass still caps the displayed sample so older
+# meetings cannot dominate the model, but it must inspect enough real fixtures
+# to find 4-5+ appearances when they exist.
+H2H_HISTORY_SEASONS = 6
+H2H_FIXTURE_LIMIT = 20
+H2H_PLAYER_SCAN_LIMIT = 20
+H2H_PLAYER_RESULT_LIMIT = 10
+_H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
+
+
+def _merge_h2h_fixtures(*responses: list, limit: int = H2H_FIXTURE_LIMIT) -> list:
+    """Merge real API-Football H2H responses into newest-first finished games."""
+    by_id = {}
+    for response in responses:
+        if not isinstance(response, list):
+            continue
+        for fixture in response:
+            if not isinstance(fixture, dict):
+                continue
+            fixture_id = (fixture.get("fixture") or {}).get("id")
+            status = ((fixture.get("fixture") or {}).get("status") or {}).get("short")
+            if not fixture_id or status not in _H2H_FINISHED_STATUSES:
+                continue
+            by_id[str(fixture_id)] = fixture
+
+    return sorted(
+        by_id.values(),
+        key=lambda item: (item.get("fixture") or {}).get("date", ""),
+        reverse=True,
+    )[:limit]
+
 # ── CALIBRATION TOGGLE ────────────────────────────────────────────────────────
 # Nightly-learned bias offsets from historical pick outcomes.
 # Priority: prop_rec (direction) > prop_league > prop_venue > prop (general).
@@ -142,6 +174,44 @@ async def predict(req: PredictionRequest):
                 return await api_football_request(endpoint, params)
             except Exception:
                 return fallback
+
+        async def get_h2h_history(team_id: int, opponent_id: int, league_id: int):
+            """Fetch a deep, deduplicated H2H history across recent seasons.
+
+            API-Football's headtohead endpoint is season-scoped when `season`
+            is supplied. A single current-season request silently omits older
+            meetings, so search the recent six provider seasons and merge them.
+            """
+            if not team_id or not opponent_id:
+                return []
+
+            # Current-season config is 2025 for European competitions, while
+            # calendar-year leagues (and the current date) are already in 2026.
+            # Starting at 2026 covers both without changing the global season
+            # constant used by the rest of the prediction pipeline.
+            start_season = 2026 if league_id == 254 else max(CURRENT_SEASON + 1, 2026)
+            seasons = list(range(start_season, start_season - H2H_HISTORY_SEASONS, -1))
+            responses = await aio.gather(
+                *[
+                    safe_fetch(
+                        "fixtures/headtohead",
+                        {
+                            "h2h": f"{team_id}-{opponent_id}",
+                            "season": season,
+                            "last": H2H_FIXTURE_LIMIT,
+                        },
+                        [],
+                    )
+                    for season in seasons
+                ],
+                return_exceptions=True,
+            )
+            merged = _merge_h2h_fixtures(*responses)
+            print(
+                f"[H2H HISTORY] {team_id} vs {opponent_id}: "
+                f"{len(merged)} finished meetings across seasons {seasons[0]}-{seasons[-1]}"
+            )
+            return merged
 
         async def get_player_data():
             if not req.playerId:
@@ -551,7 +621,7 @@ async def predict(req: PredictionRequest):
             player_data_task = get_player_data()
             team_stats_task = get_team_stats_multi_season(actual_team_id, league_id)
             opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
-            h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id}-{req.opponentId}", "season": CURRENT_SEASON}, [])
+            h2h_task = get_h2h_history(actual_team_id, req.opponentId, league_id)
 
             async def get_standings_multi_season():
                 for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
@@ -4210,7 +4280,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         h2h_player_stats = []
         if h2h_data:
             h2h_fixture_ids = []
-            for h in h2h_data[:5]:
+            for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
                 fid = h.get("fixture", {}).get("id")
                 if fid:
                     h2h_fixture_ids.append((fid, h))
@@ -4241,6 +4311,12 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                             if p.get("player", {}).get("id") == req.playerId:
                                 stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                                 minutes_played = stats.get("games", {}).get("minutes") or 0
+                                # A team meeting is not a player H2H appearance.
+                                # API-Football can return bench/DNP rows with
+                                # zero minutes; those must not inflate the H2H
+                                # sample or trigger the model's H2H adjustment.
+                                if minutes_played <= 0:
+                                    return None
                                 stat_key_map_h2h = {
                                     "pass_attempts": stats.get("passes", {}).get("total"),
                                     "shots": stats.get("shots", {}).get("total"),
@@ -4295,10 +4371,15 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             if h2h_fixture_ids:
                 try:
                     h2h_results = await aio.wait_for(
-                        aio.gather(*[fetch_h2h_player_stat(fid, fi) for fid, fi in h2h_fixture_ids[:5]]),
-                        timeout=6
+                        aio.gather(*[
+                            fetch_h2h_player_stat(fid, fi)
+                            for fid, fi in h2h_fixture_ids[:H2H_PLAYER_SCAN_LIMIT]
+                        ]),
+                        timeout=12
                     )
-                    h2h_player_stats = [r for r in h2h_results if r]
+                    h2h_player_stats = [
+                        r for r in h2h_results if r
+                    ][:H2H_PLAYER_RESULT_LIMIT]
                 except aio.TimeoutError:
                     h2h_player_stats = []
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
@@ -4310,6 +4391,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "matches": h2h_player_stats,
                 "targetProp": req.propType,
                 "sampleSize": len(h2h_values),
+                "searchedFixtureCount": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
+                "historySeasons": H2H_HISTORY_SEASONS,
+                "historyDepth": "six seasons",
             }
             if h2h_values:
                 h2h_summary["avgVsOpponent"] = round(sum(h2h_values) / len(h2h_values), 2)

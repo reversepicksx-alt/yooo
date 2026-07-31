@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import routes.misc as misc
 from routes.misc import _cached_match_is_active
-from routes.predict import _select_player_context_for_league
+from routes.predict import _merge_h2h_fixtures, _select_player_context_for_league
 from utils import _fixture_context, resolve_verified_fixture, select_next_fixture
 
 
@@ -158,6 +158,26 @@ def test_generic_search_league_does_not_hide_real_fixture(monkeypatch):
         resolve_verified_fixture(2278, opponent_id=2291, league_id=None, now=NOW)
     )
     assert result["fixtureId"] == 204
+
+
+def test_h2h_history_merges_finished_games_and_deduplicates():
+    def h2h_fixture(fid, date, status="FT"):
+        fixture = _fixture(fid, date, status)
+        fixture["fixture"]["status"]["short"] = status
+        return fixture
+
+    merged = _merge_h2h_fixtures(
+        [
+            h2h_fixture(301, "2025-05-01T15:00:00Z"),
+            h2h_fixture(302, "2025-04-01T15:00:00Z", "NS"),
+        ],
+        [
+            h2h_fixture(301, "2025-05-01T15:00:00Z"),
+            h2h_fixture(303, "2024-05-01T15:00:00Z"),
+        ],
+    )
+
+    assert [item["fixture"]["id"] for item in merged] == [301, 303]
 
 
 class _FakeCollection:
