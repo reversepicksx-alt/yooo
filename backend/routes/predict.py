@@ -8640,7 +8640,18 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[WC CALIB] err: {_wc_err}")
 
         prediction["_ts"] = datetime.now(timezone.utc)
-        await db.predictions.insert_one(prediction)
+        try:
+            await db.predictions.insert_one(prediction)
+        except Exception as _persist_err:
+            # Atlas can hard-block writes when the free-tier cluster reaches
+            # its storage limit. Persistence is useful for analytics, but it
+            # must not turn an already-computed prediction into a 500.
+            # Keep this fail-open temporarily until the cluster is cleaned up
+            # or upgraded; normal writes resume automatically afterward.
+            print(
+                f"[PREDICTION PERSISTENCE] skipped; returning computed prediction: "
+                f"{type(_persist_err).__name__}: {_persist_err}"
+            )
         prediction.pop("_id", None)
 
 

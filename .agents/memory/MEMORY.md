@@ -86,3 +86,4 @@
 - [Fixture context integrity](fixture-context-integrity.md) — opponent, venue, odds, possession, and narrative must all come from the same verified fixture.
 - [Owner scorecard and PASS calibration](owner-scorecard-pass-calibration.md) — owner soccer analytics must show the complete authenticated ledger; PASS is stored for avoidance calibration, not normal wager ROI.
 - [Deep player H2H history](deep-player-h2h-history.md) — H2H must search multiple seasons and count only fixtures where the player logged minutes; team meetings alone are not player history.
+- [Atlas quota fail-open](atlas-quota-fail-open.md) — prediction computation must not fail solely because the analytics persistence write is blocked by Atlas storage quota.
