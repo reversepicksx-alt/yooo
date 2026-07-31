@@ -31,6 +31,13 @@ Friendly entries (leagueId=667) are often "opponent team" artefacts from fixture
 
 **Why:** Fixtures are cached per fixture; when Canada plays Juventus in a friendly, Jonathan David's stats appear filed under the opponent's team entry.
 
+### Canonical profile enrichment
+When a cache hit is abbreviated but matches a multi-word query, resolve the bounded matching set through the player-profile endpoint before returning results. Persist the profile's full name and current club context back to the cache.
+
+**Why:** Squad feeds can keep a player searchable as `N. Fernández Mercau` even after the profile endpoint knows the canonical `Nicolás Ezequiel Fernández Mercau` and the player's current club has changed.
+
+**How to apply:** Use the player ID from the cache record as the identity key, prefer its matching current-team statistic, and never replace a verified fixture with stale cached matchup data.
+
 ## How to apply
 Any future changes to player search ranking or cache lookup must preserve these three pillars:
 1. Pass B targeted abbrev search always runs for 2+ word queries

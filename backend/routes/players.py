@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from config import CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON, db
 from models import PlayerSearchRequest, PlayerRoleResolveRequest
-from utils import api_football_request, is_quota_exhausted
+from utils import api_football_request, priority_api_football_request, is_quota_exhausted
 
 router = APIRouter(prefix="/api", tags=["players"])
 
@@ -136,13 +136,15 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
             ).limit(100).to_list(100)
         docs.extend(last_docs or [])
 
-        # Pass B — targeted abbreviated initial search: /^{initial}\. .* {last}$/
+        # Pass B — targeted abbreviated initial search. The surname does not
+        # have to be the final token: "N. Fernández Mercau" must be found by
+        # "Nicolas Fernandez" just like "N. Fernández".
         # Catches "J. David" even when it sits beyond position 100 in Pass A.
-        # Trailing $ prevents "J. Davidson" from matching a "david" query.
+        # The word boundary prevents "N. Fernandezson" from matching.
         # Also brings in the non-friendly leagueId entries (e.g. Canada leagueId=10)
         # so the dedup step can prefer them over friendlies (leagueId=667).
         if first_initial:
-            abbrev_pattern = rf"^{re.escape(first_initial)}\..+{re.escape(last_part)}$"
+            abbrev_pattern = rf"^{re.escape(first_initial)}\..*{re.escape(last_part)}(?:\s|$)"
             abbrev_filt: dict = {"nameClean": {"$regex": abbrev_pattern}}
             if effective_league_id:
                 abbrev_filt["leagueId"] = effective_league_id
@@ -525,12 +527,144 @@ async def search_players(req: PlayerSearchRequest):
             print(f"[INTL ENRICH] pid={p.get('id')} err={e}")
         return p
 
+    async def _enrich_abbreviated_player(p: dict) -> dict:
+        """Replace a squad abbreviation with the provider's canonical name.
+
+        Squad feeds commonly return ``N. Fernández Mercau`` while the player
+        profile has ``Nicolás Ezequiel Fernández Mercau``.  The abbreviated
+        record is still useful for finding the player, but it is not sufficient
+        for UI disambiguation or reliable club selection.
+        """
+        name = (p.get("name") or "").strip()
+        tokens = name.split()
+        if not tokens or len(tokens[0].rstrip(".")) > 2 or not tokens[0].rstrip(".").isalpha():
+            return p
+        pid = p.get("id")
+        if not pid:
+            return p
+        try:
+            profile = None
+            for season_to_try in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+                data = await priority_api_football_request(
+                    "players", {"id": pid, "season": season_to_try}
+                )
+                if data:
+                    profile = data[0]
+                    break
+            if not profile:
+                return p
+
+            player_info = profile.get("player") or {}
+            firstname = (player_info.get("firstname") or "").strip()
+            lastname = (player_info.get("lastname") or "").strip()
+            canonical_name = f"{firstname} {lastname}".strip() or player_info.get("name", "")
+            if not canonical_name:
+                return p
+
+            stats = profile.get("statistics") or []
+            cached_team_id = p.get("teamId")
+            selected_stat = next(
+                (s for s in reversed(stats)
+                 if cached_team_id and (s.get("team") or {}).get("id") == cached_team_id),
+                None,
+            )
+            selected_stat = selected_stat or next(
+                (s for s in reversed(stats)
+                 if (s.get("team") or {}).get("id") and
+                 (s.get("league") or {}).get("id") not in _INTL_LEAGUES and
+                 (s.get("league") or {}).get("id") != 667),
+                None,
+            )
+            selected_stat = selected_stat or (stats[-1] if stats else {})
+            team = selected_stat.get("team") or {}
+            league = selected_stat.get("league") or {}
+            games = selected_stat.get("games") or {}
+
+            enriched = dict(p)
+            enriched.update({
+                "name": canonical_name,
+                "firstname": firstname,
+                "lastname": lastname,
+                "age": player_info.get("age", p.get("age", 0)),
+                "photo": player_info.get("photo") or p.get("photo", ""),
+                "position": games.get("position") or player_info.get("position") or p.get("position", ""),
+            })
+            if team.get("id"):
+                enriched["teamId"] = team["id"]
+                enriched["teamName"] = team.get("name", "")
+            if league.get("id"):
+                enriched["leagueId"] = league["id"]
+
+            # Persist the canonical name for every context, but only create a
+            # new current-team context when the profile says the player moved.
+            from cache import COL_PLAYERS
+            from utils import strip_accents
+            name_clean = strip_accents(canonical_name.lower())
+            await db[COL_PLAYERS].update_many(
+                {"playerId": pid},
+                {"$set": {
+                    "name": canonical_name,
+                    "nameLower": canonical_name.lower(),
+                    "nameClean": name_clean,
+                    "firstNameClean": strip_accents(firstname.lower()),
+                    "age": enriched.get("age"),
+                    "photo": enriched.get("photo", ""),
+                }},
+            )
+            if team.get("id") and league.get("id"):
+                await db[COL_PLAYERS].update_one(
+                    {"playerId": pid, "teamId": team["id"], "leagueId": league["id"]},
+                    {"$set": {
+                        "name": canonical_name,
+                        "nameLower": canonical_name.lower(),
+                        "nameClean": name_clean,
+                        "firstNameClean": strip_accents(firstname.lower()),
+                        "teamName": team.get("name", ""),
+                        "position": enriched.get("position", ""),
+                        "_cachedAt": time.time(),
+                    }},
+                    upsert=True,
+                )
+            return enriched
+        except Exception as exc:
+            print(f"[PLAYER NAME ENRICH] pid={pid} err={exc}")
+            return p
+
     # Strategy 0: MongoDB cache-first (fast, no quota usage)
     # When quota is exhausted use relaxed mode — accept any name-matched player
     # (e.g. Messi cached under Inter Miami, not World Cup league_id=1).
     try:
         cache_results = await _search_players_cache(req.query, req.league_id, relaxed=quota_gone)
         if cache_results:
+            # Cache-first results can be abbreviated squad records. Resolve a
+            # small bounded set before sorting so a current player such as
+            # "N. Fernández Mercau" is not hidden behind unrelated
+            # "N. Fernández" entries.
+            if not quota_gone:
+                original_cache_results = list(cache_results)
+                abbreviated = [
+                    p for p in cache_results
+                    if (
+                        len(query_parts) >= 2
+                        and (p.get("name") or "").split()
+                        and len((p.get("name") or "").split()[0].rstrip(".")) <= 2
+                        and (p.get("name") or "").split()[0].rstrip(".").lower() == query_parts[0][0]
+                        and all(
+                            word in _strip((p.get("name") or "").lower())
+                            for word in query_parts[1:]
+                        )
+                    )
+                ][:20]
+                if abbreviated:
+                    cache_results = await aio.gather(
+                        *[_enrich_abbreviated_player(p) for p in abbreviated]
+                    )
+                    by_id = {p.get("id"): p for p in cache_results if p.get("id")}
+                    # Keep any non-abbreviated cache hits that were not sent
+                    # through the profile lookup.
+                    for p in original_cache_results:
+                        by_id.setdefault(p.get("id"), p)
+                    cache_results = list(by_id.values())
             sorted_results = _apply_sort_and_quality(cache_results)
             # Background enrichment: if any top result still shows a national/intl
             # league entry (meaning no club entry won the dedup), fire club resolution

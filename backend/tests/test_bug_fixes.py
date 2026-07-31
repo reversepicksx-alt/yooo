@@ -10,7 +10,7 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
+BASE_URL = (os.environ.get('REACT_APP_BACKEND_URL') or 'http://127.0.0.1:8000').rstrip('/')
 
 class TestPlayerSearch:
     """Tests for player search bug fixes - deduplication, full names, team info"""
@@ -95,6 +95,25 @@ class TestPlayerSearch:
         
         # Should be at Inter Miami
         assert "Inter Miami" in first_player.get("teamName", ""), f"Should be at Inter Miami, got: {first_player.get('teamName')}"
+
+    def test_nicolas_fernandez_search_preserves_canonical_nycfc_identity(self):
+        """Abbreviated squad names must resolve to the current canonical player record."""
+        response = requests.post(
+            f"{BASE_URL}/api/players/search",
+            json={"query": "Nicolas Fernandez"},
+        )
+        assert response.status_code == 200
+        players = response.json().get("players", [])
+
+        nycfc_player = next(
+            (p for p in players if p.get("id") == 75414),
+            None,
+        )
+        assert nycfc_player is not None, "Nicolás Fernández Mercau should be searchable"
+        assert "Nicolás" in nycfc_player["name"]
+        assert "Fernández Mercau" in nycfc_player["name"]
+        assert nycfc_player.get("teamId") == 1604
+        assert nycfc_player.get("teamName") == "New York City FC"
         
     def test_salah_search_in_epl(self):
         """Bug fix: Searching 'Salah' with league 39 (EPL) should return Mohamed Salah at Liverpool"""
