@@ -20,7 +20,7 @@ from models import PredictionRequest
 from utils import (
     api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds,
     decimal_to_american, set_api_request_priority, reset_api_request_priority,
-    select_next_fixture,
+    resolve_verified_fixture,
 )
 from ai_engine import fetch_web_intel, fetch_ai_press_intensity
 from prop_safety_cache import (
@@ -84,6 +84,37 @@ def _fixture_matchup(fixture: dict, team_id: int) -> dict | None:
         "fixtureOpponentName": opponent.get("name", ""),
         "playerIsHome": player_is_home,
     }
+
+
+def _select_player_context_for_league(
+    docs: list[dict],
+    league_id: int,
+    requested_team_id: int = 0,
+) -> dict | None:
+    """Choose the player's club context for the selected competition.
+
+    A single player ID can have both a national-team cache record and a club
+    record.  The request's selected league is the authoritative context for
+    fixture resolution; a national-team row must not make a Liga MX request
+    resolve fixtures for Mexico instead of the player's Liga MX club.
+    """
+    if not league_id or league_id in INTERNATIONAL_LEAGUES:
+        return None
+    candidates = [
+        d for d in docs
+        if d.get("teamId") and d.get("leagueId") == league_id
+    ]
+    if not candidates:
+        return None
+    if requested_team_id:
+        for doc in candidates:
+            if doc.get("teamId") == requested_team_id:
+                return doc
+    # Prefer a real club row when a league has multiple cache contexts.
+    return next(
+        (d for d in candidates if d.get("leagueId") not in INTERNATIONAL_LEAGUES),
+        candidates[0],
+    )
 
 
 @router.post("/predict")
@@ -183,6 +214,7 @@ async def predict(req: PredictionRequest):
         # real fixture data even when the scan didn't return numeric IDs.
         _resolved_opp_id = req.opponentId or 0
         _resolved_player_id = req.playerId or 0
+        _resolved_team_name = req.teamName or ""
         _player_candidates: list = []  # populated when name-based resolution finds multiple matches
 
         try:
@@ -228,17 +260,38 @@ async def predict(req: PredictionRequest):
             # 3. Resolve player ID from player name
             if (not _resolved_player_id or _resolved_player_id == 0) and req.playerName:
                 try:
+                    # If the supplied team is a national-team context but the
+                    # selected competition is domestic, do not constrain the
+                    # player lookup to that national team. The player may be
+                    # shown as "Mexico" in an older search result while the
+                    # requested fixture is Liga MX.
+                    _lookup_team_id = actual_team_id if actual_team_id and actual_team_id != 0 else None
+                    _lookup_team_hint = req.teamName or None
+                    if league_id not in INTERNATIONAL_LEAGUES and _lookup_team_id:
+                        try:
+                            from cache import COL_NATIONAL as _COL_NAT_PLAYER
+                            if await db[_COL_NAT_PLAYER].count_documents(
+                                {"teamId": _lookup_team_id}, limit=1
+                            ) > 0:
+                                _lookup_team_id = None
+                                _lookup_team_hint = None
+                        except Exception:
+                            pass
                     _p = await _get_player_by_name(
                         req.playerName,
-                        actual_team_id if actual_team_id and actual_team_id != 0 else None,
+                        _lookup_team_id,
                         league_id=league_id if league_id and league_id != 39 else None,
-                        team_name_hint=req.teamName or None,
+                        team_name_hint=_lookup_team_hint,
                         prop_type=req.propType or None,
                     )
                     if _p and _p.get("playerId"):
                         _resolved_player_id = _p["playerId"]
                         if not actual_team_id or actual_team_id == 0:
                             actual_team_id = _p.get("teamId") or actual_team_id
+                        if _p.get("teamName") and (
+                            not actual_team_id or actual_team_id == _p.get("teamId")
+                        ):
+                            _resolved_team_name = _p.get("teamName") or _resolved_team_name
                         print(f"[ID RESOLVE] '{req.playerName}' → playerId={_resolved_player_id}, teamId={actual_team_id}")
 
                         # [PLAYER AMBIGUITY] If the player was resolved by name (no playerId supplied),
@@ -270,10 +323,41 @@ async def predict(req: PredictionRequest):
                 except Exception as _re:
                     print(f"[ID RESOLVE] player lookup failed: {_re}")
 
+            # A supplied playerId is still not enough to identify the team:
+            # player IDs legitimately have both club and national-team cache
+            # rows. For domestic requests, select the row belonging to the
+            # requested league before resolving the fixture.
+            if _resolved_player_id and league_id not in INTERNATIONAL_LEAGUES:
+                try:
+                    from cache import COL_PLAYERS as _COL_PLAYER_CONTEXT
+                    _context_docs = await db[_COL_PLAYER_CONTEXT].find(
+                        {"playerId": _resolved_player_id},
+                        {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1, "leagueId": 1},
+                    ).to_list(30)
+                    _league_context = _select_player_context_for_league(
+                        _context_docs, league_id, actual_team_id
+                    )
+                    if _league_context and _league_context.get("teamId") != actual_team_id:
+                        print(
+                            f"[PLAYER CONTEXT ALIGN] playerId={_resolved_player_id} "
+                            f"league={league_id}: team {actual_team_id}/{req.teamName} "
+                            f"→ {_league_context.get('teamId')}/{_league_context.get('teamName')}"
+                        )
+                        actual_team_id = _league_context["teamId"]
+                        _resolved_team_name = _league_context.get("teamName") or _resolved_team_name
+                except Exception as _context_err:
+                    print(f"[PLAYER CONTEXT ALIGN] lookup failed: {_context_err}")
+
             # Bake resolved IDs back into req so all downstream references see them
-            if _resolved_opp_id != req.opponentId or _resolved_player_id != req.playerId or actual_team_id != req.teamId:
+            if (
+                _resolved_opp_id != req.opponentId
+                or _resolved_player_id != req.playerId
+                or actual_team_id != req.teamId
+                or _resolved_team_name != req.teamName
+            ):
                 req = req.model_copy(update={
                     "teamId": actual_team_id or 0,
+                    "teamName": _resolved_team_name or req.teamName,
                     "opponentId": _resolved_opp_id,
                     "playerId": _resolved_player_id,
                 })
@@ -309,77 +393,20 @@ async def predict(req: PredictionRequest):
             """Get bookmaker odds for the specific upcoming fixture between team and opponent.
             Uses team's next fixtures (across ALL competitions) to find the correct match."""
             try:
-                fixture_match = None
-
-                # Primary: Get team's upcoming + today's fixtures across ALL competitions
-                try:
-                    next_fixtures = await api_football_request("fixtures", {"team": actual_team_id, "next": 10})
-                    if not next_fixtures:
-                        next_fixtures = []
-
-                    # Also check today's live/scheduled fixtures (catches matches about to start or in progress)
-                    from datetime import date as date_type
-                    today_str = date_type.today().isoformat()
-                    try:
-                        # API-Football "date" requires season for some leagues; try multiple seasons
-                        today_results = await aio.gather(
-                            api_football_request("fixtures", {"team": actual_team_id, "date": today_str, "season": 2025}),
-                            api_football_request("fixtures", {"team": actual_team_id, "date": today_str, "season": 2026}),
-                            return_exceptions=True,
-                        )
-                        today_fixtures = []
-                        _seen_today: set = set()
-                        for batch in today_results:
-                            if isinstance(batch, Exception):
-                                continue
-                            for f in (batch if isinstance(batch, list) else []):
-                                _fid = f.get("fixture", {}).get("id")
-                                if _fid and _fid not in _seen_today:
-                                    _seen_today.add(_fid)
-                                    today_fixtures.append(f)
-                        if today_fixtures:
-                            # Prepend today's fixtures (higher priority — game is today)
-                            existing_ids = {f.get("fixture", {}).get("id") for f in next_fixtures}
-                            for tf in today_fixtures:
-                                if tf.get("fixture", {}).get("id") not in existing_ids:
-                                    next_fixtures.insert(0, tf)
-                    except Exception:
-                        pass
-
-                    if next_fixtures:
-                        # Never trust API response order or the requested
-                        # opponent as the matchup identity.  OCR/search context
-                        # can be stale, and today's response can include an old
-                        # finished fixture.  Use only the nearest live/future
-                        # fixture containing the player's team.
-                        fixture_match = select_next_fixture(next_fixtures, actual_team_id)
-                        if fixture_match:
-                            actual_opp_id = (
-                                fixture_match.get("teams", {})
-                                .get("away", {})
-                                .get("id")
-                                if fixture_match.get("teams", {}).get("home", {}).get("id") == actual_team_id
-                                else fixture_match.get("teams", {}).get("home", {}).get("id")
-                            )
-                            if req.opponentId and actual_opp_id != req.opponentId:
-                                print(
-                                    f"[NEXT FIXTURE ALIGN] requested={req.opponentName}({req.opponentId}) "
-                                    f"→ nearest verified fixture opponentId={actual_opp_id}"
-                                )
-                except Exception:
-                    pass
-
-                # Fallback: H2H (limited to next: 2 per API-Football max)
-                if not fixture_match:
-                    try:
-                        h2h = await api_football_request("fixtures/headtohead", {
-                            "h2h": f"{actual_team_id}-{req.opponentId}",
-                            "next": 2,
-                        })
-                        if h2h:
-                            fixture_match = select_next_fixture(h2h, actual_team_id)
-                    except Exception:
-                        pass
+                canonical = await resolve_verified_fixture(
+                    actual_team_id,
+                    opponent_id=req.opponentId,
+                    opponent_name=req.opponentName,
+                    league_id=(
+                        league_id
+                        if league_id and league_id not in {39, 667, 666}
+                        else None
+                    ),
+                )
+                if canonical:
+                    fixture_match = canonical["fixture"]
+                else:
+                    fixture_match = None
 
                 if not fixture_match:
                     return None

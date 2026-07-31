@@ -11,7 +11,7 @@ from config import (
     TOP_5_LEAGUES, db,
 )
 from models import ScanPropRequest
-from utils import api_football_request, priority_api_football_request, strip_accents, select_next_fixture
+from utils import api_football_request, priority_api_football_request, strip_accents, resolve_verified_fixture
 from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info, db, COL_PLAYERS
 
 router = APIRouter(prefix="/api", tags=["scan"])
@@ -1368,45 +1368,29 @@ async def scan_prop(req: ScanPropRequest):
             # VENUE VERIFICATION + OPPONENT FALLBACK: Cross-check against actual fixture data
             if resolved_player and resolved_player.get("teamId"):
                 try:
-                    fixtures = await priority_api_football_request("fixtures", {
-                        "team": resolved_player["teamId"], "next": 5
-                    })
-                    if fixtures:
-                        opp_id = resolved_opponent.get("teamId") if resolved_opponent else None
-                        # Select by verified kickoff/status, never by API list
-                        # order or a stale OCR opponent.
-                        matched_fixture = select_next_fixture(fixtures, resolved_player["teamId"])
-                        if matched_fixture:
-                            home_team = matched_fixture.get("teams", {}).get("home", {})
-                            away_team = matched_fixture.get("teams", {}).get("away", {})
-                            home_id = home_team.get("id")
-                            away_id = away_team.get("id")
-                            venue = "home" if home_id == resolved_player["teamId"] else "away"
-                            actual_opp_id = away_id if venue == "home" else home_id
-                            if opp_id and actual_opp_id != opp_id:
-                                print(
-                                    f"[SCAN FIXTURE ALIGN] requested={resolved_opponent.get('teamName','?')}({opp_id}) "
-                                    f"→ next={away_team.get('name') if venue == 'home' else home_team.get('name')}({actual_opp_id})"
-                                )
-
-                        # If we matched a fixture, extract opponent from it for
-                        # the response. Never return the OCR/manual opponent
-                        # as if it were the active matchup when verification
-                        # failed.
-                        if matched_fixture:
-                            home_team = matched_fixture.get("teams", {}).get("home", {})
-                            away_team = matched_fixture.get("teams", {}).get("away", {})
-                            if venue == "home":
-                                opp_from_fix = away_team
-                            else:
-                                opp_from_fix = home_team
-                            resolved_opponent = {
-                                "teamId": opp_from_fix.get("id"),
-                                "teamName": opp_from_fix.get("name", ""),
-                            }
-                            print(f"[OPPONENT FALLBACK] Resolved opponent from fixture: {resolved_opponent['teamName']} (id={resolved_opponent['teamId']})")
-                        else:
-                            resolved_opponent = None
+                    canonical = await resolve_verified_fixture(
+                        resolved_player["teamId"],
+                        opponent_id=resolved_opponent.get("teamId") if resolved_opponent else None,
+                        opponent_name=resolved_opponent.get("teamName", "") if resolved_opponent else opponent_hint or "",
+                        league_id=(
+                            league_id
+                            if league_id and league_id not in {667, 666} and not is_international
+                            else None
+                        ),
+                    )
+                    if canonical:
+                        venue = "home" if canonical.get("playerIsHome") else "away"
+                        resolved_opponent = {
+                            "teamId": canonical.get("fixtureOpponentId"),
+                            "teamName": canonical.get("fixtureOpponentName", ""),
+                        }
+                        print(
+                            f"[OPPONENT FALLBACK] Verified fixture {canonical.get('fixtureId')}: "
+                            f"{canonical.get('fixtureTeamName')} vs {canonical.get('fixtureOpponentName')} "
+                            f"({canonical.get('statusShort')})"
+                        )
+                    else:
+                        resolved_opponent = None
                 except Exception as e:
                     print(f"[VENUE VERIFY] Error checking fixtures: {e}")
                     # Do not let the OCR/manual opponent survive an

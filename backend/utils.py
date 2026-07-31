@@ -211,6 +211,171 @@ def select_next_fixture(
     return candidates[0][2] if candidates else None
 
 
+def _fixture_context(fixture: dict, team_id: int) -> dict | None:
+    """Return canonical player-team context from one verified fixture."""
+    teams = fixture.get("teams", {}) or {}
+    home = teams.get("home", {}) or {}
+    away = teams.get("away", {}) or {}
+    try:
+        team_id = int(team_id)
+    except (TypeError, ValueError):
+        return None
+    if home.get("id") == team_id:
+        player_team, opponent, player_is_home = home, away, True
+    elif away.get("id") == team_id:
+        player_team, opponent, player_is_home = away, home, False
+    else:
+        return None
+    if not player_team.get("id") or not opponent.get("id"):
+        return None
+    league = fixture.get("league", {}) or {}
+    fixture_meta = fixture.get("fixture", {}) or {}
+    return {
+        "fixtureId": fixture_meta.get("id"),
+        "fixtureTeamId": player_team.get("id"),
+        "fixtureTeamName": player_team.get("name", ""),
+        "fixtureOpponentId": opponent.get("id"),
+        "fixtureOpponentName": opponent.get("name", ""),
+        "playerIsHome": player_is_home,
+        "matchLeagueId": league.get("id"),
+        "matchLeague": league.get("name", ""),
+        "matchRound": league.get("round", ""),
+        "matchDate": fixture_meta.get("date", ""),
+        "statusShort": (fixture_meta.get("status", {}) or {}).get("short", ""),
+        "fixture": fixture,
+    }
+
+
+def _fixture_name_matches(fixture: dict, team_id: int, opponent_name: str) -> bool:
+    """Match a requested opponent name without trusting it as fixture identity."""
+    requested = " ".join(str(opponent_name or "").lower().split())
+    if not requested:
+        return False
+    context = _fixture_context(fixture, team_id)
+    actual = " ".join(str((context or {}).get("fixtureOpponentName", "")).lower().split())
+    if not actual:
+        return False
+    if requested == actual or requested in actual or actual in requested:
+        return True
+    requested_words = set(requested.replace("-", " ").split())
+    actual_words = set(actual.replace("-", " ").split())
+    return bool(requested_words and requested_words & actual_words)
+
+
+async def resolve_verified_fixture(
+    team_id: int,
+    opponent_id: int | None = None,
+    opponent_name: str = "",
+    league_id: int | None = None,
+    skip_leagues: set[int] | frozenset[int] | None = None,
+    now: datetime | None = None,
+) -> dict | None:
+    """Resolve one canonical live/upcoming soccer fixture for a player team.
+
+    The provider's response order and stale OCR/manual opponent are never
+    authoritative. Interactive requests bypass the local background soft
+    budget, while the provider quota breaker remains enforced.
+    """
+    if not team_id:
+        return None
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(timezone.utc)
+
+    today = now_utc.strftime("%Y-%m-%d")
+    try:
+        next_fixtures, today_batches = await aio.gather(
+            priority_api_football_request("fixtures", {"team": team_id, "next": 20}),
+            aio.gather(
+                priority_api_football_request(
+                    "fixtures", {"team": team_id, "date": today, "season": 2025}
+                ),
+                priority_api_football_request(
+                    "fixtures", {"team": team_id, "date": today, "season": 2026}
+                ),
+                return_exceptions=True,
+            ),
+            return_exceptions=True,
+        )
+    except Exception:
+        next_fixtures, today_batches = [], []
+
+    merged: list[dict] = []
+    seen_ids: set = set()
+    batches = []
+    if isinstance(next_fixtures, list):
+        batches.append(next_fixtures)
+    if isinstance(today_batches, (list, tuple)):
+        batches.extend(
+            batch for batch in today_batches if isinstance(batch, list)
+        )
+    for batch in batches:
+        for fixture in batch:
+            if not isinstance(fixture, dict):
+                continue
+            fixture_id = (fixture.get("fixture", {}) or {}).get("id")
+            if fixture_id and fixture_id in seen_ids:
+                continue
+            if fixture_id:
+                seen_ids.add(fixture_id)
+            merged.append(fixture)
+
+    skipped = skip_leagues or set()
+    scoped = [
+        fixture for fixture in merged
+        if (fixture.get("league", {}) or {}).get("id", 0) not in skipped
+    ]
+    if league_id:
+        league_scoped = [
+            fixture for fixture in scoped
+            if (fixture.get("league", {}) or {}).get("id") == league_id
+        ]
+        # A selected competition is authoritative. Do not silently switch to
+        # another competition because its fixture happened to be returned first.
+        scoped = league_scoped
+
+    selected = None
+    if opponent_id:
+        try:
+            wanted_id = int(opponent_id)
+        except (TypeError, ValueError):
+            wanted_id = 0
+        matching = [
+            fixture for fixture in scoped
+            if (
+                _fixture_context(fixture, team_id)
+                and _fixture_context(fixture, team_id).get("fixtureOpponentId") == wanted_id
+            )
+        ]
+        selected = select_next_fixture(matching, team_id, skip_leagues, now_utc)
+    elif opponent_name:
+        matching = [
+            fixture for fixture in scoped
+            if _fixture_name_matches(fixture, team_id, opponent_name)
+        ]
+        selected = select_next_fixture(matching, team_id, skip_leagues, now_utc)
+
+    # If the requested opponent is stale or absent, safely realign to the
+    # nearest verified live/future fixture for the player's actual team.
+    if selected is None:
+        selected = select_next_fixture(scoped, team_id, skip_leagues, now_utc)
+    if selected is None and opponent_id:
+        # A direct H2H lookup is a final interactive fallback when the team
+        # fixture feed omitted a known pairing.
+        try:
+            h2h = await priority_api_football_request(
+                "fixtures/headtohead",
+                {"h2h": f"{team_id}-{int(opponent_id)}", "next": 2},
+            )
+            if isinstance(h2h, list):
+                selected = select_next_fixture(h2h, team_id, skip_leagues, now_utc)
+        except (TypeError, ValueError, Exception):
+            selected = None
+    return _fixture_context(selected, team_id) if selected else None
+
+
 async def api_football_request(endpoint: str, params: dict = None):
     global _daily_call_count
     # Short-circuit immediately if today's quota is already known to be gone
