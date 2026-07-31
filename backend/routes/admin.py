@@ -239,6 +239,7 @@ class GrantAccessRequest(BaseModel):
     accessType: str = "Manual"
     note: str = ""
     durationDays: int = 0  # 0 = unlimited
+    expiresAt: str | None = None  # explicit ISO-8601 cutoff, if supplied
 
 
 class RevokeAccessRequest(BaseModel):
@@ -267,7 +268,20 @@ async def grant_access(req: GrantAccessRequest):
         "grantedBy": req.adminEmail.lower().strip(),
         "note": req.note or "",
     }
-    if req.durationDays and req.durationDays > 0:
+    if req.expiresAt:
+        try:
+            expires_at = datetime.fromisoformat(req.expiresAt.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= now:
+                raise ValueError("expiry must be in the future")
+            doc["expiresAt"] = expires_at.astimezone(timezone.utc).isoformat()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"expiresAt must be a future ISO-8601 timestamp: {exc}",
+            )
+    elif req.durationDays and req.durationDays > 0:
         doc["expiresAt"] = (now + timedelta(days=req.durationDays)).isoformat()
 
     await db.manual_access_grants.update_one(
