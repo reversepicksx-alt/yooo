@@ -5,6 +5,13 @@ import {
   KeyboardAvoidingView, Animated, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  renderEvidenceSummary,
+  renderOpponentDefProfile,
+  renderMatchupPossession,
+  renderH2HIntelligence,
+  renderManagerContext,
+} from '@/components/AnalysisCards';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -4602,6 +4609,32 @@ export default function ScanScreen() {
                   </View>
                 );
               })()}
+
+            {/* ─── AI DATA CARDS (Evidence · Opp Profile · Matchup · H2H · Manager) ─── */}
+            {(() => {
+              const pred = prediction as Record<string, unknown>;
+              const pickCtx = {
+                venue: venueOverride,
+                teamName: prediction.teamName,
+                opponentName: prediction.opponentName || prediction.opponent,
+                line: prediction.line,
+              };
+              const evidenceEl  = renderEvidenceSummary(pred);
+              const oppDefEl    = renderOpponentDefProfile(pred, pickCtx);
+              const matchupEl   = renderMatchupPossession(pred, pickCtx);
+              const h2hEl       = renderH2HIntelligence(pred, pickCtx);
+              const mgrEl       = renderManagerContext(pred);
+              if (!evidenceEl && !oppDefEl && !matchupEl && !h2hEl && !mgrEl) return null;
+              return (
+                <View style={{ gap: 0, marginTop: 6 }}>
+                  {evidenceEl}
+                  {mgrEl}
+                  {oppDefEl}
+                  {matchupEl}
+                  {h2hEl}
+                </View>
+              );
+            })()}
 
             {/* ─── TACTICAL AI DEEP ANALYSIS ─── */}
             {tacticalAnalysis && (() => {

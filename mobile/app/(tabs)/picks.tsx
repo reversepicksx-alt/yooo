@@ -32,6 +32,13 @@ import PlayerProfileCard from '@/components/PlayerProfileCard';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
 import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, autoPostPickToCommunity, Pick, AnalysisFactor } from '@/lib/api';
+import {
+  renderEvidenceSummary,
+  renderOpponentDefProfile,
+  renderMatchupPossession,
+  renderH2HIntelligence,
+  renderManagerContext,
+} from '@/components/AnalysisCards';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -327,332 +334,6 @@ function renderModelFactors(factors: AnalysisFactor[]) {
   );
 }
 
-function renderEvidenceSummary(data: Record<string, unknown> | null) {
-  if (!data) return null;
-  const snapshot = (data as any)?.modelInputSnapshot?.sampleCounts ?? {};
-  const factors: AnalysisFactor[] = (data as any)?.analysisFactors ?? [];
-  const h2h = (data as any)?.h2hPlayerStats ?? {};
-  const evFactor = factors.find((f) => f.id === 'evidence_quality');
-  const level = (evFactor?.value as any)?.level ?? 'unknown';
-  const score = (evFactor?.value as any)?.score;
-  const applied = (evFactor?.value as any)?.appliedGroups ?? 0;
-  const levelColor = level === 'high' ? Colors.success : level === 'medium' ? '#F59E0B' : Colors.textSecondary;
-  const playerLogs = snapshot.playerLogs ?? 0;
-  const opp = (snapshot.h2hPlayerGames ?? 0) + (snapshot.comparableGames ?? 0);
-  const possObs = snapshot.possessionObservations ?? 0;
-  const h2hApps = h2h.sampleSize ?? 0;
-  if (playerLogs === 0 && opp === 0 && possObs === 0 && score == null) return null;
-  return (
-    <View style={mStyles.evidenceRow}>
-      {score != null && (
-        <View style={[mStyles.evidenceCell, { borderColor: levelColor + '66' }]}>
-          <Text style={[mStyles.evidenceCellValue, { color: levelColor }]}>{score}</Text>
-          <Text style={mStyles.evidenceCellLabel}>EV SCORE</Text>
-        </View>
-      )}
-      {playerLogs > 0 && (
-        <View style={mStyles.evidenceCell}>
-          <Text style={mStyles.evidenceCellValue}>{playerLogs}</Text>
-          <Text style={mStyles.evidenceCellLabel}>GAME LOGS</Text>
-        </View>
-      )}
-      {h2hApps > 0 && (
-        <View style={mStyles.evidenceCell}>
-          <Text style={mStyles.evidenceCellValue}>{h2hApps}</Text>
-          <Text style={mStyles.evidenceCellLabel}>H2H APPS</Text>
-        </View>
-      )}
-      {opp > 0 && (
-        <View style={mStyles.evidenceCell}>
-          <Text style={mStyles.evidenceCellValue}>{opp}</Text>
-          <Text style={mStyles.evidenceCellLabel}>COMP GAMES</Text>
-        </View>
-      )}
-      {possObs > 0 && (
-        <View style={mStyles.evidenceCell}>
-          <Text style={mStyles.evidenceCellValue}>{possObs}</Text>
-          <Text style={mStyles.evidenceCellLabel}>POSS OBS</Text>
-        </View>
-      )}
-      {applied > 0 && (
-        <View style={mStyles.evidenceCell}>
-          <Text style={[mStyles.evidenceCellValue, { color: Colors.primary }]}>{applied}/9</Text>
-          <Text style={mStyles.evidenceCellLabel}>APPLIED</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-function renderOpponentDefProfile(data: Record<string, unknown> | null, pick: any) {
-  if (!data) return null;
-  const prof = (data as any)?.opponentDefensiveProfile;
-  if (!prof || prof.sampleSize < 2) return null;
-  const delta = prof.vsPlayerSeasonAvg as number | null;
-  const favorable = prof.isFavorable as boolean | null;
-  const accentColor = favorable == null ? Colors.textSecondary : favorable ? Colors.success : Colors.error;
-  const arrow = delta == null ? '–' : delta > 0 ? `+${delta.toFixed(1)}%` : `${delta.toFixed(1)}%`;
-  const prop = PROP_LABELS[prof.propType ?? ''] ?? (prof.propType ?? '').replace(/_/g, ' ');
-  return (
-    <View style={mStyles.proCard}>
-      <View style={mStyles.proCardHeader}>
-        <View style={[mStyles.proCardPill, { backgroundColor: accentColor + '18' }]}>
-          <Text style={[mStyles.proCardPillText, { color: accentColor }]}>OPP PROFILE</Text>
-        </View>
-        <Text style={mStyles.proCardTitle} numberOfLines={1}>{prof.opponent}</Text>
-      </View>
-      <View style={mStyles.proCardMetrics}>
-        <View style={mStyles.proCardMetric}>
-          <Text style={[mStyles.proCardMetricValue, { color: accentColor }]}>{Number(prof.avgAllowed).toFixed(1)}</Text>
-          <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} ALLOWED</Text>
-        </View>
-        {prof.playerSeasonAvg != null && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={mStyles.proCardMetricValue}>{Number(prof.playerSeasonAvg).toFixed(1)}</Text>
-            <Text style={mStyles.proCardMetricLabel}>PLAYER AVG</Text>
-          </View>
-        )}
-        <View style={mStyles.proCardMetric}>
-          <Text style={[mStyles.proCardMetricValue, { color: accentColor }]}>{arrow}</Text>
-          <Text style={mStyles.proCardMetricLabel}>VS SEASON</Text>
-        </View>
-        <View style={mStyles.proCardMetric}>
-          <Text style={mStyles.proCardMetricValue}>{prof.sampleSize}</Text>
-          <Text style={mStyles.proCardMetricLabel}>FIXTURES</Text>
-        </View>
-      </View>
-      <Text style={mStyles.proCardNote}>
-        {prof.position ? `${prof.position} · ` : ''}
-        {favorable == null
-          ? 'Insufficient data to classify.'
-          : favorable
-          ? `Favourable — ${prof.opponent} concedes above-average ${prop} to this position.`
-          : `Unfavourable — ${prof.opponent} allows below-average ${prop} here.`}
-      </Text>
-    </View>
-  );
-}
-
-function renderMatchupPossession(data: Record<string, unknown> | null, pick: any) {
-  if (!data) return null;
-  const mo = (data as any)?.matchupOverview;
-  const ep = (data as any)?.expectedPossession;
-  const gt = (data as any)?.expectedGameType ?? mo?.expectedGameType;
-  const kmf = (data as any)?.keyMatchupFactor ?? mo?.keyMatchupFactor;
-  const ss = (data as any)?.sharpSummary;
-  const isHome = pick?.venue !== 'away';
-  const teamPoss: number | null = ep ? (isHome ? ep.home : ep.away) : null;
-  const oppPoss: number | null = ep ? (isHome ? ep.away : ep.home) : null;
-  const hasPoss = teamPoss != null;
-  if (!hasPoss && !gt && !kmf && !ss) return null;
-  const possColor = teamPoss != null && oppPoss != null
-    ? teamPoss > oppPoss + 5 ? Colors.success : teamPoss < oppPoss - 5 ? '#F59E0B' : Colors.textSecondary
-    : Colors.textSecondary;
-  return (
-    <View style={mStyles.proCard}>
-      <View style={mStyles.proCardHeader}>
-        <View style={[mStyles.proCardPill, { backgroundColor: '#60A5FA18' }]}>
-          <Text style={[mStyles.proCardPillText, { color: '#60A5FA' }]}>MATCHUP</Text>
-        </View>
-        {gt ? <Text style={mStyles.proCardTitle} numberOfLines={1}>{(gt as string).replace(/_/g, ' ').toUpperCase()}</Text> : null}
-      </View>
-      {hasPoss && teamPoss != null && oppPoss != null && (
-        <View style={mStyles.possRow}>
-          <View style={mStyles.possTeam}>
-            <Text style={[mStyles.possValue, { color: possColor }]}>{Number(teamPoss).toFixed(0)}%</Text>
-            <Text style={mStyles.possLabel} numberOfLines={1}>{(pick?.teamName ?? 'HOME').split(' ').pop()?.toUpperCase()}</Text>
-          </View>
-          <View style={mStyles.possBar}>
-            <View style={[mStyles.possBarFill, { width: `${teamPoss}%` as any, backgroundColor: possColor }]} />
-          </View>
-          <View style={mStyles.possTeam}>
-            <Text style={mStyles.possValue}>{Number(oppPoss).toFixed(0)}%</Text>
-            <Text style={mStyles.possLabel} numberOfLines={1}>{(pick?.opponentName ?? 'AWAY').split(' ').pop()?.toUpperCase()}</Text>
-          </View>
-        </View>
-      )}
-      {kmf ? <Text style={mStyles.proCardNote}>{kmf}</Text> : null}
-      {ss ? <Text style={[mStyles.proCardNote, { color: Colors.textSecondary, marginTop: 4 }]}>{ss}</Text> : null}
-    </View>
-  );
-}
-
-function renderH2HIntelligence(data: Record<string, unknown> | null, pick: any) {
-  if (!data) return null;
-  const h2h = (data as any)?.h2hPlayerStats;
-  if (!h2h || !h2h.sampleSize) return null;
-  const matches: any[] = h2h.matches ?? [];
-  const avg: number | undefined = h2h.avgVsOpponent;
-  const trend: string | undefined = h2h.trendDirection;
-  const trendColor = trend === 'improving' ? Colors.success : trend === 'declining' ? Colors.error : Colors.textSecondary;
-  const trendIcon: any = trend === 'improving' ? 'trending-up' : trend === 'declining' ? 'trending-down' : 'remove';
-  const vhr = h2h.venueHitRate;
-  const prop = PROP_LABELS[h2h.targetProp ?? ''] ?? (h2h.targetProp ?? '').replace(/_/g, ' ');
-  return (
-    <View style={mStyles.proCard}>
-      <View style={mStyles.proCardHeader}>
-        <View style={[mStyles.proCardPill, { backgroundColor: Colors.primary + '18' }]}>
-          <Text style={[mStyles.proCardPillText, { color: Colors.primary }]}>H2H</Text>
-        </View>
-        <Text style={mStyles.proCardTitle} numberOfLines={1}>
-          {h2h.sampleSize} app{h2h.sampleSize !== 1 ? 's' : ''} vs {pick?.opponentName}
-          {h2h.seasonsCovered ? ` · ${h2h.seasonsCovered.range}` : ''}
-        </Text>
-      </View>
-      <View style={mStyles.proCardMetrics}>
-        {avg != null && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={mStyles.proCardMetricValue}>{Number(avg).toFixed(1)}</Text>
-            <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} AVG</Text>
-          </View>
-        )}
-        {h2h.teamMeetings != null && h2h.teamMeetings > 0 && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={mStyles.proCardMetricValue}>{h2h.teamMeetings}</Text>
-            <Text style={mStyles.proCardMetricLabel}>TEAM MEETS</Text>
-          </View>
-        )}
-        {trend && trend !== 'stable' && (
-          <View style={mStyles.proCardMetric}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, justifyContent: 'center' }}>
-              <Ionicons name={trendIcon} size={13} color={trendColor} />
-              <Text style={[mStyles.proCardMetricValue, { color: trendColor, fontSize: 12 }]}>{trend.toUpperCase()}</Text>
-            </View>
-            <Text style={mStyles.proCardMetricLabel}>TREND</Text>
-          </View>
-        )}
-        {vhr && vhr.total >= 2 && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={[mStyles.proCardMetricValue, { color: vhr.pct >= 60 ? Colors.success : vhr.pct <= 40 ? Colors.error : Colors.textSecondary }]}>
-              {vhr.pct}%
-            </Text>
-            <Text style={mStyles.proCardMetricLabel}>{(vhr.venue as string).toUpperCase()} HIT</Text>
-          </View>
-        )}
-      </View>
-      {matches.length > 0 && (
-        <View style={mStyles.h2hTable}>
-          {matches.slice(0, 5).map((m: any, i: number) => {
-            const hitLine = m.targetStat != null && pick?.line != null && m.targetStat > pick.line;
-            const statColor = hitLine ? Colors.success : m.targetStat != null ? Colors.error : Colors.textTertiary;
-            return (
-              <View key={i} style={mStyles.h2hRow}>
-                <Text style={mStyles.h2hDate}>{(m.date ?? '').slice(0, 10)}</Text>
-                <Text style={mStyles.h2hVenue}>{(m.venue ?? '?').slice(0, 1).toUpperCase()}</Text>
-                <Text style={mStyles.h2hOpp} numberOfLines={1}>{m.opponent ?? '?'}</Text>
-                {m.teamPossession != null && <Text style={mStyles.h2hPoss}>{m.teamPossession}%</Text>}
-                <Text style={[mStyles.h2hStat, { color: statColor }]}>
-                  {m.targetStat != null ? m.targetStat : '—'}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </View>
-  );
-}
-
-function renderManagerContext(data: Record<string, unknown> | null) {
-  if (!data) return null;
-  const mc = (data as any)?.managerContext;
-  if (!mc || !mc.coachName) return null;
-
-  const split = mc.logSplitInfo ?? {};
-  const drift = mc.possessionDrift ?? {};
-  const isRecent = mc.isRecent === true;
-  const isThin   = split.thinSample === true;
-
-  // Only show card when there's something meaningful to surface
-  if (!isRecent && !drift.isShift) return null;
-
-  const cardColor   = isRecent ? '#F59E0B' : '#60A5FA';
-  const pillLabel   = isRecent ? 'MANAGER CHANGE' : 'TACTICAL SHIFT';
-  const daysLabel   = mc.daysElapsed != null ? `${mc.daysElapsed}d ago` : '';
-
-  return (
-    <View style={[mStyles.proCard, { borderColor: cardColor + '44' }]}>
-      <View style={mStyles.proCardHeader}>
-        <View style={[mStyles.proCardPill, { backgroundColor: cardColor + '20' }]}>
-          <Text style={[mStyles.proCardPillText, { color: cardColor }]}>{pillLabel}</Text>
-        </View>
-        <Text style={mStyles.proCardTitle} numberOfLines={1}>
-          {mc.coachName}{daysLabel ? ` · ${daysLabel}` : ''}
-        </Text>
-        {isThin && (
-          <View style={[mStyles.proCardPill, { backgroundColor: '#FF6B3520' }]}>
-            <Text style={[mStyles.proCardPillText, { color: '#FF6B35' }]}>THIN SAMPLE</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Pre vs post average */}
-      {split.preAvg != null && split.postAvg != null && (
-        <View style={mStyles.proCardMetrics}>
-          <View style={mStyles.proCardMetric}>
-            <Text style={[mStyles.proCardMetricValue, { color: Colors.textTertiary, textDecorationLine: 'line-through' }]}>
-              {split.preAvg}
-            </Text>
-            <Text style={mStyles.proCardMetricLabel}>PRE-CHANGE{split.preCount ? ` (${split.preCount}G)` : ''}</Text>
-          </View>
-          <View style={{ justifyContent: 'center', paddingBottom: 12 }}>
-            <Text style={{ color: Colors.textTertiary, fontSize: 16 }}>→</Text>
-          </View>
-          <View style={mStyles.proCardMetric}>
-            <Text style={[mStyles.proCardMetricValue, { color: cardColor }]}>
-              {split.postAvg}
-            </Text>
-            <Text style={mStyles.proCardMetricLabel}>NEW SYSTEM{split.postCount ? ` (${split.postCount}G)` : ''}</Text>
-          </View>
-          {split.preAvg > 0 && (
-            <View style={mStyles.proCardMetric}>
-              <Text style={[mStyles.proCardMetricValue, {
-                color: split.postAvg > split.preAvg ? '#4ADE80' : '#F87171',
-              }]}>
-                {split.postAvg > split.preAvg ? '+' : ''}{((split.postAvg - split.preAvg) / split.preAvg * 100).toFixed(0)}%
-              </Text>
-              <Text style={mStyles.proCardMetricLabel}>ΔROLE</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      {/* Possession drift */}
-      {drift.isShift && (
-        <View style={mStyles.mgr_driftRow}>
-          <Text style={mStyles.mgr_driftLabel}>POSSESSION DRIFT</Text>
-          <View style={mStyles.mgr_driftBars}>
-            <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
-              <Text style={[mStyles.mgr_driftVal, { color: Colors.textTertiary }]}>{drift.seasonAvg}%</Text>
-              <Text style={mStyles.mgr_driftSub}>SEASON</Text>
-            </View>
-            <Text style={{ color: Colors.textTertiary, fontSize: 13 }}>→</Text>
-            <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
-              <Text style={[mStyles.mgr_driftVal, { color: drift.direction === 'up' ? '#4ADE80' : '#F87171' }]}>
-                {drift.last5Avg}%
-              </Text>
-              <Text style={mStyles.mgr_driftSub}>LAST 5</Text>
-            </View>
-            <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
-              <Text style={[mStyles.mgr_driftVal, { color: drift.direction === 'up' ? '#4ADE80' : '#F87171' }]}>
-                {drift.drift > 0 ? '+' : ''}{drift.drift}pp
-              </Text>
-              <Text style={mStyles.mgr_driftSub}>SHIFT</Text>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {mc.prevCoachName && (
-        <Text style={[mStyles.proCardNote, { color: Colors.textTertiary }]}>
-          Replaced: {mc.prevCoachName}
-          {isThin ? '  ·  ⚠ High uncertainty — thin post-change sample' : '  ·  ✓ Model used post-change logs only'}
-        </Text>
-      )}
-    </View>
-  );
-}
-
 const LEGACY_MODEL_FACTORS: AnalysisFactor[] = [
   ['historical_depth', 'Multi-season player history'],
   ['opponent_history', 'Opponent and comparable-player history'],
@@ -673,7 +354,6 @@ const LEGACY_MODEL_FACTORS: AnalysisFactor[] = [
   direction: 'neutral',
   detail: 'This is a legacy pick. New predictions preserve the exact inputs and sample counts used by the model.',
 }));
-
 
 
 export default function PicksScreen() {
@@ -1345,19 +1025,19 @@ export default function PicksScreen() {
             {/* ── OPPONENT DEFENSIVE PROFILE ── */}
             {!analysisModal?.loading && renderOpponentDefProfile(
               analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick,
+              analysisModal?.pick as any,
             )}
 
             {/* ── MATCHUP & POSSESSION ── */}
             {!analysisModal?.loading && renderMatchupPossession(
               analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick,
+              analysisModal?.pick as any,
             )}
 
             {/* ── H2H INTELLIGENCE ── */}
             {!analysisModal?.loading && renderH2HIntelligence(
               analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick,
+              analysisModal?.pick as any,
             )}
 
             {/* ── MANAGER / TACTICAL SHIFT CONTEXT ── */}
@@ -2279,4 +1959,3 @@ const disclaimerStyles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
-
