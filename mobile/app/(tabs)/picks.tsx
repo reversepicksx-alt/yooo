@@ -553,6 +553,106 @@ function renderH2HIntelligence(data: Record<string, unknown> | null, pick: any) 
   );
 }
 
+function renderManagerContext(data: Record<string, unknown> | null) {
+  if (!data) return null;
+  const mc = (data as any)?.managerContext;
+  if (!mc || !mc.coachName) return null;
+
+  const split = mc.logSplitInfo ?? {};
+  const drift = mc.possessionDrift ?? {};
+  const isRecent = mc.isRecent === true;
+  const isThin   = split.thinSample === true;
+
+  // Only show card when there's something meaningful to surface
+  if (!isRecent && !drift.isShift) return null;
+
+  const cardColor   = isRecent ? '#F59E0B' : '#60A5FA';
+  const pillLabel   = isRecent ? 'MANAGER CHANGE' : 'TACTICAL SHIFT';
+  const daysLabel   = mc.daysElapsed != null ? `${mc.daysElapsed}d ago` : '';
+
+  return (
+    <View style={[mStyles.proCard, { borderColor: cardColor + '44' }]}>
+      <View style={mStyles.proCardHeader}>
+        <View style={[mStyles.proCardPill, { backgroundColor: cardColor + '20' }]}>
+          <Text style={[mStyles.proCardPillText, { color: cardColor }]}>{pillLabel}</Text>
+        </View>
+        <Text style={mStyles.proCardTitle} numberOfLines={1}>
+          {mc.coachName}{daysLabel ? ` · ${daysLabel}` : ''}
+        </Text>
+        {isThin && (
+          <View style={[mStyles.proCardPill, { backgroundColor: '#FF6B3520' }]}>
+            <Text style={[mStyles.proCardPillText, { color: '#FF6B35' }]}>THIN SAMPLE</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Pre vs post average */}
+      {split.preAvg != null && split.postAvg != null && (
+        <View style={mStyles.proCardMetrics}>
+          <View style={mStyles.proCardMetric}>
+            <Text style={[mStyles.proCardMetricValue, { color: Colors.textTertiary, textDecorationLine: 'line-through' }]}>
+              {split.preAvg}
+            </Text>
+            <Text style={mStyles.proCardMetricLabel}>PRE-CHANGE{split.preCount ? ` (${split.preCount}G)` : ''}</Text>
+          </View>
+          <View style={{ justifyContent: 'center', paddingBottom: 12 }}>
+            <Text style={{ color: Colors.textTertiary, fontSize: 16 }}>→</Text>
+          </View>
+          <View style={mStyles.proCardMetric}>
+            <Text style={[mStyles.proCardMetricValue, { color: cardColor }]}>
+              {split.postAvg}
+            </Text>
+            <Text style={mStyles.proCardMetricLabel}>NEW SYSTEM{split.postCount ? ` (${split.postCount}G)` : ''}</Text>
+          </View>
+          {split.preAvg > 0 && (
+            <View style={mStyles.proCardMetric}>
+              <Text style={[mStyles.proCardMetricValue, {
+                color: split.postAvg > split.preAvg ? '#4ADE80' : '#F87171',
+              }]}>
+                {split.postAvg > split.preAvg ? '+' : ''}{((split.postAvg - split.preAvg) / split.preAvg * 100).toFixed(0)}%
+              </Text>
+              <Text style={mStyles.proCardMetricLabel}>ΔROLE</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Possession drift */}
+      {drift.isShift && (
+        <View style={mStyles.mgr_driftRow}>
+          <Text style={mStyles.mgr_driftLabel}>POSSESSION DRIFT</Text>
+          <View style={mStyles.mgr_driftBars}>
+            <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
+              <Text style={[mStyles.mgr_driftVal, { color: Colors.textTertiary }]}>{drift.seasonAvg}%</Text>
+              <Text style={mStyles.mgr_driftSub}>SEASON</Text>
+            </View>
+            <Text style={{ color: Colors.textTertiary, fontSize: 13 }}>→</Text>
+            <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
+              <Text style={[mStyles.mgr_driftVal, { color: drift.direction === 'up' ? '#4ADE80' : '#F87171' }]}>
+                {drift.last5Avg}%
+              </Text>
+              <Text style={mStyles.mgr_driftSub}>LAST 5</Text>
+            </View>
+            <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
+              <Text style={[mStyles.mgr_driftVal, { color: drift.direction === 'up' ? '#4ADE80' : '#F87171' }]}>
+                {drift.drift > 0 ? '+' : ''}{drift.drift}pp
+              </Text>
+              <Text style={mStyles.mgr_driftSub}>SHIFT</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {mc.prevCoachName && (
+        <Text style={[mStyles.proCardNote, { color: Colors.textTertiary }]}>
+          Replaced: {mc.prevCoachName}
+          {isThin ? '  ·  ⚠ High uncertainty — thin post-change sample' : '  ·  ✓ Model used post-change logs only'}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 const LEGACY_MODEL_FACTORS: AnalysisFactor[] = [
   ['historical_depth', 'Multi-season player history'],
   ['opponent_history', 'Opponent and comparable-player history'],
@@ -1260,6 +1360,11 @@ export default function PicksScreen() {
               analysisModal?.pick,
             )}
 
+            {/* ── MANAGER / TACTICAL SHIFT CONTEXT ── */}
+            {!analysisModal?.loading && renderManagerContext(
+              analysisModal?.data as Record<string, unknown> | null,
+            )}
+
             {/* ── AI TACTICAL BREAKDOWN ── */}
             {!analysisModal?.loading && modalText && (() => {
               const pick = analysisModal?.pick as any;
@@ -1682,6 +1787,16 @@ const mStyles = StyleSheet.create({
   h2hOpp: { flex: 1, fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
   h2hPoss: { fontSize: 10, color: Colors.textTertiary, width: 32, textAlign: 'right' },
   h2hStat: { fontSize: 14, fontWeight: '800', width: 26, textAlign: 'right' },
+  // ── Manager / Tactical Shift card
+  mgr_driftRow: {
+    gap: 6,
+    backgroundColor: Colors.card, borderRadius: 8,
+    padding: 10,
+  },
+  mgr_driftLabel: { fontSize: 8, fontWeight: '900', color: Colors.textTertiary, letterSpacing: 1.2 },
+  mgr_driftBars: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  mgr_driftVal: { fontSize: 16, fontWeight: '800' },
+  mgr_driftSub: { fontSize: 7, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.7 },
 });
 
 function StatTile({ label, value, accent }: { label: string; value: string; accent?: string }) {

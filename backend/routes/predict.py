@@ -596,6 +596,7 @@ async def predict(req: PredictionRequest):
         # Recompute after canonical fixture alignment.
         safe_team_id = actual_team_id if actual_team_id and actual_team_id != 0 else None
         safe_opp_id = req.opponentId if req.opponentId and req.opponentId != 0 else None
+        _manager_task = None   # set below in the API-Football branch
 
         if ai_only_mode:
             print(f"[AI-ONLY] Running in AI-only mode for {req.playerName} — teamId={actual_team_id}, opponentId={req.opponentId}")
@@ -633,6 +634,16 @@ async def predict(req: PredictionRequest):
             standings_task = get_standings_multi_season()
             fixtures_task = get_recent_fixtures_fast(actual_team_id, 40)
             odds_task = aio.sleep(0, result=match_odds_prefetched)
+
+            # ── MANAGER CHANGE DETECTION (async, 7-day cached) ─────────────────
+            # Runs concurrently with Wave-1 so it adds ~0 latency on cache hits.
+            try:
+                from manager_tracker import get_team_coach_info as _get_coach_info
+                _manager_task = aio.ensure_future(
+                    _get_coach_info(actual_team_id, db, api_football_request)
+                )
+            except Exception as _mgt_init_err:
+                print(f"[MANAGER] task init error: {_mgt_init_err}")
 
         import time as _t
         _t0 = _t.time()
@@ -1721,6 +1732,41 @@ async def predict(req: PredictionRequest):
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
         ai_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
+
+        # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
+        _manager_ctx = {}
+        _manager_possession_drift = {}
+        if _manager_task is not None:
+            try:
+                _manager_ctx = await _manager_task or {}
+                if _manager_ctx.get("isRecent"):
+                    print(
+                        f"[MANAGER] ⚠ Recent change: {_manager_ctx.get('prevCoachName','?')} → "
+                        f"{_manager_ctx.get('coachName','?')} "
+                        f"({_manager_ctx.get('daysElapsed')}d ago, start={_manager_ctx.get('coachStartDate')})"
+                    )
+                else:
+                    print(
+                        f"[MANAGER] {_manager_ctx.get('coachName', 'unknown')} "
+                        f"(stable, {_manager_ctx.get('daysElapsed','?')}d)"
+                    )
+            except Exception as _mgr_err:
+                print(f"[MANAGER] await error: {_mgr_err}")
+
+        # ── Possession drift: last-5 vs season average for tactical-shift detection ──
+        if team_fixture_stats:
+            try:
+                from manager_tracker import compute_possession_drift as _cpd
+                _manager_possession_drift = _cpd(team_fixture_stats) or {}
+                if _manager_possession_drift.get("isShift"):
+                    print(
+                        f"[MANAGER POSS DRIFT] {req.teamName}: "
+                        f"season={_manager_possession_drift['seasonAvg']}% → "
+                        f"last5={_manager_possession_drift['last5Avg']}% "
+                        f"({_manager_possession_drift['drift']:+.1f}pp) ⚠ TACTICAL SHIFT"
+                    )
+            except Exception as _pd_err:
+                print(f"[MANAGER POSS DRIFT] error: {_pd_err}")
         game_situation = results[4] if len(results) > 4 and not isinstance(results[4], (Exception, type(None))) else {}
         web_intel = results[5] if len(results) > 5 and not isinstance(results[5], (Exception, type(None))) else ""
         ai_press_intensity = results[6] if len(results) > 6 and not isinstance(results[6], (Exception, type(None))) else None
@@ -3175,6 +3221,47 @@ async def predict(req: PredictionRequest):
                         f"[VENUE PRIOR] {req.playerName}/{req.propType}: "
                         f"only {len(_venue_logs)} {player_venue} logs — keeping combined {len(player_game_logs)}"
                     )
+
+            # ── MANAGER CHANGE LOG SPLIT ──────────────────────────────────────────
+            # When a recent coaching change is detected, pre-change game logs reflect
+            # a completely different tactical system. Split at the change date and
+            # use ONLY post-change logs as the Bayesian prior so the model prices
+            # the new system — not a blended history from two different managers.
+            #
+            # Threshold: ≥ 3 post-change logs → use them exclusively.
+            # < 3 post-change logs → keep combined (flag thin sample for AI + UI).
+            _manager_split_info = {}
+            if _manager_ctx.get("isRecent") and _manager_ctx.get("coachStartDate"):
+                try:
+                    from manager_tracker import detect_log_split as _dls
+                    _post_logs, _pre_logs, _post_n, _pre_n = _dls(
+                        _bayes_logs, _manager_ctx["coachStartDate"]
+                    )
+                    _sfm_field = _sfm.get(req.propType, "passes_total")
+                    _pre_vals_ms  = [g.get(_sfm_field) for g in _pre_logs  if g.get(_sfm_field) is not None]
+                    _post_vals_ms = [g.get(_sfm_field) for g in _post_logs if g.get(_sfm_field) is not None]
+                    _pre_avg_ms   = round(sum(_pre_vals_ms)  / len(_pre_vals_ms),  1) if _pre_vals_ms  else None
+                    _post_avg_ms  = round(sum(_post_vals_ms) / len(_post_vals_ms), 1) if _post_vals_ms else None
+                    _manager_split_info = {
+                        "postCount": _post_n, "preCount": _pre_n,
+                        "preAvg":    _pre_avg_ms, "postAvg": _post_avg_ms,
+                        "thinSample": _post_n < 5,
+                    }
+                    if _post_n >= 3:
+                        _bayes_logs = _post_logs
+                        print(
+                            f"[MANAGER SPLIT] {req.playerName}: using {_post_n} post-"
+                            f"{_manager_ctx.get('coachName','new manager')!r} logs "
+                            f"(dropped {_pre_n} pre-change) | avg "
+                            f"{_pre_avg_ms} → {_post_avg_ms} ({req.propType})"
+                        )
+                    else:
+                        print(
+                            f"[MANAGER SPLIT] {req.playerName}: only {_post_n} post-change "
+                            f"logs — keeping combined {len(_bayes_logs)} (THIN SAMPLE)"
+                        )
+                except Exception as _msp_err:
+                    print(f"[MANAGER SPLIT] error: {_msp_err}")
 
             # ── SAMPLE-QUALITY FILTER (luck strip) ───────────────────────
             # Drop garbage-time cameos and severe blowouts when we have
@@ -5842,6 +5929,55 @@ Amplification factors to explore: opponent defensive passivity, possession domin
         except Exception:
             pass
 
+        # ── MANAGER CHANGE PROMPT BLOCK ──────────────────────────────────────────
+        _manager_change_block = ""
+        try:
+            if _manager_ctx.get("isRecent") and _manager_ctx.get("coachStartDate"):
+                _mc = _manager_ctx
+                _ms = _manager_split_info if "_manager_split_info" in dir() else {}
+                _mpd = _manager_possession_drift
+                _mb  = (
+                    f"\n\n[⚠ MANAGER CHANGE — CRITICAL SYSTEM CONTEXT — READ BEFORE ANALYSIS]\n"
+                    f"CONFIRMED: {req.teamName} appointed {_mc.get('coachName','new manager')} "
+                    f"{_mc.get('daysElapsed')} days ago (from {_mc.get('coachStartDate')}).\n"
+                )
+                if _mc.get("prevCoachName"):
+                    _mb += f"Previous coach: {_mc['prevCoachName']}\n"
+                if _ms.get("preAvg") is not None and _ms.get("postAvg") is not None:
+                    _mb += (
+                        f"Stat split ({req.propType}): "
+                        f"pre-{_mc.get('coachName','new coach')} avg = {_ms['preAvg']} "
+                        f"({_ms.get('preCount',0)} games)  →  "
+                        f"post-{_mc.get('coachName','new coach')} avg = {_ms['postAvg']} "
+                        f"({_ms.get('postCount',0)} games)\n"
+                    )
+                    if _ms.get("thinSample"):
+                        _mb += (
+                            f"⚠ THIN SAMPLE: Only {_ms.get('postCount',0)} games under "
+                            f"{_mc.get('coachName','new coach')} — high uncertainty; lean on "
+                            f"the post-change trend over the full history.\n"
+                        )
+                    else:
+                        _mb += "✓ Model used ONLY post-change game logs for this projection.\n"
+                if _mpd.get("isShift"):
+                    _mb += (
+                        f"Team possession drift: season avg {_mpd['seasonAvg']}% → "
+                        f"last-5 avg {_mpd['last5Avg']}% ({_mpd['drift']:+.1f}pp) — "
+                        f"TACTICAL IDENTITY SHIFT CONFIRMED.\n"
+                    )
+                _mb += (
+                    ">>> MANDATORY: The manager change is the PRIMARY narrative driver for this "
+                    "prediction. In keyEvidence and matchup analysis you MUST: "
+                    "(1) explicitly name the new coach and state the tactical identity shift, "
+                    "(2) reference the pre vs post statistical split above, "
+                    "(3) discuss whether this player's role in the new system is a PRIMARY beneficiary "
+                    "(higher volume) or secondary (lower volume), "
+                    "(4) set your uncertaintyNote to reflect thin-sample risk if applicable. <<<"
+                )
+                _manager_change_block = _mb
+        except Exception as _mcb_err:
+            print(f"[MANAGER BLOCK] error: {_mcb_err}")
+
         prompt = f"""⛔⛔⛔ PLAYER IDENTITY — READ THIS FIRST — MANDATORY ⛔⛔⛔
 Player name: {req.playerName}. Current team: {corrected_team_name}. Opponent today: {req.opponentName}.
 RULES:
@@ -5861,7 +5997,7 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 {_suppression_context}
 {dom_context}
 {position_context}
-{_h2h_prompt_block}{_opp_def_prompt_block}{final_data[:3500]}
+{_h2h_prompt_block}{_opp_def_prompt_block}{_manager_change_block}{final_data[:3500]}
 
 Analyze ALL data thoroughly. Return JSON only."""
 
@@ -8651,6 +8787,17 @@ Analyze ALL data thoroughly. Return JSON only."""
                 }
         except Exception as _odf_err:
             print(f"[OPP DEF PROFILE] failed: {_odf_err}")
+
+        # ── MANAGER CONTEXT ──────────────────────────────────────────────────────
+        try:
+            if _manager_ctx:
+                prediction["managerContext"] = {
+                    **_manager_ctx,
+                    "logSplitInfo": _manager_split_info if "_manager_split_info" in vars() else {},
+                    "possessionDrift": _manager_possession_drift if "_manager_possession_drift" in vars() else {},
+                }
+        except Exception as _mc_err:
+            print(f"[MANAGER CONTEXT] failed: {_mc_err}")
 
         # ── FINAL PASS-PROJECTION CALIBRATION (SHADOW BY DEFAULT) ───────────
         # This is deliberately the only projection-calibration boundary.  It

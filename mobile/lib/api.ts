@@ -432,6 +432,29 @@ export interface PredictionResult {
     isFavorable: boolean | null;
     playerSeasonAvg: number | null;
   };
+  managerContext?: {
+    coachName?: string;
+    coachStartDate?: string | null;
+    prevCoachName?: string | null;
+    daysElapsed?: number | null;
+    isRecent?: boolean;
+    recentChange?: boolean;
+    logSplitInfo?: {
+      postCount: number;
+      preCount: number;
+      preAvg?: number | null;
+      postAvg?: number | null;
+      thinSample: boolean;
+    };
+    possessionDrift?: {
+      seasonAvg: number;
+      last5Avg: number;
+      drift: number;
+      isShift: boolean;
+      direction: string;
+      sampleSize?: number;
+    };
+  };
   expectedPossession?: { home: number; away: number };
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
@@ -865,6 +888,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     playerCandidates: raw.playerCandidates ?? undefined,
     prizePicksContext: (raw as any).prizePicksContext ?? undefined,
     aiPending: (raw as any).aiPending ?? undefined,
+    managerContext: (raw as any).managerContext ?? undefined,
   };
 }
 
