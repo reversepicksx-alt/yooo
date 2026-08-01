@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  ActivityIndicator, RefreshControl, Platform,
+  ActivityIndicator, RefreshControl, TouchableOpacity,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getOwnerAnalytics, AnalyticsBucket, ConfidenceTier, ModelScorecard,
+  runModelReplay, ModelReplayResult, WalkForwardReplay, DescriptiveScorecardResult,
 } from '@/lib/api';
 
 const PROP_LABELS: Record<string, string> = {
@@ -272,6 +273,291 @@ function ModelScorecardCard({ scorecard }: { scorecard?: ModelScorecard }) {
   );
 }
 
+// ── Model Replay Card ────────────────────────────────────────────────────────
+
+function gapColor(gap: number | null): string {
+  if (gap === null) return Colors.textTertiary;
+  if (Math.abs(gap) <= 5) return Colors.primary;
+  if (Math.abs(gap) <= 10) return '#FFCC00';
+  return Colors.error;
+}
+
+function ObservationRow({ text }: { text: string }) {
+  const isWarn = text.startsWith('⚠️');
+  const isOk   = text.startsWith('✅');
+  return (
+    <View style={[
+      styles.obsRow,
+      isWarn && styles.obsWarn,
+      isOk   && styles.obsOk,
+    ]}>
+      <Text style={styles.obsText}>{text}</Text>
+    </View>
+  );
+}
+
+function ReplayMetricGrid({
+  label, ll, bs, mae, rmse, n,
+}: { label: string; ll?: number | null; bs?: number | null; mae?: number | null; rmse?: number | null; n?: number }) {
+  return (
+    <View style={styles.replayMetricBlock}>
+      <Text style={styles.replayMetricBlockLabel}>{label}</Text>
+      {n !== undefined && <Text style={styles.replayMetricN}>n={n}</Text>}
+      <View style={styles.replayMetricRow}>
+        <View style={styles.replayMetricCell}>
+          <Text style={styles.replayMetricVal}>{ll != null ? ll.toFixed(4) : '—'}</Text>
+          <Text style={styles.replayMetricKey}>LOG LOSS</Text>
+        </View>
+        <View style={styles.replayMetricCell}>
+          <Text style={styles.replayMetricVal}>{bs != null ? bs.toFixed(4) : '—'}</Text>
+          <Text style={styles.replayMetricKey}>BRIER</Text>
+        </View>
+        <View style={styles.replayMetricCell}>
+          <Text style={styles.replayMetricVal}>{mae != null ? mae.toFixed(3) : '—'}</Text>
+          <Text style={styles.replayMetricKey}>MAE</Text>
+        </View>
+        <View style={styles.replayMetricCell}>
+          <Text style={styles.replayMetricVal}>{rmse != null ? rmse.toFixed(3) : '—'}</Text>
+          <Text style={styles.replayMetricKey}>RMSE</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function ModelReplayCard({ email, token }: { email: string; token: string }) {
+  const [running, setRunning] = useState(false);
+  const [result, setResult]   = useState<ModelReplayResult | null>(null);
+  const [error, setError]     = useState<string | null>(null);
+  const [sport, setSport]     = useState('');
+
+  const SPORTS = ['', 'soccer', 'basketball', 'baseball', 'cs2', 'football'];
+  const SPORT_LABELS: Record<string, string> = {
+    '': 'All', soccer: 'Soccer', basketball: 'Basketball',
+    baseball: 'Baseball', cs2: 'CS2', football: 'NFL',
+  };
+
+  async function run() {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await runModelReplay(email, token, sport);
+      setResult(res);
+    } catch (e: any) {
+      setError(e?.message ?? 'Request failed');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const wf = result?.walkForwardReplay;
+  const ds = result?.descriptiveScorecard;
+
+  return (
+    <View style={styles.replayCard}>
+      {/* Header */}
+      <View style={styles.sectionHeader}>
+        <Ionicons name="repeat-outline" size={14} color={Colors.primary} />
+        <Text style={styles.sectionTitle}>Model Replay</Text>
+      </View>
+      <Text style={styles.replayIntro}>
+        Out-of-sample accuracy report. Each pick is evaluated against only the history available before it was made.
+      </Text>
+
+      {/* Sport filter pills */}
+      <View style={styles.replaySportRow}>
+        {SPORTS.map((s) => (
+          <TouchableOpacity
+            key={s || '_all'}
+            style={[styles.replaySportPill, sport === s && styles.replaySportPillActive]}
+            onPress={() => setSport(s)}
+          >
+            <Text style={[styles.replaySportPillText, sport === s && styles.replaySportPillTextActive]}>
+              {SPORT_LABELS[s]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Run button */}
+      <TouchableOpacity
+        style={[styles.replayBtn, running && styles.replayBtnDisabled]}
+        onPress={run}
+        disabled={running}
+      >
+        {running
+          ? <ActivityIndicator color="#000" size="small" />
+          : <Text style={styles.replayBtnText}>Run Replay</Text>}
+      </TouchableOpacity>
+
+      {error && (
+        <View style={styles.obsWarn}>
+          <Text style={styles.obsText}>❌ {error}</Text>
+        </View>
+      )}
+
+      {result && !result.walkForwardReplay && (
+        <Text style={styles.replayIntro}>{result.n === 0 ? 'No eligible settled picks found.' : 'No replay data returned.'}</Text>
+      )}
+
+      {result && wf && ds && (
+        <>
+          {/* Coverage row */}
+          <View style={styles.replayCoverageRow}>
+            <View style={styles.replayCoverageItem}>
+              <Text style={styles.replayCoverageNum}>{wf.eligibleSamples}</Text>
+              <Text style={styles.replayCoverageLabel}>ELIGIBLE</Text>
+            </View>
+            <View style={styles.replayCoverageItem}>
+              <Text style={styles.replayCoverageNum}>{wf.evaluatedSamples}</Text>
+              <Text style={styles.replayCoverageLabel}>EVALUATED</Text>
+            </View>
+            <View style={styles.replayCoverageItem}>
+              <Text style={[styles.replayCoverageNum, { color: wf.leakageViolations > 0 ? Colors.error : Colors.primary }]}>
+                {wf.leakageViolations}
+              </Text>
+              <Text style={styles.replayCoverageLabel}>LEAKAGE</Text>
+            </View>
+            <View style={styles.replayCoverageItem}>
+              <Text style={styles.replayCoverageNum}>{ds.duplicateRowsRemoved}</Text>
+              <Text style={styles.replayCoverageLabel}>DEDUPED</Text>
+            </View>
+          </View>
+
+          {/* Date range */}
+          <Text style={styles.replayDateRange}>
+            {wf.dateRange.from?.slice(0, 10) ?? '—'} → {wf.dateRange.to?.slice(0, 10) ?? '—'}
+          </Text>
+
+          {/* Observations */}
+          {result.observations.length > 0 && (
+            <View style={styles.obsContainer}>
+              {result.observations.map((obs, i) => (
+                <ObservationRow key={i} text={obs} />
+              ))}
+            </View>
+          )}
+
+          {/* Descriptive vs Walk-forward side by side */}
+          <Text style={styles.replaySubheading}>CLASSIFICATION METRICS</Text>
+          <ReplayMetricGrid
+            label="Descriptive (full corpus)"
+            ll={ds.classification.finalConfidence.logLoss}
+            bs={ds.classification.finalConfidence.brierScore}
+            mae={ds.projection.overall.mae}
+            rmse={ds.projection.overall.rmse}
+            n={ds.n}
+          />
+          <ReplayMetricGrid
+            label="Walk-forward (out-of-sample)"
+            ll={wf.classification.logLoss}
+            bs={wf.classification.brierScore}
+            mae={wf.projection.mae}
+            rmse={wf.projection.rmse}
+            n={wf.classification.n}
+          />
+
+          {/* Prospective calibration table */}
+          {wf.prospectiveCalibration.length > 0 && (
+            <>
+              <Text style={styles.replaySubheading}>PROSPECTIVE CALIBRATION BINS</Text>
+              <Text style={styles.replayBinNote}>
+                Prior predicted % uses only picks settled before each row. Final observed % is the overall bin hit rate.
+              </Text>
+              <View style={styles.calHeader}>
+                <Text style={[styles.calCell, { flex: 1.4 }]}>BAND</Text>
+                <Text style={styles.calCell}>N</Text>
+                <Text style={styles.calCell}>PRIOR%</Text>
+                <Text style={styles.calCell}>OBS%</Text>
+                <Text style={styles.calCell}>GAP</Text>
+                <Text style={styles.calCell}>FINAL%</Text>
+              </View>
+              {wf.prospectiveCalibration.map((bin) => (
+                <View key={bin.label} style={styles.calRow}>
+                  <Text style={[styles.calCell, { flex: 1.4, color: Colors.text }]}>{bin.label}</Text>
+                  <Text style={styles.calCell}>{bin.n}</Text>
+                  <Text style={styles.calCell}>{bin.priorPredictedPct != null ? `${bin.priorPredictedPct.toFixed(0)}%` : '—'}</Text>
+                  <Text style={styles.calCell}>{bin.observedPct != null ? `${bin.observedPct.toFixed(0)}%` : '—'}</Text>
+                  <Text style={[styles.calCell, { color: gapColor(bin.gapPp), fontWeight: '700' }]}>
+                    {bin.gapPp != null ? `${bin.gapPp >= 0 ? '+' : ''}${bin.gapPp.toFixed(1)}` : '—'}
+                  </Text>
+                  <Text style={styles.calCell}>{bin.finalObservedPct != null ? `${bin.finalObservedPct.toFixed(0)}%` : '—'}</Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {/* Per-sport breakdown */}
+          {wf.bySport.length > 0 && (
+            <>
+              <Text style={[styles.replaySubheading, { marginTop: 14 }]}>BY SPORT</Text>
+              <View style={styles.calHeader}>
+                <Text style={[styles.calCell, { flex: 1.5 }]}>SPORT</Text>
+                <Text style={styles.calCell}>N</Text>
+                <Text style={styles.calCell}>LOG LOSS</Text>
+                <Text style={styles.calCell}>BRIER</Text>
+                <Text style={styles.calCell}>MAE</Text>
+              </View>
+              {wf.bySport.map((s) => (
+                <View key={s.sport} style={styles.calRow}>
+                  <Text style={[styles.calCell, { flex: 1.5, color: Colors.text }]}>{s.sport.toUpperCase()}</Text>
+                  <Text style={styles.calCell}>{s.classification.n}</Text>
+                  <Text style={styles.calCell}>{s.classification.logLoss?.toFixed(3) ?? '—'}</Text>
+                  <Text style={styles.calCell}>{s.classification.brierScore?.toFixed(3) ?? '—'}</Text>
+                  <Text style={styles.calCell}>{s.projection.mae?.toFixed(2) ?? '—'}</Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {/* Per-prop regression */}
+          {wf.byProp.length > 0 && (
+            <>
+              <Text style={[styles.replaySubheading, { marginTop: 14 }]}>PROJECTION ERROR BY PROP</Text>
+              <View style={styles.calHeader}>
+                <Text style={[styles.calCell, { flex: 2 }]}>PROP</Text>
+                <Text style={styles.calCell}>N</Text>
+                <Text style={styles.calCell}>MAE</Text>
+                <Text style={styles.calCell}>RMSE</Text>
+                <Text style={styles.calCell}>BIAS</Text>
+              </View>
+              {wf.byProp.slice(0, 15).map((p) => (
+                <View key={`${p.sport}-${p.propType}`} style={styles.calRow}>
+                  <Text style={[styles.calCell, { flex: 2, color: Colors.text }]} numberOfLines={1}>
+                    {p.sport.toUpperCase()} · {PROP_LABELS[p.propType] || p.propType}
+                  </Text>
+                  <Text style={styles.calCell}>{p.n}</Text>
+                  <Text style={styles.calCell}>{p.mae?.toFixed(2) ?? '—'}</Text>
+                  <Text style={styles.calCell}>{p.rmse?.toFixed(2) ?? '—'}</Text>
+                  <Text style={[styles.calCell, { color: (p.meanError ?? 0) >= 0 ? Colors.primary : Colors.error }]}>
+                    {p.meanError != null ? `${p.meanError >= 0 ? '+' : ''}${p.meanError.toFixed(2)}` : '—'}
+                  </Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {/* Holdout from descriptive scorecard */}
+          {ds.chronologicalHoldout && (
+            <View style={[styles.holdoutBox, { marginTop: 14 }]}>
+              <Text style={styles.modelSubheading}>DESCRIPTIVE HOLDOUT (FINAL 20%)</Text>
+              <Text style={styles.holdoutText}>
+                n={ds.chronologicalHoldout.n} · {ds.chronologicalHoldout.dateRange.from?.slice(0, 10) ?? '—'} → {ds.chronologicalHoldout.dateRange.to?.slice(0, 10) ?? '—'}
+                {'\n'}Log loss {ds.chronologicalHoldout.classification?.logLoss?.toFixed(3) ?? '—'} · Brier {ds.chronologicalHoldout.classification?.brierScore?.toFixed(3) ?? '—'} · MAE {ds.chronologicalHoldout.projection?.mae?.toFixed(2) ?? '—'} · RMSE {ds.chronologicalHoldout.projection?.rmse?.toFixed(2) ?? '—'}
+              </Text>
+              <Text style={styles.modelFootnote}>
+                Descriptive time-split. Not a true out-of-sample test — use walk-forward metrics above for that.
+              </Text>
+            </View>
+          )}
+
+          <Text style={styles.replayFooter}>Generated {result.generatedAt?.slice(0, 19).replace('T', ' ') ?? ''} UTC</Text>
+        </>
+      )}
+    </View>
+  );
+}
+
 function BarRow({ item, maxTotal }: { item: AnalyticsBucket; maxTotal: number }) {
   const barWidth = maxTotal > 0 ? (item.total / maxTotal) * 100 : 0;
   const fillWidth = item.total > 0 ? (item.hits / item.total) * 100 : 0;
@@ -421,6 +707,8 @@ export default function AnalyticsTab() {
             />
 
             <ModelScorecardCard scorecard={data.scorecard} />
+
+            <ModelReplayCard email={session!.email} token={session!.token} />
 
             {/* Key insight callout */}
             <View style={styles.insightCard}>
@@ -961,5 +1249,175 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     marginTop: 8,
     textAlign: 'center',
+  },
+
+  // ── Model Replay Card ──────────────────────────────────────────────────────
+  replayCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  replayIntro: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: Colors.textTertiary,
+    marginBottom: 12,
+  },
+  replaySportRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  replaySportPill: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  replaySportPillActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  replaySportPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  replaySportPillTextActive: {
+    color: '#000',
+  },
+  replayBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  replayBtnDisabled: {
+    opacity: 0.6,
+  },
+  replayBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.3,
+  },
+  replayCoverageRow: {
+    flexDirection: 'row',
+    marginBottom: 6,
+    marginTop: 4,
+  },
+  replayCoverageItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  replayCoverageNum: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.5,
+  },
+  replayCoverageLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  replayDateRange: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  obsContainer: {
+    marginBottom: 14,
+    gap: 5,
+  },
+  obsRow: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+  },
+  obsOk: {
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderColor: 'rgba(57,255,20,0.2)',
+  },
+  obsWarn: {
+    backgroundColor: 'rgba(255,204,0,0.06)',
+    borderColor: 'rgba(255,204,0,0.2)',
+  },
+  obsText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: Colors.textSecondary,
+  },
+  replaySubheading: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    color: Colors.textTertiary,
+    marginBottom: 7,
+    marginTop: 4,
+  },
+  replayMetricBlock: {
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 10,
+    marginBottom: 8,
+  },
+  replayMetricBlockLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  replayMetricN: {
+    fontSize: 9,
+    color: Colors.textTertiary,
+    marginBottom: 8,
+  },
+  replayMetricRow: {
+    flexDirection: 'row',
+  },
+  replayMetricCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  replayMetricVal: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  replayMetricKey: {
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  replayBinNote: {
+    fontSize: 9,
+    lineHeight: 13,
+    color: Colors.textTertiary,
+    marginBottom: 7,
+  },
+  replayFooter: {
+    fontSize: 9,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginTop: 12,
   },
 });

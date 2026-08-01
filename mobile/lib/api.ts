@@ -2659,3 +2659,110 @@ export async function getTeamSeasonPossession(teamId: number, leagueId?: number,
   return apiCall(url);
 }
 
+export interface ReplayCalibrationBin {
+  label: string;
+  n: number;
+  prospectiveN: number;
+  priorPredictedPct: number | null;
+  observedPct: number | null;
+  gapPp: number | null;
+  finalObservedPct: number | null;
+  note?: string;
+}
+
+
+export interface WalkForwardReplay {
+  description: string;
+  eligibleSamples: number;
+  evaluatedSamples: number;
+  missingPriorDataEvents: number;
+  leakageViolations: number;
+  dateRange: { from: string | null; to: string | null };
+  classification: ReplayClassification;
+  prospectiveCalibration: ReplayCalibrationBin[];
+  projection: ReplayProjection;
+  bySport: ReplaySportEntry[];
+  byProp: ReplayPropEntry[];
+}
+
+export interface ReplayProjection {
+  n: number;
+  mae: number | null;
+  rmse: number | null;
+  meanError: number | null;
+}
+
+export async function runModelReplay(
+  email: string,
+  token: string,
+  sport: string = '',
+): Promise<ModelReplayResult> {
+  return apiCall('/api/admin/model-replay', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, sport }),
+  });
+}
+
+export interface ReplayClassification {
+  n: number;
+  logLoss: number | null;
+  brierScore: number | null;
+}
+
+export interface ReplayPropEntry {
+  sport: string;
+  propType: string;
+  n: number;
+  mae: number | null;
+  rmse: number | null;
+  meanError: number | null;
+}
+
+export interface ModelReplayResult {
+  success: boolean;
+  n: number;
+  sport: string;
+  generatedAt?: string;
+  observations: string[];
+  descriptiveScorecard: DescriptiveScorecardResult | null;
+  walkForwardReplay: WalkForwardReplay | null;
+}
+
+export interface DescriptiveScorecardResult {
+  description: string;
+  n: number;
+  rawN: number;
+  duplicateRowsRemoved: number;
+  resultCounts: Record<string, number>;
+  calibrationOnlyN: number;
+  dateRange: { from: string | null; to: string | null };
+  classification: {
+    finalConfidence: ReplayClassification;
+    rawConfidence: ReplayClassification;
+    calibration: Array<{
+      label: string;
+      n: number;
+      predictedPct: number;
+      observedPct: number;
+      gapPp: number;
+    }>;
+  };
+  projection: {
+    overall: ReplayProjection;
+    byProp: ReplayPropEntry[];
+    unitsNote: string;
+  };
+  chronologicalHoldout: {
+    description: string;
+    n: number;
+    dateRange: { from: string | null; to: string | null };
+    classification: ReplayClassification;
+    projection: ReplayProjection;
+  };
+}
+
+export interface ReplaySportEntry {
+  sport: string;
+  classification: ReplayClassification;
+  projection: ReplayProjection;
+}
