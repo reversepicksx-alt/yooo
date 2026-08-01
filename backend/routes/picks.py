@@ -451,6 +451,10 @@ async def save_pick(req: SavePickRequest):
         "gameScript": pick.get("gameScript") or {},
         "moneyline": pick.get("moneyline") or None,
         "oddsTier": pick.get("oddsTier") or pick.get("bayesianMetrics", {}).get("oddsTierPriors", {}).get("oddsTier") or None,
+        # Keep the exact factor snapshot used for this prediction on the pick
+        # so Analysis remains auditable after prediction-cache rotation.
+        "analysisFactors": pick.get("analysisFactors") or [],
+        "modelInputSnapshot": pick.get("modelInputSnapshot") or {},
     }
 
     # Persist the model's projected ball-possession split so we can compare
@@ -475,7 +479,8 @@ async def save_pick(req: SavePickRequest):
             if val:
                 doc[field] = val
         # Store tactical metrics so the analysis modal can show them
-        for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder"):
+        for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
+                      "analysisFactors", "modelInputSnapshot"):
             val = pick.get(field)
             if val is not None:
                 doc[field] = val
@@ -1714,6 +1719,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "playerGameLogs": 1, "tacticalAlerts": 1,
         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
+        "analysisFactors": 1, "modelInputSnapshot": 1,
         "_created": 1,
     }
 
@@ -1739,7 +1745,8 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
             if _ai_v.get("tacticalBreakdown") or _ai_v.get("sharpSummary") or _ai_v.get("reasoning"):
                 _merged = {**_ai_v}
                 for _mf in ("projectedValue", "bayesianMetrics", "gameScript", "moneyline",
-                            "tacticalAlerts", "pOver", "pUnder", "confidenceScore", "confidenceLevel"):
+                            "tacticalAlerts", "pOver", "pUnder", "confidenceScore", "confidenceLevel",
+                            "analysisFactors", "modelInputSnapshot"):
                     _mv = pick.get(_mf)
                     if _mv is not None and not _merged.get(_mf):
                         _merged[_mf] = _mv
@@ -1778,7 +1785,14 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val
-        if inline_analysis.get("reasoning") or inline_analysis.get("sharpSummary") or inline_analysis.get("tacticalBreakdown"):
+        # Factor snapshots are deterministic model output, not AI prose.
+        # Include them even when a legacy pick has no narrative fields.
+        for field in ("analysisFactors", "modelInputSnapshot"):
+            val = pick.get(field)
+            if val is not None:
+                inline_analysis[field] = val
+        if (inline_analysis.get("reasoning") or inline_analysis.get("sharpSummary")
+                or inline_analysis.get("tacticalBreakdown") or inline_analysis.get("analysisFactors")):
             return {"found": True, "analysis": inline_analysis}
         return {"found": False}
 

@@ -88,3 +88,4 @@
 - [Deep player H2H history](deep-player-h2h-history.md) — H2H must search multiple seasons and count only fixtures where the player logged minutes; team meetings alone are not player history.
 - [Atlas quota fail-open](atlas-quota-fail-open.md) — prediction computation must not fail solely because the analytics persistence write is blocked by Atlas storage quota.
 - [Thin opponent sample confidence](thin-opponent-sample-confidence.md) — one or two opponent meetings cannot justify very-high confidence; disclose thin evidence and cap conservatively.
+- [Auditable model factors](auditable-model-factors.md) — prediction explanations must snapshot final inputs at the pipeline boundary, persist with saved picks, and show unavailable data explicitly.

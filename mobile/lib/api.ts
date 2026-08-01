@@ -458,6 +458,8 @@ export interface PredictionResult {
     goalkeeperSaveSample?: number | null;
     opponentShotsOnTarget?: number | null;
   };
+  analysisFactors?: AnalysisFactor[];
+  modelInputSnapshot?: Record<string, unknown>;
   edgeRating?: 'SHARP EDGE' | 'EDGE' | 'MARGINAL' | 'NO EDGE';
   safetyRating?: 'SAFE' | 'MODERATE' | 'RISKY' | 'AVOID';
   propHistoricalRate?: number;
@@ -518,6 +520,8 @@ interface RawPrediction {
   tacticalBreakdown?: string;
   sharpSummary?: string;
   tacticalAlerts?: string[];
+  analysisFactors?: AnalysisFactor[];
+  modelInputSnapshot?: Record<string, unknown>;
   isWorldCup?: boolean;
   riskSignals?: PredictionResult['riskSignals'];
   congestion?: PredictionResult['congestion'];
@@ -630,6 +634,18 @@ interface RawPrediction {
   lineDeviationHitRate?: number;
   gameScript?: Record<string, unknown>;
   error?: string;
+}
+
+export interface AnalysisFactor {
+  id: string;
+  title: string;
+  status: 'applied' | 'measured' | 'warning' | 'unavailable' | string;
+  summary: string;
+  value?: unknown;
+  sampleSize?: number | null;
+  impact?: 'projection' | 'confidence' | 'context' | string;
+  direction?: 'up' | 'down' | 'neutral' | string;
+  detail?: string;
 }
 
 const GAME_LOG_FIELD_MAP: Record<string, string> = {
@@ -807,6 +823,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
+    analysisFactors: raw.analysisFactors ?? undefined,
+    modelInputSnapshot: raw.modelInputSnapshot ?? undefined,
     tacticalBreakdown: raw.tacticalBreakdown || undefined,
     keyFactors: Array.isArray((raw as any).keyFactors) ? ((raw as any).keyFactors as string[]) : undefined,
     qualitySignal: (raw as any).qualitySignal || undefined,
@@ -910,6 +928,8 @@ export interface Pick {
   tacticalBreakdown?: string;
   tacticalAlerts?: string[];
   gameScript?: Record<string, unknown>;
+  analysisFactors?: AnalysisFactor[];
+  modelInputSnapshot?: Record<string, unknown>;
   bayesianMetrics?: Record<string, unknown>;
   // Owner-only media fields (player photos + team crests from API-Football cache)
   ownerPlayerPhoto?: string;
@@ -978,6 +998,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     tacticalBreakdown: (p.tacticalBreakdown as string) || undefined,
     tacticalAlerts: (p.tacticalAlerts as string[]) || undefined,
     gameScript: (p.gameScript as Record<string, unknown>) || undefined,
+    analysisFactors: (p.analysisFactors as AnalysisFactor[]) || undefined,
+    modelInputSnapshot: (p.modelInputSnapshot as Record<string, unknown>) || undefined,
     bayesianMetrics: (p.bayesianMetrics as Record<string, unknown>) || undefined,
     // Owner-only media fields pass-through
     ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || undefined,

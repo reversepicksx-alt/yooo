@@ -1086,6 +1086,8 @@ export default function ScanScreen() {
         role: prediction.playerRole || undefined,
         sport: sport,
         gameScript: prediction.gameScript || undefined,
+        analysisFactors: prediction.analysisFactors || undefined,
+        modelInputSnapshot: prediction.modelInputSnapshot || undefined,
         moneyline: prediction.moneyline || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,

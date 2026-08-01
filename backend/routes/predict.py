@@ -8665,6 +8665,326 @@ Analyze ALL data thoroughly. Return JSON only."""
         except Exception as _wc_err:
             print(f"[WC CALIB] err: {_wc_err}")
 
+        # ── AUDITABLE MODEL FACTORS ─────────────────────────────────────────
+        # Keep the explanation attached to the exact prediction that produced
+        # the number.  This is deliberately built at the end of the pipeline,
+        # after Bayesian Truth, calibration, thin-sample guards, and the final
+        # matchup override have all run.  The mobile Analysis page renders all
+        # ten factors, including unavailable inputs, so "not enough data" is
+        # visible instead of being silently treated as neutral evidence.
+        try:
+            def _af_num(value):
+                try:
+                    return float(value) if value is not None and str(value).strip() != "" else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _af_avg(values):
+                nums = [_af_num(v) for v in values]
+                nums = [v for v in nums if v is not None]
+                return round(sum(nums) / len(nums), 2) if nums else None
+
+            def _af_factor(fid, title, status, summary, value=None, sample_size=None,
+                           impact="context", direction="neutral", detail=""):
+                return {
+                    "id": fid,
+                    "title": title,
+                    "status": status,
+                    "summary": summary,
+                    "value": value,
+                    "sampleSize": sample_size,
+                    "impact": impact,
+                    "direction": direction,
+                    "detail": detail,
+                }
+
+            _af_logs = [g for g in (player_game_logs or []) if isinstance(g, dict)]
+            _af_team_stats = [g for g in (team_fixture_stats or []) if isinstance(g, dict)]
+            _af_opp_stats = [g for g in (opponent_fixture_stats or []) if isinstance(g, dict)]
+            _af_h2h = [g for g in (h2h_player_stats or []) if isinstance(g, dict)]
+            _af_target_map = {
+                "pass_attempts": "passes_total", "passes": "passes_total",
+                "shots": "shots_total", "shots_on_target": "shots_on",
+                "tackles": "tackles_total", "key_passes": "passes_key",
+                "shots_assisted": "passes_key", "saves": "goals_saves",
+                "goalie_saves": "goals_saves", "interceptions": "tackles_interceptions",
+                "blocks": "tackles_blocks", "dribbles": "dribbles_attempts",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                "duels_won": "duels_won", "goals": "goals_total", "assists": "goals_assists",
+            }
+            _af_target = _af_target_map.get(req.propType, "passes_total")
+            _af_values = [_af_num(g.get(_af_target)) for g in _af_logs]
+            _af_values = [v for v in _af_values if v is not None]
+            _af_h2h_values = [_af_num(g.get("targetStat")) for g in _af_h2h]
+            _af_h2h_values = [v for v in _af_h2h_values if v is not None]
+
+            # Team pass-volume history.  This is separate from the player's
+            # own logs: a 65-pass player on a 500-pass team is a different
+            # opportunity profile from a 65-pass player on a 300-pass team.
+            _af_team_passes = [
+                _af_num(g.get("totalPasses")) for g in _af_team_stats
+                if _af_num(g.get("totalPasses")) is not None
+            ]
+            _af_team_pass_avg = _af_avg(_af_team_passes)
+            _af_pass_prop = req.propType in {"pass_attempts", "passes", "key_passes", "crosses"}
+
+            # Join player logs to team fixture totals by date to estimate the
+            # player's share of team passes when both sides expose the field.
+            _af_team_pass_by_date = {}
+            for g in _af_team_stats:
+                _d = str(g.get("date") or "")[:10]
+                _p = _af_num(g.get("totalPasses"))
+                if _d and _p and _p > 0:
+                    _af_team_pass_by_date[_d] = _p
+            _af_shares = []
+            for g in _af_logs:
+                _d = str(g.get("date") or "")[:10]
+                _p = _af_num(g.get("passes_total"))
+                _tp = _af_team_pass_by_date.get(_d)
+                if _p is not None and _tp and _tp > 0:
+                    _af_shares.append((_p / _tp) * 100)
+            _af_share_avg = _af_avg(_af_shares)
+
+            # Possession is represented as a range, not a falsely precise
+            # single point.  Use observed team possession volatility when
+            # available; otherwise expose a conservative uncertainty band.
+            _af_poss_obs = []
+            for g in _af_team_stats:
+                raw_poss = g.get("possession")
+                if isinstance(raw_poss, str):
+                    raw_poss = raw_poss.replace("%", "").strip()
+                val = _af_num(raw_poss)
+                if val is not None and 0 < val < 100:
+                    _af_poss_obs.append(val)
+            _af_expected_poss = _af_num((match_dominance or {}).get("expectedPoss"))
+            if _af_expected_poss is None:
+                _af_expected_poss = _af_num(
+                    ((prediction.get("matchupOverview") or {}).get("expectedPossession") or {}).get(
+                        "home" if prediction.get("isHome") else "away"
+                    )
+                )
+            _af_poss_std = None
+            if len(_af_poss_obs) >= 3:
+                try:
+                    _af_poss_std = float(stats_mod.stdev(_af_poss_obs))
+                except Exception:
+                    _af_poss_std = None
+            _af_range_width = max(4.0, min(12.0, (_af_poss_std or 6.0)))
+            _af_poss_range = (
+                [round(max(0, _af_expected_poss - _af_range_width), 1),
+                 round(min(100, _af_expected_poss + _af_range_width), 1)]
+                if _af_expected_poss is not None else None
+            )
+            _af_real_poss = bool((match_dominance or {}).get("hasRealPossData"))
+
+            _af_lineup = prediction.get("lineup")
+            _af_lineup_status = (_af_lineup or {}).get("status") if isinstance(_af_lineup, dict) else None
+            _af_role = (
+                (prediction.get("player") or {}).get("role")
+                or prediction.get("role")
+                or locals().get("player_role")
+                or ""
+            )
+            _af_position = (
+                (prediction.get("player") or {}).get("position")
+                or prediction.get("position")
+                or locals().get("player_position")
+                or ""
+            )
+
+            _af_game_situation = game_situation if isinstance(game_situation, dict) else {}
+            _af_game_script = prediction.get("gameScript") or {}
+            _af_event_warning = (
+                "Pre-match estimate only: an early goal, red card, or substitution can change the pace and role."
+            )
+            _af_comp = {
+                "leagueId": req.leagueId,
+                "league": (prediction.get("matchContext") or {}).get("league") or None,
+                "venue": prediction.get("venue") or req.venue,
+                "opponentTier": prediction.get("currentOppTier"),
+                "opponentRank": prediction.get("currentOppRank"),
+                "fixtureId": prediction.get("fixtureId") or (match_odds or {}).get("fixtureId"),
+            }
+            _af_missing = []
+            for _k, _v in {
+                "fixture": _af_comp.get("fixtureId"),
+                "possession": _af_expected_poss if _af_real_poss else None,
+                "playerHistory": len(_af_values),
+                "opponentHistory": len(_af_h2h_values),
+                "lineup": _af_lineup_status,
+                "teamPassVolume": _af_team_pass_avg if _af_pass_prop else True,
+            }.items():
+                if _v is None or _v == 0 or _v == "":
+                    _af_missing.append(_k)
+
+            _af_opponent_n = len(_af_h2h_values)
+            _af_comparable_n = int((position_comp_data or {}).get("sampleSize") or 0)
+            _af_history_status = "applied" if len(_af_values) >= 3 else ("warning" if _af_values else "unavailable")
+            _af_opp_status = "applied" if (_af_opponent_n >= 3 or _af_comparable_n >= 3) else (
+                "warning" if (_af_opponent_n or _af_comparable_n) else "unavailable"
+            )
+            _af_poss_status = "applied" if _af_real_poss and _af_expected_poss is not None else (
+                "warning" if _af_expected_poss is not None else "unavailable"
+            )
+            _af_team_pass_status = "applied" if _af_team_pass_avg is not None else (
+                "measured" if not _af_pass_prop else "unavailable"
+            )
+            _af_share_status = "applied" if _af_share_avg is not None else (
+                "warning" if _af_pass_prop else "measured"
+            )
+            _af_lineup_status_label = "applied" if _af_lineup_status in {"confirmed", "predicted"} else (
+                "warning" if _af_role or _af_position else "unavailable"
+            )
+            _af_script_status = "applied" if _af_game_script or _af_game_situation else "warning"
+            _af_comp_status = "applied" if _af_comp.get("fixtureId") and _af_comp.get("leagueId") else "warning"
+            _af_tactical_status = "applied" if _af_comparable_n >= 3 else (
+                "warning" if _af_comparable_n else "unavailable"
+            )
+
+            # Evidence-quality is intentionally descriptive.  It never boosts
+            # the model; it explains why confidence was capped or left alone.
+            _af_applied_count = sum(
+                1 for s in (
+                    _af_history_status, _af_opp_status, _af_poss_status,
+                    _af_team_pass_status, _af_share_status, _af_lineup_status_label,
+                    _af_script_status, _af_comp_status, _af_tactical_status,
+                ) if s == "applied"
+            )
+            _af_warning_count = sum(
+                1 for s in (
+                    _af_history_status, _af_opp_status, _af_poss_status,
+                    _af_team_pass_status, _af_share_status, _af_lineup_status_label,
+                    _af_script_status, _af_comp_status, _af_tactical_status,
+                ) if s == "warning"
+            )
+            _af_quality_score = round(min(100, max(20, 45 + _af_applied_count * 5 - _af_warning_count * 3)))
+            _af_quality_level = "high" if _af_quality_score >= 78 else ("medium" if _af_quality_score >= 58 else "low")
+            _af_conf = _af_num(prediction.get("confidenceScore")) or 50
+            _af_conf_cap = 72 if _af_opponent_n < 3 and _af_comparable_n < 3 else None
+            _af_evidence_detail = (
+                f"{_af_applied_count} of 9 evidence groups applied; "
+                f"{_af_warning_count} need caution. Displayed confidence is {_af_conf:.0f}%."
+            )
+            if _af_conf_cap:
+                _af_evidence_detail += " Opponent-specific evidence is thin, so confidence is capped conservatively."
+
+            prediction["analysisFactors"] = [
+                _af_factor(
+                    "historical_depth", "Multi-season player history", _af_history_status,
+                    f"{len(_af_values)} usable {_af_target.replace('_', ' ')} game logs",
+                    {"games": len(_af_values), "avg": _af_avg(_af_values), "seasonsSearched": H2H_HISTORY_SEASONS},
+                    len(_af_values), "projection", "neutral",
+                    "Logs are filtered for usable stat evidence and minutes before entering the prior."
+                ),
+                _af_factor(
+                    "opponent_history", "Opponent and comparable-player history", _af_opp_status,
+                    f"{_af_opponent_n} direct H2H games · {_af_comparable_n} comparable matchups",
+                    {"h2hAverage": _af_avg(_af_h2h_values), "h2hGames": _af_opponent_n, "comparableGames": _af_comparable_n},
+                    _af_opponent_n + _af_comparable_n, "projection", "neutral",
+                    "Direct H2H is weighted only when it has enough appearances; comparable position history is a fallback."
+                ),
+                _af_factor(
+                    "possession_range", "Possession range and upside", _af_poss_status,
+                    (f"Expected {_af_expected_poss:.1f}% possession; likely range "
+                     f"{_af_poss_range[0]:.1f}–{_af_poss_range[1]:.1f}%") if _af_poss_range else "No verified possession range",
+                    {"expected": _af_expected_poss, "range": _af_poss_range, "observations": len(_af_poss_obs),
+                     "realData": _af_real_poss, "multiplier": (match_dominance or {}).get("multiplier")},
+                    len(_af_poss_obs), "projection", "up" if (_af_expected_poss or 50) > 52 else ("down" if (_af_expected_poss or 50) < 48 else "neutral"),
+                    "The range exposes uncertainty around the point estimate; it is not a guarantee of possession."
+                ),
+                _af_factor(
+                    "team_pass_volume", "Team pass-volume environment", _af_team_pass_status,
+                    f"Team averaged {_af_team_pass_avg:.1f} passes per match" if _af_team_pass_avg is not None else (
+                        "Measured but not needed for this prop" if not _af_pass_prop else "Team pass totals unavailable"
+                    ),
+                    {"average": _af_team_pass_avg, "observations": len(_af_team_passes), "propSensitive": _af_pass_prop},
+                    len(_af_team_passes), "projection" if _af_pass_prop else "context", "up" if _af_pass_prop and (_af_team_pass_avg or 0) >= 450 else "neutral",
+                    "Team opportunity is separated from the player's own recent production."
+                ),
+                _af_factor(
+                    "player_share", "Player share of team passes", _af_share_status,
+                    f"Player averaged {_af_share_avg:.1f}% of team passes" if _af_share_avg is not None else (
+                        "Player share unavailable from matching fixture totals" if _af_pass_prop else "Measured only for passing props"
+                    ),
+                    {"averagePct": _af_share_avg, "gamesJoined": len(_af_shares)},
+                    len(_af_shares), "projection" if _af_pass_prop else "context", "up" if _af_share_avg is not None and _af_share_avg >= 8 else "neutral",
+                    "Share is joined by fixture date; it is unavailable when provider data lacks team totals for the same match."
+                ),
+                _af_factor(
+                    "availability_role", "Availability, lineup, and role", _af_lineup_status_label,
+                    f"{_af_lineup_status or 'Lineup unavailable'} · {_af_position or 'position unknown'}"
+                    f"{' · ' + _af_role if _af_role else ''}",
+                    {"lineupStatus": _af_lineup_status, "position": _af_position, "role": _af_role,
+                     "teamPlayers": len((((_af_lineup or {}).get("home") or {}).get("players") or [])) if isinstance(_af_lineup, dict) else 0},
+                    None, "projection", "neutral",
+                    "Confirmed or predicted lineup data can change expected minutes; role is kept separate from raw position."
+                ),
+                _af_factor(
+                    "game_state", "Game-state and event scenarios", _af_script_status,
+                    (_af_game_script.get("key_finding") or "Scenario model available; live match events are not known pre-match."),
+                    {"gameScript": _af_game_script or None, "situation": _af_game_situation or None,
+                     "earlyGoalProfile": locals().get("_fg_scenario_weights") or None,
+                     "liveEventsAvailable": False},
+                    None, "projection", "neutral", _af_event_warning
+                ),
+                _af_factor(
+                    "competition_context", "Competition, venue, and opponent strength", _af_comp_status,
+                    f"{_af_comp.get('league') or 'League ' + str(_af_comp.get('leagueId') or '?')} · "
+                    f"{_af_comp.get('venue') or 'venue unknown'} · "
+                    f"opponent {_af_comp.get('opponentTier') or 'tier unknown'}",
+                    _af_comp, None, "context", "neutral",
+                    "Fixture identity, venue, odds, and opponent tier are kept together to avoid mixing matches."
+                ),
+                _af_factor(
+                    "tactical_similarity", "Tactical and role similarity", _af_tactical_status,
+                    f"{_af_comparable_n} same-position opponent matchups" if _af_comparable_n else "No comparable tactical sample",
+                    {"sampleSize": _af_comparable_n, "position": _af_position,
+                     "role": _af_role, "formation": ((_af_lineup or {}).get("home") or {}).get("formation") if isinstance(_af_lineup, dict) else None},
+                    _af_comparable_n, "projection", "neutral",
+                    "Comparable history is weighted by position, venue, opponent, and available possession context."
+                ),
+                _af_factor(
+                    "evidence_quality", "Evidence quality and confidence controls", "applied" if _af_quality_level != "low" else "warning",
+                    f"{_af_quality_level.title()} evidence quality · {_af_conf:.0f}% displayed confidence",
+                    {"score": _af_quality_score, "level": _af_quality_level, "appliedGroups": _af_applied_count,
+                     "warningGroups": _af_warning_count, "confidence": _af_conf, "confidenceCap": _af_conf_cap,
+                     "missingInputs": _af_missing},
+                    _af_applied_count, "confidence", "down" if _af_conf_cap else "neutral", _af_evidence_detail
+                ),
+            ]
+            prediction["modelInputSnapshot"] = {
+                "capturedAt": datetime.now(timezone.utc).isoformat(),
+                "fixture": {
+                    "fixtureId": prediction.get("fixtureId") or (match_odds or {}).get("fixtureId"),
+                    "teamId": prediction.get("fixtureTeamId") or actual_team_id,
+                    "opponentId": prediction.get("fixtureOpponentId") or req.opponentId,
+                    "venue": prediction.get("venue") or req.venue,
+                    "leagueId": req.leagueId,
+                },
+                "request": {"playerId": req.playerId, "playerName": req.playerName,
+                            "propType": req.propType, "line": req.line},
+                "sampleCounts": {
+                    "playerLogs": len(_af_logs), "teamFixtures": len(_af_team_stats),
+                    "opponentFixtures": len(_af_opp_stats), "h2hPlayerGames": _af_opponent_n,
+                    "comparableGames": _af_comparable_n, "possessionObservations": len(_af_poss_obs),
+                    "teamPassObservations": len(_af_team_passes), "shareJoins": len(_af_shares),
+                },
+                "final": {
+                    "projectedValue": prediction.get("projectedValue"),
+                    "recommendation": prediction.get("recommendation"),
+                    "confidenceScore": prediction.get("confidenceScore"),
+                    "confidenceLevel": prediction.get("confidenceLevel"),
+                    "expectedPossession": _af_expected_poss,
+                    "lineupStatus": _af_lineup_status,
+                    "gameScript": _af_game_script or None,
+                },
+            }
+        except Exception as _af_err:
+            # A diagnostic explanation must never make a valid prediction fail.
+            print(f"[MODEL FACTORS] snapshot failed: {_af_err}")
+            prediction["analysisFactors"] = []
+
         prediction["_ts"] = datetime.now(timezone.utc)
         try:
             await db.predictions.insert_one(prediction)

@@ -31,7 +31,7 @@ import SocialFeed from '@/components/SocialFeed';
 import PlayerProfileCard from '@/components/PlayerProfileCard';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
-import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, autoPostPickToCommunity, Pick } from '@/lib/api';
+import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, autoPostPickToCommunity, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -235,6 +235,118 @@ function renderAnalysisBlocks(text: string, rec: string) {
   }
   return blocks;
 }
+
+function renderModelFactors(factors: AnalysisFactor[]) {
+  const statusColor: Record<string, string> = {
+    applied: Colors.primary,
+    measured: '#60A5FA',
+    warning: '#F59E0B',
+    unavailable: Colors.textTertiary,
+  };
+  const statusLabel: Record<string, string> = {
+    applied: 'APPLIED',
+    measured: 'MEASURED',
+    warning: 'CAUTION',
+    unavailable: 'UNAVAILABLE',
+  };
+  const formatValue = (factor: AnalysisFactor) => {
+    const value = factor.value as any;
+    if (!value || typeof value !== 'object') return null;
+    if (factor.id === 'possession_range' && Array.isArray(value.range)) {
+      return `${value.expected != null ? Number(value.expected).toFixed(1) : '—'}% expected · ${value.range[0]}–${value.range[1]}% range`;
+    }
+    if (factor.id === 'historical_depth') {
+      return `${value.avg != null ? Number(value.avg).toFixed(1) : '—'} avg · ${value.seasonsSearched ?? '—'} seasons searched`;
+    }
+    if (factor.id === 'opponent_history') {
+      return `${value.h2hAverage != null ? Number(value.h2hAverage).toFixed(1) : '—'} H2H avg · ${value.comparableGames ?? 0} comparable`;
+    }
+    if (factor.id === 'team_pass_volume') {
+      return value.average != null ? `${Number(value.average).toFixed(1)} team passes/game` : null;
+    }
+    if (factor.id === 'player_share') {
+      return value.averagePct != null ? `${Number(value.averagePct).toFixed(1)}% team-pass share` : null;
+    }
+    if (factor.id === 'evidence_quality') {
+      return `${value.score ?? '—'}/100 · ${value.appliedGroups ?? 0} applied groups`;
+    }
+    if (factor.id === 'availability_role') {
+      return [value.lineupStatus, value.position, value.role].filter(Boolean).join(' · ') || null;
+    }
+    if (factor.id === 'competition_context') {
+      return [value.leagueId ? `League ${value.leagueId}` : null, value.venue, value.opponentTier ? `${value.opponentTier} opponent` : null]
+        .filter(Boolean).join(' · ') || null;
+    }
+    if (factor.id === 'tactical_similarity') {
+      return value.sampleSize != null ? `${value.sampleSize} comparable games${value.position ? ` · ${value.position}` : ''}` : null;
+    }
+    return null;
+  };
+
+  return (
+    <View style={mStyles.factorSection}>
+      <View style={mStyles.factorSectionHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={mStyles.factorSectionTitle}>MODEL FACTORS</Text>
+          <Text style={mStyles.factorSectionSubtitle}>What the final projection had — and what it did not</Text>
+        </View>
+        <Ionicons name="flask-outline" size={16} color={Colors.primary} />
+      </View>
+      <View style={mStyles.factorGrid}>
+        {factors.map((factor) => {
+          const color = statusColor[factor.status] || Colors.textSecondary;
+          const valueText = formatValue(factor);
+          const impact = factor.impact === 'projection'
+            ? 'PROJECTION'
+            : factor.impact === 'confidence' ? 'CONFIDENCE' : 'CONTEXT';
+          return (
+            <View key={factor.id} style={[mStyles.factorCard, { borderLeftColor: color }]}>
+              <View style={mStyles.factorCardTop}>
+                <Text style={mStyles.factorTitle}>{factor.title}</Text>
+                <Text style={[mStyles.factorStatus, { color }]}>{statusLabel[factor.status] || factor.status.toUpperCase()}</Text>
+              </View>
+              <Text style={mStyles.factorSummary}>{factor.summary}</Text>
+              {valueText ? <Text style={mStyles.factorValue}>{valueText}</Text> : null}
+              <View style={mStyles.factorMeta}>
+                <Text style={mStyles.factorImpact}>{impact}</Text>
+                {factor.sampleSize != null ? <Text style={mStyles.factorSample}>n={factor.sampleSize}</Text> : null}
+                {factor.direction && factor.direction !== 'neutral' ? (
+                  <Ionicons
+                    name={factor.direction === 'up' ? 'arrow-up' : 'arrow-down'}
+                    size={11}
+                    color={factor.direction === 'up' ? Colors.success : Colors.error}
+                  />
+                ) : null}
+              </View>
+              {factor.detail ? <Text style={mStyles.factorDetail}>{factor.detail}</Text> : null}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+const LEGACY_MODEL_FACTORS: AnalysisFactor[] = [
+  ['historical_depth', 'Multi-season player history'],
+  ['opponent_history', 'Opponent and comparable-player history'],
+  ['possession_range', 'Possession range and upside'],
+  ['team_pass_volume', 'Team pass-volume environment'],
+  ['player_share', 'Player share of team passes'],
+  ['availability_role', 'Availability, lineup, and role'],
+  ['game_state', 'Game-state and event scenarios'],
+  ['competition_context', 'Competition, venue, and opponent strength'],
+  ['tactical_similarity', 'Tactical and role similarity'],
+  ['evidence_quality', 'Evidence quality and confidence controls'],
+].map(([id, title]) => ({
+  id,
+  title,
+  status: 'unavailable',
+  summary: 'Not captured when this saved pick was created.',
+  impact: id === 'evidence_quality' ? 'confidence' : 'context',
+  direction: 'neutral',
+  detail: 'This is a legacy pick. New predictions preserve the exact inputs and sample counts used by the model.',
+}));
 
 
 
@@ -470,6 +582,12 @@ export default function PicksScreen() {
   // Filter out stale placeholder text that was stored while AI was still pending
   const modalText = (_rawModalText && !_rawModalText.startsWith('AI analysis loading')) ? _rawModalText : undefined;
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
+  const capturedModalFactors = (
+    (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]
+  ).filter((factor) => factor && factor.id && factor.title);
+  const modalFactors = capturedModalFactors.length > 0
+    ? capturedModalFactors
+    : (!analysisModal?.loading ? LEGACY_MODEL_FACTORS : []);
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -903,6 +1021,8 @@ export default function PicksScreen() {
               );
             })()}
 
+            {modalFactors.length > 0 && renderModelFactors(modalFactors)}
+
             {/* ── PRE-MATCH INTEL section label (settled picks show it as secondary) ── */}
             {(() => {
               const pick = analysisModal?.pick as any;
@@ -1166,6 +1286,89 @@ const mStyles = StyleSheet.create({
   aiSection: { gap: 5 },
   aiSectionTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
   aiSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  factorSection: {
+    marginBottom: 18,
+    gap: 10,
+  },
+  factorSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingBottom: 2,
+  },
+  factorSectionTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: Colors.primary,
+    letterSpacing: 1.4,
+  },
+  factorSectionSubtitle: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 3,
+  },
+  factorGrid: {
+    gap: 8,
+  },
+  factorCard: {
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    borderLeftWidth: 3,
+    padding: 10,
+    gap: 5,
+  },
+  factorCardTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  factorTitle: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  factorStatus: {
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  factorSummary: {
+    fontSize: 11.5,
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  factorValue: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.text,
+    lineHeight: 16,
+  },
+  factorMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 1,
+  },
+  factorImpact: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: Colors.textTertiary,
+    letterSpacing: 0.8,
+  },
+  factorSample: {
+    fontSize: 9,
+    color: Colors.textTertiary,
+    fontWeight: '600',
+  },
+  factorDetail: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    lineHeight: 15,
+  },
   // ── Game Script Banner (analysis modal)
   gsBanner: {
     flexDirection: 'row',
