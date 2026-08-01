@@ -324,6 +324,14 @@ export interface PredictionResult {
   bayesianMetrics?: Record<string, unknown>;
   reasoning?: string;
   tacticalBreakdown?: string;
+  playerGameLogs?: {
+    games?: Record<string, unknown>[];
+    homeAvg?: number;
+    awayAvg?: number;
+    hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  };
+  /** Identifies whether the explanation contains a real Gemini narrative or math fallback text. */
+  aiSource?: 'gemini' | 'math' | string;
   blendNote?: string;
   aiProjection?: number;
   bayesianComponent?: number;
@@ -565,6 +573,7 @@ interface RawPrediction {
   playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   reasoning?: string;
   tacticalBreakdown?: string;
+  aiSource?: 'gemini' | 'math' | string;
   sharpSummary?: string;
   tacticalAlerts?: string[];
   analysisFactors?: AnalysisFactor[];
@@ -873,6 +882,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     analysisFactors: raw.analysisFactors ?? undefined,
     modelInputSnapshot: raw.modelInputSnapshot ?? undefined,
     tacticalBreakdown: raw.tacticalBreakdown || undefined,
+    aiSource: (raw as any).aiSource || undefined,
     keyFactors: Array.isArray((raw as any).keyFactors) ? ((raw as any).keyFactors as string[]) : undefined,
     qualitySignal: (raw as any).qualitySignal || undefined,
     currentOppTier: (raw as any).currentOppTier || undefined,
@@ -974,6 +984,13 @@ export interface Pick {
   sharpSummary?: string;
   reasoning?: string;
   tacticalBreakdown?: string;
+  playerGameLogs?: {
+    games?: Record<string, unknown>[];
+    homeAvg?: number;
+    awayAvg?: number;
+    hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  };
+  aiSource?: 'gemini' | 'math' | string;
   tacticalAlerts?: string[];
   gameScript?: Record<string, unknown>;
   analysisFactors?: AnalysisFactor[];
@@ -1044,6 +1061,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     sharpSummary: (p.sharpSummary as string) || undefined,
     reasoning: (p.reasoning as string) || undefined,
     tacticalBreakdown: (p.tacticalBreakdown as string) || undefined,
+    playerGameLogs: (p.playerGameLogs as Pick['playerGameLogs']) || undefined,
+    aiSource: (p.aiSource as string) || undefined,
     tacticalAlerts: (p.tacticalAlerts as string[]) || undefined,
     gameScript: (p.gameScript as Record<string, unknown>) || undefined,
     analysisFactors: (p.analysisFactors as AnalysisFactor[]) || undefined,

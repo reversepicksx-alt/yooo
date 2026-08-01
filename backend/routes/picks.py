@@ -450,6 +450,8 @@ async def save_pick(req: SavePickRequest):
         "settledAt": None,
         "gameScript": pick.get("gameScript") or {},
         "moneyline": pick.get("moneyline") or None,
+        "aiSource": pick.get("aiSource") or None,
+        "playerGameLogs": pick.get("playerGameLogs") or {},
         "oddsTier": pick.get("oddsTier") or pick.get("bayesianMetrics", {}).get("oddsTierPriors", {}).get("oddsTier") or None,
         # Keep the exact factor snapshot used for this prediction on the pick
         # so Analysis remains auditable after prediction-cache rotation.
@@ -474,7 +476,7 @@ async def save_pick(req: SavePickRequest):
     # Store AI analysis fields directly on sport picks (no separate predictions collection)
     # Soccer, CS2, and WTA all persist AI analysis on the pick for offline analysis modal access.
     if sport in ("cs2", "soccer", "wta"):
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts"):
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs"):
             val = pick.get(field)
             if val:
                 doc[field] = val
@@ -1716,7 +1718,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "confidenceLevel": 1, "confidenceInterval": 1,
         "player": 1, "opponent": 1, "propType": 1, "line": 1,
         "recentSamples": 1, "bayesianMetrics": 1,
-        "playerGameLogs": 1, "tacticalAlerts": 1,
+        "playerGameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
         "analysisFactors": 1, "modelInputSnapshot": 1,
@@ -1777,7 +1779,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     pick_sport = pick.get("sport", "soccer")
     if not prediction and pick_sport in ("cs2", "soccer", "wta"):
         inline_analysis = {}
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts",
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs",
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
                       "streakFlag", "propType", "line", "playerName", "opponentName",

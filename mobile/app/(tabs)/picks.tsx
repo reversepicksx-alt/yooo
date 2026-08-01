@@ -32,13 +32,6 @@ import PlayerProfileCard from '@/components/PlayerProfileCard';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
 import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, autoPostPickToCommunity, Pick, AnalysisFactor } from '@/lib/api';
-import {
-  renderEvidenceSummary,
-  renderOpponentDefProfile,
-  renderMatchupPossession,
-  renderH2HIntelligence,
-  renderManagerContext,
-} from '@/components/AnalysisCards';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -387,6 +380,81 @@ function renderEvidenceSummary(data: Record<string, unknown> | null) {
           <Text style={mStyles.evidenceCellLabel}>APPLIED</Text>
         </View>
       )}
+    </View>
+  );
+}
+
+function renderRecentGameData(data: Record<string, unknown> | null, pick: Pick | null) {
+  if (!data) return null;
+  const playerLogs = (data as any)?.playerGameLogs;
+  const games = Array.isArray(playerLogs?.games)
+    ? playerLogs.games
+    : Array.isArray((data as any)?.recentSamples)
+      ? (data as any).recentSamples
+      : [];
+  if (games.length === 0) return null;
+
+  const propLabel = PROP_LABELS[pick?.propType ?? ''] ?? (pick?.propType ?? 'STAT').replace(/_/g, ' ');
+  const line = Number(pick?.line);
+  const direction = String(pick?.recommendation ?? '').toUpperCase();
+  const getValue = (game: any) => {
+    const value = game?.targetStat ?? game?.value ?? game?.statValue ?? game?.stat;
+    return value == null || value === '' ? null : Number(value);
+  };
+  const isHit = (value: number | null) => {
+    if (value == null || !Number.isFinite(line) || !line) return null;
+    return direction === 'UNDER' ? value < line : value > line;
+  };
+
+  return (
+    <View style={mStyles.proCard}>
+      <View style={mStyles.proCardHeader}>
+        <View style={[mStyles.proCardPill, { backgroundColor: Colors.primary + '18' }]}>
+          <Text style={[mStyles.proCardPillText, { color: Colors.primary }]}>RECENT GAMES</Text>
+        </View>
+        <Text style={mStyles.proCardTitle}>
+          {games.length} {propLabel.toLowerCase()} observations
+        </Text>
+      </View>
+      <View style={{ marginTop: 8 }}>
+        {games.slice(0, 8).map((game: any, index: number) => {
+          const value = getValue(game);
+          const hit = isHit(value);
+          const valueColor = hit == null
+            ? Colors.text
+            : hit ? Colors.success : Colors.error;
+          const date = String(game?.date ?? game?.gameDate ?? '').slice(0, 10) || '—';
+          const opponent = String(game?.opponent ?? game?.opponentName ?? 'Unknown opponent');
+          const venue = String(game?.venue ?? '').toUpperCase();
+          const minutes = game?.minutes ?? game?.minutesPlayed;
+          return (
+            <View
+              key={`${date}-${opponent}-${index}`}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: 8,
+                borderTopWidth: index === 0 ? 0 : 1,
+                borderTopColor: Colors.borderSubtle,
+              }}
+            >
+              <Text style={{ width: 76, fontSize: 10, color: Colors.textTertiary }}>{date}</Text>
+              <Text style={{ flex: 1, fontSize: 11, color: Colors.textSecondary }} numberOfLines={1}>
+                {venue ? `${venue} · ` : ''}{opponent}
+              </Text>
+              <Text style={{ width: 48, textAlign: 'right', fontSize: 10, color: Colors.textTertiary }}>
+                {minutes != null ? `${minutes}m` : '—'}
+              </Text>
+              <Text style={{ width: 48, textAlign: 'right', fontSize: 14, fontWeight: '800', color: valueColor }}>
+                {value != null && Number.isFinite(value) ? value : '—'}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+      <Text style={mStyles.proCardNote}>
+        {propLabel} values from the player’s recent completed games. Green/red indicates the saved pick direction against the line.
+      </Text>
     </View>
   );
 }
@@ -910,9 +978,10 @@ export default function PicksScreen() {
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
-  const _rawModalText = (analysisModal?.data?.reasoning ?? analysisModal?.pick?.reasoning ?? analysisModal?.data?.tacticalBreakdown ?? analysisModal?.pick?.tacticalBreakdown ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary ?? analysisModal?.pick?.sharpSummary) as string | undefined;
+  const _rawModalText = (analysisModal?.data?.tacticalBreakdown ?? analysisModal?.pick?.tacticalBreakdown ?? analysisModal?.data?.reasoning ?? analysisModal?.pick?.reasoning ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary ?? analysisModal?.pick?.sharpSummary) as string | undefined;
   // Filter out stale placeholder text that was stored while AI was still pending
   const modalText = (_rawModalText && !_rawModalText.startsWith('AI analysis loading')) ? _rawModalText : undefined;
+  const modalAiSource = String(analysisModal?.data?.aiSource ?? analysisModal?.pick?.aiSource ?? '').toLowerCase();
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
   const capturedModalFactors = (
     (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]
@@ -1348,6 +1417,12 @@ export default function PicksScreen() {
             {/* ── EVIDENCE SUMMARY ── */}
             {!analysisModal?.loading && renderEvidenceSummary(analysisModal?.data as Record<string, unknown> | null)}
 
+            {/* ── RECENT GAME DATA ── */}
+            {!analysisModal?.loading && renderRecentGameData(
+              analysisModal?.data as Record<string, unknown> | null,
+              analysisModal?.pick ?? null,
+            )}
+
             {/* ── OPPONENT DEFENSIVE PROFILE ── */}
             {!analysisModal?.loading && renderOpponentDefProfile(
               analysisModal?.data as Record<string, unknown> | null,
@@ -1385,6 +1460,16 @@ export default function PicksScreen() {
                     </View>
                   )}
                   <View style={mStyles.aiBlocks}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                      <Ionicons
+                        name={modalAiSource === 'gemini' ? 'sparkles-outline' : 'calculator-outline'}
+                        size={13}
+                        color={modalAiSource === 'gemini' ? Colors.primary : Colors.textTertiary}
+                      />
+                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 1.1, color: modalAiSource === 'gemini' ? Colors.primary : Colors.textTertiary }}>
+                        {modalAiSource === 'gemini' ? 'GEMINI · FULL TACTICAL ANALYSIS' : 'FULL MODEL EXPLANATION'}
+                      </Text>
+                    </View>
                     {renderAnalysisBlocks(modalText, modalRec)}
                   </View>
                 </View>

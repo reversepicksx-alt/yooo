@@ -7741,6 +7741,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                                       "keyEvidence", "sensitivityTests", "subRisk",
                                       "gameFlowDynamics", "uncertaintyNote"):
                         prediction[_narr_key] = ""
+                    prediction["aiSource"] = "math"
                     prediction["tacticalAlerts"] = []
                     try:
                         if _soc_ck:
@@ -8659,6 +8660,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         if _ai_td and len(_ai_td.strip()) > 100:
             # ── AI produced a real narrative — keep it, append math footer ──
             prediction["tacticalBreakdown"] = _ai_td.strip() + "\n\n---\n" + _m_math + "\n" + _m_tldr
+            prediction["aiSource"] = "gemini"
             # Keep AI's sharpSummary if it's non-empty and substantive
             if not (_ai_ss and len(_ai_ss.strip()) > 20):
                 prediction["sharpSummary"] = _m_sharp_summary
@@ -8667,6 +8669,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             # ── AI failed or returned empty — fall back to pure-math breakdown ──
             prediction["tacticalBreakdown"] = _m_full_block
             prediction["sharpSummary"] = _m_sharp_summary
+            prediction["aiSource"] = "math"
             print(f"[PURE MATH] AI summary absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
 
         # ── Game Script — attach computed scenario probabilities + script analysis
