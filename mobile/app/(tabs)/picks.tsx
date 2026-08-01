@@ -327,6 +327,232 @@ function renderModelFactors(factors: AnalysisFactor[]) {
   );
 }
 
+function renderEvidenceSummary(data: Record<string, unknown> | null) {
+  if (!data) return null;
+  const snapshot = (data as any)?.modelInputSnapshot?.sampleCounts ?? {};
+  const factors: AnalysisFactor[] = (data as any)?.analysisFactors ?? [];
+  const h2h = (data as any)?.h2hPlayerStats ?? {};
+  const evFactor = factors.find((f) => f.id === 'evidence_quality');
+  const level = (evFactor?.value as any)?.level ?? 'unknown';
+  const score = (evFactor?.value as any)?.score;
+  const applied = (evFactor?.value as any)?.appliedGroups ?? 0;
+  const levelColor = level === 'high' ? Colors.success : level === 'medium' ? '#F59E0B' : Colors.textSecondary;
+  const playerLogs = snapshot.playerLogs ?? 0;
+  const opp = (snapshot.h2hPlayerGames ?? 0) + (snapshot.comparableGames ?? 0);
+  const possObs = snapshot.possessionObservations ?? 0;
+  const h2hApps = h2h.sampleSize ?? 0;
+  if (playerLogs === 0 && opp === 0 && possObs === 0 && score == null) return null;
+  return (
+    <View style={mStyles.evidenceRow}>
+      {score != null && (
+        <View style={[mStyles.evidenceCell, { borderColor: levelColor + '66' }]}>
+          <Text style={[mStyles.evidenceCellValue, { color: levelColor }]}>{score}</Text>
+          <Text style={mStyles.evidenceCellLabel}>EV SCORE</Text>
+        </View>
+      )}
+      {playerLogs > 0 && (
+        <View style={mStyles.evidenceCell}>
+          <Text style={mStyles.evidenceCellValue}>{playerLogs}</Text>
+          <Text style={mStyles.evidenceCellLabel}>GAME LOGS</Text>
+        </View>
+      )}
+      {h2hApps > 0 && (
+        <View style={mStyles.evidenceCell}>
+          <Text style={mStyles.evidenceCellValue}>{h2hApps}</Text>
+          <Text style={mStyles.evidenceCellLabel}>H2H APPS</Text>
+        </View>
+      )}
+      {opp > 0 && (
+        <View style={mStyles.evidenceCell}>
+          <Text style={mStyles.evidenceCellValue}>{opp}</Text>
+          <Text style={mStyles.evidenceCellLabel}>COMP GAMES</Text>
+        </View>
+      )}
+      {possObs > 0 && (
+        <View style={mStyles.evidenceCell}>
+          <Text style={mStyles.evidenceCellValue}>{possObs}</Text>
+          <Text style={mStyles.evidenceCellLabel}>POSS OBS</Text>
+        </View>
+      )}
+      {applied > 0 && (
+        <View style={mStyles.evidenceCell}>
+          <Text style={[mStyles.evidenceCellValue, { color: Colors.primary }]}>{applied}/9</Text>
+          <Text style={mStyles.evidenceCellLabel}>APPLIED</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function renderOpponentDefProfile(data: Record<string, unknown> | null, pick: any) {
+  if (!data) return null;
+  const prof = (data as any)?.opponentDefensiveProfile;
+  if (!prof || prof.sampleSize < 2) return null;
+  const delta = prof.vsPlayerSeasonAvg as number | null;
+  const favorable = prof.isFavorable as boolean | null;
+  const accentColor = favorable == null ? Colors.textSecondary : favorable ? Colors.success : Colors.error;
+  const arrow = delta == null ? '–' : delta > 0 ? `+${delta.toFixed(1)}%` : `${delta.toFixed(1)}%`;
+  const prop = PROP_LABELS[prof.propType ?? ''] ?? (prof.propType ?? '').replace(/_/g, ' ');
+  return (
+    <View style={mStyles.proCard}>
+      <View style={mStyles.proCardHeader}>
+        <View style={[mStyles.proCardPill, { backgroundColor: accentColor + '18' }]}>
+          <Text style={[mStyles.proCardPillText, { color: accentColor }]}>OPP PROFILE</Text>
+        </View>
+        <Text style={mStyles.proCardTitle} numberOfLines={1}>{prof.opponent}</Text>
+      </View>
+      <View style={mStyles.proCardMetrics}>
+        <View style={mStyles.proCardMetric}>
+          <Text style={[mStyles.proCardMetricValue, { color: accentColor }]}>{Number(prof.avgAllowed).toFixed(1)}</Text>
+          <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} ALLOWED</Text>
+        </View>
+        {prof.playerSeasonAvg != null && (
+          <View style={mStyles.proCardMetric}>
+            <Text style={mStyles.proCardMetricValue}>{Number(prof.playerSeasonAvg).toFixed(1)}</Text>
+            <Text style={mStyles.proCardMetricLabel}>PLAYER AVG</Text>
+          </View>
+        )}
+        <View style={mStyles.proCardMetric}>
+          <Text style={[mStyles.proCardMetricValue, { color: accentColor }]}>{arrow}</Text>
+          <Text style={mStyles.proCardMetricLabel}>VS SEASON</Text>
+        </View>
+        <View style={mStyles.proCardMetric}>
+          <Text style={mStyles.proCardMetricValue}>{prof.sampleSize}</Text>
+          <Text style={mStyles.proCardMetricLabel}>FIXTURES</Text>
+        </View>
+      </View>
+      <Text style={mStyles.proCardNote}>
+        {prof.position ? `${prof.position} · ` : ''}
+        {favorable == null
+          ? 'Insufficient data to classify.'
+          : favorable
+          ? `Favourable — ${prof.opponent} concedes above-average ${prop} to this position.`
+          : `Unfavourable — ${prof.opponent} allows below-average ${prop} here.`}
+      </Text>
+    </View>
+  );
+}
+
+function renderMatchupPossession(data: Record<string, unknown> | null, pick: any) {
+  if (!data) return null;
+  const mo = (data as any)?.matchupOverview;
+  const ep = (data as any)?.expectedPossession;
+  const gt = (data as any)?.expectedGameType ?? mo?.expectedGameType;
+  const kmf = (data as any)?.keyMatchupFactor ?? mo?.keyMatchupFactor;
+  const ss = (data as any)?.sharpSummary;
+  const isHome = pick?.venue !== 'away';
+  const teamPoss: number | null = ep ? (isHome ? ep.home : ep.away) : null;
+  const oppPoss: number | null = ep ? (isHome ? ep.away : ep.home) : null;
+  const hasPoss = teamPoss != null;
+  if (!hasPoss && !gt && !kmf && !ss) return null;
+  const possColor = teamPoss != null && oppPoss != null
+    ? teamPoss > oppPoss + 5 ? Colors.success : teamPoss < oppPoss - 5 ? '#F59E0B' : Colors.textSecondary
+    : Colors.textSecondary;
+  return (
+    <View style={mStyles.proCard}>
+      <View style={mStyles.proCardHeader}>
+        <View style={[mStyles.proCardPill, { backgroundColor: '#60A5FA18' }]}>
+          <Text style={[mStyles.proCardPillText, { color: '#60A5FA' }]}>MATCHUP</Text>
+        </View>
+        {gt ? <Text style={mStyles.proCardTitle} numberOfLines={1}>{(gt as string).replace(/_/g, ' ').toUpperCase()}</Text> : null}
+      </View>
+      {hasPoss && teamPoss != null && oppPoss != null && (
+        <View style={mStyles.possRow}>
+          <View style={mStyles.possTeam}>
+            <Text style={[mStyles.possValue, { color: possColor }]}>{Number(teamPoss).toFixed(0)}%</Text>
+            <Text style={mStyles.possLabel} numberOfLines={1}>{(pick?.teamName ?? 'HOME').split(' ').pop()?.toUpperCase()}</Text>
+          </View>
+          <View style={mStyles.possBar}>
+            <View style={[mStyles.possBarFill, { width: `${teamPoss}%` as any, backgroundColor: possColor }]} />
+          </View>
+          <View style={mStyles.possTeam}>
+            <Text style={mStyles.possValue}>{Number(oppPoss).toFixed(0)}%</Text>
+            <Text style={mStyles.possLabel} numberOfLines={1}>{(pick?.opponentName ?? 'AWAY').split(' ').pop()?.toUpperCase()}</Text>
+          </View>
+        </View>
+      )}
+      {kmf ? <Text style={mStyles.proCardNote}>{kmf}</Text> : null}
+      {ss ? <Text style={[mStyles.proCardNote, { color: Colors.textSecondary, marginTop: 4 }]}>{ss}</Text> : null}
+    </View>
+  );
+}
+
+function renderH2HIntelligence(data: Record<string, unknown> | null, pick: any) {
+  if (!data) return null;
+  const h2h = (data as any)?.h2hPlayerStats;
+  if (!h2h || !h2h.sampleSize) return null;
+  const matches: any[] = h2h.matches ?? [];
+  const avg: number | undefined = h2h.avgVsOpponent;
+  const trend: string | undefined = h2h.trendDirection;
+  const trendColor = trend === 'improving' ? Colors.success : trend === 'declining' ? Colors.error : Colors.textSecondary;
+  const trendIcon: any = trend === 'improving' ? 'trending-up' : trend === 'declining' ? 'trending-down' : 'remove';
+  const vhr = h2h.venueHitRate;
+  const prop = PROP_LABELS[h2h.targetProp ?? ''] ?? (h2h.targetProp ?? '').replace(/_/g, ' ');
+  return (
+    <View style={mStyles.proCard}>
+      <View style={mStyles.proCardHeader}>
+        <View style={[mStyles.proCardPill, { backgroundColor: Colors.primary + '18' }]}>
+          <Text style={[mStyles.proCardPillText, { color: Colors.primary }]}>H2H</Text>
+        </View>
+        <Text style={mStyles.proCardTitle} numberOfLines={1}>
+          {h2h.sampleSize} app{h2h.sampleSize !== 1 ? 's' : ''} vs {pick?.opponentName}
+          {h2h.seasonsCovered ? ` · ${h2h.seasonsCovered.range}` : ''}
+        </Text>
+      </View>
+      <View style={mStyles.proCardMetrics}>
+        {avg != null && (
+          <View style={mStyles.proCardMetric}>
+            <Text style={mStyles.proCardMetricValue}>{Number(avg).toFixed(1)}</Text>
+            <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} AVG</Text>
+          </View>
+        )}
+        {h2h.teamMeetings != null && h2h.teamMeetings > 0 && (
+          <View style={mStyles.proCardMetric}>
+            <Text style={mStyles.proCardMetricValue}>{h2h.teamMeetings}</Text>
+            <Text style={mStyles.proCardMetricLabel}>TEAM MEETS</Text>
+          </View>
+        )}
+        {trend && trend !== 'stable' && (
+          <View style={mStyles.proCardMetric}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, justifyContent: 'center' }}>
+              <Ionicons name={trendIcon} size={13} color={trendColor} />
+              <Text style={[mStyles.proCardMetricValue, { color: trendColor, fontSize: 12 }]}>{trend.toUpperCase()}</Text>
+            </View>
+            <Text style={mStyles.proCardMetricLabel}>TREND</Text>
+          </View>
+        )}
+        {vhr && vhr.total >= 2 && (
+          <View style={mStyles.proCardMetric}>
+            <Text style={[mStyles.proCardMetricValue, { color: vhr.pct >= 60 ? Colors.success : vhr.pct <= 40 ? Colors.error : Colors.textSecondary }]}>
+              {vhr.pct}%
+            </Text>
+            <Text style={mStyles.proCardMetricLabel}>{(vhr.venue as string).toUpperCase()} HIT</Text>
+          </View>
+        )}
+      </View>
+      {matches.length > 0 && (
+        <View style={mStyles.h2hTable}>
+          {matches.slice(0, 5).map((m: any, i: number) => {
+            const hitLine = m.targetStat != null && pick?.line != null && m.targetStat > pick.line;
+            const statColor = hitLine ? Colors.success : m.targetStat != null ? Colors.error : Colors.textTertiary;
+            return (
+              <View key={i} style={mStyles.h2hRow}>
+                <Text style={mStyles.h2hDate}>{(m.date ?? '').slice(0, 10)}</Text>
+                <Text style={mStyles.h2hVenue}>{(m.venue ?? '?').slice(0, 1).toUpperCase()}</Text>
+                <Text style={mStyles.h2hOpp} numberOfLines={1}>{m.opponent ?? '?'}</Text>
+                {m.teamPossession != null && <Text style={mStyles.h2hPoss}>{m.teamPossession}%</Text>}
+                <Text style={[mStyles.h2hStat, { color: statColor }]}>
+                  {m.targetStat != null ? m.targetStat : '—'}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
 const LEGACY_MODEL_FACTORS: AnalysisFactor[] = [
   ['historical_depth', 'Multi-season player history'],
   ['opponent_history', 'Opponent and comparable-player history'],
@@ -970,129 +1196,138 @@ export default function PicksScreen() {
           {/* Body */}
           <ScrollView style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
 
-            {/* ── POST-MATCH BREAKDOWN (settled picks only, shown FIRST and PROMINENT) ── */}
+            {/* ── Loading state ── */}
+            {analysisModal?.loading && (
+              <View style={mStyles.modalLoading}>
+                <ActivityIndicator color={Colors.primary} />
+                <Text style={mStyles.modalLoadingText}>Loading analysis…</Text>
+              </View>
+            )}
+
+            {/* ── POST-MATCH BREAKDOWN (settled only, shown FIRST) ── */}
             {(() => {
               const pick = analysisModal?.pick as any;
               const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
               if (!isSettled) return null;
               const review = pick?.matchReview as string | undefined;
-              const res = (pick?.result || '').toLowerCase();
-              const isHit = res === 'hit';
+              const isHit = (pick?.result || '').toLowerCase() === 'hit';
               const accent = isHit ? Colors.primary : '#FF6B35';
-              const bgColor = isHit ? 'rgba(57,255,20,0.05)' : 'rgba(255,107,53,0.05)';
               return (
                 <View style={{
-                  borderWidth: 1, borderColor: accent + '55',
-                  borderLeftWidth: 4, borderLeftColor: accent,
-                  backgroundColor: bgColor, borderRadius: 10,
-                  paddingVertical: 14, paddingHorizontal: 14, marginBottom: 18,
+                  borderWidth: 1, borderColor: accent + '55', borderLeftWidth: 4, borderLeftColor: accent,
+                  backgroundColor: isHit ? 'rgba(57,255,20,0.05)' : 'rgba(255,107,53,0.05)',
+                  borderRadius: 10, paddingVertical: 14, paddingHorizontal: 14, marginBottom: 16,
                 }}>
-                  {/* Header row */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                    <Ionicons
-                      name={isHit ? 'checkmark-circle' : 'close-circle'}
-                      size={16} color={accent}
-                    />
+                    <Ionicons name={isHit ? 'checkmark-circle' : 'close-circle'} size={16} color={accent} />
                     <Text style={{ fontSize: 11, fontWeight: '800', color: accent, letterSpacing: 1.4 }}>
                       {isHit ? 'VERDICT: HIT' : 'VERDICT: MISS'}
                     </Text>
-                    <View style={{
-                      marginLeft: 'auto', backgroundColor: accent + '22',
-                      borderRadius: 4, paddingHorizontal: 7, paddingVertical: 2,
-                    }}>
-                      <Text style={{ fontSize: 9, fontWeight: '700', color: accent, letterSpacing: 0.8 }}>
-                        POST-MATCH AI
-                      </Text>
+                    <View style={{ marginLeft: 'auto', backgroundColor: accent + '22', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: accent, letterSpacing: 0.8 }}>POST-MATCH AI</Text>
                     </View>
                   </View>
                   {review ? (
-                    <Text style={{ fontSize: 14, color: Colors.text, lineHeight: 22, letterSpacing: 0.1 }}>
-                      {review}
-                    </Text>
+                    <Text style={{ fontSize: 14, color: Colors.text, lineHeight: 22 }}>{review}</Text>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <ActivityIndicator size="small" color={accent} />
-                      <Text style={{ fontSize: 13, color: Colors.textSecondary }}>
-                        Generating match breakdown…
-                      </Text>
+                      <Text style={{ fontSize: 13, color: Colors.textSecondary }}>Generating match breakdown…</Text>
                     </View>
                   )}
                 </View>
               );
             })()}
 
-            {modalFactors.length > 0 && renderModelFactors(modalFactors)}
+            {/* ── EVIDENCE SUMMARY ── */}
+            {!analysisModal?.loading && renderEvidenceSummary(analysisModal?.data as Record<string, unknown> | null)}
 
-            {/* ── PRE-MATCH INTEL section label (settled picks show it as secondary) ── */}
-            {(() => {
+            {/* ── OPPONENT DEFENSIVE PROFILE ── */}
+            {!analysisModal?.loading && renderOpponentDefProfile(
+              analysisModal?.data as Record<string, unknown> | null,
+              analysisModal?.pick,
+            )}
+
+            {/* ── MATCHUP & POSSESSION ── */}
+            {!analysisModal?.loading && renderMatchupPossession(
+              analysisModal?.data as Record<string, unknown> | null,
+              analysisModal?.pick,
+            )}
+
+            {/* ── H2H INTELLIGENCE ── */}
+            {!analysisModal?.loading && renderH2HIntelligence(
+              analysisModal?.data as Record<string, unknown> | null,
+              analysisModal?.pick,
+            )}
+
+            {/* ── AI TACTICAL BREAKDOWN ── */}
+            {!analysisModal?.loading && modalText && (() => {
               const pick = analysisModal?.pick as any;
               const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
-              if (!isSettled || !modalText) return null;
               return (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
-                  <Text style={{ fontSize: 9, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.2 }}>
-                    PRE-MATCH INTEL
-                  </Text>
-                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
+                <View>
+                  {isSettled && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.2 }}>PRE-MATCH INTEL</Text>
+                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
+                    </View>
+                  )}
+                  <View style={mStyles.aiBlocks}>
+                    {renderAnalysisBlocks(modalText, modalRec)}
+                  </View>
                 </View>
               );
             })()}
 
-            {/* ── Analysis body (pre-match) ── */}
-            {analysisModal?.loading ? (
-              <View style={mStyles.modalLoading}>
-                <ActivityIndicator color={Colors.primary} />
-                <Text style={mStyles.modalLoadingText}>Loading analysis…</Text>
-              </View>
-            ) : !modalText ? (
-              (() => {
-                const pick = analysisModal?.pick as any;
-                const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
-                if (isSettled) return null;
-                return (
-                  <View style={mStyles.modalLoading}>
-                    <Ionicons name="analytics-outline" size={32} color={Colors.textTertiary} />
-                    <Text style={mStyles.modalLoadingText}>No analysis found for this pick yet.</Text>
-                  </View>
-                );
-              })()
-            ) : (
-              <View style={mStyles.aiBlocks}>
-                {renderAnalysisBlocks(modalText, modalRec)}
-
-                {/* ── SIGNAL ALERTS — full-width readable cards, NOT cut-off pills ── */}
-                {modalAlerts.length > 0 && (
-                  <View style={{ gap: 8, marginTop: 4 }}>
-                    {modalAlerts.slice(0, 5).map((alert, i) => {
-                      const lower = alert.toLowerCase();
-                      const isLineDeviation = lower.includes('line deviation') || lower.includes('edgegap') || lower.includes('deviation');
-                      const isRisk = lower.includes('risk') || lower.includes('dismissal') || lower.includes('invalid') || lower.includes('flip') || lower.includes('void') || lower.includes('red card');
-                      const isBoost = lower.includes('boost') || lower.includes('infl') || lower.includes('rise') || lower.includes('high');
-                      const alertColor = isRisk ? '#FF6B35' : isLineDeviation ? '#60A5FA' : isBoost ? Colors.primary : '#60A5FA';
-                      const iconName: any = isRisk ? 'warning' : isLineDeviation ? 'stats-chart' : isBoost ? 'trending-up' : 'information-circle';
-                      const label = isLineDeviation ? 'LINE INTEL' : isRisk ? 'RISK SIGNAL' : 'SIGNAL';
-                      return (
-                        <View key={i} style={{
-                          backgroundColor: alertColor + '0D',
-                          borderRadius: 8, padding: 10,
-                          borderWidth: 1, borderColor: alertColor + '33',
-                          borderLeftWidth: 3, borderLeftColor: alertColor,
-                        }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-                            <Ionicons name={iconName} size={11} color={alertColor} />
-                            <Text style={{ fontSize: 9, fontWeight: '800', color: alertColor, letterSpacing: 1.1 }}>
-                              {label}
-                            </Text>
-                          </View>
-                          <Text style={{ fontSize: 12.5, color: Colors.text, lineHeight: 18 }}>{alert}</Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
+            {/* ── SIGNAL ALERTS ── */}
+            {!analysisModal?.loading && modalAlerts.length > 0 && (
+              <View style={{ gap: 8, marginTop: 4 }}>
+                {modalAlerts.slice(0, 5).map((alert, i) => {
+                  const lower = alert.toLowerCase();
+                  const isLineDeviation = lower.includes('line deviation') || lower.includes('edgegap') || lower.includes('deviation');
+                  const isRisk = lower.includes('risk') || lower.includes('dismissal') || lower.includes('invalid') || lower.includes('flip') || lower.includes('void') || lower.includes('red card');
+                  const isBoost = lower.includes('boost') || lower.includes('infl') || lower.includes('rise') || lower.includes('high');
+                  const alertColor = isRisk ? '#FF6B35' : isLineDeviation ? '#60A5FA' : isBoost ? Colors.primary : '#60A5FA';
+                  const iconName: any = isRisk ? 'warning' : isLineDeviation ? 'stats-chart' : isBoost ? 'trending-up' : 'information-circle';
+                  const label = isLineDeviation ? 'LINE INTEL' : isRisk ? 'RISK SIGNAL' : 'SIGNAL';
+                  return (
+                    <View key={i} style={{
+                      backgroundColor: alertColor + '0D', borderRadius: 8, padding: 10,
+                      borderWidth: 1, borderColor: alertColor + '33', borderLeftWidth: 3, borderLeftColor: alertColor,
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                        <Ionicons name={iconName} size={11} color={alertColor} />
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: alertColor, letterSpacing: 1.1 }}>{label}</Text>
+                      </View>
+                      <Text style={{ fontSize: 12.5, color: Colors.text, lineHeight: 18 }}>{alert}</Text>
+                    </View>
+                  );
+                })}
               </View>
             )}
+
+            {/* ── MODEL FACTORS ── */}
+            {!analysisModal?.loading && modalFactors.length > 0 && renderModelFactors(modalFactors)}
+
+            {/* No analysis yet */}
+            {!analysisModal?.loading && !modalText && modalAlerts.length === 0 && (() => {
+              const pick = analysisModal?.pick as any;
+              const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
+              if (isSettled) return null;
+              const hasData = !!(
+                (analysisModal?.data as any)?.opponentDefensiveProfile ||
+                (analysisModal?.data as any)?.h2hPlayerStats?.sampleSize ||
+                (analysisModal?.data as any)?.expectedPossession
+              );
+              if (hasData) return null;
+              return (
+                <View style={mStyles.modalLoading}>
+                  <Ionicons name="analytics-outline" size={32} color={Colors.textTertiary} />
+                  <Text style={mStyles.modalLoadingText}>No analysis found for this pick yet.</Text>
+                </View>
+              );
+            })()}
           </ScrollView>
           </View>
         </View>
@@ -1394,6 +1629,59 @@ const mStyles = StyleSheet.create({
   gsBannerChipName: { fontSize: 9, color: '#9CA3AF', fontWeight: '600' },
   gsBannerChipPct: { fontSize: 9, fontWeight: '800' },
   gsBannerSub: { fontSize: 10, color: '#6B7280', fontWeight: '500', marginTop: 2 },
+  // ── Evidence Summary ribbon
+  evidenceRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 7,
+    marginBottom: 14, backgroundColor: Colors.cardSecondary,
+    borderRadius: 10, padding: 10,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  evidenceCell: {
+    flex: 1, minWidth: 52, alignItems: 'center', gap: 1,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+    borderRadius: 8, paddingVertical: 8, paddingHorizontal: 4,
+    backgroundColor: Colors.card,
+  },
+  evidenceCellValue: { fontSize: 17, fontWeight: '800', color: Colors.text },
+  evidenceCellLabel: { fontSize: 7, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.7, textAlign: 'center' },
+  // ── Pro data cards
+  proCard: {
+    backgroundColor: Colors.cardSecondary, borderRadius: 12,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+    padding: 14, marginBottom: 12, gap: 10,
+  },
+  proCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  proCardPill: { borderRadius: 5, paddingHorizontal: 7, paddingVertical: 2 },
+  proCardPillText: { fontSize: 8, fontWeight: '900', letterSpacing: 1.2 },
+  proCardTitle: { flex: 1, fontSize: 13, fontWeight: '700', color: Colors.text },
+  proCardMetrics: { flexDirection: 'row', gap: 7 },
+  proCardMetric: {
+    flex: 1, alignItems: 'center', gap: 2,
+    backgroundColor: Colors.card, borderRadius: 8,
+    paddingVertical: 8, paddingHorizontal: 4,
+  },
+  proCardMetricValue: { fontSize: 15, fontWeight: '800', color: Colors.text },
+  proCardMetricLabel: { fontSize: 7, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.7, textAlign: 'center' },
+  proCardNote: { fontSize: 11.5, color: Colors.textSecondary, lineHeight: 17 },
+  // ── Possession bar
+  possRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  possTeam: { alignItems: 'center', width: 46 },
+  possValue: { fontSize: 17, fontWeight: '800', color: Colors.text },
+  possLabel: { fontSize: 7, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.5 },
+  possBar: { flex: 1, height: 6, backgroundColor: Colors.borderSubtle, borderRadius: 3, overflow: 'hidden' },
+  possBarFill: { height: '100%', borderRadius: 3 },
+  // ── H2H table
+  h2hTable: { gap: 3, marginTop: 2 },
+  h2hRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 6, paddingHorizontal: 8,
+    backgroundColor: Colors.card, borderRadius: 6,
+  },
+  h2hDate: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', width: 52 },
+  h2hVenue: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', width: 12 },
+  h2hOpp: { flex: 1, fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
+  h2hPoss: { fontSize: 10, color: Colors.textTertiary, width: 32, textAlign: 'right' },
+  h2hStat: { fontSize: 14, fontWeight: '800', width: 26, textAlign: 'right' },
 });
 
 function StatTile({ label, value, accent }: { label: string; value: string; accent?: string }) {

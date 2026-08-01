@@ -15,6 +15,52 @@ AI_MODEL = "gemini-2.5-flash"
 GEMINI_FLASH = "gemini-2.5-flash"
 GEMINI_PRO = "gemini-2.5-pro"
 
+# ── Daily prediction generation budget guard ──────────────────────────────
+# Stored in /tmp/ — ephemeral, resets on container/VM restart (≈ daily in prod).
+# Only interactive prediction synthesis calls are counted; background jobs
+# (press intensity, web intel, positions) do NOT consume this budget.
+import json as _json_budget
+import os as _os_budget
+
+_AI_BUDGET_PATH = "/tmp/rp_ai_budget.json"
+_budget_asyncio_lock = None  # lazily initialised
+
+
+def _get_budget_lock():
+    global _budget_asyncio_lock
+    if _budget_asyncio_lock is None:
+        _budget_asyncio_lock = asyncio.Lock()
+    return _budget_asyncio_lock
+
+
+async def check_and_increment_prediction_budget() -> bool:
+    """Returns True if AI synthesis can proceed; False when daily limit is hit.
+
+    The limit comes from AI_DAILY_GENERATION_LIMIT (config.py / env var).
+    Fails open: any I/O error returns True so a broken counter never blocks
+    actual predictions.
+    """
+    from config import AI_DAILY_GENERATION_LIMIT as _LIMIT
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    async with _get_budget_lock():
+        try:
+            data: dict = {}
+            if _os_budget.path.exists(_AI_BUDGET_PATH):
+                with open(_AI_BUDGET_PATH, "r") as _f:
+                    data = _json_budget.load(_f)
+            count = int(data.get(today, 0))
+            if count >= _LIMIT:
+                print(f"[AI BUDGET] Daily limit {_LIMIT} reached ({count} calls). Math-only fallback.")
+                return False
+            # Write updated count — keep only today's key to avoid unbounded growth
+            with open(_AI_BUDGET_PATH, "w") as _f:
+                _json_budget.dump({today: count + 1}, _f)
+            print(f"[AI BUDGET] Prediction synthesis {count + 1}/{_LIMIT} today.")
+            return True
+        except Exception as _be:
+            print(f"[AI BUDGET] Counter error ({_be}) — proceeding with AI (fail-open).")
+            return True
+
 # ── Replit AI Integration env vars (no external API key needed) ───────────────
 import os as _os
 _REPLIT_GEMINI_KEY = _os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY", "")

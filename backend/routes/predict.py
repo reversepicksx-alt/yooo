@@ -14,7 +14,7 @@ from openai import OpenAI
 from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
-    INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER,
+    INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER, GEMINI_AI_ENABLED,
 )
 from models import PredictionRequest
 from utils import (
@@ -4399,6 +4399,64 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 h2h_summary["avgVsOpponent"] = round(sum(h2h_values) / len(h2h_values), 2)
                 h2h_summary["minVsOpponent"] = min(h2h_values)
                 h2h_summary["maxVsOpponent"] = max(h2h_values)
+
+            # ── Enriched H2H metadata for the pro analysis display ──────────
+            # Total team meetings found (not just ones the player appeared in)
+            h2h_summary["teamMeetings"] = len(h2h_data) if h2h_data else 0
+
+            # Season span from team H2H fixture dates
+            try:
+                _h2h_years = []
+                for _hd in (h2h_data or []):
+                    _hd_date = (_hd.get("fixture") or {}).get("date", "")
+                    if _hd_date and len(_hd_date) >= 4:
+                        try:
+                            _h2h_years.append(int(_hd_date[:4]))
+                        except (ValueError, TypeError):
+                            pass
+                if _h2h_years:
+                    h2h_summary["seasonsCovered"] = {
+                        "min": min(_h2h_years), "max": max(_h2h_years),
+                        "range": f"{min(_h2h_years)}–{max(_h2h_years)}",
+                    }
+            except Exception:
+                pass
+
+            # Trend: recent 3 appearances vs prior (positive = improving)
+            if len(h2h_values) >= 4:
+                try:
+                    _recent_3_avg = sum(h2h_values[:3]) / 3
+                    _prior_avg = sum(h2h_values[3:]) / len(h2h_values[3:])
+                    _trend_delta = _recent_3_avg - _prior_avg
+                    h2h_summary["trendDirection"] = (
+                        "improving" if _trend_delta > 3
+                        else "declining" if _trend_delta < -3
+                        else "stable"
+                    )
+                    h2h_summary["trendDelta"] = round(_trend_delta, 2)
+                except Exception:
+                    h2h_summary["trendDirection"] = "stable"
+            else:
+                h2h_summary["trendDirection"] = "stable"
+
+            # Venue hit rate at the player's current venue
+            try:
+                _vh_hits = 0
+                _vh_total = 0
+                for _hs in h2h_player_stats:
+                    if _hs.get("venue") == player_venue and _hs.get("targetStat") is not None:
+                        _vh_total += 1
+                        if _hs["targetStat"] > req.line:
+                            _vh_hits += 1
+                if _vh_total > 0:
+                    h2h_summary["venueHitRate"] = {
+                        "hits": _vh_hits, "total": _vh_total,
+                        "pct": round(_vh_hits / _vh_total * 100),
+                        "venue": player_venue,
+                    }
+            except Exception:
+                pass
+
             historical_data["h2hPlayerStats"] = h2h_summary
 
         # Extract player's ACTUAL position from API-Sports data
@@ -5725,6 +5783,65 @@ Amplification factors to explore: opponent defensive passivity, possession domin
 
         _prop_display = req.propType
 
+        # ── H2H Intelligence block for AI prompt ──────────────────────────────
+        _h2h_snap = historical_data.get("h2hPlayerStats") or {}
+        _h2h_prompt_block = ""
+        if _h2h_snap.get("sampleSize", 0) > 0:
+            _hb = "[HEAD-TO-HEAD INTELLIGENCE — MANDATORY REFERENCE]\n"
+            if _h2h_snap.get("teamMeetings"):
+                _hb += f"Total team meetings (last {H2H_HISTORY_SEASONS} seasons): {_h2h_snap['teamMeetings']}"
+                if _h2h_snap.get("seasonsCovered"):
+                    _hb += f" ({_h2h_snap['seasonsCovered']['range']})"
+                _hb += "\n"
+            _hb += f"Player appeared in {_h2h_snap['sampleSize']} of those games with minutes vs {req.opponentName}\n"
+            if _h2h_snap.get("avgVsOpponent") is not None:
+                _hb += (
+                    f"Player H2H avg ({req.propType}): {_h2h_snap['avgVsOpponent']:.1f} "
+                    f"(season avg is {wave2_supplement.get('playerGameLogs',{}).get('rawAvg','?')})\n"
+                )
+            if _h2h_snap.get("trendDirection") and _h2h_snap["trendDirection"] != "stable":
+                _hb += f"H2H trend: {_h2h_snap['trendDirection'].upper()} over recent appearances\n"
+            if _h2h_snap.get("venueHitRate") and _h2h_snap["venueHitRate"]["total"] >= 2:
+                _vhr = _h2h_snap["venueHitRate"]
+                _hb += (
+                    f"At {_vhr['venue'].upper()} vs this opponent: {_vhr['hits']}/{_vhr['total']} times "
+                    f"exceeded line {req.line} ({_vhr['pct']}% hit rate)\n"
+                )
+            _hb += ">>> MANDATORY: Your keyEvidence and matchup analysis MUST explicitly cite this H2H record. <<<\n"
+            _h2h_prompt_block = _hb
+
+        # ── Opponent Defensive Profile block for AI prompt ─────────────────────
+        _opp_def_prompt_block = ""
+        try:
+            _pcd_pp = position_comp_data if isinstance(position_comp_data, dict) else {}
+            _pcd_avg_pp = _pcd_pp.get("avgStatValue")
+            if not _pcd_avg_pp:
+                _pcd_raw_pp = [p.get("statValue") for p in (_pcd_pp.get("players") or []) if p.get("statValue") is not None]
+                if _pcd_raw_pp:
+                    _pcd_avg_pp = round(sum(_pcd_raw_pp) / len(_pcd_raw_pp), 1)
+            _pcd_n_pp = int(_pcd_pp.get("sampleSize") or len(_pcd_pp.get("players") or []))
+            if _pcd_avg_pp is not None and _pcd_n_pp >= 2:
+                _odf_b = (
+                    f"[OPPONENT DEFENSIVE PROFILE — {req.opponentName} vs {display_position or req.propType.replace('_',' ')}]\n"
+                    f"{req.opponentName} allows {float(_pcd_avg_pp):.1f} {req.propType.replace('_',' ')} "
+                    f"per game to {display_position or 'same-position'} players (n={_pcd_n_pp} fixtures)\n"
+                )
+                _ps_avg_pp = wave2_supplement.get("playerGameLogs", {}).get("rawAvg")
+                if _ps_avg_pp and float(_ps_avg_pp) > 0:
+                    _delta_pp = round((float(_pcd_avg_pp) / float(_ps_avg_pp) - 1) * 100, 1)
+                    _dir_pp = "ABOVE" if _delta_pp > 0 else "BELOW"
+                    _odf_b += f"That is {abs(_delta_pp):.1f}% {_dir_pp} this player's season average of {_ps_avg_pp}\n"
+                    if abs(_delta_pp) >= 15:
+                        _odf_b += (
+                            f">>> STRONG {'FAVOURABLE' if _delta_pp > 0 else 'UNFAVOURABLE'} MATCHUP: "
+                            f"cite this opponent allowance rate as a PRIMARY factor in keyEvidence <<<\n"
+                        )
+                    else:
+                        _odf_b += ">>> Cite this opponent allowance data explicitly in your matchup analysis. <<<\n"
+                _opp_def_prompt_block = _odf_b
+        except Exception:
+            pass
+
         prompt = f"""⛔⛔⛔ PLAYER IDENTITY — READ THIS FIRST — MANDATORY ⛔⛔⛔
 Player name: {req.playerName}. Current team: {corrected_team_name}. Opponent today: {req.opponentName}.
 RULES:
@@ -5744,7 +5861,7 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 {_suppression_context}
 {dom_context}
 {position_context}
-{final_data[:3500]}
+{_h2h_prompt_block}{_opp_def_prompt_block}{final_data[:3500]}
 
 Analyze ALL data thoroughly. Return JSON only."""
 
@@ -5850,14 +5967,32 @@ Analyze ALL data thoroughly. Return JSON only."""
             pass
         # ─────────────────────────────────────────────────────────────────────
 
-        # AI synthesis is disabled by emergency credit protection. Existing
-        # cached narratives may still be displayed, but no new Gemini task is
-        # created; the deterministic Bayesian result remains authoritative.
         ai_result = None
         _ai_task = None
         if _pred_cached:
             ai_result = _pred_cached
             print("[AI] Cache hit — narrative available immediately")
+        elif GEMINI_AI_ENABLED:
+            from ai_engine import check_and_increment_prediction_budget
+            _budget_ok = await check_and_increment_prediction_budget()
+            if _budget_ok:
+                print("[AI] Inline Gemini synthesis starting…")
+                try:
+                    ai_result = await aio.wait_for(call_grok(label="gemini-flash"), timeout=50)
+                    if ai_result and ai_result.get("tacticalBreakdown"):
+                        try:
+                            await db.ai_response_cache.replace_one(
+                                {"_k": _soc_ck},
+                                {"_k": _soc_ck, "v": ai_result, "ts": datetime.now(timezone.utc)},
+                                upsert=True,
+                            )
+                        except Exception:
+                            pass
+                except Exception as _ai_err:
+                    print(f"[AI] Synthesis failed: {_ai_err}")
+                    ai_result = None
+            else:
+                print("[AI BUDGET] Daily limit reached — math-only prediction.")
         else:
             print("[AI DISABLED] Gemini synthesis skipped; returning math-only prediction.")
 
@@ -8480,7 +8615,42 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[SAFETY NET] playerGameLogs rebuilt from {len(player_game_logs)} logs for {req.playerName}")
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
-        # positionComparison removed — not shown in UI
+        # positionComparison stored but not surfaced directly; used for opponent profile below
+
+        # ── OPPONENT DEFENSIVE PROFILE ───────────────────────────────────────
+        # Derived from position-comparison data already fetched above.
+        # Quantifies how many of this stat the opponent allows per game to
+        # same-position players, versus the player's own season average.
+        try:
+            _pcd = position_comp_data if isinstance(position_comp_data, dict) else {}
+            _pcd_players = _pcd.get("players") or []
+            _pcd_n = int(_pcd.get("sampleSize") or len(_pcd_players) or 0)
+            _pcd_avg = None
+            if _pcd.get("avgStatValue") is not None:
+                _pcd_avg = float(_pcd["avgStatValue"])
+            elif _pcd_players:
+                _pcd_vals = [p.get("statValue") for p in _pcd_players if p.get("statValue") is not None]
+                if _pcd_vals:
+                    _pcd_avg = round(sum(_pcd_vals) / len(_pcd_vals), 1)
+            if _pcd_avg is not None and _pcd_n >= 2:
+                _player_s_avg = wave2_supplement.get("playerGameLogs", {}).get("rawAvg")
+                _odf_delta_pct = None
+                _odf_favorable = None
+                if _player_s_avg and float(_player_s_avg) > 0:
+                    _odf_delta_pct = round((float(_pcd_avg) / float(_player_s_avg) - 1) * 100, 1)
+                    _odf_favorable = _odf_delta_pct > 0
+                prediction["opponentDefensiveProfile"] = {
+                    "opponent": req.opponentName,
+                    "propType": req.propType,
+                    "position": (prediction.get("player") or {}).get("position") or player_position or "",
+                    "avgAllowed": _pcd_avg,
+                    "sampleSize": _pcd_n,
+                    "vsPlayerSeasonAvg": _odf_delta_pct,
+                    "isFavorable": _odf_favorable,
+                    "playerSeasonAvg": float(_player_s_avg) if _player_s_avg else None,
+                }
+        except Exception as _odf_err:
+            print(f"[OPP DEF PROFILE] failed: {_odf_err}")
 
         # ── FINAL PASS-PROJECTION CALIBRATION (SHADOW BY DEFAULT) ───────────
         # This is deliberately the only projection-calibration boundary.  It

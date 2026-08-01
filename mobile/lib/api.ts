@@ -406,8 +406,32 @@ export interface PredictionResult {
   awayAvg?: number;
   sampleSize?: number;
   hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
-  h2hPlayerStats?: { matches: H2HMatch[]; avgVsOpponent?: number; sampleSize: number; targetProp?: string };
+  h2hPlayerStats?: {
+    matches: H2HMatch[];
+    avgVsOpponent?: number;
+    minVsOpponent?: number;
+    maxVsOpponent?: number;
+    sampleSize: number;
+    targetProp?: string;
+    teamMeetings?: number;
+    seasonsCovered?: { min: number; max: number; range: string } | null;
+    trendDirection?: 'improving' | 'declining' | 'stable';
+    trendDelta?: number;
+    venueHitRate?: { hits: number; total: number; pct: number; venue: string } | null;
+    historySeasons?: number;
+    searchedFixtureCount?: number;
+  };
   positionComparison?: { positionShort?: string; opponent?: string; venue?: string; avgStatValue?: number; sampleSize?: number; players?: Record<string, unknown>[] };
+  opponentDefensiveProfile?: {
+    opponent: string;
+    propType: string;
+    position: string;
+    avgAllowed: number;
+    sampleSize: number;
+    vsPlayerSeasonAvg: number | null;
+    isFavorable: boolean | null;
+    playerSeasonAvg: number | null;
+  };
   expectedPossession?: { home: number; away: number };
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
