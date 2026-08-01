@@ -28,10 +28,9 @@ import LiveMatchTracker from '@/components/LiveMatchTracker';
 import StreaksAchievements from '@/components/StreaksAchievements';
 import PicksCalendar from '@/components/PicksCalendar';
 import SocialFeed from '@/components/SocialFeed';
-import PlayerProfileCard from '@/components/PlayerProfileCard';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
-import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, sharePickToCommunity, autoPostPickToCommunity, Pick, AnalysisFactor } from '@/lib/api';
+import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -762,14 +761,12 @@ export default function PicksScreen() {
   const [streaksOpen, setStreaksOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [socialOpen, setSocialOpen] = useState(false);
-  const [profilePlayer, setProfilePlayer] = useState<{ name: string; picks: Pick[] } | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [imageDisclaimerVisible, setImageDisclaimerVisible] = useState(false);
   const sessionErrCount = useRef(0);
-  const picksRef = useRef<Pick[]>([]);
   const autoPostedImagesRef = useRef<Set<string>>(new Set());
 
   // One-time owner-only image-use disclaimer (shown once per device install)
@@ -838,15 +835,6 @@ export default function PicksScreen() {
       // on every 15s boundary → list flicker and navigation glitches.
     }, [refetch])
   );
-
-  React.useEffect(() => {
-    picksRef.current = picks;
-  }, [picks]);
-
-  const handlePlayerPress = useCallback((pick: Pick) => {
-    const playerPicks = picksRef.current.filter(p => p.playerName === pick.playerName);
-    setProfilePlayer({ name: pick.playerName, picks: playerPicks });
-  }, []);
 
   const deleteMutation = useMutation({
     mutationFn: (pickId: string) => {
@@ -933,30 +921,6 @@ export default function PicksScreen() {
     } catch (err) {
       autoPostedImagesRef.current.delete(pick.pickId);
       console.warn('[COMMUNITY AUTO POST] failed', err);
-    }
-  }, [session]);
-
-  const handlePickPress = useCallback(async (pick: Pick) => {
-    const id = pick.pickId || pick._id || pick.id;
-    if (!id || !session) return;
-    setAnalysisModal({ pick, data: null, loading: true });
-    try {
-      const result = await fetchPickAnalysis(session.email, session.token, id);
-      const analysis = result.found ? (result.analysis ?? null) : null;
-      setAnalysisModal({ pick, data: analysis, loading: false });
-      // Kick off on-demand review generation in background for settled picks without one
-      const isSettled = pick.status === 'settled' && (pick.result === 'hit' || pick.result === 'miss');
-      if (isSettled && !(pick as any).matchReview) {
-        generateMatchReview(session.email, session.token, id).then(rev => {
-          if (rev) {
-            setAnalysisModal(prev =>
-              prev?.pick === pick ? { ...prev, pick: { ...prev.pick, matchReview: rev } as any } : prev
-            );
-          }
-        }).catch(() => {});
-      }
-    } catch {
-      setAnalysisModal({ pick, data: null, loading: false });
     }
   }, [session]);
 
@@ -1118,18 +1082,12 @@ export default function PicksScreen() {
           initialNumToRender={8}
           maxToRenderPerBatch={8}
           renderItem={({ item }) => {
-            const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
             const onDeleteForItem = () => handleDelete(item);
             const card = (
               <OwnerPickCard
                 pick={item}
-                onPress={tappable ? () => {
-                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                  handlePickPress(item);
-                } : undefined}
                 onTrack={() => setLiveTrackerPick(item)}
                 onDelete={onDeleteForItem}
-                onPlayerPress={handlePlayerPress}
                 onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
                 onAutoPostImage={highestConfidenceActivePick?.pickId === item.pickId
                   ? (imageData) => handleAutoPostImage(item, imageData)
@@ -1155,10 +1113,8 @@ export default function PicksScreen() {
               <SwipeablePickRow onDelete={onDeleteForItem}>
                 <OwnerPickCard
                   pick={item}
-                  onPress={() => handlePickPress(item)}
                   onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}
-                  onPlayerPress={handlePlayerPress}
                   onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
                 />
               </SwipeablePickRow>
@@ -1581,16 +1537,6 @@ export default function PicksScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* ── Player Profile ── */}
-      {profilePlayer && (
-        <PlayerProfileCard
-          visible={!!profilePlayer}
-          onClose={() => setProfilePlayer(null)}
-          playerName={profilePlayer.name}
-          picks={profilePlayer.picks}
-        />
-      )}
 
       {/* ── Custom Alerts ── */}
       <CustomAlerts visible={alertsOpen} onClose={() => setAlertsOpen(false)} />

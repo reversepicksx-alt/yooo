@@ -112,10 +112,10 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onPress, onTrack, onDelete, onPlayerPress, onShareCommunity, onAutoPostImage,
+  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage,
 }: {
-  pick: Pick; onPress?: () => void; onTrack?: () => void;
-  onDelete?: () => void; onPlayerPress?: (pick: Pick) => void;
+  pick: Pick; onTrack?: () => void;
+  onDelete?: () => void;
   onShareCommunity?: (imageData: string) => void | Promise<void>;
   onAutoPostImage?: (imageData: string) => void | Promise<void>;
 }) {
@@ -352,10 +352,8 @@ export default function OwnerPickCard({
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <TouchableOpacity
+    <View
       ref={cardRef}
-      activeOpacity={onPress ? 0.82 : 1}
-      onPress={onPress}
       style={styles.card}
     >
       {/* Left accent stripe — color = direction / result */}
@@ -364,8 +362,7 @@ export default function OwnerPickCard({
       <View style={styles.inner}>
         {/* ── Top row: identity + badge ─────────────────────── */}
         <View style={styles.topRow}>
-          <TouchableOpacity style={styles.identity} activeOpacity={0.7}
-            onPress={() => onPlayerPress?.(pick)} disabled={!onPlayerPress}>
+          <View style={styles.identity}>
             {pick.ownerPlayerPhoto && !photoFailed ? (
               <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.avatar}
                 onError={() => setPhotoFailed(true)} />
@@ -386,7 +383,7 @@ export default function OwnerPickCard({
                 </Text>
               </View>
             </View>
-          </TouchableOpacity>
+          </View>
 
           <View style={styles.rightCluster}>
             {Platform.OS === 'web' && onDelete && !captureMode && (
@@ -501,7 +498,7 @@ export default function OwnerPickCard({
           </TouchableOpacity>
         </Modal>
       )}
-    </TouchableOpacity>
+    </View>
   );
 }
 
