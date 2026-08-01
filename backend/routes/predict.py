@@ -7733,26 +7733,63 @@ Analyze ALL data thoroughly. Return JSON only."""
                         f"despite the cautious market pricing."
                     )
                     prediction["sharpSummary"] = _replacement_summary
-                    # Wipe all AI narrative fields that may contradict the new direction.
-                    # The AI writes these before BAYESIAN TRUTH flips the direction;
-                    # keeping stale text causes the badge to say OVER while the
-                    # Verdict/Reasoning/Matchup sections all explain UNDER.
-                    for _narr_key in ("tacticalBreakdown", "reasoning", "scenarioAnalysis",
-                                      "keyEvidence", "sensitivityTests", "subRisk",
-                                      "gameFlowDynamics", "uncertaintyNote"):
-                        prediction[_narr_key] = ""
-                    prediction["aiSource"] = "math"
-                    prediction["tacticalAlerts"] = []
-                    try:
-                        if _soc_ck:
-                            await db.ai_response_cache.delete_one({"_k": _soc_ck})
-                    except Exception:
-                        pass
-                    print(
-                        f"[DIRECTION GUARD] {req.playerName}/{req.propType}: "
-                        f"sharpSummary said {_alt_dir} but final rec={_bt_dir.upper()} — "
-                        f"replaced summary, wiped narrative fields, cleared AI cache"
-                    )
+                    # Do not discard a substantive Gemini explanation when the
+                    # final Bayesian pass changes direction. Gemini is called
+                    # before the full posterior is available, so this can happen
+                    # even though the explanation contains valuable matchup,
+                    # role, manager, and game-flow evidence. Replace only the
+                    # direction-bearing sections and add an authoritative
+                    # reconciliation note; retain the evidence and its source.
+                    _existing_td = prediction.get("tacticalBreakdown", "") or ""
+                    if isinstance(_existing_td, str) and len(_existing_td.strip()) > 100:
+                        _final_note = (
+                            f"**Final Model Reconciliation**\n"
+                            f"The completed Reverse Formula posterior is authoritative: "
+                            f"{_proj_disp} {_dir_word} the {req.line} line with "
+                            f"{_p_dir:.0f}% probability. The tactical evidence below is "
+                            f"retained as matchup context; the final Bayesian direction "
+                            f"overrides any earlier {_alt_dir} lean.\n\n"
+                        )
+                        # Replace a generated Verdict section when present so the
+                        # first section can never contradict the recommendation.
+                        _existing_td = re.sub(
+                            r"\*\*Verdict\*\*.*?(?=\n\s*\*\*[A-Za-z][^*]*\*\*|\Z)",
+                            (
+                                f"**Verdict**\n"
+                                f"The completed Reverse Formula projects {_proj_disp} "
+                                f"— {_dir_word} {req.line} ({_p_dir:.0f}% probability)."
+                            ),
+                            _existing_td,
+                            count=1,
+                            flags=re.IGNORECASE | re.DOTALL,
+                        )
+                        # Likewise replace a generated TL;DR so the visible close
+                        # of the analysis agrees with the final badge.
+                        _existing_td = re.sub(
+                            r"\*\*TL;DR\*\*.*?(?=\n\s*\*\*[A-Za-z][^*]*\*\*|\Z)",
+                            (
+                                f"**TL;DR**\n"
+                                f"{_dir_word} at {_proj_disp} is the final model call "
+                                f"against the {req.line} line ({_p_dir:.0f}% probability)."
+                            ),
+                            _existing_td,
+                            count=1,
+                            flags=re.IGNORECASE | re.DOTALL,
+                        )
+                        prediction["tacticalBreakdown"] = _final_note + _existing_td.strip()
+                        prediction["aiSource"] = "gemini"
+                        print(
+                            f"[DIRECTION GUARD] {req.playerName}/{req.propType}: "
+                            f"final rec={_bt_dir.upper()} — reconciled Gemini narrative "
+                            f"without discarding tactical evidence"
+                        )
+                    else:
+                        # No substantive AI text exists, so the normal math
+                        # fallback below remains the correct source marker.
+                        prediction["aiSource"] = "math"
+                    # Keep the daily AI cache. The final direction is computed
+                    # fresh on every request, and this same reconciliation is
+                    # applied to cached prose when necessary.
 
             # ── LOW CONVICTION FILTER ─────────────────────────────────────────
             # When Bayesian max(P(OVER), P(UNDER)) < 57%, the model has weak

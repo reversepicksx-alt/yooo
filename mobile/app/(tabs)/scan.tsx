@@ -699,11 +699,17 @@ export default function ScanScreen() {
       }
       setPrediction(result);
       setPredictionRequest(req);
-      setTacticalAnalysis(result.tacticalBreakdown || null);
+      setTacticalAnalysis(result.tacticalBreakdown || result.reasoning || result.sharpSummary || null);
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAiNarrativeLoading(!!result.aiPending);
+      if (result.aiPending) {
+        // The API returns the math result first while Gemini finishes in the
+        // background. Start polling immediately so the full factor-by-factor
+        // Tactical AI explanation reaches the visible result screen.
+        void pollForAiNarrative(req, result);
+      }
     } catch (e: unknown) {
       if (e instanceof Error && e.message === '__CANCELLED__') return;
       const msg = e instanceof Error ? e.message : 'Analysis failed — try again';
@@ -737,17 +743,28 @@ export default function ScanScreen() {
       const poll = await pollAiNarrative(req);
       if (poll.ready && poll.data) {
         const data = poll.data;
+        const polledTacticalBreakdown = (data.tacticalBreakdown as string) || '';
+        const polledReasoning = (data.reasoning as string) || '';
+        const completedNarrative = polledTacticalBreakdown || polledReasoning;
+        // Keep the dedicated narrative render state in sync with prediction.
+        // The first response is often math-only; Gemini finishes in this poll.
+        // Updating only prediction here left the visible Tactical AI section
+        // permanently blank after the background request completed.
+        if (completedNarrative.trim().length > 0) {
+          setTacticalAnalysis(completedNarrative);
+        }
         setPrediction((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
-            tacticalBreakdown: (data.tacticalBreakdown as string) || prev.tacticalBreakdown,
+            tacticalBreakdown: polledTacticalBreakdown || prev.tacticalBreakdown,
             sharpSummary: (data.sharpSummary as string) || prev.sharpSummary,
-            reasoning: (data.reasoning as string) || prev.reasoning,
+            reasoning: polledReasoning || prev.reasoning,
             scenarioAnalysis: (data.scenarioAnalysis as string) || prev.scenarioAnalysis,
             keyEvidence: (data.keyEvidence as string) || prev.keyEvidence,
             gameFlowDynamics: (data.gameFlowDynamics as string) || prev.gameFlowDynamics,
             aiProjection: (data.aiProjection as number) || prev.aiProjection,
+            aiSource: (data.aiSource as PredictionResult['aiSource']) || 'gemini',
             aiPending: false,
           };
         });
@@ -4484,37 +4501,16 @@ export default function ScanScreen() {
               );
             })()}
 
-            {/* ─── ANALYSIS EVIDENCE (the pick card itself stays concise) ─── */}
-            {(() => {
-              const pred = prediction as Record<string, unknown>;
-              const pickCtx = {
-                venue: venueOverride,
-                teamName: prediction.teamName,
-                opponentName: prediction.opponentName || prediction.opponent,
-                line: prediction.line,
-              };
-              const evidenceEl  = renderEvidenceSummary(pred);
-              const oppDefEl    = renderOpponentDefProfile(pred, pickCtx);
-              const matchupEl   = renderMatchupPossession(pred, pickCtx);
-              const h2hEl       = renderH2HIntelligence(pred, pickCtx);
-              const mgrEl       = renderManagerContext(pred);
-              if (!evidenceEl && !oppDefEl && !matchupEl && !h2hEl && !mgrEl) return null;
-              return (
-                <View style={{ gap: 0, marginTop: 6 }}>
-                  {evidenceEl}
-                  {mgrEl}
-                  {oppDefEl}
-                  {matchupEl}
-                  {h2hEl}
-                </View>
-              );
-            })()}
-
             {/* ─── FULL TACTICAL AI ANALYSIS ─── */}
-            {tacticalAnalysis && (() => {
+            {(tacticalAnalysis || prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary) && (() => {
               const isOver = prediction.recommendation === 'OVER';
               const isUnder = prediction.recommendation === 'UNDER';
               const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+              const narrative = tacticalAnalysis
+                || prediction.tacticalBreakdown
+                || prediction.reasoning
+                || prediction.sharpSummary
+                || '';
 
               // Render markdown-lite: bold (**text**), bullets, headers, paragraphs
               const renderLine = (raw: string, key: number) => {
@@ -4566,7 +4562,7 @@ export default function ScanScreen() {
                 );
               };
 
-              const lines = tacticalAnalysis.split('\n');
+              const lines = narrative.split('\n');
 
               return (
                 <View style={[styles.scoutCard, { borderColor: recColor + '33', marginTop: 10 }]}>
@@ -4582,6 +4578,32 @@ export default function ScanScreen() {
                   <View style={{ gap: 0, marginTop: 4 }}>
                     {lines.map((line, i) => renderLine(line, i))}
                   </View>
+                </View>
+              );
+            })()}
+
+            {/* ─── ANALYSIS EVIDENCE (the pick card itself stays concise) ─── */}
+            {(() => {
+              const pred = prediction as Record<string, unknown>;
+              const pickCtx = {
+                venue: venueOverride,
+                teamName: prediction.teamName,
+                opponentName: prediction.opponentName || prediction.opponent,
+                line: prediction.line,
+              };
+              const evidenceEl  = renderEvidenceSummary(pred);
+              const oppDefEl    = renderOpponentDefProfile(pred, pickCtx);
+              const matchupEl   = renderMatchupPossession(pred, pickCtx);
+              const h2hEl       = renderH2HIntelligence(pred, pickCtx);
+              const mgrEl       = renderManagerContext(pred);
+              if (!evidenceEl && !oppDefEl && !matchupEl && !h2hEl && !mgrEl) return null;
+              return (
+                <View style={{ gap: 0, marginTop: 6 }}>
+                  {evidenceEl}
+                  {mgrEl}
+                  {oppDefEl}
+                  {matchupEl}
+                  {h2hEl}
                 </View>
               );
             })()}
