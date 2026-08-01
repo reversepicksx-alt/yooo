@@ -91,3 +91,4 @@
 - [Thin opponent sample confidence](thin-opponent-sample-confidence.md) — one or two opponent meetings cannot justify very-high confidence; disclose thin evidence and cap conservatively.
 - [Auditable model factors](auditable-model-factors.md) — prediction explanations must snapshot final inputs at the pipeline boundary, persist with saved picks, and show unavailable data explicitly.
 - [Full analysis destination](analysis-destination.md) — analysis views own the complete narrative and recent-game evidence; concise pick cards must not duplicate or hide it.
+- [Final projection ledger AI contract](final-projection-ledger-ai-contract.md) — Gemini must explain the exact post-calibration projection snapshot, with cache identity bound to the ledger fingerprint.

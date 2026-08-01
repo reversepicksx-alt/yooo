@@ -515,6 +515,38 @@ export interface PredictionResult {
   };
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
+  factorLedger?: {
+    version: string;
+    factors: Array<{
+      id: string;
+      title: string;
+      sequence?: number;
+      status?: string;
+      before?: number | null;
+      after?: number | null;
+      delta?: number | null;
+      direction?: 'up' | 'down' | 'neutral' | string;
+      multiplier?: number | null;
+      sampleSize?: number | null;
+      inputs?: Record<string, unknown>;
+      reason?: string;
+      kind?: 'confidence' | string;
+    }>;
+    final: {
+      projectedValue?: number | null;
+      line?: number | null;
+      recommendation?: string;
+      pOver?: number | null;
+      pUnder?: number | null;
+      confidenceScore?: number | null;
+      confidenceLevel?: string;
+      edge?: number | null;
+      edgeRating?: string;
+      safetyRating?: string;
+    };
+  };
+  factorLedgerVersion?: string;
+  factorLedgerFingerprint?: string;
   edgeRating?: 'SHARP EDGE' | 'EDGE' | 'MARGINAL' | 'NO EDGE';
   safetyRating?: 'SAFE' | 'MODERATE' | 'RISKY' | 'AVOID';
   propHistoricalRate?: number;
@@ -578,6 +610,9 @@ interface RawPrediction {
   tacticalAlerts?: string[];
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
+  factorLedger?: PredictionResult['factorLedger'];
+  factorLedgerVersion?: string;
+  factorLedgerFingerprint?: string;
   isWorldCup?: boolean;
   riskSignals?: PredictionResult['riskSignals'];
   congestion?: PredictionResult['congestion'];
@@ -881,6 +916,9 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     analysisSummary: raw.analysisSummary ?? undefined,
     analysisFactors: raw.analysisFactors ?? undefined,
     modelInputSnapshot: raw.modelInputSnapshot ?? undefined,
+    factorLedger: raw.factorLedger ?? undefined,
+    factorLedgerVersion: raw.factorLedgerVersion ?? undefined,
+    factorLedgerFingerprint: raw.factorLedgerFingerprint ?? undefined,
     tacticalBreakdown: raw.tacticalBreakdown || undefined,
     aiSource: (raw as any).aiSource || undefined,
     keyFactors: Array.isArray((raw as any).keyFactors) ? ((raw as any).keyFactors as string[]) : undefined,

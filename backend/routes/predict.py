@@ -2,6 +2,7 @@ import json
 import os
 import re
 import uuid
+import hashlib
 import asyncio as aio
 import statistics as stats_mod
 import traceback
@@ -164,6 +165,65 @@ async def predict(req: PredictionRequest):
     _priority_token = set_api_request_priority(True)
     try:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # Ordered numeric audit trail for the explanation layer.  This is
+        # intentionally separate from analysisFactors: analysisFactors describe
+        # evidence quality, while this ledger describes how the displayed
+        # projection was actually transformed.
+        _factor_ledger: list[dict] = []
+
+        def _ledger_num(value):
+            try:
+                return round(float(value), 4) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def _record_projection_factor(
+            factor_id: str,
+            title: str,
+            before,
+            after,
+            *,
+            status: str = "applied",
+            reason: str = "",
+            inputs: dict | None = None,
+            sample_size=None,
+            multiplier=None,
+        ):
+            b = _ledger_num(before)
+            a = _ledger_num(after)
+            _factor_ledger.append({
+                "id": factor_id,
+                "title": title,
+                "status": status,
+                "before": b,
+                "after": a,
+                "delta": _ledger_num(a - b) if a is not None and b is not None else None,
+                "direction": (
+                    "up" if a is not None and b is not None and a > b
+                    else "down" if a is not None and b is not None and a < b
+                    else "neutral"
+                ),
+                "multiplier": _ledger_num(multiplier),
+                "sampleSize": sample_size,
+                "inputs": inputs or {},
+                "reason": reason,
+            })
+
+        def _record_confidence_control(control_id: str, title: str, before, after, reason: str):
+            _factor_ledger.append({
+                "id": control_id,
+                "title": title,
+                "status": "applied" if before != after else "measured",
+                "before": _ledger_num(before),
+                "after": _ledger_num(after),
+                "delta": _ledger_num(after - before) if before is not None and after is not None else None,
+                "direction": "down" if after is not None and before is not None and after < before else "neutral",
+                "multiplier": None,
+                "sampleSize": None,
+                "inputs": {},
+                "reason": reason,
+                "kind": "confidence",
+            })
         # Prediction cache REMOVED: returning stale cached predictions caused
         # contradictions (e.g., wrong possession narrative when match data changed)
         # and undermined user trust. Every request now runs full fresh analysis.
@@ -6001,9 +6061,9 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        async def call_gemini(label="grok-fallback", model=GROK_MODEL):
+        async def call_gemini(label="grok-fallback", model=GROK_MODEL, prompt_override=None):
             """Gemini fallback — mirrors call_grok but as a named secondary attempt."""
-            return await call_grok(label=label, model=model)
+            return await call_grok(label=label, model=model, prompt_override=prompt_override)
 
         # =============================================
         # AI SYNTHESIS: Gemini primary, secondary fallback
@@ -6014,14 +6074,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        async def call_grok(label="ai", model=None):
+        async def call_grok(label="ai", model=None, prompt_override=None):
             """Primary AI synthesis — Replit Gemini AI Integration."""
             from ai_engine import _ai_call as _engine_call
             import re as _re
             import html as _html
             try:
                 text = await _engine_call(
-                    prompt,
+                    prompt_override if prompt_override is not None else prompt,
                     system=PREDICTION_SYSTEM,
                     temperature=0.0,
                     max_tokens=4000,
@@ -6087,52 +6147,13 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
-        # ── Soccer daily prediction cache ─────────────────────────────────────
-        # Same player + prop + line + opponent on the same day returns the
-        # cached AI synthesis (tacticalBreakdown / sharpSummary / reasoning).
-        # Bayesian Truth still runs fresh on every request — only the
-        # expensive Gemini narrative call is skipped on a cache hit.
-        _soc_ck = f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|{req.opponentName or ''}|{today_str}"
-        _pred_cached = None
-        try:
-            _pred_hit = await db.ai_response_cache.find_one({"_k": _soc_ck}, {"_id": 0, "v": 1})
-            if _pred_hit and isinstance(_pred_hit.get("v"), dict) and _pred_hit["v"].get("tacticalBreakdown"):
-                _pred_cached = _pred_hit["v"]
-                print(f"[PRED CACHE HIT] soccer {_soc_ck[:70]}")
-        except Exception:
-            pass
-        # ─────────────────────────────────────────────────────────────────────
-
+        # AI is deliberately deferred until the final projection ledger exists.
+        # Looking up or generating a narrative here would allow a stale/preflight
+        # projection to be cached against the request.
         ai_result = None
+        _pred_cached = None
         _ai_task = None
-        if _pred_cached:
-            ai_result = _pred_cached
-            print("[AI] Cache hit — narrative available immediately")
-        elif GEMINI_AI_ENABLED:
-            from ai_engine import check_prediction_budget as _check_budget, increment_prediction_budget as _incr_budget
-            _budget_ok = await _check_budget()
-            if _budget_ok:
-                print("[AI] Inline Gemini synthesis starting…")
-                try:
-                    ai_result = await aio.wait_for(call_grok(label="gemini-flash"), timeout=50)
-                    if ai_result and ai_result.get("tacticalBreakdown"):
-                        # Increment ONLY after a confirmed tacticalBreakdown response
-                        await _incr_budget()
-                        try:
-                            await db.ai_response_cache.replace_one(
-                                {"_k": _soc_ck},
-                                {"_k": _soc_ck, "v": ai_result, "ts": datetime.now(timezone.utc)},
-                                upsert=True,
-                            )
-                        except Exception:
-                            pass
-                except Exception as _ai_err:
-                    print(f"[AI] Synthesis failed: {_ai_err}")
-                    ai_result = None
-            else:
-                print("[AI BUDGET] Daily limit reached — math-only prediction.")
-        else:
-            print("[AI DISABLED] Gemini synthesis skipped; returning math-only prediction.")
+        print("[AI] Narrative deferred until final projection ledger is locked.")
 
         # If no cached AI and background task is running, seed with math-only result
         if not ai_result:
@@ -6367,6 +6388,24 @@ Analyze ALL data thoroughly. Return JSON only."""
         # =============================================
         if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
             bayesian_posterior = real_bayes["posteriorMean"]
+            _record_projection_factor(
+                "bayesian_engine",
+                "Three-layer Bayesian engine",
+                real_bayes.get("priorMean"),
+                bayesian_posterior,
+                inputs={
+                    "priorMean": real_bayes.get("priorMean"),
+                    "momentumMean": real_bayes.get("momentumMean"),
+                    "momentumEffect": real_bayes.get("momentumEffect"),
+                    "covariateAdjustment": real_bayes.get("covariateAdjustment"),
+                    "priorSamples": real_bayes.get("priorSamples"),
+                    "priorWeight": real_bayes.get("priorWeight"),
+                    "momentumWeight": real_bayes.get("momentumWeight"),
+                    "covariateWeight": real_bayes.get("covariateWeight"),
+                },
+                sample_size=real_bayes.get("priorSamples"),
+                reason="Initial posterior after prior, recent-form momentum, and capped match covariates.",
+            )
 
             # ─── OPPONENT H2H PRIOR ADJUSTMENT ────────────────────────────────────
             # Blend player's historical stats vs THIS specific opponent into the prior.
@@ -6417,6 +6456,16 @@ Analyze ALL data thoroughly. Return JSON only."""
                 bayesian_posterior = round(
                     _old_bp * (1 - _h2h_weight) + _h2h_avg_use * _h2h_weight, 1
                 )
+                _record_projection_factor(
+                    "opponent_h2h_blend",
+                    "Direct player H2H blend",
+                    _old_bp,
+                    bayesian_posterior,
+                    inputs={"h2hAverage": _h2h_avg_use, "weightPct": round(_h2h_weight * 100), "venue": _venue_note},
+                    sample_size=_h2h_n_use,
+                    multiplier=1 - _h2h_weight,
+                    reason="Blended the player's verified appearances against this opponent into the posterior.",
+                )
                 real_bayes["opponentH2HAvg"] = _h2h_avg_use
                 real_bayes["opponentH2HSamples"] = _h2h_n_use
                 real_bayes["opponentH2HWeight"] = round(_h2h_weight * 100)
@@ -6463,6 +6512,21 @@ Analyze ALL data thoroughly. Return JSON only."""
                         _old_bp2 = bayesian_posterior
                         bayesian_posterior = round(
                             _old_bp2 * (1 - _h2h_line_weight) + _h2h_line_target * _h2h_line_weight, 1
+                        )
+                        _record_projection_factor(
+                            "h2h_line_signal",
+                            "Unanimous same-venue H2H line signal",
+                            _old_bp2,
+                            bayesian_posterior,
+                            inputs={
+                                "target": _h2h_line_target,
+                                "overPct": round(_h2h_over_pct * 100),
+                                "line": req.line,
+                                "weightPct": round(_h2h_line_weight * 100),
+                            },
+                            sample_size=_h2h_line_n,
+                            multiplier=1 - _h2h_line_weight,
+                            reason="Same-venue H2H appearances consistently cleared one side of the line.",
                         )
                         real_bayes["h2hLineHitRate"]   = round(_h2h_over_pct * 100)
                         real_bayes["h2hLineSampleN"]   = _h2h_line_n
@@ -6613,6 +6677,25 @@ Analyze ALL data thoroughly. Return JSON only."""
                     bayesian_posterior = round(
                         _old_bp * (1 - _opp_weight) + _opp_allowed_avg * _opp_weight, 1
                     )
+                    _record_projection_factor(
+                        "opponent_profile",
+                        "Same-position opponent profile",
+                        _old_bp,
+                        bayesian_posterior,
+                        inputs={
+                            "allowedAverage": _opp_allowed_avg,
+                            "sampleSize": _opp_allowed_n,
+                            "weightPct": round(_opp_weight * 100),
+                            "pairShare": real_bayes.get("pairShare"),
+                            "comparisonSeasonAverage": real_bayes.get("compSeasonAvg"),
+                            "rawAllowedAverage": real_bayes.get("rawOppAllowedAvg"),
+                            "convergence": bool(_has_poss_data and _poss_diff * _opp_diff > 0
+                                                and abs(_poss_diff) >= 5 and abs(_opp_diff) >= 5),
+                        },
+                        sample_size=_opp_allowed_n,
+                        multiplier=1 - _opp_weight,
+                        reason="Compared the opponent's recent output allowed to same-position players, pair-calibrated to this player's baseline.",
+                    )
                     real_bayes["opponentAllowedAvg"]     = round(_opp_allowed_avg, 1)
                     real_bayes["opponentAllowedSamples"] = _opp_allowed_n
                     real_bayes["opponentAllowedWeight"]  = round(_opp_weight * 100)
@@ -6634,6 +6717,15 @@ Analyze ALL data thoroughly. Return JSON only."""
             if _sit_bayes_mult != 1.0:
                 _old_bp = bayesian_posterior
                 bayesian_posterior = round(bayesian_posterior * _sit_bayes_mult, 1)
+                _record_projection_factor(
+                    "situational_multiplier",
+                    "Match situation multiplier",
+                    _old_bp,
+                    bayesian_posterior,
+                    inputs={"multiplier": _sit_bayes_mult, "matchStakes": game_situation.get("matchStakes")},
+                    multiplier=_sit_bayes_mult,
+                    reason="Adjusted the posterior for the match-state and tactical situation.",
+                )
                 print(f"[SITUATION MULT] Bayesian {_old_bp:.1f} × {_sit_bayes_mult:.3f} = {bayesian_posterior:.1f} ({req.propType})")
                 real_bayes["posteriorMean"] = bayesian_posterior
                 real_bayes["situationalMultiplier"] = _sit_bayes_mult
@@ -6675,6 +6767,15 @@ Analyze ALL data thoroughly. Return JSON only."""
                 _KO_ET_MULT  = round(1.0 + _KO_ET_PROB * (30.0 / 90.0), 4)  # ≈ 1.1000
                 _ko_old_bp   = bayesian_posterior
                 bayesian_posterior = round(bayesian_posterior * _KO_ET_MULT, 1)
+                _record_projection_factor(
+                    "knockout_extra_time",
+                    "Knockout extra-time exposure",
+                    _ko_old_bp,
+                    bayesian_posterior,
+                    inputs={"extraTimeProbability": _KO_ET_PROB, "extraMinutes": 30, "knockout": True},
+                    multiplier=_KO_ET_MULT,
+                    reason="Added expected count volume from the possibility of 30 minutes of extra time.",
+                )
                 real_bayes["posteriorMean"]    = bayesian_posterior
                 real_bayes["koExtraTimeAdj"]   = _KO_ET_MULT
                 real_bayes["koExtraTimeProb"]  = _KO_ET_PROB
@@ -8935,6 +9036,20 @@ Analyze ALL data thoroughly. Return JSON only."""
                     _corrected_mean = round(
                         float(_cal_mean) * _pass_calibration["multiplier"], 1
                     )
+                    _record_projection_factor(
+                        "pass_projection_calibration",
+                        "Learned pass-projection calibration",
+                        _cal_mean,
+                        _corrected_mean,
+                        inputs={
+                            "multiplier": _pass_calibration.get("multiplier"),
+                            "bucket": _pass_calibration.get("bucket"),
+                            "mode": _pass_calibration.get("mode"),
+                        },
+                        sample_size=_pass_calibration.get("n"),
+                        multiplier=_pass_calibration.get("multiplier"),
+                        reason="Applied only when the learned walk-forward calibration bucket is live.",
+                    )
                     prediction["projectedValue"] = _corrected_mean
                     prediction["recommendation"] = (
                         "over" if _corrected_mean > req.line else "under"
@@ -9394,6 +9509,354 @@ Analyze ALL data thoroughly. Return JSON only."""
             # A diagnostic explanation must never make a valid prediction fail.
             print(f"[MODEL FACTORS] snapshot failed: {_af_err}")
             prediction["analysisFactors"] = []
+
+        # ── FINAL PROJECTION LEDGER + LEDGER-BOUND AI ─────────────────────────
+        # This is intentionally the last model boundary.  The earlier
+        # analysisFactors snapshot is evidence-oriented; factorLedger is the
+        # ordered numeric audit trail used by the explanation model.
+        try:
+            _ledger_projection = next(
+                (
+                    item.get("after")
+                    for item in reversed(_factor_ledger)
+                    if item.get("after") is not None and item.get("kind") != "confidence"
+                ),
+                None,
+            )
+            _final_projection = prediction.get("projectedValue", req.line)
+            if _ledger_projection != _ledger_num(_final_projection):
+                _record_projection_factor(
+                    "final_projection_lock",
+                    "Final displayed projection",
+                    _ledger_projection,
+                    _final_projection,
+                    inputs={"line": req.line},
+                    reason="Captures any late guard or calibration change before the result is returned.",
+                )
+            else:
+                _record_projection_factor(
+                    "final_projection_lock",
+                    "Final displayed projection",
+                    _ledger_projection,
+                    _final_projection,
+                    status="measured",
+                    inputs={"line": req.line},
+                    reason="Final projection is locked for display and explanation.",
+                )
+
+            # A late pass calibration or hard guard can move the displayed
+            # projection after the Bayesian Truth block refreshed pOver/pUnder.
+            # Recompute the probabilities from the value the user actually
+            # sees, using the same predictive standard deviation used earlier.
+            # This keeps the ledger, bayesianMetrics, badge, and AI prompt on
+            # one final numeric snapshot.
+            _final_bm = prediction.setdefault("bayesianMetrics", {})
+            _final_line_num = float(req.line) if req.line is not None else 0.0
+            _final_pv_num = float(_final_projection) if _final_projection is not None else _final_line_num
+            _final_std = max(
+                float(_final_bm.get("posteriorStd") or 0),
+                float(_final_bm.get("priorStd") or 0) * 0.55,
+                abs(_final_pv_num) * 0.17,
+            )
+            if _final_std > 0 and _final_line_num:
+                try:
+                    import math as _final_math
+                    _final_z = (_final_line_num - _final_pv_num) / _final_std
+                    _final_p_under = round(
+                        100 * (0.5 * (1 + _final_math.erf(_final_z / _final_math.sqrt(2)))),
+                        1,
+                    )
+                    _final_p_over = round(100 - _final_p_under, 1)
+                    _final_bm["pOver"] = _final_p_over
+                    _final_bm["pUnder"] = _final_p_under
+                    if str(prediction.get("recommendation") or "").upper() != "PASS":
+                        _final_rec = "over" if _final_p_over >= _final_p_under else "under"
+                        prediction["recommendation"] = _final_rec
+                        _final_bm["recommendation"] = _final_rec
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass
+
+            # Reassert the display invariant after every late projection stage.
+            # PASS is an intentional suppression state; OVER/UNDER must agree
+            # with the final displayed projection relative to the line.
+            if str(prediction.get("recommendation") or "").upper() != "PASS":
+                prediction["recommendation"] = (
+                    "over" if _final_pv_num > _final_line_num else "under"
+                )
+                _final_bm["recommendation"] = prediction["recommendation"]
+
+            # Recompute edge and safety after all late projection stages. The
+            # normal edge/safety block runs before pass-projection calibration,
+            # so using its values here could describe an earlier projection or
+            # earlier direction in the final ledger.
+            _final_rec_upper = str(prediction.get("recommendation") or "").upper()
+            _final_position = (
+                prediction.get("player", {}).get("position")
+                or prediction.get("position")
+                or specific_position
+                or ""
+            )
+            _final_conf_pre_safety = float(prediction.get("confidenceScore") or 50)
+            if _final_rec_upper == "PASS":
+                _final_safety = "AVOID"
+                _final_hist_rate = None
+                _final_hist_n = 0
+            elif prediction.get("coinFlip"):
+                _final_safety = "RISKY"
+                _final_hist_rate = None
+                _final_hist_n = 0
+            else:
+                _final_safety_data = _get_prop_safety(
+                    req.propType,
+                    _final_rec_upper,
+                    league_id=req.leagueId,
+                    position=_final_position,
+                )
+                _final_safety = (_final_safety_data or {}).get("safety", "RISKY")
+                _final_hist_rate = (_final_safety_data or {}).get("hitRate")
+                _final_hist_n = (_final_safety_data or {}).get("n", 0)
+
+            _final_margin = abs(_final_pv_num - _final_line_num) if _final_line_num > 0 else 0
+            _final_gap_pct = (
+                abs(_final_pv_num - _final_line_num) / _final_line_num * 100
+                if _final_line_num > 0 else 0
+            )
+            _final_market_dist = _final_gap_pct >= 35
+            if _final_rec_upper == "PASS" or prediction.get("coinFlip") or _final_safety == "AVOID":
+                _final_edge_rating = "NO EDGE"
+            elif _final_safety == "SAFE":
+                _final_edge_rating = (
+                    "SHARP EDGE" if _final_margin >= 5 and _final_conf_pre_safety >= 60
+                    else "EDGE" if _final_margin >= 3 and _final_conf_pre_safety >= 55
+                    else "MARGINAL" if _final_margin >= 2 else "NO EDGE"
+                )
+            elif _final_safety == "MODERATE":
+                _final_edge_rating = (
+                    "SHARP EDGE" if _final_margin >= 8 and _final_conf_pre_safety >= 65
+                    else "EDGE" if _final_margin >= 5 and _final_conf_pre_safety >= 58
+                    else "MARGINAL" if _final_margin >= 3 else "NO EDGE"
+                )
+            else:
+                _final_edge_rating = (
+                    "MARGINAL"
+                    if (_final_margin >= 10 and _final_conf_pre_safety >= 70) or _final_market_dist
+                    else "NO EDGE"
+                )
+            if _final_market_dist and _final_edge_rating == "NO EDGE":
+                _final_edge_rating = "MARGINAL"
+
+            prediction["edgeRating"] = _final_edge_rating
+            prediction["safetyRating"] = _final_safety
+            prediction["propHistoricalRate"] = _final_hist_rate
+            prediction["propHistoricalN"] = _final_hist_n
+
+            # Preserve the existing suppression policy, but apply it against
+            # the final direction/rating if late calibration changed either.
+            if _final_rec_upper != "PASS":
+                if _final_safety == "AVOID" and _final_hist_rate is not None:
+                    _final_cap = max(50, round(_final_hist_rate))
+                    if float(prediction.get("confidenceScore") or 50) > _final_cap:
+                        _record_confidence_control(
+                            "final_safety_cap",
+                            "Final safety confidence cap",
+                            prediction.get("confidenceScore"),
+                            _final_cap,
+                            f"Final {_final_rec_upper} safety is AVOID at {_final_hist_rate:.1f}% "
+                            f"over {_final_hist_n} settled events.",
+                        )
+                        prediction["confidenceScore"] = _final_cap
+                        prediction["confidenceLevel"] = "Medium" if _final_cap >= 55 else "Low"
+                elif _final_safety == "RISKY" and _final_hist_rate is not None:
+                    _final_risky_conf = float(prediction.get("confidenceScore") or 50)
+                    if _final_hist_rate < 50 and _final_risky_conf > 65:
+                        _final_adj = max(55, _final_risky_conf - 5)
+                        _record_confidence_control(
+                            "final_risky_adjustment",
+                            "Final risky-prop confidence adjustment",
+                            _final_risky_conf,
+                            _final_adj,
+                            f"Final {_final_rec_upper} safety is RISKY at {_final_hist_rate:.1f}% "
+                            f"over {_final_hist_n} settled events.",
+                        )
+                        prediction["confidenceScore"] = _final_adj
+                        prediction["confidenceLevel"] = "High" if _final_adj >= 70 else "Medium"
+
+            # Confidence is a separate control stream from projection. Keep it
+            # explicit so Gemini can explain a PASS/RISKY/capped result without
+            # implying the cap changed the math projection.
+            _raw_conf_final = prediction.get("rawConfidence")
+            _display_conf_final = prediction.get("confidenceScore", 50)
+            if _raw_conf_final is not None and _ledger_num(_raw_conf_final) != _ledger_num(_display_conf_final):
+                _record_confidence_control(
+                    "final_confidence_control",
+                    "Final confidence controls",
+                    _raw_conf_final,
+                    _display_conf_final,
+                    "Displayed confidence includes empirical, sample-size, market-distance, and safety controls.",
+                )
+
+            _ledger_final = {
+                "projectedValue": _ledger_num(_final_projection),
+                "line": _ledger_num(req.line),
+                "recommendation": str(prediction.get("recommendation") or "").upper(),
+                "pOver": _ledger_num(_final_bm.get("pOver")),
+                "pUnder": _ledger_num(_final_bm.get("pUnder")),
+                "confidenceScore": _ledger_num(_display_conf_final),
+                "confidenceLevel": prediction.get("confidenceLevel"),
+                "edge": _ledger_num(abs(float(_final_projection) - float(req.line)))
+                if _final_projection is not None and req.line is not None else None,
+                "edgeRating": prediction.get("edgeRating"),
+                "safetyRating": prediction.get("safetyRating"),
+            }
+            for _idx, _factor in enumerate(_factor_ledger, start=1):
+                _factor["sequence"] = _idx
+            _ledger_payload = {
+                "version": "projection-ledger-v1",
+                "factors": _factor_ledger,
+                "final": _ledger_final,
+            }
+            _ledger_fingerprint = hashlib.sha256(
+                json.dumps(_ledger_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+            ).hexdigest()[:20]
+            prediction["factorLedger"] = _ledger_payload
+            prediction["factorLedgerVersion"] = "projection-ledger-v1"
+            prediction["factorLedgerFingerprint"] = _ledger_fingerprint
+
+            # Use the final ledger as an authoritative suffix rather than
+            # relying on any earlier preflight values embedded in `prompt`.
+            _final_ledger_prompt = f"""
+
+⛔ FINAL LEDGER — AUTHORITATIVE AND COMPLETE ⛔
+The following values are the exact values shown to the user. Do not recompute,
+round differently, or use any earlier estimate in the request. Explain every
+factor with status "applied" in sequence order. Mention skipped/unavailable
+factors only as limitations. Never invent a numeric adjustment that is absent
+from this ledger. Projection and recommendation are mathematical; Gemini must
+not change them.
+
+{json.dumps(_ledger_payload, indent=2, default=str)}
+
+Your opening Verdict, sharpSummary, TL;DR, aiProjection, scenario base case,
+and every probability claim must agree with FINAL. If recommendation is PASS,
+describe it as no actionable edge rather than a winning OVER/UNDER pick. If
+confidence or safety was capped, say that explicitly and distinguish the cap
+from the projection.
+"""
+            _final_ai_prompt = prompt + _final_ledger_prompt
+            _soc_ck = (
+                f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|"
+                f"{req.opponentName or ''}|{today_str}|{_ledger_fingerprint}"
+            )
+            _final_ai_result = None
+            _ai_cache_hit = False
+            try:
+                _pred_hit = await db.ai_response_cache.find_one(
+                    {"_k": _soc_ck}, {"_id": 0, "v": 1}
+                )
+                if (
+                    _pred_hit
+                    and isinstance(_pred_hit.get("v"), dict)
+                    and _pred_hit["v"].get("tacticalBreakdown")
+                ):
+                    _final_ai_result = _pred_hit["v"]
+                    _ai_cache_hit = True
+                    print(f"[PRED CACHE HIT] final ledger {_ledger_fingerprint}")
+            except Exception as _cache_read_err:
+                print(f"[PRED CACHE READ] skipped: {_cache_read_err}")
+
+            if _final_ai_result is None and GEMINI_AI_ENABLED:
+                from ai_engine import (
+                    check_prediction_budget as _check_budget,
+                    increment_prediction_budget as _incr_budget,
+                )
+                if await _check_budget():
+                    try:
+                        _final_ai_result = await aio.wait_for(
+                            call_grok(
+                                label="gemini-final-ledger",
+                                model="gemini-2.0-flash",
+                                prompt_override=_final_ai_prompt,
+                            ),
+                            timeout=50,
+                        )
+                        if _final_ai_result and _final_ai_result.get("tacticalBreakdown"):
+                            await _incr_budget()
+                            try:
+                                await db.ai_response_cache.replace_one(
+                                    {"_k": _soc_ck},
+                                    {
+                                        "_k": _soc_ck,
+                                        "v": _final_ai_result,
+                                        "ledgerFingerprint": _ledger_fingerprint,
+                                        "ts": datetime.now(timezone.utc),
+                                    },
+                                    upsert=True,
+                                )
+                            except Exception as _cache_write_err:
+                                print(f"[PRED CACHE WRITE] skipped: {_cache_write_err}")
+                    except Exception as _final_ai_err:
+                        print(f"[AI FINAL LEDGER] synthesis failed: {_final_ai_err}")
+                        _final_ai_result = None
+                else:
+                    print("[AI BUDGET] Daily limit reached — final math-only prediction.")
+            else:
+                print("[AI DISABLED] Gemini final-ledger synthesis skipped.")
+
+            # Merge only narrative fields. Deterministic fixture, player,
+            # projection, recommendation, and model metrics remain untouched.
+            _narrative_fields = (
+                "aiProjection", "reasoning", "tacticalBreakdown", "sharpSummary",
+                "scenarioAnalysis", "keyEvidence", "sensitivityTests", "subRisk",
+                "gameFlowDynamics", "uncertaintyNote", "qualitySignal", "keyFactors",
+            )
+            if _final_ai_result:
+                for _field in _narrative_fields:
+                    if _field in _final_ai_result:
+                        prediction[_field] = _final_ai_result[_field]
+                prediction["aiSource"] = "gemini"
+                prediction["aiPending"] = False
+                prediction["aiLedgerFingerprint"] = _ledger_fingerprint
+            else:
+                prediction["aiSource"] = "math"
+                prediction["aiPending"] = False
+
+            # Rebuild the authoritative math footer after all late calibration
+            # and guard stages. This prevents a correct AI narrative from being
+            # followed by stale pre-calibration numbers.
+            _final_bm = prediction.get("bayesianMetrics") or {}
+            _fpv = prediction.get("projectedValue", req.line)
+            _frec = str(prediction.get("recommendation") or "PASS").upper()
+            _fline = req.line
+            _fpover = _final_bm.get("pOver", 50) or 50
+            _fpunder = _final_bm.get("pUnder", 50) or 50
+            _fpwin = max(_fpover, _fpunder)
+            _fedge = abs(float(_fpv) - float(_fline)) if _fpv is not None and _fline is not None else 0
+            _fp_s = str(int(_fpv)) if isinstance(_fpv, (int, float)) and _fpv == int(_fpv) else f"{_fpv}"
+            _fl_s = str(int(_fline)) if isinstance(_fline, (int, float)) and _fline == int(_fline) else f"{_fline}"
+            _final_math_footer = (
+                f"**Final Math Ledger**\n"
+                f"Projection: {_fp_s} | Line: {_fl_s} | Recommendation: {_frec} | Edge: {_fedge:.1f}\n"
+                f"P(OVER): {_fpover:.1f}% | P(UNDER): {_fpunder:.1f}% | "
+                f"Confidence: {_display_conf_final:.0f}% ({prediction.get('confidenceLevel', 'Medium')})\n"
+                f"Ledger: {_ledger_fingerprint} | Factors recorded: {len(_factor_ledger)}"
+            )
+            _existing_final_td = prediction.get("tacticalBreakdown")
+            if isinstance(_existing_final_td, str) and len(_existing_final_td.strip()) > 100 and _final_ai_result:
+                prediction["tacticalBreakdown"] = _existing_final_td.strip() + "\n\n---\n" + _final_math_footer
+            else:
+                prediction["tacticalBreakdown"] = _final_math_footer
+            prediction["sharpSummary"] = (
+                f"Reverse Formula final call: {_fp_s} {_frec} {_fl_s} "
+                f"with {_fpwin:.1f}% probability and {_fedge:.1f} edge. "
+                f"Confidence is {_display_conf_final:.0f}% ({prediction.get('confidenceLevel', 'Medium')}); "
+                f"{prediction.get('safetyRating', 'risk not rated')} safety."
+            )
+        except Exception as _ledger_err:
+            # The ledger is diagnostic/explanatory and must never take down a
+            # valid math prediction. Keep the explicit math source marker.
+            print(f"[FINAL LEDGER] failed: {_ledger_err}")
+            prediction["aiSource"] = "math"
+            prediction["aiPending"] = False
 
         prediction["_ts"] = datetime.now(timezone.utc)
         try:
