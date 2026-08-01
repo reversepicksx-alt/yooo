@@ -331,19 +331,51 @@ async def search_players(req: PlayerSearchRequest):
         }
 
     quota_gone = is_quota_exhausted()
+    # This endpoint is called directly while a user is typing. Background
+    # maintenance may consume the local soft budget, but that must not make an
+    # uncached player look like a genuine no-result. Priority bypasses only the
+    # local maintenance budget; api_football_request still enforces the real
+    # daily provider-quota breaker.
+    search_api_request = priority_api_football_request
 
     # Sort helpers — defined early so they can be applied to cache hits too.
     def _strip(s):
         return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     query_parts = [_strip(w.lower()) for w in req.query.strip().split()]
     _TOP5_LEAGUES = {39, 140, 135, 78, 61}   # EPL, LaLiga, SerieA, Bund., Ligue1
+    _NICKNAME_ALIASES = {
+        "andy": {"andrew"}, "danny": {"daniel"}, "drew": {"andrew"},
+        "jack": {"john", "johnathan", "johnny"}, "jake": {"jacob"},
+        "jimmy": {"james"}, "joey": {"joseph"}, "jon": {"jonathan"},
+        "josh": {"joshua"}, "katie": {"katherine", "kathryn"},
+        "liz": {"elizabeth"}, "lizzy": {"elizabeth"}, "matt": {"matthew"},
+        "matty": {"matthew"}, "mike": {"michael"}, "nick": {"nicholas"},
+        "rob": {"robert"}, "sammy": {"samuel", "samantha"}, "steve": {"steven", "stephen"},
+        "tom": {"thomas"}, "tommy": {"thomas"}, "will": {"william"},
+    }
+
+    def _name_matches_query(name_norm: str) -> bool:
+        """Strict full-name match with a bounded first-name nickname rescue."""
+        name_words = set(name_norm.split())
+        if all(word in name_words for word in query_parts):
+            return True
+        if len(query_parts) < 2:
+            return False
+        first_aliases = _NICKNAME_ALIASES.get(query_parts[0], set())
+        return bool(first_aliases) and any(alias in name_words for alias in first_aliases) and all(
+            word in name_words for word in query_parts[1:]
+        )
 
     def sort_key(p):
         has_team    = 0 if p.get("teamName") else 1
         name_norm   = _strip((p.get("name") or "").lower())
         first_norm  = _strip((p.get("firstname") or "").lower())
         name_words  = set(name_norm.split())
-        all_match   = 0 if all(w in name_norm for w in query_parts) else 1
+        nickname_rescued = (
+            not all(w in name_norm for w in query_parts)
+            and _name_matches_query(name_norm)
+        )
+        all_match   = 0 if _name_matches_query(name_norm) else 1
 
         # Abbreviated-name rescue: "J. David" must match query "Jonathan David".
         # API-Football stores many players with abbreviated first names (e.g.
@@ -385,7 +417,12 @@ async def search_players(req: PlayerSearchRequest):
         # e.g. "messi" is a word in "l. messi" but NOT in "messias".
         # Treat abbreviated-name rescues as exact-word matches so they sort above
         # reversed-name false positives (e.g. "David Jonathan" for "Jonathan David").
-        exact_word  = 0 if (abbrev_rescued or middle_rescued or all(w in name_words for w in query_parts)) else 1
+        exact_word  = 0 if (
+            nickname_rescued
+            or abbrev_rescued
+            or middle_rescued
+            or all(w in name_words for w in query_parts)
+        ) else 1
 
         # Reversed-name penalty: "David Jonathan" must not beat "J. David" when
         # the query is "Jonathan David".  If the stored name has all query words
@@ -423,7 +460,7 @@ async def search_players(req: PlayerSearchRequest):
             # Jesus" must not become a list of players named only Jonathan).
             def _direct_or_abbreviated_match(p):
                 name_norm = _strip((p.get("name") or "").lower())
-                if all(w in name_norm for w in query_parts):
+                if _name_matches_query(name_norm):
                     return True
                 stored_tokens = name_norm.split()
                 first_token = stored_tokens[0] if stored_tokens else ""
@@ -724,7 +761,7 @@ async def search_players(req: PlayerSearchRequest):
 
         async def search_season(s):
             try:
-                data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
+                data = await search_api_request("players", {"search": req.query, "league": req.league_id, "season": s})
                 return [(extract_player(item), s) for item in (data or [])]
             except Exception:
                 return []
@@ -741,7 +778,7 @@ async def search_players(req: PlayerSearchRequest):
         if not all_players:
             for s in seasons_to_try[2:]:
                 try:
-                    data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
+                    data = await search_api_request("players", {"search": req.query, "league": req.league_id, "season": s})
                     if data:
                         all_players.extend([extract_player(item) for item in data])
                         break
@@ -753,7 +790,7 @@ async def search_players(req: PlayerSearchRequest):
             last_name = req.query.strip().split()[-1]
             async def search_season_lastname(s):
                 try:
-                    data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
+                    data = await search_api_request("players", {"search": last_name, "league": req.league_id, "season": s})
                     return [(extract_player(item), s) for item in (data or [])]
                 except Exception:
                     return []
@@ -768,7 +805,7 @@ async def search_players(req: PlayerSearchRequest):
             if not all_players:
                 for s in seasons_to_try[2:3]:
                     try:
-                        data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
+                        data = await search_api_request("players", {"search": last_name, "league": req.league_id, "season": s})
                         if data:
                             all_players.extend([extract_player(item) for item in data])
                             break
@@ -793,7 +830,7 @@ async def search_players(req: PlayerSearchRequest):
             )
             for s in search_seasons:
                 try:
-                    data = await api_football_request("players", {"search": req.query, "league": lid, "season": s})
+                    data = await search_api_request("players", {"search": req.query, "league": lid, "season": s})
                     if data:
                         return [extract_player(item) for item in data]
                 except Exception:
@@ -820,7 +857,7 @@ async def search_players(req: PlayerSearchRequest):
                 )
                 for s in search_seasons_lw:
                     try:
-                        data = await api_football_request(
+                        data = await search_api_request(
                             "players", {"search": last_word_q, "league": lid, "season": s}
                         )
                         if data:
@@ -835,7 +872,7 @@ async def search_players(req: PlayerSearchRequest):
     # Strategy 3: profiles
     if not all_players and not quota_gone:
         try:
-            data = await api_football_request("players/profiles", {"search": req.query})
+            data = await search_api_request("players/profiles", {"search": req.query})
             if data:
                 all_players.extend([extract_player(item) for item in data])
         except Exception:
@@ -847,7 +884,7 @@ async def search_players(req: PlayerSearchRequest):
         parts_q = req.query.strip().split()
         fl_query = f"{parts_q[0]} {parts_q[-1]}"
         try:
-            data = await api_football_request("players/profiles", {"search": fl_query})
+            data = await search_api_request("players/profiles", {"search": fl_query})
             if data:
                 all_players.extend([extract_player(item) for item in data])
         except Exception:
@@ -857,7 +894,7 @@ async def search_players(req: PlayerSearchRequest):
     if not all_players and not quota_gone and " " in req.query:
         last_name = req.query.strip().split()[-1]
         try:
-            data = await api_football_request("players/profiles", {"search": last_name})
+            data = await search_api_request("players/profiles", {"search": last_name})
             if data:
                 all_players.extend([extract_player(item) for item in data])
         except Exception:

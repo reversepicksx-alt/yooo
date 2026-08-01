@@ -27,3 +27,10 @@ Multi-word player queries are strict AND searches. Return only full-name matches
 **Why:** A slower response for an earlier partial query could overwrite the current dropdown, and API fallback results for one token made a query like “Jonathan Jesus” show unrelated Jonathan or Jesús players.
 
 **How to apply:** Keep `_apply_sort_and_quality` strict for 2+ words, preserve only an explicitly unambiguous short-name exception such as “Jacy” → “Jacy Oliveira,” and clear stale UI results while the latest query is debounced/requested.
+
+## Interactive search priority and nickname rescue
+Interactive `/api/players/search` calls must use `priority_api_football_request` for provider fallbacks. The local 700-call soft budget is for background maintenance and must not turn uncached names into empty results; the real provider daily-quota breaker still applies. Multi-word filtering may include a bounded first-name nickname alias when the surname matches exactly, such as “Matty Longstaff” → “Matthew Ben Longstaff.”
+
+**Why:** Background jobs routinely consumed the local maintenance budget even while the provider dashboard had quota remaining. Separately, API-Football returned canonical names that strict matching rejected when users typed common nicknames.
+
+**How to apply:** Keep priority limited to the interactive search route, not background enrichment. Add nickname aliases conservatively and require all remaining query words to match complete canonical-name tokens.
