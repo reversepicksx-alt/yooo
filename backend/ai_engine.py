@@ -33,8 +33,27 @@ def _get_budget_lock():
     return _budget_asyncio_lock
 
 
-async def check_and_increment_prediction_budget() -> bool:
+def _read_budget_file() -> tuple[dict, bool]:
+    """Read the budget JSON file. Returns (data_dict, was_corrupt).
+
+    - If the file is missing, returns ({}, False) — treated as a fresh day.
+    - If the file exists but is malformed, returns ({}, True) and logs a warning.
+    """
+    if not _os_budget.path.exists(_AI_BUDGET_PATH):
+        return {}, False
+    try:
+        with open(_AI_BUDGET_PATH, "r") as _f:
+            return _json_budget.load(_f), False
+    except Exception as _read_err:
+        print(f"[AI BUDGET] WARNING: budget file corrupt/unreadable ({_read_err}). Treating as zero.")
+        return {}, True
+
+
+async def check_prediction_budget() -> bool:
     """Returns True if AI synthesis can proceed; False when daily limit is hit.
+
+    Does NOT increment the counter — call increment_prediction_budget() only
+    after a successful tacticalBreakdown is confirmed.
 
     The limit comes from AI_DAILY_GENERATION_LIMIT (config.py / env var).
     Fails open: any I/O error returns True so a broken counter never blocks
@@ -44,22 +63,62 @@ async def check_and_increment_prediction_budget() -> bool:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     async with _get_budget_lock():
         try:
-            data: dict = {}
-            if _os_budget.path.exists(_AI_BUDGET_PATH):
-                with open(_AI_BUDGET_PATH, "r") as _f:
-                    data = _json_budget.load(_f)
+            data, _corrupt = _read_budget_file()
             count = int(data.get(today, 0))
             if count >= _LIMIT:
                 print(f"[AI BUDGET] Daily limit {_LIMIT} reached ({count} calls). Math-only fallback.")
                 return False
-            # Write updated count — keep only today's key to avoid unbounded growth
-            with open(_AI_BUDGET_PATH, "w") as _f:
-                _json_budget.dump({today: count + 1}, _f)
-            print(f"[AI BUDGET] Prediction synthesis {count + 1}/{_LIMIT} today.")
+            print(f"[AI BUDGET] Budget OK: {count}/{_LIMIT} calls used today.")
             return True
         except Exception as _be:
             print(f"[AI BUDGET] Counter error ({_be}) — proceeding with AI (fail-open).")
             return True
+
+
+async def increment_prediction_budget() -> None:
+    """Increment the daily AI synthesis counter.
+
+    Called only after a successful tacticalBreakdown response has been confirmed
+    and cached. Keeps only today's key in the file to avoid unbounded growth.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    async with _get_budget_lock():
+        try:
+            data, _corrupt = _read_budget_file()
+            count = int(data.get(today, 0))
+            with open(_AI_BUDGET_PATH, "w") as _f:
+                _json_budget.dump({today: count + 1}, _f)
+            from config import AI_DAILY_GENERATION_LIMIT as _LIMIT
+            print(f"[AI BUDGET] Incremented → {count + 1}/{_LIMIT} today.")
+        except Exception as _be:
+            print(f"[AI BUDGET] WARNING: failed to increment counter ({_be}).")
+
+
+async def get_prediction_budget_status() -> dict:
+    """Return today's AI generation count and limit for admin visibility."""
+    from config import AI_DAILY_GENERATION_LIMIT as _LIMIT
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    async with _get_budget_lock():
+        try:
+            data, corrupt = _read_budget_file()
+            count = int(data.get(today, 0))
+            return {"date": today, "count": count, "limit": _LIMIT, "remaining": max(0, _LIMIT - count), "corrupt": corrupt}
+        except Exception as _be:
+            print(f"[AI BUDGET] Status read error ({_be}).")
+            return {"date": today, "count": 0, "limit": _LIMIT, "remaining": _LIMIT, "corrupt": True, "error": str(_be)}
+
+
+# Keep the old name as a shim so any stale call sites still work.
+async def check_and_increment_prediction_budget() -> bool:
+    """Deprecated shim — prefer check_prediction_budget() + increment_prediction_budget().
+
+    This version still increments eagerly (pre-call) for backward compatibility
+    if called directly, but the main predict route now uses the split API.
+    """
+    ok = await check_prediction_budget()
+    if ok:
+        await increment_prediction_budget()
+    return ok
 
 # ── Replit AI Integration env vars (no external API key needed) ───────────────
 import os as _os

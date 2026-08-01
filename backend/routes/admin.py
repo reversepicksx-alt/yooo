@@ -1158,3 +1158,21 @@ async def admin_model_replay(req: ModelReplayRequest):
         },
         "walkForwardReplay": replay,
     }
+
+
+class _AiBudgetRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/ai-budget")
+async def admin_ai_budget(req: _AiBudgetRequest):
+    """Owner only: return today's AI generation count vs the daily limit.
+
+    Shows the current /tmp budget counter so the owner can see how many
+    Gemini synthesis calls have been made today without digging into logs.
+    """
+    await verify_owner(req.email, req.token)
+    from ai_engine import get_prediction_budget_status
+    status = await get_prediction_budget_status()
+    return status

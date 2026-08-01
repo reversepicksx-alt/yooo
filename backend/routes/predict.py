@@ -6109,13 +6109,15 @@ Analyze ALL data thoroughly. Return JSON only."""
             ai_result = _pred_cached
             print("[AI] Cache hit — narrative available immediately")
         elif GEMINI_AI_ENABLED:
-            from ai_engine import check_and_increment_prediction_budget
-            _budget_ok = await check_and_increment_prediction_budget()
+            from ai_engine import check_prediction_budget as _check_budget, increment_prediction_budget as _incr_budget
+            _budget_ok = await _check_budget()
             if _budget_ok:
                 print("[AI] Inline Gemini synthesis starting…")
                 try:
                     ai_result = await aio.wait_for(call_grok(label="gemini-flash"), timeout=50)
                     if ai_result and ai_result.get("tacticalBreakdown"):
+                        # Increment ONLY after a confirmed tacticalBreakdown response
+                        await _incr_budget()
                         try:
                             await db.ai_response_cache.replace_one(
                                 {"_k": _soc_ck},
@@ -9398,7 +9400,6 @@ Analyze ALL data thoroughly. Return JSON only."""
         reset_api_request_priority(_priority_token)
 
 
-
 # ── AI async polling endpoint ──────────────────────────────────────────────
 # F5 decoupling: frontend polls for AI narrative after receiving math result
 @router.post("/predict/ai-poll")
@@ -9441,4 +9442,3 @@ async def match_script(teamId: int, opponentId: int, leagueId: int, isHome: bool
         return {"available": False, "noCleanScript": True, "primaryScript": None,
                 "isFavorable": False, "explanation": "Could not classify this match right now.",
                 "tacticalModifier": None, "expectedEffects": []}
-
