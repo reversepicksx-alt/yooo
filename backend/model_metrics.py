@@ -261,6 +261,15 @@ def _walk_forward_classification(ordered: list[dict]) -> dict:
         "brierScore": round(brier_sum / n, 4),
     }
 
+_BIN_DEFS = (
+    ("50–59%", 50, 60),
+    ("60–69%", 60, 70),
+    ("70–79%", 70, 80),
+    ("80–89%", 80, 90),
+    ("90–100%", 90, 101),
+)
+
+
 def _bin_label(confidence: float) -> str | None:
     for label, lo, hi in _BIN_DEFS:
         if lo <= confidence < hi:

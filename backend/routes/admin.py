@@ -517,14 +517,52 @@ async def picks_audit(req: _PicksAuditRequest):
     )
     totals["wrong_push_count"] = len(wrong_pushes)
 
+    # ── 7. Calibration alerts ──────────────────────────────────────────────
+    from calibration_alerts import get_all_alerts as _get_cal_alerts
+    _cal_snapshot = _get_cal_alerts()
+    _cal_alerts_summary = []
+    for sport, alert in (_cal_snapshot.get("sports") or {}).items():
+        level = alert.get("alertLevel", "OK")
+        if level != "OK":
+            _cal_alerts_summary.append({
+                "scope":         "sport",
+                "sport":         sport,
+                "alertLevel":    level,
+                "brierScore":    alert.get("brierScore"),
+                "maxOverGapPp":  alert.get("maxOverGapPp"),
+                "worstBin":      alert.get("worstBin"),
+                "n":             alert.get("n"),
+            })
+    for key, alert in (_cal_snapshot.get("props") or {}).items():
+        _cal_alerts_summary.append({
+            "scope":         "prop",
+            "key":           key,
+            "sport":         alert.get("sport"),
+            "propType":      alert.get("propType"),
+            "alertLevel":    alert.get("alertLevel"),
+            "brierScore":    alert.get("brierScore"),
+            "maxOverGapPp":  alert.get("maxOverGapPp"),
+            "worstBin":      alert.get("worstBin"),
+            "n":             alert.get("n"),
+        })
+
     return {
-        "generatedAt":  now.isoformat(),
-        "totals":       totals,
-        "matrix":       matrix,
-        "wrong_pushes": wrong_pushes,
-        "stale":        stale_by_sport,
-        "prop_rates":   prop_rates,
-        "recent_voids": recent_voids,
+        "generatedAt":        now.isoformat(),
+        "totals":             totals,
+        "matrix":             matrix,
+        "wrong_pushes":       wrong_pushes,
+        "stale":              stale_by_sport,
+        "prop_rates":         prop_rates,
+        "recent_voids":       recent_voids,
+        "calibrationAlerts":  {
+            "lastRefresh":   _cal_snapshot.get("lastRefresh"),
+            "alerts":        _cal_alerts_summary,
+            "note": (
+                "AVOID = Brier ≥ 0.28 or calibration gap ≥ 15pp; "
+                "RISKY = Brier ≥ 0.26 or gap ≥ 10pp. "
+                "Run POST /api/admin/calibration-alerts/refresh to recompute."
+            ),
+        },
     }
 
 
@@ -930,6 +968,39 @@ async def admin_pass_calibration_validate(req: PassCalValidateRequest):
         "observations": observations,
         "safeToEnable": safe_to_enable,
     }
+
+
+# ── Calibration Alerts ────────────────────────────────────────────────────────
+
+class _CalAlertRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/calibration-alerts")
+async def calibration_alerts_inspect(req: _CalAlertRequest):
+    """Inspect the current calibration alert snapshot (owner only).
+
+    Returns per-sport and per-(sport×prop) Brier scores, calibration gaps,
+    and alert levels (AVOID / RISKY / OK).  Run /calibration-alerts/refresh
+    to recompute from the latest settled picks.
+    """
+    await verify_owner(req.email, req.token)
+    from calibration_alerts import get_all_alerts
+    return {"success": True, **get_all_alerts()}
+
+
+@router.post("/calibration-alerts/refresh")
+async def calibration_alerts_refresh(req: _CalAlertRequest):
+    """Force-refresh calibration alerts from the latest settled picks (owner only).
+
+    Runs walk_forward_replay per sport and per sport×prop, then updates
+    the in-memory AVOID/RISKY alert cache used by the prediction engine.
+    """
+    await verify_owner(req.email, req.token)
+    from calibration_alerts import refresh_calibration_alerts, get_all_alerts
+    result = await refresh_calibration_alerts(db)
+    return {"success": True, **result, "snapshot": get_all_alerts()}
 
 
 # ── Model Replay ────────────────────────────────────────────────────────────────

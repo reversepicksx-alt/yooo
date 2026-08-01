@@ -241,6 +241,20 @@ async def _run_startup_tasks():
             await _a.sleep(6 * 60 * 60)
     asyncio.create_task(_prop_safety_loop())
 
+    # Calibration alerts: scan per-sport/per-prop walk-forward Brier score
+    # and calibration gaps every 6h.  Emits AVOID/RISKY suppression signals
+    # when confidence is systematically over-stated for a sport or prop type.
+    async def _calibration_alerts_loop():
+        from calibration_alerts import refresh_calibration_alerts
+        import asyncio as _a
+        while True:
+            try:
+                await refresh_calibration_alerts(db)
+            except Exception as _e:
+                print(f"[CAL ALERTS] refresh failed: {_e}")
+            await _a.sleep(6 * 60 * 60)
+    asyncio.create_task(_calibration_alerts_loop())
+
     # Odds-tier empirical priors: auto-learn from settled picks every 6h.
     # Mirrors scenario_priors / league_priors cadence. Min sample n=8.
     async def _odds_tier_loop():

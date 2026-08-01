@@ -8116,6 +8116,57 @@ Analyze ALL data thoroughly. Return JSON only."""
                             f"[DEV ADJ] {_er_prop} {_er_rec}: {_post_conf}% → {_dev_adj}% "
                             f"({_dev_band_final} band hist={_dev_hit_final}%)"
                         )
+        # ── CALIBRATION ALERT SUPPRESSION ────────────────────────────────────────
+        # Walk-forward Brier score and calibration gap scans run every 6h and
+        # flag sports/props where the model systematically over-states confidence.
+        # When a sport or prop is flagged AVOID/RISKY at the walk-forward level,
+        # apply the same cap logic as prop_safety above so users never see
+        # "High" confidence from a statistically over-confident sport.
+        if prediction.get("recommendation", "").upper() not in ("PASS",):
+            try:
+                from calibration_alerts import get_calibration_alert as _get_cal_alert
+                _cal_alert = _get_cal_alert(
+                    str(getattr(req, "sport", "") or ""),
+                    str(getattr(req, "propType", "") or ""),
+                )
+                if _cal_alert and _cal_alert.get("alertLevel") in ("AVOID", "RISKY"):
+                    _cal_level  = _cal_alert["alertLevel"]
+                    _cal_brier  = _cal_alert.get("brierScore")
+                    _cal_gap    = _cal_alert.get("maxOverGapPp")
+                    _cal_src    = _cal_alert.get("source", "sport")
+                    _post_conf  = prediction.get("confidenceScore", 50)
+                    if _cal_level == "AVOID":
+                        # Cap at 60 — systematic over-confidence should never show as High/Strong
+                        _cal_cap = 60
+                        if _post_conf > _cal_cap:
+                            prediction["confidenceScore"] = _cal_cap
+                            prediction["confidenceLevel"] = "Medium"
+                            prediction["calibrationAlertApplied"] = {
+                                "level": _cal_level, "source": _cal_src,
+                                "brierScore": _cal_brier, "maxOverGapPp": _cal_gap,
+                                "capApplied": _cal_cap, "from": _post_conf,
+                            }
+                            print(
+                                f"[CAL AVOID] {_cal_src} alert: {_post_conf}% → capped {_cal_cap}% "
+                                f"(Brier={_cal_brier}, gap={_cal_gap}pp)"
+                            )
+                    elif _cal_level == "RISKY" and _post_conf > 70:
+                        # Soft −5pp reduction when walk-forward shows mild over-confidence
+                        _cal_adj = max(60, _post_conf - 5)
+                        if _cal_adj != _post_conf:
+                            prediction["confidenceScore"] = _cal_adj
+                            prediction["confidenceLevel"] = "High" if _cal_adj >= 70 else "Medium"
+                            prediction["calibrationAlertApplied"] = {
+                                "level": _cal_level, "source": _cal_src,
+                                "brierScore": _cal_brier, "maxOverGapPp": _cal_gap,
+                                "capApplied": _cal_adj, "from": _post_conf,
+                            }
+                            print(
+                                f"[CAL RISKY] {_cal_src} alert: {_post_conf}% → {_cal_adj}% "
+                                f"(Brier={_cal_brier}, gap={_cal_gap}pp)"
+                            )
+            except Exception as _cal_err:
+                print(f"[CAL ALERT SUP] error: {_cal_err}")
         # ─────────────────────────────────────────────────────────────────────────────
 
         prediction.setdefault("probabilityCurve", [])
