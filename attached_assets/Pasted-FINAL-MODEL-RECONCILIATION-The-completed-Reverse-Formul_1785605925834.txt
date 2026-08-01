@@ -1,0 +1,21 @@
+FINAL MODEL RECONCILIATION
+The completed Reverse Formula posterior is authoritative: 43.0 OVER the 41.5 line with 57% probability. The tactical evidence below is retained as matchup context; the final Bayesian direction overrides any earlier UNDER lean.
+VERDICT
+The completed Reverse Formula projects 43.0 — OVER 41.5 (57% probability).
+Matchup — Banfield's tactical approach, even when facing a team with slightly less possession, tends to limit the central defenders' pass volume. While the average CB against Banfield at home records 57.4 passes, this is skewed by teams with significantly higher possession (e.g., Argentinos JRS with 67% possession for Román Riquelme's 74 passes). Maffini's team, Estudiantes de Rio Cuarto, is only expected to hold 53.5% possession, which is not enough to inflate his numbers to that average. Banfield's focus on 'quick transitions' and 'exploiting wide areas' suggests they will bypass the central defense in their build-up, reducing Maffini's opportunities for high-volume, safe passes.
+Situation — This is a 'PICK'EM' game with Estudiantes de Rio Cuarto as slight home favorites, but the moneyline suggests a tight contest. While Estudiantes is expected to have 53.5% possession, this is only a modest increase from their season average of 48.2%. This slight possession advantage is unlikely to translate into a significant increase in Maffini's pass attempts, especially given Banfield's tactical setup. The game flow is expected to be competitive, with both teams vying for control, which often leads to fewer uncontested passes for central defenders in a stopper role.
+Analysis — Maffini's recent game logs consistently support the UNDER. He recorded 33 vs Racing Club, 33 vs Belgrano Cordoba, 27 vs Huracan, 21 vs San Lorenzo, 37 vs Atletico Tucuman, and 29 vs Argentinos JRS. The only two games where he went OVER were 47 vs Sarmiento Junin and 45 vs Aldosivi, both away games where the tactical context likely differed. Crucially, his most tactically similar past game is the 26 passes he recorded against Banfield on 2/3 (away), which serves as a strong anchor for today's projection. This head-to-head performance, significantly below his season average, indicates Banfield's specific defensive scheme effectively suppresses his passing volume. Even at home, where Estudiantes averages 31.67 passes for Maffini, this is still well below the 41.5 line.
+Scenarios —
+Best case: Estudiantes de Rio Cuarto struggles to break down Banfield's defense, leading to more direct play and Maffini hitting 35-39 passes.
+Base case: A competitive 'PICK'EM' game with Banfield's pressing limiting Maffini's involvement, resulting in 30-34 passes.
+Worst case: An early Banfield goal forces Estudiantes to chase, leading to more long balls and Maffini dropping to 25-29 passes.
+Risk — An early red card for Banfield could significantly alter the game flow, allowing Estudiantes de Rio Cuarto to dominate possession uncontested and potentially inflate Maffini's pass count.
+TL;DR
+OVER at 43.0 is the final model call against the 41.5 line (57% probability).
+---
+MATH ENGINE
+Projection: 43  |  Line: 41.5  |  Edge: 1.5
+P(OVER): 57%  |  P(UNDER): 43%
+Season avg: 30.9  |  Covariate adj: +0.5
+Momentum: WARMING  |  Reversal flag: STABLE  |  Confidence: 57% (Medium)
+TL;DR — 43 OVER 41.5  |  P(OVER): 57%  |  Edge: 1.5  |  57% confidence (Medium)
