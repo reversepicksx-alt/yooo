@@ -865,6 +865,8 @@ export interface Pick {
   status?: string;
   result?: string;
   actualValue?: number | null;
+  minutesPlayed?: number | null;
+  voidReason?: string | null;
   currentValue?: number | null;
   pace?: number | null;
   hitPct?: number | null;
@@ -940,6 +942,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     status: p.status as string,
     result: p.result as string,
     actualValue: p.actualValue as number ?? null,
+    minutesPlayed: (p.minutesPlayed as number) ?? null,
+    voidReason: (p.voidReason as string) || null,
     currentValue: (p.currentValue as number) ?? null,
     pace: (p.pace as number) ?? null,
     hitPct: (p.hitPct as number) ?? null,

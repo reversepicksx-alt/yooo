@@ -8619,6 +8619,32 @@ Analyze ALL data thoroughly. Return JSON only."""
         except Exception as _calib_err:
             print(f"[CONF CALIB] application failed: {_calib_err}")
 
+        # Opponent-specific samples are useful context, but 1–2 meetings are
+        # not enough to justify Very High confidence. Keep the broad empirical
+        # calibration intact and only cap the display when this unusually thin
+        # matchup signal is present.
+        try:
+            _bm_final = prediction.get("bayesianMetrics") or {}
+            _opp_sample_final = int(_bm_final.get("opponentAllowedSamples") or 0)
+            _final_conf = float(prediction.get("confidenceScore") or 0)
+            if (
+                req.propType not in {"goals", "assists"}
+                and 0 < _opp_sample_final < 3
+                and _final_conf > 72
+            ):
+                prediction["confidenceScore"] = 72
+                prediction["confidenceLevel"] = "High"
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"THIN OPPONENT SAMPLE: opponent-specific evidence uses only "
+                    f"{_opp_sample_final} matchup(s); confidence capped at 72%."
+                ]
+                print(
+                    f"[THIN OPP SAMPLE] {req.playerName}/{req.propType}: "
+                    f"n={_opp_sample_final}, confidence {_final_conf:.0f}%→72%"
+                )
+        except Exception as _thin_sample_err:
+            print(f"[THIN OPP SAMPLE] application failed: {_thin_sample_err}")
+
         # ── WORLD CUP CALIBRATION TRACKING ──────────────────────────────
         # The World Cup happens once every 4 years, so there's almost no settled-pick
         # history for "World Cup knockout" specifically — the calibration table above

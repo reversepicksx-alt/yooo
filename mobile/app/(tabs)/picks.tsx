@@ -59,23 +59,44 @@ function getLeagueLabel(id?: number | null) {
   return LEAGUE_LABELS[id] || `League ${id}`;
 }
 
+function normalizedResult(p: Pick) {
+  return String(p.result || '').toLowerCase();
+}
+function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
+  const result = normalizedResult(p);
+  if (result === 'hit' || result === 'won') return 'hit';
+  if (result === 'miss' || result === 'lost') return 'miss';
+  if (result === 'push') return 'push';
+  if (result === 'dnp') return 'dnp';
+  if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
+    const line = Number(p.line);
+    const actual = Number(p.actualValue);
+    const rec = String(p.recommendation || '').toLowerCase();
+    if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
+      if (actual === line) return 'push';
+      return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
+    }
+  }
+  return null;
+}
 function isLive(p: Pick) {
-  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost','dnp'].includes(p.result ?? ''));
+  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending'
+    || (!p.status && derivedOutcome(p) == null);
 }
 function isSettled(p: Pick) {
-  return p.matchStatus === 'final' || p.status === 'settled' || ['hit','miss','push','won','lost','dnp'].includes(p.result ?? '');
+  return p.matchStatus === 'final' || p.status === 'settled' || derivedOutcome(p) != null;
 }
 function pickWon(p: Pick) {
-  return p.result === 'hit' || p.result === 'won' || p.status === 'won';
+  return derivedOutcome(p) === 'hit' || p.status === 'won';
 }
 function pickLost(p: Pick) {
-  return p.result === 'miss' || p.result === 'lost' || p.status === 'lost';
+  return derivedOutcome(p) === 'miss' || p.status === 'lost';
 }
 function pickPush(p: Pick) {
-  return p.result === 'push';
+  return derivedOutcome(p) === 'push';
 }
 function pickDnp(p: Pick) {
-  return p.result === 'dnp';
+  return derivedOutcome(p) === 'dnp';
 }
 
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {

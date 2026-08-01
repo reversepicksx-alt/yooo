@@ -32,7 +32,7 @@ const PROP_LABELS: Record<string, string> = {
 
 function isSettled(p: Pick) {
   return p.matchStatus === 'final' || p.status === 'settled'
-    || ['hit', 'miss', 'push', 'won', 'lost', 'dnp'].includes(p.result ?? '');
+    || getSettledOutcome(p) != null;
 }
 function isLive(p: Pick) {
   if (isSettled(p)) return false;
@@ -44,10 +44,27 @@ function isLive(p: Pick) {
   );
 }
 function isPending(p: Pick) { return !isSettled(p) && !isLive(p); }
-function pickWon(p: Pick) { return p.result === 'hit' || p.result === 'won' || p.status === 'won'; }
-function pickLost(p: Pick) { return p.result === 'miss' || p.result === 'lost' || p.status === 'lost'; }
-function pickPush(p: Pick) { return p.result === 'push'; }
-function pickDnp(p: Pick) { return p.result === 'dnp'; }
+function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
+  const raw = String(p.result || '').toLowerCase();
+  if (raw === 'hit' || raw === 'won') return 'hit';
+  if (raw === 'miss' || raw === 'lost') return 'miss';
+  if (raw === 'push') return 'push';
+  if (raw === 'dnp') return 'dnp';
+  if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
+    const line = Number(p.line);
+    const actual = Number(p.actualValue);
+    const rec = String(p.recommendation || '').toLowerCase();
+    if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
+      if (actual === line) return 'push';
+      return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
+    }
+  }
+  return null;
+}
+function pickWon(p: Pick) { return getSettledOutcome(p) === 'hit' || p.status === 'won'; }
+function pickLost(p: Pick) { return getSettledOutcome(p) === 'miss' || p.status === 'lost'; }
+function pickPush(p: Pick) { return getSettledOutcome(p) === 'push'; }
+function pickDnp(p: Pick) { return getSettledOutcome(p) === 'dnp'; }
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   if (p.recommendation === 'OVER' || p.recommendation === 'UNDER') return p.recommendation;
   const proj = p.projection ?? p.projectedValue;

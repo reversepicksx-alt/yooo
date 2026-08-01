@@ -620,6 +620,11 @@ async def generate_match_review(pick_id: str) -> bool:
     Returns True if a review was written.
     """
     try:
+        # Keep this import local: ai_engine has several optional API paths, and
+        # match-review generation must resolve the provider client explicitly
+        # instead of relying on a function imported in another code path.
+        from utils import api_football_request
+
         _claim = await db.picks.update_one(
             {
                 "pickId": pick_id,

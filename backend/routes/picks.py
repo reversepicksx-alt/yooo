@@ -24,6 +24,27 @@ _bdl_live_last_attempt: dict[str, float] = {}
 _bdl_live_locks:        dict[str, aio.Lock] = {}
 BDL_LIVE_COOLDOWN_SEC = 120   # re-fetch every 2 min per pick
 
+# Soccer count props where a positive final stat is conclusive evidence that
+# the player participated.  API-Football's minutes field is occasionally
+# stale/incorrect even when the fixture player row has the real stat.
+_SOCCER_STAT_EVIDENCE_PROPS = frozenset({
+    "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+    "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+    "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+    "duels_won", "saves", "goals", "assists", "yellow_cards", "red_cards",
+    "offsides",
+})
+
+
+def _has_soccer_stat_evidence(pick: dict) -> bool:
+    """Return true when a settled soccer count stat proves participation."""
+    if pick.get("sport", "soccer") != "soccer":
+        return False
+    if pick.get("propType") not in _SOCCER_STAT_EVIDENCE_PROPS:
+        return False
+    value = pick.get("actualValue")
+    return isinstance(value, (int, float)) and value > 0
+
 def _bdl_live_lock(pick_id: str) -> aio.Lock:
     if pick_id not in _bdl_live_locks:
         _bdl_live_locks[pick_id] = aio.Lock()
@@ -885,13 +906,19 @@ async def list_picks(req: GetPicksRequest):
         if not _should_process(p):
             # Still apply in-memory DNP coercion for display correctness
             _sport = p.get("sport", "soccer")
-            if bool(p.get("voidReason")) or (_sport == "soccer" and (p.get("minutesPlayed") or 90) < 30):
+            if (
+                not _has_soccer_stat_evidence(p)
+                and (bool(p.get("voidReason")) or (_sport == "soccer" and (p.get("minutesPlayed") or 90) < 30))
+            ):
                 p["result"] = "dnp"
             continue
         pick_email = _pick_email(p)
 
         # ── DNP / early-sub guard ────────────────────────────────────────────
-        # Voided picks (voidReason set OR <30 min played) must always be DNP.
+        # Voided picks (voidReason set OR <30 min played) must always be DNP,
+        # except when the final provider stat proves the player participated.
+        # This exception is essential because API-Football can report a stale
+        # low minutes value alongside a real positive fixture stat.
         # This branch ACTIVELY corrects them — not just skips — so that a race
         # condition between a concurrent list_picks response and a DB fix can
         # never leave result=miss permanently stuck in the DB.
@@ -899,9 +926,10 @@ async def list_picks(req: GetPicksRequest):
         # CS2/MLB/WTA and would falsely DNP every non-soccer pick.
         _sport = p.get("sport", "soccer")
         _min_played = p.get("minutesPlayed")
-        is_dnp = bool(p.get("voidReason")) or (
+        has_stat_evidence = _has_soccer_stat_evidence(p)
+        is_dnp = not has_stat_evidence and (bool(p.get("voidReason")) or (
             _sport == "soccer" and _min_played is not None and _min_played < 30
-        )
+        ))
         if is_dnp:
             if p.get("result") != "dnp":
                 p["result"] = "dnp"
@@ -916,6 +944,42 @@ async def list_picks(req: GetPicksRequest):
                               "voidReason": p.get("voidReason") or void_label}}
                 )
             continue
+
+        # Repair an already-settled false DNP in-place the next time the
+        # owner's picks are loaded. Do not manually edit production records:
+        # this deterministic repair is safe, idempotent, and based only on
+        # the stored final stat and original line/direction.
+        if has_stat_evidence and (p.get("voidReason") or p.get("result") == "dnp"):
+            previous_result = p.get("result")
+            previous_void_reason = p.get("voidReason")
+            correct, pass_outcome = _settle_pick_result(
+                p["actualValue"], p.get("line", 0), p
+            )
+            p["result"] = correct
+            p.pop("voidReason", None)
+            repair_set = {
+                "result": correct,
+                "hitPct": 100 if correct == "hit" else 50 if correct == "push" else 0,
+                "settlementCorrection": {
+                    "reason": "positive provider stat overrides stale minutes/DNP classification",
+                    "previousResult": previous_result,
+                    "previousVoidReason": previous_void_reason,
+                    "actualValue": p["actualValue"],
+                    "minutesPlayed": _min_played,
+                    "correctedBy": "picks_consistency_guard",
+                    "correctedAt": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            if pass_outcome:
+                repair_set["passOutcome"] = pass_outcome
+            await db.picks.update_one(
+                {"pickId": p["pickId"], "email": pick_email},
+                {"$set": repair_set, "$unset": {"voidReason": ""}},
+            )
+            print(
+                f"[CONSISTENCY] Repaired false DNP {p.get('playerName','')} "
+                f"{p.get('propType','')} stat={p['actualValue']} min={_min_played} → {correct}"
+            )
 
         # ── Normal result consistency check ──────────────────────────────────
         if p.get("actualValue") is not None:
