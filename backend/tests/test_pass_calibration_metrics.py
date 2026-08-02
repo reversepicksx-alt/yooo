@@ -2,11 +2,11 @@ from model_metrics import build_scorecard
 from routes.picks import _pass_lean, _settle_pick_result
 
 
-def test_pass_with_explicit_lean_scores_avoided_outcome_only():
+def test_legacy_pass_with_explicit_lean_settles_as_normal_hit():
     result, outcome = _settle_pick_result(
         56, 62.5, {"recommendation": "pass", "passLeaning": "under"}
     )
-    assert (result, outcome) == ("pass", "hit")
+    assert (result, outcome) == ("hit", None)
 
 
 def test_pass_recovers_strict_projection_direction():

@@ -61,7 +61,7 @@ function getLeagueLabel(id?: number | null) {
 function normalizedResult(p: Pick) {
   return String(p.result || '').toLowerCase();
 }
-function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | 'pass' | null {
+function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const result = normalizedResult(p);
   const hasVerifiedSource = p.settlementSource?.verified === true;
   if (hasVerifiedSource && (result === 'hit' || result === 'won')) return 'hit';
@@ -69,9 +69,12 @@ function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | 'pass' | nul
   if (hasVerifiedSource && result === 'push') return 'push';
   if (hasVerifiedSource && result === 'dnp') return 'dnp';
   if (hasVerifiedSource && result === 'pass') {
-    // PASS is the non-actionable recommendation. Its avoided OVER/UNDER
-    // direction is still scored separately for calibration.
-    return 'pass';
+    // A verified final value is always an actionable settlement outcome.
+    // Older rows may still carry result=pass; use their stored avoided
+    // direction/outcome so history renders them like every other pick.
+    if (p.passOutcome === 'hit') return 'hit';
+    if (p.passOutcome === 'miss') return 'miss';
+    if (p.passOutcome === 'push') return 'push';
   }
   if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
     const line = Number(p.line);
@@ -110,10 +113,6 @@ function pickPush(p: Pick) {
 function pickDnp(p: Pick) {
   return derivedOutcome(p) === 'dnp';
 }
-function pickPass(p: Pick) {
-  return derivedOutcome(p) === 'pass';
-}
-
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   const rec = p.recommendation;
   if (rec === 'OVER' || rec === 'UNDER') return rec;
@@ -144,7 +143,6 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   const hits = picks.filter(pickWon).length;
   const misses = picks.filter(pickLost).length;
   const dnps = picks.filter(pickDnp).length;
-  const passes = picks.filter(pickPass).length;
   const pending = picks.filter(isLive).length;
   const review = picks.filter(isPendingReview).length;
   const settled = hits + misses;
@@ -182,10 +180,6 @@ function RecordBar({ picks }: { picks: Pick[] }) {
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.dnp }]}>{dnps}</Text>
           <Text style={styles.recordKey}>DNP</Text>
-        </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.textSecondary }]}>{passes}</Text>
-          <Text style={styles.recordKey}>PASS</Text>
         </View>
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.primary }]}>

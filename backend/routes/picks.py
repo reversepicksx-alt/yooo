@@ -1022,30 +1022,38 @@ async def list_picks(req: GetPicksRequest):
                 )
                 p["status"] = "pending_review"
                 continue
-            if correct != p.get("result"):
+            # A verified final can never remain a user-facing PASS. Older
+            # records used PASS for calibration-only rows; once the exact
+            # final stat and avoided side are known, rewrite them to the same
+            # directional recommendation/result used by every other card.
+            _legacy_pass = (
+                str(p.get("recommendation") or "").lower() == "pass"
+                and correct in {"hit", "miss", "push"}
+            )
+            if correct != p.get("result") or _legacy_pass:
                 p["result"] = correct
+                if _legacy_pass:
+                    _pass_direction = _pass_lean(p)
+                    if _pass_direction:
+                        p["recommendation"] = _pass_direction
+                    p.pop("passOutcome", None)
+                    p.pop("passLeaning", None)
+                    p.pop("isCalibrationOnly", None)
                 print(f"[CONSISTENCY] Correcting {p.get('playerName','')} {p.get('propType','')} → {correct}")
                 updates = {"result": correct}
                 updates["hitPct"] = 100 if correct == "hit" else 0 if correct == "miss" else 50
-                if pass_outcome:
-                    updates["passOutcome"] = pass_outcome
+                unset = {}
+                if _legacy_pass and _pass_direction:
+                    updates["recommendation"] = _pass_direction
+                    unset = {
+                        "passOutcome": "",
+                        "passLeaning": "",
+                        "passReason": "",
+                        "isCalibrationOnly": "",
+                    }
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": pick_email},
-                    {"$set": updates}
-                )
-            elif pass_outcome and p.get("passOutcome") != pass_outcome:
-                # PASS remains the non-actionable recommendation, but its
-                # avoided side still needs a definitive calibration outcome.
-                p["passOutcome"] = pass_outcome
-                _pass_direction = _pass_lean(p)
-                if _pass_direction and p.get("passLeaning") != _pass_direction:
-                    p["passLeaning"] = _pass_direction
-                await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": pick_email},
-                    {"$set": {
-                        "passOutcome": pass_outcome,
-                        **({"passLeaning": _pass_direction} if _pass_direction else {}),
-                    }}
+                    {"$set": updates, "$unset": unset} if unset else {"$set": updates}
                 )
 
     # ── CS2 settled-pick data repair ─────────────────────────────────────────
@@ -3896,17 +3904,17 @@ def _settle_result(current_value, line, recommendation):
 
 
 def _settle_pick_result(current_value, line, pick):
-    """Return (stored_result, avoided_side_result) for actionable/PASS picks.
+    """Return the real final outcome for an actionable or legacy PASS pick.
 
-    PASS records remain calibration-only in the ledger.  Their original lean
-    is evaluated and stored separately so they can train avoidance analysis
-    without being counted as normal wager wins or losses.
+    PASS is allowed as a prediction-time recommendation, but never as a
+    user-facing settled result. Once a verified final and a directional lean
+    are available, settle it as HIT, MISS, or PUSH exactly like any other pick.
     """
     recommendation = str(pick.get("recommendation") or "over").lower()
     if recommendation == "pass":
         lean = _pass_lean(pick)
         if lean in {"over", "under"} and current_value is not None:
-            return "pass", _settle_result(current_value, line, lean)
+            return _settle_result(current_value, line, lean), None
         return "pass", None
     return _settle_result(current_value, line, recommendation), None
 
