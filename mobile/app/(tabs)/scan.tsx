@@ -9,7 +9,6 @@ import {
   renderEvidenceSummary,
   renderOpponentDefProfile,
   renderMatchupPossession,
-  renderH2HIntelligence,
   renderManagerContext,
 } from '@/components/AnalysisCards';
 import * as ImagePicker from 'expo-image-picker';
@@ -4044,6 +4043,71 @@ export default function ScanScreen() {
                       </View>
                     );
                   })()}
+
+                  {/* ── H2H subsection — kept inside the game-log card ── */}
+                  {prediction.h2hPlayerStats && prediction.h2hPlayerStats.matches.length > 0 && (() => {
+                    const h2h = prediction.h2hPlayerStats;
+                    const matches = h2h.matches.slice(0, 6);
+                    const h2hVals = matches.map((m: any) => m.targetStat).filter((v: any) => v != null);
+                    const h2hAvg = h2hVals.length > 0
+                      ? h2hVals.reduce((a: number, b: number) => a + b, 0) / h2hVals.length
+                      : null;
+                    const h2hOver = prediction.line != null
+                      ? h2hVals.filter((v: number) => v > prediction.line!).length
+                      : 0;
+                    const h2hLabel = prediction.opponentName || prediction.opponent || 'OPPONENT';
+                    return (
+                      <View style={styles.h2hInline}>
+                        <View style={styles.h2hInlineHeader}>
+                          <View style={styles.h2hInlineTitleRow}>
+                            <Ionicons name="swap-horizontal-outline" size={11} color={Colors.primary} />
+                            <Text style={styles.h2hInlineTitle}>H2H · VS {h2hLabel.toUpperCase()}</Text>
+                          </View>
+                          <Text style={styles.h2hInlineMeta}>
+                            {h2h.sampleSize} APP{h2h.sampleSize !== 1 ? 'S' : ''}
+                            {h2hAvg != null ? `  ·  AVG ${h2hAvg.toFixed(1)}` : ''}
+                          </Text>
+                        </View>
+                        {h2hVals.length >= 2 && prediction.line != null && (
+                          <View style={styles.h2hInlineRate}>
+                            <Text style={styles.h2hInlineRateLabel}>OVER LINE</Text>
+                            <Text style={[styles.h2hInlineRateValue, {
+                              color: h2hOver / h2hVals.length >= 0.6
+                                ? Colors.success
+                                : h2hOver / h2hVals.length <= 0.4 ? Colors.error : Colors.textSecondary,
+                            }]}>
+                              {h2hOver}/{h2hVals.length} · {Math.round(h2hOver / h2hVals.length * 100)}%
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.h2hInlineRows}>
+                          {matches.map((m: any, i: number) => {
+                            const value = m.targetStat;
+                            const isOver = value != null && prediction.line != null && value > prediction.line;
+                            const venue = m.venue === 'home' ? 'H' : m.venue === 'away' ? 'A' : '–';
+                            return (
+                              <View key={`${m.date || 'h2h'}-${i}`} style={styles.h2hInlineRow}>
+                                <Text style={styles.h2hInlineDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
+                                <Text style={styles.h2hInlineVenue}>{venue}</Text>
+                                <Text style={styles.h2hInlineOpp} numberOfLines={1}>{m.opponent || h2hLabel}</Text>
+                                {m.teamPossession != null && (
+                                  <Text style={styles.h2hInlinePoss}>{m.teamPossession}%</Text>
+                                )}
+                                <Text style={[styles.h2hInlineStat, {
+                                  color: value == null ? Colors.textTertiary : isOver ? Colors.success : Colors.error,
+                                }]}>
+                                  {value != null ? value : '—'}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                        {h2h.matches.length > matches.length && (
+                          <Text style={styles.h2hInlineMore}>Showing {matches.length} of {h2h.matches.length} meetings</Text>
+                        )}
+                      </View>
+                    );
+                  })()}
                 </View>
               );
             })()}
@@ -4594,16 +4658,14 @@ export default function ScanScreen() {
               const evidenceEl  = renderEvidenceSummary(pred);
               const oppDefEl    = renderOpponentDefProfile(pred, pickCtx);
               const matchupEl   = renderMatchupPossession(pred, pickCtx);
-              const h2hEl       = renderH2HIntelligence(pred, pickCtx);
               const mgrEl       = renderManagerContext(pred);
-              if (!evidenceEl && !oppDefEl && !matchupEl && !h2hEl && !mgrEl) return null;
+               if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl) return null;
               return (
                 <View style={{ gap: 0, marginTop: 6 }}>
                   {evidenceEl}
                   {mgrEl}
                   {oppDefEl}
                   {matchupEl}
-                  {h2hEl}
                 </View>
               );
             })()}
@@ -4694,145 +4756,6 @@ export default function ScanScreen() {
             {/* ─── MARKET LINE (RENDERED ABOVE) ─── */}
 
             {/* ─── GAME LOG GRID (RENDERED ABOVE) ─── */}
-
-            {/* ─── H2H CARD — HOME vs AWAY split ─── */}
-            {prediction.h2hPlayerStats && prediction.h2hPlayerStats.matches.length > 0 && (() => {
-              const allMatches = prediction.h2hPlayerStats.matches;
-              const homeMatches = allMatches.filter((m: any) => m.venue === 'home');
-              const awayMatches = allMatches.filter((m: any) => m.venue === 'away');
-              const homeVals = homeMatches.map((m: any) => m.targetStat).filter((v: any) => v != null);
-              const awayVals = awayMatches.map((m: any) => m.targetStat).filter((v: any) => v != null);
-              const homeAvg = homeVals.length > 0 ? homeVals.reduce((a: number, b: number) => a + b, 0) / homeVals.length : null;
-              const awayAvg = awayVals.length > 0 ? awayVals.reduce((a: number, b: number) => a + b, 0) / awayVals.length : null;
-              const venueKnown = homeMatches.length > 0 || awayMatches.length > 0;
-
-              const renderMatchRow = (m: any, i: number, arr: any[]) => {
-                const over = m.targetStat != null && prediction.line != null && m.targetStat >= prediction.line;
-                const score = m.matchScore || m.score;
-                return (
-                  <View key={i} style={[styles.h2hRow, i < arr.length - 1 && styles.h2hRowBorder]}>
-                    <Text style={styles.h2hDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
-                    {score ? <Text style={styles.h2hScore}>{score}</Text> : null}
-                    {(m.teamPossession != null || m.opponentPossession != null) && (() => {
-                      const tp = m.teamPossession ?? (m.opponentPossession != null ? 100 - m.opponentPossession : null);
-                      const op = m.opponentPossession ?? (m.teamPossession != null ? 100 - m.teamPossession : null);
-                      if (tp == null) return null;
-                      return (
-                        <Text style={styles.h2hPoss}>{tp}%{op != null ? `–${op}%` : ''}</Text>
-                      );
-                    })()}
-                    <View style={styles.h2hRight}>
-                      {(m.minutesPlayed ?? m.minutes) > 0 && (
-                        <Text style={styles.h2hMins}>{m.minutesPlayed ?? m.minutes}'</Text>
-                      )}
-                      <Text style={[styles.h2hStat, { color: m.targetStat != null ? (over ? Colors.success : Colors.error) : Colors.textTertiary }]}>
-                        {m.targetStat != null ? String(m.targetStat) : '—'}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              };
-
-              // Compute venue-specific line hit rate for the badge
-              const venueMatches = allMatches.filter((m: any) => m.venue === venueOverride);
-              const venueVals = venueMatches.map((m: any) => m.targetStat).filter((v: any) => v != null);
-              const venueOverCount = prediction.line != null
-                ? venueVals.filter((v: number) => v > prediction.line!).length : 0;
-              const venueUnderCount = venueVals.length - venueOverCount;
-              const showVenueHitBadge = venueVals.length >= 2;
-              const venueHitPct = venueVals.length > 0 ? Math.round(venueOverCount / venueVals.length * 100) : null;
-              const venueAllOver = venueOverCount === venueVals.length && venueVals.length >= 2;
-              const venueAllUnder = venueUnderCount === venueVals.length && venueVals.length >= 2;
-              const venueHitColor = venueAllOver ? Colors.success : venueAllUnder ? Colors.error : Colors.textSecondary;
-              const venueIcon = venueOverride === 'home' ? '🏠' : '✈️';
-              const venueLabel = venueOverride === 'home' ? 'HOME' : 'AWAY';
-
-              return (
-                <View style={styles.h2hCard}>
-                  {/* Header */}
-                  <View style={styles.h2hHeader}>
-                    <Ionicons name="swap-horizontal-outline" size={13} color={Colors.primary} />
-                    <Text style={styles.h2hTitle}>
-                      H2H{prediction.opponentName ? ` vs ${prediction.opponentName}` : ''}
-                    </Text>
-                    {prediction.h2hPlayerStats.avgVsOpponent != null && (
-                      <Text style={styles.h2hAvg}>
-                        ALL AVG {prediction.h2hPlayerStats.avgVsOpponent.toFixed(1)}
-                      </Text>
-                    )}
-                  </View>
-
-                  {/* Venue H2H hit rate badge — shows when ≥2 same-venue games exist */}
-                  {showVenueHitBadge && venueHitPct !== null && (
-                    <View style={[styles.h2hHitBadge, {
-                      backgroundColor: venueHitColor + '18',
-                      borderColor: venueHitColor + '55',
-                    }]}>
-                      <Ionicons
-                        name={venueAllOver ? 'trending-up' : venueAllUnder ? 'trending-down' : 'remove'}
-                        size={12}
-                        color={venueHitColor}
-                      />
-                      <Text style={[styles.h2hHitBadgeText, { color: venueHitColor }]}>
-                        {venueIcon} {venueLabel} H2H  {venueOverCount}/{venueVals.length} OVER  {venueHitPct}%
-                      </Text>
-                      {(venueAllOver || venueAllUnder) && (
-                        <View style={[styles.h2hHitBadgePill, { backgroundColor: venueHitColor + '33' }]}>
-                          <Text style={[styles.h2hHitBadgePillText, { color: venueHitColor }]}>
-                            UNANIMOUS
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
-
-                  {/* Home vs Away comparison bar */}
-                  {venueKnown && (homeAvg != null || awayAvg != null) && (
-                    <View style={styles.h2hVenueCompare}>
-                      <View style={styles.h2hVenueSide}>
-                        <Text style={styles.h2hVenueLabel}>🏠 HOME</Text>
-                        <Text style={[styles.h2hVenueAvg, { color: homeAvg != null && prediction.line != null ? (homeAvg >= prediction.line ? Colors.success : Colors.error) : Colors.text }]}>
-                          {homeAvg != null ? homeAvg.toFixed(1) : '—'}
-                        </Text>
-                        <Text style={styles.h2hVenueSub}>{homeVals.length} game{homeVals.length !== 1 ? 's' : ''}</Text>
-                      </View>
-                      <View style={styles.h2hVenueDivider} />
-                      <View style={styles.h2hVenueSide}>
-                        <Text style={styles.h2hVenueLabel}>✈️ AWAY</Text>
-                        <Text style={[styles.h2hVenueAvg, { color: awayAvg != null && prediction.line != null ? (awayAvg >= prediction.line ? Colors.success : Colors.error) : Colors.text }]}>
-                          {awayAvg != null ? awayAvg.toFixed(1) : '—'}
-                        </Text>
-                        <Text style={styles.h2hVenueSub}>{awayVals.length} game{awayVals.length !== 1 ? 's' : ''}</Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* HOME matches */}
-                  {homeMatches.length > 0 && (
-                    <>
-                      <View style={styles.h2hVenueSection}>
-                        <Text style={styles.h2hVenueSectionLabel}>HOME H2H</Text>
-                      </View>
-                      {homeMatches.map((m: any, i: number) => renderMatchRow(m, i, homeMatches))}
-                    </>
-                  )}
-
-                  {/* AWAY matches */}
-                  {awayMatches.length > 0 && (
-                    <>
-                      <View style={[styles.h2hVenueSection, homeMatches.length > 0 && { marginTop: 10 }]}>
-                        <Text style={styles.h2hVenueSectionLabel}>AWAY H2H</Text>
-                      </View>
-                      {awayMatches.map((m: any, i: number) => renderMatchRow(m, i, awayMatches))}
-                    </>
-                  )}
-
-                  {/* Fallback: if venue unknown, show all */}
-                  {!venueKnown && allMatches.map((m: any, i: number) => renderMatchRow(m, i, allMatches))}
-                </View>
-              );
-            })()}
-
 
             {saveError && (
               <View style={styles.inlineError}>
@@ -6162,7 +6085,7 @@ const styles = StyleSheet.create({
   /* ─── GAME LOG GRID ─── */
   gameLogsCard: {
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 12,
+    padding: 11, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 8, gap: 8,
   },
   syntheticNotice: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
@@ -6184,7 +6107,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', backgroundColor: Colors.cardSecondary,
     borderRadius: 8, padding: 2, gap: 2,
   },
-  glTab: { flex: 1, alignItems: 'center', paddingVertical: 7, borderRadius: 7 },
+  glTab: { flex: 1, alignItems: 'center', paddingVertical: 5, borderRadius: 6 },
   glTabActive: { backgroundColor: Colors.primaryDim },
   glTabText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   glTabTextActive: { color: Colors.primary },
@@ -6237,7 +6160,7 @@ const styles = StyleSheet.create({
   glMinsBarFill: { height: '100%', borderRadius: 1.5 },
   glHitRateRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
+    paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
   },
   glHitRateLeft: { alignItems: 'center', minWidth: 34 },
   glHitRateCount: { fontSize: 14, fontWeight: '800' },
@@ -6253,14 +6176,14 @@ const styles = StyleSheet.create({
   glResetBtnText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   glLineAdjuster: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,
-    paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 2,
+    paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 2,
   },
   glLineBtn: {
-    width: 30, height: 30, borderRadius: 15,
+    width: 26, height: 26, borderRadius: 13,
     backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center',
   },
   glLineBtnText: { color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 },
-  glLineValue: { color: Colors.text, fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+  glLineValue: { color: Colors.text, fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
   glLineLabel: { color: Colors.textTertiary, fontSize: 8, letterSpacing: 0.8, marginTop: 1 },
   glLineResetBtn: {
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)',
@@ -6298,11 +6221,11 @@ const styles = StyleSheet.create({
   glOppPossLabel: { fontSize: 8, fontWeight: '700', color: '#4A6CFF', letterSpacing: 0.5 },
   glOppPossVal: { fontSize: 9, fontWeight: '800', color: '#4A6CFF' },
 
-  avgRow: { flexDirection: 'row', gap: 16 },
+  avgRow: { flexDirection: 'row', gap: 12 },
   avgText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
   defStatsRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8,
-    paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)',
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 5,
+    paddingTop: 5, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)',
   },
   defStatsLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.5, marginRight: 2 },
   defStatChip: {
@@ -6313,55 +6236,29 @@ const styles = StyleSheet.create({
   defStatChipLabel: { fontSize: 8, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.4 },
   defStatChipVal: { fontSize: 10, color: Colors.text, fontWeight: '800' },
 
-  /* ─── H2H CARD ─── */
-  h2hCard: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 0,
+  /* ─── Inline H2H subsection ─── */
+  h2hInline: {
+    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',
+    marginTop: 3, paddingTop: 8, gap: 5,
   },
-  h2hHeader: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 12 },
-  h2hTitle: { fontSize: 11, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2, flex: 1 },
-  h2hAvg: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
-  h2hRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 10, gap: 10,
+  h2hInlineHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  h2hInlineTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  h2hInlineTitle: { fontSize: 8, fontWeight: '800', color: Colors.primary, letterSpacing: 0.8 },
+  h2hInlineMeta: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600' },
+  h2hInlineRate: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.025)', borderRadius: 5, paddingHorizontal: 7, paddingVertical: 4,
   },
-  h2hRowBorder: { borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
-  h2hDate: { fontSize: 11, color: Colors.textTertiary, fontWeight: '600', width: 72 },
-  h2hScore: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', flex: 1 },
-  h2hPoss: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', marginRight: 4 },
-  h2hRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  h2hMins: { fontSize: 10, color: Colors.textTertiary },
-  h2hStat: { fontSize: 16, fontWeight: '800', minWidth: 28, textAlign: 'right' },
-
-  /* H2H venue split */
-  h2hVenueCompare: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.cardSecondary, borderRadius: 10,
-    marginBottom: 14, paddingVertical: 10,
-  },
-  h2hVenueSide: { flex: 1, alignItems: 'center', gap: 2 },
-  h2hVenueLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
-  h2hVenueAvg: { fontSize: 22, fontWeight: '900', lineHeight: 26 },
-  h2hVenueSub: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600' },
-  h2hVenueDivider: { width: 1, height: 40, backgroundColor: Colors.borderSubtle },
-  h2hHitBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, paddingVertical: 7,
-    borderRadius: 10, borderWidth: 1,
-    marginBottom: 12,
-  },
-  h2hHitBadgeText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4, flex: 1 },
-  h2hHitBadgePill: {
-    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
-  },
-  h2hHitBadgePillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
-  h2hVenueSection: {
-    borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
-    paddingTop: 8, marginTop: 2, marginBottom: 4,
-  },
-  h2hVenueSectionLabel: {
-    fontSize: 9, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 1.2,
-  },
+  h2hInlineRateLabel: { fontSize: 7, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.6 },
+  h2hInlineRateValue: { fontSize: 9, fontWeight: '800' },
+  h2hInlineRows: { gap: 1 },
+  h2hInlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 20 },
+  h2hInlineDate: { fontSize: 8, color: Colors.textTertiary, width: 58 },
+  h2hInlineVenue: { fontSize: 8, color: Colors.textTertiary, fontWeight: '800', width: 10 },
+  h2hInlineOpp: { flex: 1, fontSize: 9, color: Colors.textSecondary },
+  h2hInlinePoss: { fontSize: 8, color: Colors.textTertiary, width: 28, textAlign: 'right' },
+  h2hInlineStat: { fontSize: 11, fontWeight: '800', width: 24, textAlign: 'right' },
+  h2hInlineMore: { fontSize: 7, color: Colors.textTertiary, textAlign: 'right', marginTop: 1 },
 
   /* Sharp verdict card */
   sharpVerdictCard: {

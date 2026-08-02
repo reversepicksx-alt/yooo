@@ -413,11 +413,12 @@ function renderRecentGameData(data: Record<string, unknown> | null, pick: Pick |
     : Array.isArray((data as any)?.recentSamples)
       ? (data as any).recentSamples
       : [];
-  if (games.length === 0) return null;
-
   const propLabel = PROP_LABELS[pick?.propType ?? ''] ?? (pick?.propType ?? 'STAT').replace(/_/g, ' ');
   const line = Number(pick?.line);
   const direction = String(pick?.recommendation ?? '').toUpperCase();
+  const h2h = (data as any)?.h2hPlayerStats;
+  const h2hMatches: any[] = Array.isArray(h2h?.matches) ? h2h.matches.slice(0, 5) : [];
+  if (games.length === 0 && h2hMatches.length === 0) return null;
   const getValue = (game: any) => {
     const value = game?.targetStat ?? game?.value ?? game?.statValue ?? game?.stat;
     return value == null || value === '' ? null : Number(value);
@@ -437,7 +438,7 @@ function renderRecentGameData(data: Record<string, unknown> | null, pick: Pick |
           {games.length} {propLabel.toLowerCase()} observations
         </Text>
       </View>
-      <View style={{ marginTop: 8 }}>
+      {games.length > 0 && <View style={{ marginTop: 8 }}>
         {games.slice(0, 8).map((game: any, index: number) => {
           const value = getValue(game);
           const hit = isHit(value);
@@ -472,7 +473,49 @@ function renderRecentGameData(data: Record<string, unknown> | null, pick: Pick |
             </View>
           );
         })}
-      </View>
+      </View>}
+      {h2hMatches.length > 0 && (
+        <View style={mStyles.inlineH2H}>
+          <View style={mStyles.inlineH2HHeader}>
+            <View style={mStyles.inlineH2HTitleRow}>
+              <Ionicons name="swap-horizontal-outline" size={11} color={Colors.primary} />
+              <Text style={mStyles.inlineH2HTitle}>
+                H2H · VS {(pick?.opponentName ?? h2h?.opponentName ?? 'OPPONENT').toUpperCase()}
+              </Text>
+            </View>
+            <Text style={mStyles.inlineH2HMeta}>
+              {h2h?.sampleSize ?? h2hMatches.length} APP{(h2h?.sampleSize ?? h2hMatches.length) !== 1 ? 'S' : ''}
+              {h2h?.avgVsOpponent != null ? ` · AVG ${Number(h2h.avgVsOpponent).toFixed(1)}` : ''}
+            </Text>
+          </View>
+          <View style={mStyles.inlineH2HRows}>
+            {h2hMatches.map((match: any, index: number) => {
+              const value = match?.targetStat ?? match?.value;
+              const over = value != null && Number.isFinite(line) && value > line;
+              return (
+                <View key={`${match?.date ?? 'h2h'}-${index}`} style={mStyles.inlineH2HRow}>
+                  <Text style={mStyles.inlineH2HDate}>{String(match?.date ?? '').slice(0, 10) || '—'}</Text>
+                  <Text style={mStyles.inlineH2HVenue}>{String(match?.venue ?? '?').slice(0, 1).toUpperCase()}</Text>
+                  <Text style={mStyles.inlineH2HOpp} numberOfLines={1}>{match?.opponent ?? pick?.opponentName ?? '?'}</Text>
+                  {match?.teamPossession != null && (
+                    <Text style={mStyles.inlineH2HPoss}>{match.teamPossession}%</Text>
+                  )}
+                  <Text style={[mStyles.inlineH2HStat, {
+                    color: value == null ? Colors.textTertiary : over ? Colors.success : Colors.error,
+                  }]}>
+                    {value != null ? value : '—'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+          {(h2h?.matches?.length ?? 0) > h2hMatches.length && (
+            <Text style={mStyles.inlineH2HMore}>
+              Showing {h2hMatches.length} of {h2h.matches.length} meetings
+            </Text>
+          )}
+        </View>
+      )}
       <Text style={mStyles.proCardNote}>
         {propLabel} values from the player’s recent completed games. Green/red indicates the saved pick direction against the line.
       </Text>
@@ -569,82 +612,6 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
       )}
       {kmf ? <Text style={mStyles.proCardNote}>{kmf}</Text> : null}
       {ss ? <Text style={[mStyles.proCardNote, { color: Colors.textSecondary, marginTop: 4 }]}>{ss}</Text> : null}
-    </View>
-  );
-}
-
-function renderH2HIntelligence(data: Record<string, unknown> | null, pick: any) {
-  if (!data) return null;
-  const h2h = (data as any)?.h2hPlayerStats;
-  if (!h2h || !h2h.sampleSize) return null;
-  const matches: any[] = h2h.matches ?? [];
-  const avg: number | undefined = h2h.avgVsOpponent;
-  const trend: string | undefined = h2h.trendDirection;
-  const trendColor = trend === 'improving' ? Colors.success : trend === 'declining' ? Colors.error : Colors.textSecondary;
-  const trendIcon: any = trend === 'improving' ? 'trending-up' : trend === 'declining' ? 'trending-down' : 'remove';
-  const vhr = h2h.venueHitRate;
-  const prop = PROP_LABELS[h2h.targetProp ?? ''] ?? (h2h.targetProp ?? '').replace(/_/g, ' ');
-  return (
-    <View style={mStyles.proCard}>
-      <View style={mStyles.proCardHeader}>
-        <View style={[mStyles.proCardPill, { backgroundColor: Colors.primary + '18' }]}>
-          <Text style={[mStyles.proCardPillText, { color: Colors.primary }]}>H2H</Text>
-        </View>
-        <Text style={mStyles.proCardTitle} numberOfLines={1}>
-          {h2h.sampleSize} app{h2h.sampleSize !== 1 ? 's' : ''} vs {pick?.opponentName}
-          {h2h.seasonsCovered ? ` · ${h2h.seasonsCovered?.range ?? h2h.seasonsCovered}` : ''}
-        </Text>
-      </View>
-      <View style={mStyles.proCardMetrics}>
-        {avg != null && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={mStyles.proCardMetricValue}>{Number(avg).toFixed(1)}</Text>
-            <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} AVG</Text>
-          </View>
-        )}
-        {h2h.teamMeetings != null && h2h.teamMeetings > 0 && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={mStyles.proCardMetricValue}>{h2h.teamMeetings}</Text>
-            <Text style={mStyles.proCardMetricLabel}>TEAM MEETS</Text>
-          </View>
-        )}
-        {trend && trend !== 'stable' && (
-          <View style={mStyles.proCardMetric}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, justifyContent: 'center' }}>
-              <Ionicons name={trendIcon} size={13} color={trendColor} />
-              <Text style={[mStyles.proCardMetricValue, { color: trendColor, fontSize: 12 }]}>{trend.toUpperCase()}</Text>
-            </View>
-            <Text style={mStyles.proCardMetricLabel}>TREND</Text>
-          </View>
-        )}
-        {vhr && vhr.total >= 2 && (
-          <View style={mStyles.proCardMetric}>
-            <Text style={[mStyles.proCardMetricValue, { color: vhr.pct >= 60 ? Colors.success : vhr.pct <= 40 ? Colors.error : Colors.textSecondary }]}>
-              {vhr.pct}%
-            </Text>
-            <Text style={mStyles.proCardMetricLabel}>{(vhr.venue as string).toUpperCase()} HIT</Text>
-          </View>
-        )}
-      </View>
-      {matches.length > 0 && (
-        <View style={mStyles.h2hTable}>
-          {matches.slice(0, 5).map((m: any, i: number) => {
-            const hitLine = m.targetStat != null && pick?.line != null && m.targetStat > pick.line;
-            const statColor = hitLine ? Colors.success : m.targetStat != null ? Colors.error : Colors.textTertiary;
-            return (
-              <View key={i} style={mStyles.h2hRow}>
-                <Text style={mStyles.h2hDate}>{(m.date ?? '').slice(0, 10)}</Text>
-                <Text style={mStyles.h2hVenue}>{(m.venue ?? '?').slice(0, 1).toUpperCase()}</Text>
-                <Text style={mStyles.h2hOpp} numberOfLines={1}>{m.opponent ?? '?'}</Text>
-                {m.teamPossession != null && <Text style={mStyles.h2hPoss}>{m.teamPossession}%</Text>}
-                <Text style={[mStyles.h2hStat, { color: statColor }]}>
-                  {m.targetStat != null ? m.targetStat : '—'}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
     </View>
   );
 }
@@ -1413,12 +1380,6 @@ export default function PicksScreen() {
               analysisModal?.pick as any,
             )}
 
-            {/* ── H2H INTELLIGENCE ── */}
-            {!analysisModal?.loading && renderH2HIntelligence(
-              analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick as any,
-            )}
-
             {/* ── MANAGER / TACTICAL SHIFT CONTEXT ── */}
             {!analysisModal?.loading && renderManagerContext(
               analysisModal?.data as Record<string, unknown> | null,
@@ -1846,6 +1807,22 @@ const mStyles = StyleSheet.create({
   h2hOpp: { flex: 1, fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
   h2hPoss: { fontSize: 10, color: Colors.textTertiary, width: 32, textAlign: 'right' },
   h2hStat: { fontSize: 14, fontWeight: '800', width: 26, textAlign: 'right' },
+  inlineH2H: {
+    borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
+    marginTop: 7, paddingTop: 7, gap: 4,
+  },
+  inlineH2HHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  inlineH2HTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  inlineH2HTitle: { fontSize: 8, fontWeight: '800', color: Colors.primary, letterSpacing: 0.7 },
+  inlineH2HMeta: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600' },
+  inlineH2HRows: { gap: 1 },
+  inlineH2HRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 19 },
+  inlineH2HDate: { fontSize: 8, color: Colors.textTertiary, width: 56 },
+  inlineH2HVenue: { fontSize: 8, color: Colors.textTertiary, fontWeight: '800', width: 10 },
+  inlineH2HOpp: { flex: 1, fontSize: 9, color: Colors.textSecondary },
+  inlineH2HPoss: { fontSize: 8, color: Colors.textTertiary, width: 28, textAlign: 'right' },
+  inlineH2HStat: { fontSize: 11, fontWeight: '800', width: 24, textAlign: 'right' },
+  inlineH2HMore: { fontSize: 7, color: Colors.textTertiary, textAlign: 'right' },
   // ── Manager / Tactical Shift card
   mgr_driftRow: {
     gap: 6,
