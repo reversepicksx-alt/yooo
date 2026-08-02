@@ -83,7 +83,7 @@ function isLive(p: Pick) {
     || (!p.status && derivedOutcome(p) == null);
 }
 function isSettled(p: Pick) {
-  return p.matchStatus === 'final' || p.status === 'settled' || derivedOutcome(p) != null;
+  return p.status === 'pending_review' || derivedOutcome(p) != null;
 }
 function pickWon(p: Pick) {
   return derivedOutcome(p) === 'hit' || p.status === 'won';

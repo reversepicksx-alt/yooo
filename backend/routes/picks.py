@@ -991,10 +991,39 @@ async def list_picks(req: GetPicksRequest):
         # ── Normal result consistency check ──────────────────────────────────
         if p.get("actualValue") is not None:
             correct, pass_outcome = _settle_pick_result(p["actualValue"], p.get("line", 0), p)
+            _explicit_result = str(p.get("result") or "").lower() in {"hit", "miss", "push", "dnp"}
+            _verified_final = (p.get("settlementSource") or {}).get("verified") is True
+            _needs_soccer_source_review = (
+                _sport == "soccer"
+                and not p.get("correctedManually")
+                and not _verified_final
+            )
+            if _needs_soccer_source_review or (not _explicit_result and not _verified_final):
+                # A numeric value without an auditable final source is not
+                # calibration data. Keep it visible for review, but never
+                # infer hit/miss/push from a possibly stale currentValue.
+                p["result"] = "pending_review"
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": pick_email},
+                    {"$set": {
+                        "status": "pending_review",
+                        "result": "pending_review",
+                        "settlementReview": {
+                            "reason": "actualValue has no explicit result or verified settlement source",
+                            "actualValue": p["actualValue"],
+                            "previousResult": p.get("result"),
+                            "markedBy": "picks_consistency_guard",
+                            "markedAt": datetime.now(timezone.utc).isoformat(),
+                        },
+                    }},
+                )
+                p["status"] = "pending_review"
+                continue
             if correct != p.get("result"):
                 p["result"] = correct
                 print(f"[CONSISTENCY] Correcting {p.get('playerName','')} {p.get('propType','')} → {correct}")
                 updates = {"result": correct}
+                updates["hitPct"] = 100 if correct == "hit" else 0 if correct == "miss" else 50
                 if pass_outcome:
                     updates["passOutcome"] = pass_outcome
                 await db.picks.update_one(
@@ -1288,7 +1317,11 @@ async def list_picks(req: GetPicksRequest):
                     refreshed = await _settle_soccer_pick(
                         p, team_id, player_id, opponent, prop_type, league_id
                     )
-                    if refreshed and refreshed.get("actualValue") is not None:
+                    if (
+                        refreshed
+                        and refreshed.get("actualValue") is not None
+                        and (refreshed.get("settlementSource") or {}).get("verified") is True
+                    ):
                         new_val = refreshed["actualValue"]
                         old_val = p.get("actualValue")
                         meta_set = {}
@@ -1303,6 +1336,7 @@ async def list_picks(req: GetPicksRequest):
                                 "actualValue": new_val,
                                 "hitPct": 50,
                                 "voidReason": refreshed["voidReason"],
+                                "settlementSource": refreshed.get("settlementSource"),
                             }
                             for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
                                          "homePoss", "awayPoss", "minutesPlayed"):
@@ -1318,16 +1352,25 @@ async def list_picks(req: GetPicksRequest):
                                 if v is not None and v != "" and p.get(fld) != v:
                                     meta_set[fld] = v
                                     p[fld] = v
-                            if new_val != old_val:
-                                line    = p.get("line", 0)
-                                rec     = p.get("recommendation", "over")
-                                new_res = _settle_result(new_val, line, rec)
+                            line    = p.get("line", 0)
+                            new_res, pass_outcome = _settle_pick_result(new_val, line, p)
+                            if new_val != old_val or new_res != p.get("result"):
                                 p["actualValue"] = new_val
                                 p["result"]      = new_res
                                 meta_set["actualValue"] = new_val
                                 meta_set["result"] = new_res
+                                meta_set["hitPct"] = (
+                                    100 if new_res == "hit" else
+                                    0 if new_res == "miss" else 50
+                                )
+                                if pass_outcome:
+                                    meta_set["passOutcome"] = pass_outcome
+                            meta_set["settlementSource"] = refreshed.get("settlementSource")
+                            p["settlementSource"] = refreshed.get("settlementSource")
+                            if new_val == old_val and new_res == p.get("result"):
+                                p["actualValue"] = new_val
                                 print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: "
-                                      f"actualValue {old_val} → {new_val}, result → {new_res}")
+                                      f"verified actualValue={new_val}, result={new_res}")
 
                         if meta_set:
                             await db.picks.update_one(
@@ -1871,7 +1914,23 @@ async def correct_pick(req: CorrectPickRequest):
         result_str = "miss"
     await db.picks.update_one(
         {"pickId": req.pickId, "email": req.email.lower()},
-        {"$set": {"actualValue": req.actualValue, "result": result_str, "correctedManually": True}}
+        {"$set": {
+            "actualValue": req.actualValue,
+            "result": result_str,
+            "hitPct": 100 if result_str == "hit" else 0 if result_str == "miss" else 50,
+            "correctedManually": True,
+            "settlementSource": {
+                "provider": "manual_correction",
+                "fixtureId": pick.get("fixtureId"),
+                "playerId": pick.get("playerId"),
+                "propType": pick.get("propType"),
+                "statPath": "manual",
+                "fixtureStatus": pick.get("matchStatus"),
+                "verified": True,
+                "verificationMethod": "owner_authenticated_correction",
+                "recordedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        }}
     )
     return {"success": True, "result": result_str, "actualValue": req.actualValue}
 
@@ -1904,6 +1963,33 @@ SOCCER_STAT_MAP = {
     "clearances": lambda s: s.get("tackles", {}).get("clearances"),
     "duels_won": lambda s: s.get("duels", {}).get("won"),
     "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
+}
+
+# API-Football paths are persisted with each verified settlement so an
+# incorrect provider field or fixture can be audited instead of silently
+# becoming calibration data.
+SOCCER_STAT_PATHS = {
+    "goals": "statistics.goals.total",
+    "assists": "statistics.goals.assists",
+    "shots_assisted": "statistics.passes.key",
+    "pass_attempts": "statistics.passes.total",
+    "passes": "statistics.passes.total",
+    "shots": "statistics.shots.total",
+    "shots_on_target": "statistics.shots.on",
+    "tackles": "statistics.tackles.total",
+    "key_passes": "statistics.passes.key",
+    "saves": "statistics.goals.saves",
+    "goalie_saves": "statistics.goals.saves",
+    "interceptions": "statistics.tackles.interceptions",
+    "blocks": "statistics.tackles.blocks",
+    "dribbles": "statistics.dribbles.attempts",
+    "dribbles_success": "statistics.dribbles.success",
+    "fouls_drawn": "statistics.fouls.drawn",
+    "fouls_committed": "statistics.fouls.committed",
+    "crosses": "statistics.passes.crosses",
+    "clearances": "statistics.tackles.clearances",
+    "duels_won": "statistics.duels.won",
+    "yellow_cards": "statistics.cards.yellow",
 }
 
 @router.post("/picks/live-update")
@@ -3416,6 +3502,33 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
     line = pick.get("line", 0)
     recommendation = pick.get("recommendation", "over")
     pass_outcome = None
+    settlement_source = None
+    if is_finished and current_value is not None and _player_found_in_api:
+        matched_player_id = pick.get("playerId")
+        if player_stats_data:
+            for _team_data in player_stats_data:
+                for _player_row in _team_data.get("players", []):
+                    if (
+                        _player_row.get("player", {}).get("id") == pick.get("playerId")
+                        or (
+                            pick.get("playerName")
+                            and _player_row.get("player", {}).get("name", "").lower().endswith(
+                                str(pick.get("playerName")).lower().split()[-1]
+                            )
+                        )
+                    ):
+                        matched_player_id = _player_row.get("player", {}).get("id") or matched_player_id
+                        break
+                if matched_player_id:
+                    break
+        settlement_source = _soccer_settlement_provenance(
+            provider="api-football",
+            fixture_id=fixture_id,
+            player_id=matched_player_id,
+            prop_type=pick.get("propType", ""),
+            stat_path=SOCCER_STAT_PATHS.get(pick.get("propType", ""), "statistics"),
+            fixture_status=status_short,
+        )
 
     # Pace (extrapolate to 90 min) — only meaningful when we have a real stat value
     effective_elapsed = max(elapsed, 1)
@@ -3495,6 +3608,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 "settledAt": datetime.now(timezone.utc).isoformat(),
                 "settledBy": "live_dnp",
                 "voidReason": "Player not in matchday squad",
+                "settlementSource": _soccer_settlement_provenance(
+                    provider="api-football",
+                    fixture_id=fixture_id,
+                    player_id=pick.get("playerId"),
+                    prop_type=pick.get("propType", ""),
+                    stat_path="fixtures/players.player_missing",
+                    fixture_status=status_short,
+                ),
             }
             if home_poss is not None:
                 _persist_settlement["homePoss"] = home_poss
@@ -3576,6 +3697,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                       "finalAwayGoals": away_goals,
                       "homeTeam": home_team_name,
                       "awayTeam": away_team_name,
+                       "settlementSource": settlement_source,
                       "scenarioBucket": _scen_bucket,
                       "settledAt": datetime.now(timezone.utc).isoformat()}
         if pass_outcome:
@@ -3697,6 +3819,38 @@ def _settle_pick_result(current_value, line, pick):
     return _settle_result(current_value, line, recommendation), None
 
 
+def _soccer_settlement_provenance(
+    *,
+    provider: str,
+    fixture_id: int | str | None,
+    player_id: int | str | None,
+    prop_type: str,
+    stat_path: str,
+    fixture_status: str | None = None,
+    verified: bool = True,
+    verification_method: str = "fixture_id",
+) -> dict:
+    """Build an auditable source marker for an official final stat.
+
+    A live/current value is not a settlement.  This marker is only written
+    alongside a value that came from a finished fixture's player-stat row.
+    Keeping the provider, fixture, player, and exact stat path together makes
+    bad settlements diagnosable and keeps calibration from treating an
+    unverified display value as ground truth.
+    """
+    return {
+        "provider": provider,
+        "fixtureId": fixture_id,
+        "playerId": player_id,
+        "propType": prop_type,
+        "statPath": stat_path,
+        "fixtureStatus": fixture_status,
+        "verified": verified,
+        "verificationMethod": verification_method,
+        "recordedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.post("/settle-picks")
 async def settle_picks(req: SettlePicksRequest):
     """Check match results and settle picks that have finished."""
@@ -3757,6 +3911,15 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                 "homeTeam": match.get("home_team_name", ""),
                 "awayTeam": match.get("away_team_name", ""),
                 "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
+                "settlementSource": _soccer_settlement_provenance(
+                    provider="bdl-soccer",
+                    fixture_id=match.get("match_id") or match.get("id"),
+                    player_id=pick.get("playerId"),
+                    prop_type=prop_type,
+                    stat_path=f"bdl.{stat_field}",
+                    fixture_status="FT",
+                    verification_method="finished_match_player_stat",
+                ),
             }
         result_str, pass_outcome = _settle_pick_result(actual_value, pick.get("line", 0), pick)
         return {
@@ -3766,6 +3929,15 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "homeTeam": match.get("home_team_name", ""),
             "awayTeam": match.get("away_team_name", ""),
             "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
+            "settlementSource": _soccer_settlement_provenance(
+                provider="bdl-soccer",
+                fixture_id=match.get("match_id") or match.get("id"),
+                player_id=pick.get("playerId"),
+                prop_type=prop_type,
+                stat_path=f"bdl.{stat_field}",
+                fixture_status="FT",
+                verification_method="finished_match_player_stat",
+            ),
             **({"passOutcome": pass_outcome} if pass_outcome else {}),
         }
 
@@ -3790,8 +3962,38 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     pick_created = datetime.fromtimestamp(pick_timestamp / 1000, tz=timezone.utc) if isinstance(pick_timestamp, (int, float)) and pick_timestamp else datetime.min.replace(tzinfo=timezone.utc)
 
     recent = None
+    stored_fixture_id = pick.get("fixtureId")
+    if stored_fixture_id:
+        # A saved fixture ID is authoritative. If it is unavailable or its
+        # teams do not match this pick, defer rather than searching another
+        # finished fixture by opponent name.
+        try:
+            exact_rows = await api_football_request(
+                "fixtures", {"id": int(stored_fixture_id)}
+            ) or []
+            exact = exact_rows[0] if exact_rows else None
+            exact_status = (exact or {}).get("fixture", {}).get("status", {}).get("short", "")
+            exact_home = (exact or {}).get("teams", {}).get("home", {}).get("id")
+            exact_away = (exact or {}).get("teams", {}).get("away", {}).get("id")
+            team_match = not team_id or team_id in (exact_home, exact_away)
+            opp_id = pick.get("opponentId")
+            opponent_match = not opp_id or opp_id in (exact_home, exact_away)
+            if exact and exact_status in ("FT", "AET", "PEN") and team_match and opponent_match:
+                recent = exact
+            else:
+                print(
+                    f"[SETTLE-DEFER] {pick.get('playerName','')} stored fixture "
+                    f"{stored_fixture_id} failed exact validation "
+                    f"(status={exact_status}, teams={exact_home}/{exact_away}, "
+                    f"pick={team_id}/{opp_id})"
+                )
+                return None
+        except Exception as _exact_err:
+            print(f"[SETTLE-DEFER] exact fixture lookup failed for {stored_fixture_id}: {_exact_err}")
+            return None
+
     _fixture_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [CURRENT_SEASON + 1, CURRENT_SEASON]
-    for s in _fixture_seasons:
+    for s in _fixture_seasons if recent is None else []:
         try:
             _p_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
             _p_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -3836,6 +4038,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     actual_value = None
 
     minutes_played = 0
+    settlement_source = None
     if fixture_players:
         for team_data in fixture_players:
             for p in team_data.get("players", []):
@@ -3845,6 +4048,17 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                     getter = SOCCER_STAT_MAP.get(prop_type)
                     if getter:
                         actual_value = getter(pstats)
+                        if actual_value is not None:
+                            settlement_source = _soccer_settlement_provenance(
+                                provider="api-football",
+                                fixture_id=fixture_id,
+                                player_id=p.get("player", {}).get("id") or player_id,
+                                prop_type=prop_type,
+                                stat_path=SOCCER_STAT_PATHS.get(prop_type, "statistics"),
+                                fixture_status=recent.get("fixture", {}).get("status", {}).get("short"),
+                                verified=bool(stored_fixture_id),
+                                verification_method="fixture_id" if stored_fixture_id else "team_opponent_date_fallback",
+                            )
                     break
             if actual_value is not None or minutes_played:
                 break
@@ -3883,6 +4097,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "homePoss": home_poss,
             "awayPoss": away_poss,
             "oppAvgPoss": settle_opp_avg_poss,
+            "settlementSource": settlement_source,
         }
 
     if actual_value is not None:
@@ -3917,6 +4132,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "homePoss": home_poss,
             "awayPoss": away_poss,
             "oppAvgPoss": settle_opp_avg_poss,
+            "settlementSource": settlement_source,
             **({"passOutcome": pass_outcome} if pass_outcome else {}),
         }
 

@@ -978,7 +978,25 @@ export interface Pick {
   projectedValue?: number;
   status?: string;
   result?: string;
+  settlementReview?: {
+    reason?: string;
+    actualValue?: number | null;
+    previousResult?: string | null;
+    markedBy?: string;
+    markedAt?: string;
+  } | null;
   actualValue?: number | null;
+  settlementSource?: {
+    provider?: string;
+    fixtureId?: number | string | null;
+    playerId?: number | string | null;
+    propType?: string;
+    statPath?: string;
+    fixtureStatus?: string | null;
+    verified?: boolean;
+    verificationMethod?: string;
+    recordedAt?: string;
+  } | null;
   minutesPlayed?: number | null;
   voidReason?: string | null;
   currentValue?: number | null;
@@ -1064,7 +1082,9 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     projectedValue: p.projectedValue as number,
     status: p.status as string,
     result: p.result as string,
+    settlementReview: (p.settlementReview as Pick['settlementReview']) || null,
     actualValue: p.actualValue as number ?? null,
+    settlementSource: (p.settlementSource as Pick['settlementSource']) || null,
     minutesPlayed: (p.minutesPlayed as number) ?? null,
     voidReason: (p.voidReason as string) || null,
     currentValue: (p.currentValue as number) ?? null,

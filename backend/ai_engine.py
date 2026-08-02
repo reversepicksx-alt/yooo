@@ -2351,6 +2351,17 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
     fid = matched.get("fixture", {}).get("id")
     if not fid:
         return False
+    # If the pick contains team identity, the matched fixture must contain the
+    # same teams. This prevents a name-based fallback from grading a different
+    # fixture with a similar opponent label.
+    _home_id = matched.get("teams", {}).get("home", {}).get("id")
+    _away_id = matched.get("teams", {}).get("away", {}).get("id")
+    if pick.get("teamId") and pick["teamId"] not in (_home_id, _away_id):
+        print(f"[AUTO-SETTLE] SKIP {pick.get('playerName','?')} — team mismatch for fixture {fid}")
+        return False
+    if opponent_id and opponent_id not in (_home_id, _away_id):
+        print(f"[AUTO-SETTLE] SKIP {pick.get('playerName','?')} — opponent mismatch for fixture {fid}")
+        return False
 
     # Get player stats from the fixture
     try:
@@ -2469,6 +2480,17 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 "settledAt": datetime.now(timezone.utc).isoformat(),
                 "settledBy": "auto_soccer",
                 "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
+                "settlementSource": {
+                    "provider": "api-football",
+                    "fixtureId": fid,
+                    "playerId": player_id,
+                    "propType": prop_type,
+                    "statPath": "fixtures/players.player_missing_or_unpopulated",
+                    "fixtureStatus": _match_status,
+                    "verified": bool(_stored_fid),
+                    "verificationMethod": "fixture_id" if _stored_fid else "team_opponent_date_fallback",
+                    "recordedAt": datetime.now(timezone.utc).isoformat(),
+                },
             }
             if home_poss is not None:
                 _push_set["homePoss"] = home_poss
@@ -2532,6 +2554,17 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             "scenarioBucket": _scen_bucket,
             "settledAt": datetime.now(timezone.utc).isoformat(),
             "settledBy": "auto_soccer",
+            "settlementSource": {
+                "provider": "api-football",
+                "fixtureId": fid,
+                "playerId": player_id,
+                "propType": prop_type,
+                "statPath": f"statistics.{prop_type}",
+                "fixtureStatus": _match_status,
+                "verified": bool(_stored_fid),
+                "verificationMethod": "fixture_id" if _stored_fid else "team_opponent_date_fallback",
+                "recordedAt": datetime.now(timezone.utc).isoformat(),
+            },
         }
         if home_poss is not None:
             _settle_set["homePoss"] = home_poss

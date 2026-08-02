@@ -6620,6 +6620,14 @@ Analyze ALL data thoroughly. Return JSON only."""
                     # ────────────────────────────────────────────────────────────────────
                     _poss_sens = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
                     _is_gk_conv = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or (player_position or "").lower() == "goalkeeper"
+                    # The audit record below is shared by all opponent-profile
+                    # predictions, but the possession comparison only runs for
+                    # possession-sensitive outfield props. Initialize the
+                    # convergence inputs before that narrower branch so GK and
+                    # unrelated props cannot raise UnboundLocalError.
+                    _has_poss_data = False
+                    _poss_diff = 0.0
+                    _opp_diff = 0.0
                     if req.propType in _poss_sens and not _is_gk_conv:
                         _exp_poss  = match_dominance.get("expectedPoss")
                         _avg_poss  = match_dominance.get("teamSeasonAvg")

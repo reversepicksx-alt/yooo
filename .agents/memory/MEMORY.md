@@ -92,3 +92,4 @@
 - [Auditable model factors](auditable-model-factors.md) — prediction explanations must snapshot final inputs at the pipeline boundary, persist with saved picks, and show unavailable data explicitly.
 - [Full analysis destination](analysis-destination.md) — analysis views own the complete narrative and recent-game evidence; concise pick cards must not duplicate or hide it.
 - [Final projection ledger AI contract](final-projection-ledger-ai-contract.md) — Gemini must explain the exact post-calibration projection snapshot, with cache identity bound to the ledger fingerprint.
+- [Soccer settlement source integrity](settlement-source-integrity.md) — provider stat paths and exact-fixture provenance are required before a value can be final or enter calibration.

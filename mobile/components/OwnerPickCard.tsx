@@ -31,8 +31,9 @@ const PROP_LABELS: Record<string, string> = {
 };
 
 function isSettled(p: Pick) {
-  return p.matchStatus === 'final' || p.status === 'settled'
-    || getSettledOutcome(p) != null;
+  return getSettledOutcome(p) != null
+    || p.status === 'pending_review'
+    || String(p.result || '').toLowerCase() === 'pending_review';
 }
 function isLive(p: Pick) {
   if (isSettled(p)) return false;
@@ -44,13 +45,21 @@ function isLive(p: Pick) {
   );
 }
 function isPending(p: Pick) { return !isSettled(p) && !isLive(p); }
+function isPendingReview(p: Pick) {
+  return p.status === 'pending_review'
+    || String(p.result || '').toLowerCase() === 'pending_review';
+}
 function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const raw = String(p.result || '').toLowerCase();
   if (raw === 'hit' || raw === 'won') return 'hit';
   if (raw === 'miss' || raw === 'lost') return 'miss';
   if (raw === 'push') return 'push';
   if (raw === 'dnp') return 'dnp';
-  if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
+  if (
+    (p.status === 'settled' || p.matchStatus === 'final')
+    && p.actualValue != null
+    && p.settlementSource?.verified === true
+  ) {
     const line = Number(p.line);
     const actual = Number(p.actualValue);
     const rec = String(p.recommendation || '').toLowerCase();
@@ -88,11 +97,12 @@ function formatMatchTime(iso?: string): string {
 }
 
 // ─── Status badge ────────────────────────────────────────────────────────────
-function StatusPill({ won, lost, push, dnp, live, pending }: Record<string, boolean>) {
+function StatusPill({ won, lost, push, dnp, live, pending, pendingReview }: Record<string, boolean>) {
   if (won) return <View style={[pill.root, { backgroundColor: '#39FF14' }]}><Text style={[pill.txt, { color: '#000' }]}>HIT ✓</Text></View>;
   if (lost) return <View style={[pill.root, { backgroundColor: '#FF3B30' }]}><Text style={[pill.txt, { color: '#fff' }]}>MISS</Text></View>;
   if (push) return <View style={[pill.root, { backgroundColor: '#0A84FF' }]}><Text style={[pill.txt, { color: '#fff' }]}>PUSH</Text></View>;
   if (dnp) return <View style={[pill.root, { backgroundColor: '#FF9500' }]}><Text style={[pill.txt, { color: '#fff' }]}>DNP</Text></View>;
+  if (pendingReview) return <View style={[pill.root, pill.pendingReview]}><Text style={[pill.txt, { color: '#FFD60A' }]}>PENDING REVIEW</Text></View>;
   if (live) return (
     <View style={[pill.root, pill.live]}>
       <View style={pill.dot} />
@@ -106,6 +116,7 @@ const pill = StyleSheet.create({
   root: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
   live: { backgroundColor: 'rgba(255,59,48,0.12)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.4)' },
   pending: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+  pendingReview: { backgroundColor: 'rgba(255,214,10,0.12)', borderWidth: 1, borderColor: 'rgba(255,214,10,0.45)' },
   dot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#FF3B30', marginRight: 5 },
   txt: { fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
 });
@@ -124,6 +135,7 @@ export default function OwnerPickCard({
   const push = pickPush(pick);
   const dnp = pickDnp(pick);
   const settled = isSettled(pick);
+  const pendingReview = isPendingReview(pick);
   const live = isLive(pick);
   const pending = isPending(pick);
 
@@ -136,11 +148,18 @@ export default function OwnerPickCard({
 
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
   const projValue = pick.projection ?? pick.projectedValue ?? null;
-  const actualValue = pick.actualValue ?? pick.currentValue ?? null;
+  // A settled card may only show an official final stat. Never fall back to
+  // currentValue here: that is a live/polling value and was the source of
+  // misleading "FINAL" values on older saved picks.
+  const explicitResult = ['hit', 'miss', 'push', 'dnp'].includes(String(pick.result || '').toLowerCase());
+  const hasVerifiedFinal = pick.actualValue != null
+    && explicitResult
+    && pick.settlementSource?.verified === true;
+  const actualValue = hasVerifiedFinal ? pick.actualValue! : null;
   const livePace = pick.pace ?? null;
   const nowValue = settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
   const paceValue = live ? (livePace ?? projValue) : projValue;
-  const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
+  const paceLabel = dnp ? 'DNP' : pendingReview ? 'REVIEW' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
   // hitPct is a live pace estimate.  Once settled, 0/100 is the outcome,
   // not a model probability; showing it as "hit prob" was misleading.
   const hitPct = live ? (pick.hitPct ?? null) : null;
@@ -403,7 +422,7 @@ export default function OwnerPickCard({
                   : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
               </TouchableOpacity>
             )}
-            <StatusPill won={won} lost={lost} push={push} dnp={dnp} live={live} pending={pending} />
+            <StatusPill won={won} lost={lost} push={push} dnp={dnp} live={live} pending={pending} pendingReview={pendingReview} />
           </View>
         </View>
 
@@ -421,7 +440,7 @@ export default function OwnerPickCard({
         <View style={styles.statsRow}>
           {!pending && nowValue != null && (
             <View style={styles.statBlock}>
-              <Text style={styles.statLbl}>{settled ? 'FINAL' : live ? 'NOW' : 'NOW'}</Text>
+              <Text style={styles.statLbl}>{settled && hasVerifiedFinal ? 'FINAL' : live ? 'NOW' : 'PENDING'}</Text>
               <Text style={[styles.statVal, {
                 color: nowValue != null && lineValue != null
                   ? ((isOver && nowValue >= lineValue) || (isUnder && nowValue <= lineValue)) ? '#39FF14' : '#FF3B30'

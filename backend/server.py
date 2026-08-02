@@ -1384,7 +1384,8 @@ async def bulk_resettle_zero_picks(payload: dict):
             "resettleReason": f"Bulk resettle: was {pick_doc.get('result')} with actualValue=0",
         }
         for key in ("matchScore", "homeTeam", "awayTeam", "finalHomeGoals",
-                    "finalAwayGoals", "homePoss", "awayPoss", "fixtureDate", "voidReason"):
+                    "finalAwayGoals", "homePoss", "awayPoss", "fixtureDate",
+                    "voidReason", "settlementSource"):
             if result.get(key) is not None:
                 update_fields[key] = result[key]
 
@@ -1472,9 +1473,17 @@ async def force_resettle_pick(payload: dict):
         "resettledAt":    datetime.now(timezone.utc).isoformat(),
         "resettleReason": f"Admin force-resettle (was {prev_result}, actualValue={prev_actual})",
     }
+    if result.get("settlementSource") is not None:
+        update_fields["settlementSource"] = result["settlementSource"]
+    update_fields["settlementCorrection"] = {
+        "previousResult": prev_result,
+        "previousActualValue": prev_actual,
+        "correctedBy": "admin_force_resettle",
+        "correctedAt": datetime.now(timezone.utc).isoformat(),
+    }
     for key in ("matchScore", "homeTeam", "awayTeam", "finalHomeGoals",
                 "finalAwayGoals", "homePoss", "awayPoss", "fixtureDate",
-                "voidReason"):
+                "voidReason", "settlementSource"):
         if result.get(key) is not None:
             update_fields[key] = result[key]
 
@@ -1493,6 +1502,156 @@ async def force_resettle_pick(payload: dict):
         "newActualValue": result.get("actualValue"),
         "minutesPlayed": result.get("minutesPlayed"),
         "matchScore":   result.get("matchScore"),
+    }
+
+
+@app.post("/api/admin/repair-soccer-settlements")
+async def repair_soccer_settlements(payload: dict):
+    """Audit or repair suspicious positive soccer settlements.
+
+    The endpoint is intentionally dry-run by default.  A write is allowed only
+    when the saved pick has an exact fixtureId and the fresh settlement returns
+    a verified provider source.  The previous settlement is retained in an
+    audit object before the replacement is written.
+
+    Body: {
+      "secret": "...",
+      "dryRun": true,
+      "pickId": "optional-single-id",
+      "pickIds": ["optional", "ids"]
+    }
+    """
+    import os
+    from datetime import datetime, timezone
+    from routes.picks import _settle_soccer_pick
+
+    _admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not _admin_secret or payload.get("secret", "") != _admin_secret:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    dry_run = payload.get("dryRun", True) is not False
+    requested_ids = set()
+    if payload.get("pickId"):
+        requested_ids.add(str(payload["pickId"]).strip())
+    for value in payload.get("pickIds", []) or []:
+        if value:
+            requested_ids.add(str(value).strip())
+
+    _COUNT_PROPS = {
+        "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+        "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+        "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+        "duels_won",
+    }
+    query = {
+        "sport": "soccer",
+        "status": "settled",
+        "actualValue": {"$gt": 0},
+        "propType": {"$in": list(_COUNT_PROPS)},
+    }
+    if requested_ids:
+        query["pickId"] = {"$in": list(requested_ids)}
+    else:
+        # Positive legacy values without a verified source are the suspicious
+        # population. Explicit pickIds remain auditable even if already marked
+        # verified, which is useful for investigating a known bad record.
+        query["settlementSource.verified"] = {"$ne": True}
+
+    candidates = await db.picks.find(query, {"_id": 0}).to_list(200)
+    results = []
+    for pick_doc in candidates:
+        pick_id = pick_doc.get("pickId", "")
+        entry = {
+            "pickId": pick_id,
+            "playerName": pick_doc.get("playerName"),
+            "propType": pick_doc.get("propType"),
+            "fixtureId": pick_doc.get("fixtureId"),
+            "previousResult": pick_doc.get("result"),
+            "previousActualValue": pick_doc.get("actualValue"),
+            "previousSettlementSource": pick_doc.get("settlementSource"),
+        }
+        if not pick_doc.get("fixtureId"):
+            entry["action"] = "skipped: exact fixtureId is required"
+            results.append(entry)
+            continue
+        if dry_run:
+            entry["action"] = "would-refetch-exact-fixture-and-player (dryRun=true)"
+            results.append(entry)
+            continue
+
+        pick_for_settle = {**pick_doc, "status": "live", "id": pick_id}
+        try:
+            result = await _settle_soccer_pick(
+                pick_for_settle,
+                pick_doc.get("teamId") or 0,
+                pick_doc.get("playerId") or 0,
+                pick_doc.get("opponentName", ""),
+                pick_doc.get("propType", ""),
+                pick_doc.get("leagueId") or 0,
+            )
+        except Exception as exc:
+            entry["action"] = f"error: {exc}"
+            results.append(entry)
+            continue
+
+        source = (result or {}).get("settlementSource") or {}
+        if not result or source.get("verified") is not True:
+            entry["action"] = "skipped: fresh exact settlement was not verified"
+            entry["freshSettlementSource"] = source or None
+            results.append(entry)
+            continue
+
+        now = datetime.now(timezone.utc).isoformat()
+        new_result = result.get("result")
+        update_fields = {
+            "status": result.get("status", "settled"),
+            "result": new_result,
+            "actualValue": result.get("actualValue"),
+            "minutesPlayed": result.get("minutesPlayed"),
+            "hitPct": 100 if new_result == "hit" else 0 if new_result == "miss" else 50,
+            "settledAt": now,
+            "resettledAt": now,
+            "settlementSource": source,
+            "settlementRepairAudit": {
+                "previous": {
+                    "status": pick_doc.get("status"),
+                    "result": pick_doc.get("result"),
+                    "actualValue": pick_doc.get("actualValue"),
+                    "settlementSource": pick_doc.get("settlementSource"),
+                },
+                "replacement": {
+                    "result": new_result,
+                    "actualValue": result.get("actualValue"),
+                    "settlementSource": source,
+                },
+                "correctedBy": "admin_repair_soccer_settlement",
+                "correctedAt": now,
+            },
+            "resettleReason": (
+                f"Verified exact-fixture repair "
+                f"(was {pick_doc.get('result')}, actualValue={pick_doc.get('actualValue')})"
+            ),
+        }
+        for key in (
+            "matchScore", "homeTeam", "awayTeam", "finalHomeGoals",
+            "finalAwayGoals", "homePoss", "awayPoss", "fixtureDate", "voidReason",
+        ):
+            if result.get(key) is not None:
+                update_fields[key] = result[key]
+        await db.picks.update_one({"pickId": pick_id}, {"$set": update_fields})
+        entry.update({
+            "action": "repaired",
+            "newResult": new_result,
+            "newActualValue": result.get("actualValue"),
+            "freshSettlementSource": source,
+        })
+        results.append(entry)
+
+    return {
+        "ok": True,
+        "dryRun": dry_run,
+        "found": len(candidates),
+        "results": results,
     }
 
 
