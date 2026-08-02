@@ -1298,6 +1298,242 @@ async def _try_settle_bdl(pick: dict, sport: str) -> bool:
     return True
 
 
+async def _repair_pending_review_soccer_batch(
+    limit: int = 24,
+    *,
+    include_legacy: bool = False,
+    pick_ids: list[str] | None = None,
+) -> dict:
+    """Repair a bounded batch of legacy soccer pending-review picks.
+
+    These records are intentionally kept out of the normal live/pending
+    settlement query.  They still need the same deterministic exact-fixture
+    settlement path, but must never be sent through Gemini or silently counted
+    as settled while their source is unverified.
+    """
+    from routes.picks import _settle_soccer_pick
+    from utils import set_api_request_priority, reset_api_request_priority
+    _retry_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+
+    review_query = {
+        "$or": [
+            {"status": "pending_review"},
+            {"result": "pending_review"},
+            {"settlementReview": {"$exists": True}},
+        ]
+    }
+    if include_legacy:
+        review_query["$or"].append({
+            "status": "settled",
+            "result": {"$in": ["hit", "miss", "push", "dnp", "pass"]},
+            "settlementSource.verified": {"$ne": True},
+            "correctedManually": {"$ne": True},
+        })
+
+    candidate_filters = [
+        review_query,
+        {
+            "$or": [
+                {"sport": "soccer"},
+                {"sport": {"$exists": False}},
+            ]
+        },
+    ]
+    # A specifically requested pick is an explicit retry/debug operation and
+    # must bypass the normal deferred-record cooldown.
+    if not pick_ids:
+        candidate_filters.append({
+            "$or": [
+                {"settlementRepairLastAttemptAt": {"$exists": False}},
+                {"settlementRepairLastAttemptAt": {"$lt": _retry_before}},
+            ]
+        })
+    candidate_query = {"$and": candidate_filters}
+    if pick_ids:
+        candidate_query["$and"].append({"pickId": {"$in": [str(v) for v in pick_ids]}})
+
+    candidates = await db.picks.find(
+        candidate_query,
+        {"_id": 0},
+    ).sort([("fixtureId", -1), ("createdAt", 1), ("timestamp", 1)]).to_list(
+        max(1, min(int(limit or 24), 40))
+    )
+
+    if not candidates:
+        print("[REVIEW REPAIR] Batch complete: found=0 repaired=0 deferred=0 errors=0")
+        return {"found": 0, "repaired": 0, "deferred": 0, "errors": 0}
+
+    repaired = deferred = errors = 0
+    for pick_doc in candidates:
+        pick_id = pick_doc.get("pickId")
+        player_id = pick_doc.get("playerId") or 0
+        if not pick_id or not player_id:
+            deferred += 1
+            if pick_id:
+                await db.picks.update_one(
+                    {"pickId": pick_id},
+                    {"$set": {
+                        "settlementRepairLastAttemptAt": datetime.now(timezone.utc).isoformat(),
+                        "settlementRepairLastAttemptReason": "missing playerId or pickId",
+                    }},
+                )
+            continue
+
+        # A local maintenance soft budget must not mask available provider
+        # quota for this explicit repair operation. The batch itself remains
+        # bounded, and API-Football's real 429/quota breaker still applies.
+        _priority_token = set_api_request_priority(True)
+        try:
+            result = await _settle_soccer_pick(
+                {
+                    **pick_doc,
+                    "id": pick_id,
+                    "status": "live",
+                    "_settlement_repair": True,
+                },
+                pick_doc.get("teamId") or 0,
+                player_id,
+                pick_doc.get("opponentName", ""),
+                pick_doc.get("propType", ""),
+                pick_doc.get("leagueId") or 0,
+            )
+        except Exception as exc:
+            errors += 1
+            print(f"[REVIEW REPAIR] {pick_doc.get('playerName', '?')} error: {exc}")
+            await db.picks.update_one(
+                {"pickId": pick_id},
+                {"$set": {
+                    "settlementRepairLastAttemptAt": datetime.now(timezone.utc).isoformat(),
+                    "settlementRepairLastAttemptReason": str(exc)[:300],
+                }},
+            )
+            continue
+        finally:
+            reset_api_request_priority(_priority_token)
+
+        source = (result or {}).get("settlementSource") or {}
+        if (
+            not result
+            or source.get("verified") is not True
+            or (result.get("actualValue") is None and not result.get("voidReason"))
+        ):
+            deferred += 1
+            _reason = (
+                "no verified settlement"
+                if not result
+                else "unverified settlement source"
+                if source.get("verified") is not True
+                else "missing actual value"
+            )
+            await db.picks.update_one(
+                {"pickId": pick_id},
+                {"$set": {
+                    "settlementRepairLastAttemptAt": datetime.now(timezone.utc).isoformat(),
+                    "settlementRepairLastAttemptReason": _reason,
+                }},
+            )
+            continue
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        new_result = "dnp" if result.get("voidReason") else result.get("result")
+        update_fields = {
+            "status": "settled",
+            "result": new_result,
+            "actualValue": result.get("actualValue"),
+            "hitPct": (
+                50 if new_result in {"push", "dnp", "pass"}
+                else 100 if new_result == "hit"
+                else 0
+            ),
+            "settledAt": now_iso,
+            "resettledAt": now_iso,
+            "settledBy": "auto_pending_review_repair",
+            "settlementSource": source,
+            "settlementRepairAudit": {
+                "previous": {
+                    "status": pick_doc.get("status"),
+                    "result": pick_doc.get("result"),
+                    "actualValue": pick_doc.get("actualValue"),
+                    "settlementSource": pick_doc.get("settlementSource"),
+                    "settlementReview": pick_doc.get("settlementReview"),
+                },
+                "replacement": {
+                    "result": new_result,
+                    "actualValue": result.get("actualValue"),
+                    "settlementSource": source,
+                },
+                "correctedBy": "auto_pending_review_repair",
+                "correctedAt": now_iso,
+            },
+        }
+        for key in (
+            "fixtureId", "fixtureDate", "matchScore", "homeTeam", "awayTeam",
+            "finalHomeGoals", "finalAwayGoals", "homePoss", "awayPoss",
+            "minutesPlayed", "voidReason", "passOutcome",
+        ):
+            if result.get(key) is not None:
+                update_fields[key] = result[key]
+
+        updated = await db.picks.update_one(
+            {
+                "pickId": pick_id,
+                "$and": [
+                    {
+                        "$or": [
+                            {"status": "pending_review"},
+                            {"result": "pending_review"},
+                            {"settlementReview": {"$exists": True}},
+                            {
+                                "status": "settled",
+                                "result": {"$in": ["hit", "miss", "push", "dnp", "pass"]},
+                                "settlementSource.verified": {"$ne": True},
+                                "correctedManually": {"$ne": True},
+                            },
+                        ]
+                    },
+                    {"settlementSource.verified": {"$ne": True}},
+                ],
+            },
+            {
+                "$set": update_fields,
+                "$unset": {
+                    "settlementReview": "",
+                    "settlementRepairLastAttemptAt": "",
+                    "settlementRepairLastAttemptReason": "",
+                },
+            },
+        )
+        if updated.modified_count:
+            repaired += 1
+            print(
+                f"[REVIEW REPAIR] {pick_doc.get('playerName', '?')} "
+                f"{pick_doc.get('propType', '?')} → {new_result} "
+                f"actual={result.get('actualValue')} "
+                f"fixture={result.get('fixtureId') or pick_doc.get('fixtureId')}"
+            )
+        else:
+            deferred += 1
+            await db.picks.update_one(
+                {"pickId": pick_id},
+                {"$set": {
+                    "settlementRepairLastAttemptAt": datetime.now(timezone.utc).isoformat(),
+                    "settlementRepairLastAttemptReason": "record changed before repair write",
+                }},
+            )
+
+    summary = {
+        "found": len(candidates),
+        "repaired": repaired,
+        "deferred": deferred,
+        "errors": errors,
+    }
+    print(
+        f"[REVIEW REPAIR] Batch complete: found={summary['found']} "
+        f"repaired={repaired} deferred={deferred} errors={errors}"
+    )
+    return summary
+
+
 async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
     from utils import api_football_request, is_quota_exhausted
@@ -1305,6 +1541,10 @@ async def _run_auto_settlement():
 
     if is_quota_exhausted():
         return  # Don't burn quota on settlement checks when there's nothing left
+
+    # pending_review records were previously invisible to this bot, leaving
+    # large legacy backlogs dependent on the owner's six-item UI refresh.
+    await _repair_pending_review_soccer_batch()
 
     # Settle "live" picks AND soccer "pending" picks older than 90 min (match duration).
     # MLB pending picks are intentionally excluded from the timestamp-cutoff path —

@@ -1289,12 +1289,140 @@ async def owner_top_props_table():
 @app.post("/api/admin/force-settle")
 async def force_settle():
     """Immediately run the auto-settlement bot — use to unblock stuck picks."""
-    from ai_engine import _run_auto_settlement
+    from ai_engine import _run_auto_settlement, _repair_pending_review_soccer_batch
     try:
         await _run_auto_settlement()
-        return {"ok": True, "message": "Settlement run complete — check picks for updates"}
+        # The normal bot uses one bounded batch per scheduled run. An explicit
+        # force action is allowed to drain the legacy review backlog in bounded
+        # batches, without requiring the owner to refresh the app 20 times.
+        repair_batches = []
+        for _ in range(12):
+            summary = await _repair_pending_review_soccer_batch(limit=40)
+            repair_batches.append(summary)
+            if summary["found"] == 0 or summary["repaired"] == 0:
+                break
+        return {
+            "ok": True,
+            "message": "Settlement run complete — check picks for updates",
+            "reviewRepair": repair_batches,
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/admin/repair-pending-review")
+async def repair_pending_review(payload: dict = Body(...)):
+    """Owner-only bounded repair for legacy soccer pending-review records.
+
+    This intentionally does not run the normal multi-sport settlement sweep.
+    The caller can repeat the bounded operation while monitoring provider
+    quota, and every repair remains deterministic and provenance-verified.
+    """
+    from routes.admin import verify_owner
+    from ai_engine import _repair_pending_review_soccer_batch
+
+    await verify_owner(
+        str(payload.get("email") or ""),
+        str(payload.get("token") or ""),
+    )
+    try:
+        limit = max(1, min(int(payload.get("limit") or 40), 40))
+        batches = max(1, min(int(payload.get("batches") or 1), 4))
+        summaries = []
+        for _ in range(batches):
+            summary = await _repair_pending_review_soccer_batch(
+                limit=limit,
+                include_legacy=bool(payload.get("includeLegacy", True)),
+                pick_ids=(
+                    [str(payload["pickId"])]
+                    if payload.get("pickId")
+                    else None
+                ),
+            )
+            summaries.append(summary)
+            if summary["found"] == 0:
+                break
+        return {
+            "ok": True,
+            "reviewRepair": summaries,
+            "totals": {
+                key: sum(item.get(key, 0) for item in summaries)
+                for key in ("found", "repaired", "deferred", "errors")
+            },
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/admin/pending-review-status")
+async def pending_review_status(payload: dict = Body(...)):
+    """Owner-only read-only snapshot of the pending-review backlog."""
+    from routes.admin import verify_owner
+
+    await verify_owner(
+        str(payload.get("email") or ""),
+        str(payload.get("token") or ""),
+    )
+    query = {
+        "$and": [
+            {
+                "$or": [
+                    {"status": "pending_review"},
+                    {"result": "pending_review"},
+                    {"settlementReview": {"$exists": True}},
+                ]
+            },
+            {
+                "$or": [
+                    {"sport": "soccer"},
+                    {"sport": {"$exists": False}},
+                ]
+            },
+        ]
+    }
+    count = await db.picks.count_documents(query)
+    legacy_query = {
+        "sport": "soccer",
+        "status": "settled",
+        "result": {"$in": ["hit", "miss", "push", "dnp", "pass"]},
+        "settlementSource.verified": {"$ne": True},
+        "correctedManually": {"$ne": True},
+    }
+    legacy_count = await db.picks.count_documents(legacy_query)
+    andy_rows = await db.picks.find(
+        {
+            "sport": "soccer",
+            "$or": [
+                {"playerName": {"$regex": "Andy Aryel Najar", "$options": "i"}},
+                {"playerName": {"$regex": "Najar", "$options": "i"}},
+            ],
+        },
+        {
+            "_id": 0,
+            "pickId": 1,
+            "playerName": 1,
+            "status": 1,
+            "result": 1,
+            "actualValue": 1,
+            "line": 1,
+            "recommendation": 1,
+            "fixtureId": 1,
+            "playerId": 1,
+            "teamId": 1,
+            "opponentId": 1,
+            "settlementReview": 1,
+            "settlementSource": 1,
+            "settlementRepairAudit": 1,
+            "settlementRepairLastAttemptReason": 1,
+        },
+    ).sort("timestamp", -1).to_list(10)
+    return {
+        "ok": True,
+        "pendingReviewCount": count,
+        "legacyUnverifiedCount": legacy_count,
+        "totalUnverifiedSoccerCount": count + legacy_count,
+        "andyNajar": andy_rows,
+    }
 
 
 @app.post("/api/admin/bulk-resettle-zero-picks")

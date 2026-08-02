@@ -1296,7 +1296,11 @@ async def list_picks(req: GetPicksRequest):
             p for p in picks
             if _should_process(p)
             and p.get("sport", "soccer") == "soccer"
-            and p.get("status") == "pending_review"
+            and (
+                p.get("status") == "pending_review"
+                or str(p.get("result") or "").lower() == "pending_review"
+                or p.get("settlementReview")
+            )
             and not p.get("correctedManually")
             and not p.get("voidReason")
         ]
@@ -1304,7 +1308,11 @@ async def list_picks(req: GetPicksRequest):
             p for p in picks
             if _should_process(p)
             and p.get("sport", "soccer") == "soccer"
-            and p.get("status") in {"settled", "pending_review"}
+            and (
+                p.get("status") in {"settled", "pending_review"}
+                or str(p.get("result") or "").lower() == "pending_review"
+                or p.get("settlementReview")
+            )
             and not p.get("correctedManually")
             and not p.get("voidReason")
             and (
@@ -3919,7 +3927,11 @@ async def settle_picks(req: SettlePicksRequest):
 async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, league_id):
     """Settle a soccer pick — BDL path for BDL leagues, legacy path otherwise."""
     import soccer_bdl_client as _sbc
-    if _sbc.is_bdl_league(league_id):
+    # API-Football is the authoritative soccer settlement source. Explicit
+    # legacy-review repairs must never fall back to the old BDL routes: those
+    # endpoints are unauthorized/rate-limited for several mapped leagues and
+    # can turn a bounded repair into a long timeout.
+    if _sbc.is_bdl_league(league_id) and not pick.get("_settlement_repair"):
         matches = await _sbc.get_live_and_recent_matches(league_id)
         match   = _sbc.find_match_for_pick(matches, pick)
         if not match or not match.get("is_finished"):
@@ -3999,7 +4011,19 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         return None
 
     pick_timestamp = pick.get("timestamp", 0)
-    pick_created = datetime.fromtimestamp(pick_timestamp / 1000, tz=timezone.utc) if isinstance(pick_timestamp, (int, float)) and pick_timestamp else datetime.min.replace(tzinfo=timezone.utc)
+    if isinstance(pick_timestamp, (int, float)) and pick_timestamp:
+        pick_created = datetime.fromtimestamp(
+            pick_timestamp / 1000, tz=timezone.utc
+        )
+    elif isinstance(pick_timestamp, str) and pick_timestamp:
+        try:
+            pick_created = datetime.fromisoformat(
+                pick_timestamp.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+        except Exception:
+            pick_created = datetime.min.replace(tzinfo=timezone.utc)
+    else:
+        pick_created = datetime.min.replace(tzinfo=timezone.utc)
 
     recent = None
     stored_fixture_id = pick.get("fixtureId")
@@ -4032,11 +4056,25 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             print(f"[SETTLE-DEFER] exact fixture lookup failed for {stored_fixture_id}: {_exact_err}")
             return None
 
-    _fixture_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [CURRENT_SEASON + 1, CURRENT_SEASON]
+    _fixture_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [
+        CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1
+    ]
     for s in _fixture_seasons if recent is None else []:
         try:
-            _p_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
-            _p_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            _now = datetime.now(timezone.utc)
+            if pick_created != datetime.min.replace(tzinfo=timezone.utc):
+                # Legacy records need a historical window around the original
+                # prediction date; a rolling "last 90 days" window misses old
+                # fixtures and can otherwise match an unrelated opponent.
+                _p_from_dt = pick_created - timedelta(days=3)
+                _p_to_dt = min(_now, pick_created + timedelta(days=14))
+                if _p_to_dt < _p_from_dt:
+                    _p_to_dt = _now
+            else:
+                _p_from_dt = _now - timedelta(days=90)
+                _p_to_dt = _now
+            _p_from = _p_from_dt.strftime("%Y-%m-%d")
+            _p_to = _p_to_dt.strftime("%Y-%m-%d")
             _fix_params = {"team": team_id, "from": _p_from, "to": _p_to, "season": s}
             if league_id:
                 _fix_params["league"] = league_id
@@ -4045,10 +4083,21 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                 for f in data:
                     home = f.get("teams", {}).get("home", {}).get("name", "")
                     away = f.get("teams", {}).get("away", {}).get("name", "")
+                    home_id = f.get("teams", {}).get("home", {}).get("id")
+                    away_id = f.get("teams", {}).get("away", {}).get("id")
                     status = f.get("fixture", {}).get("status", {}).get("short", "")
                     if status not in ("FT", "AET", "PEN"):
                         continue
-                    if not (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
+                    if team_id and team_id not in (home_id, away_id):
+                        continue
+                    _opponent_id = pick.get("opponentId")
+                    if _opponent_id:
+                        if _opponent_id not in (home_id, away_id):
+                            continue
+                    elif not opponent or not (
+                        opponent.lower() in home.lower()
+                        or opponent.lower() in away.lower()
+                    ):
                         continue
                     # Time guard: finished fixture must have ended after the pick was
                     # saved.  kickoff+3h is not enough — a Germany pick at 14:00 can
@@ -4113,10 +4162,17 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     away_team_name = recent.get("teams", {}).get("away", {}).get("name", "") or ""
     home_team_id = recent.get("teams", {}).get("home", {}).get("id")
     away_team_id = recent.get("teams", {}).get("away", {}).get("id")
-    home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
+    if pick.get("_settlement_repair"):
+        home_poss, away_poss = None, None
+    else:
+        home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
     _settle_venue = (pick.get("venue") or "home").lower()
     _settle_opp_id = away_team_id if _settle_venue == "home" else home_team_id
-    settle_opp_avg_poss = await _get_team_avg_possession(_settle_opp_id, pick.get("leagueId"), CURRENT_SEASON)
+    settle_opp_avg_poss = (
+        None
+        if pick.get("_settlement_repair")
+        else await _get_team_avg_possession(_settle_opp_id, pick.get("leagueId"), CURRENT_SEASON)
+    )
 
     # DNP / early-sub void guard — players with < 30 min get DNP, not hit/miss
     _DNP_THRESHOLD = 30
