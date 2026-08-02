@@ -403,7 +403,10 @@ async def save_pick(req: SavePickRequest):
         # PASS is saved as a calibration observation.  passLeaning stores the
         # model's original direction so settlement can measure the avoided
         # outcome without presenting PASS as an actionable wager.
-        "passLeaning": str(pick.get("passLeaning") or "").lower() or None,
+        # Preserve the suppressed side for calibration. Legacy clients omitted
+        # it, so recover it from the final projection only when the projection
+        # is strictly above/below the line; ties remain ambiguous.
+        "passLeaning": _pass_lean(pick),
         "passReason": pick.get("passReason") or None,
         "isCalibrationOnly": str(pick.get("recommendation") or "").upper() == "PASS",
         "leagueId": pick.get("leagueId") or pick.get("_request", {}).get("leagueId", 0),
@@ -1030,6 +1033,20 @@ async def list_picks(req: GetPicksRequest):
                     {"pickId": p["pickId"], "email": pick_email},
                     {"$set": updates}
                 )
+            elif pass_outcome and p.get("passOutcome") != pass_outcome:
+                # PASS remains the non-actionable recommendation, but its
+                # avoided side still needs a definitive calibration outcome.
+                p["passOutcome"] = pass_outcome
+                _pass_direction = _pass_lean(p)
+                if _pass_direction and p.get("passLeaning") != _pass_direction:
+                    p["passLeaning"] = _pass_direction
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": pick_email},
+                    {"$set": {
+                        "passOutcome": pass_outcome,
+                        **({"passLeaning": _pass_direction} if _pass_direction else {}),
+                    }}
+                )
 
     # ── CS2 settled-pick data repair ─────────────────────────────────────────
     # Only run for the requester's OWN picks (owner-view must not repair other
@@ -1427,6 +1444,11 @@ async def list_picks(req: GetPicksRequest):
                                 )
                                 if pass_outcome:
                                     meta_set["passOutcome"] = pass_outcome
+                                    pass_direction = _pass_lean(p)
+                                    if pass_direction:
+                                        meta_set["passLeaning"] = pass_direction
+                            elif pass_outcome:
+                                meta_set["passOutcome"] = pass_outcome
                             meta_set["settlementSource"] = refreshed.get("settlementSource")
                             p["settlementSource"] = refreshed.get("settlementSource")
                             p["status"] = "settled"
@@ -3882,15 +3904,46 @@ def _settle_pick_result(current_value, line, pick):
     """
     recommendation = str(pick.get("recommendation") or "over").lower()
     if recommendation == "pass":
-        lean = str(
-            pick.get("passLeaning")
-            or (pick.get("skipDetails") or {}).get("direction")
-            or ""
-        ).lower()
+        lean = _pass_lean(pick)
         if lean in {"over", "under"} and current_value is not None:
             return "pass", _settle_result(current_value, line, lean)
         return "pass", None
     return _settle_result(current_value, line, recommendation), None
+
+
+def _pass_lean(pick: dict) -> str | None:
+    """Return the directional side a calibration-only PASS was avoiding.
+
+    PASS is still the user-facing recommendation, but calibration needs the
+    original OVER/UNDER side to score the avoided outcome. New predictions
+    persist this explicitly. Legacy rows may safely recover it only from an
+    explicit skip direction or a final projection that is strictly on one
+    side of the line; callers must leave ties/ambiguous rows unresolved.
+    """
+    explicit = str(
+        pick.get("passLeaning")
+        or (pick.get("skipDetails") or {}).get("direction")
+        or ""
+    ).lower()
+    if explicit in {"over", "under"}:
+        return explicit
+
+    try:
+        projection = pick.get("projection")
+        if projection is None:
+            projection = pick.get("projectedValue")
+        line = pick.get("line")
+        if projection is None or line is None:
+            return None
+        projection = float(projection)
+        line = float(line)
+        if projection > line:
+            return "over"
+        if projection < line:
+            return "under"
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def _soccer_settlement_provenance(

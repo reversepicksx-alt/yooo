@@ -7984,6 +7984,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                 _pass_rate = _recent_pass["hitRate"]
                 _pass_n = _recent_pass["n"]
                 prediction["recommendation"] = "PASS"
+                # Keep the side being suppressed. PASS remains non-actionable
+                # for the user, but calibration must score the avoided
+                # OVER/UNDER direction after the fixture settles.
+                prediction["passLeaning"] = _pass_dir
                 prediction["passReason"] = (
                     f"PASS — recent {_pass_dir} pass-prop results in this "
                     f"league/role bucket are {_pass_rate:.0f}% "

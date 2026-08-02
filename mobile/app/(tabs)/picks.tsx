@@ -68,7 +68,11 @@ function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | 'pass' | nul
   if (hasVerifiedSource && (result === 'miss' || result === 'lost')) return 'miss';
   if (hasVerifiedSource && result === 'push') return 'push';
   if (hasVerifiedSource && result === 'dnp') return 'dnp';
-  if (hasVerifiedSource && result === 'pass') return 'pass';
+  if (hasVerifiedSource && result === 'pass') {
+    // PASS is the non-actionable recommendation. Its avoided OVER/UNDER
+    // direction is still scored separately for calibration.
+    return 'pass';
+  }
   if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
     const line = Number(p.line);
     const actual = Number(p.actualValue);
@@ -113,9 +117,11 @@ function pickPass(p: Pick) {
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   const rec = p.recommendation;
   if (rec === 'OVER' || rec === 'UNDER') return rec;
+  const passLean = String(p.passLeaning || '').toUpperCase();
+  if (passLean === 'OVER' || passLean === 'UNDER') return passLean;
   const proj = p.projection ?? p.projectedValue;
   if (proj != null && p.line > 0) {
-    return proj < p.line ? 'OVER' : 'UNDER';
+    return proj > p.line ? 'OVER' : 'UNDER';
   }
   return null;
 }

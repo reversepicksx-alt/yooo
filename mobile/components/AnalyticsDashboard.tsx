@@ -32,10 +32,12 @@ function getSport(p: Pick) {
 
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   if (p.recommendation === 'OVER' || p.recommendation === 'UNDER') return p.recommendation;
+  const passLean = String(p.passLeaning || '').toUpperCase();
+  if (passLean === 'OVER' || passLean === 'UNDER') return passLean;
   const proj = p.projection ?? (p as any).projectedValue ?? null;
   const line = typeof p.line === 'number' ? p.line : null;
   if (proj != null && line != null) {
-    return proj < line ? 'OVER' : 'UNDER';
+    return proj > line ? 'OVER' : 'UNDER';
   }
   return null;
 }
@@ -392,6 +394,11 @@ export default function AnalyticsDashboard({
                 <Text style={s.ownerHealthScope}>
                   {ownerData.scope?.rawSettled ?? ownerData.overall.total} raw rows · {ownerData.overall.total} deduplicated settled events · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable · {ownerData.overall.calibrationOnly ?? 0} PASS calibration
                 </Text>
+                {ownerData.overall.passCalibration?.n ? (
+                  <Text style={s.ownerHealthMeta}>
+                    PASS calibration: {ownerData.overall.passCalibration.hits} avoided-direction hits · {ownerData.overall.passCalibration.misses} misses · {ownerData.overall.passCalibration.winPct}% directional accuracy
+                  </Text>
+                ) : null}
                 <View style={s.ownerHealthGrid}>
                   <View>
                     <Text style={s.ownerHealthValue}>{ownerData.overall.hits}</Text>

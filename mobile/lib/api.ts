@@ -599,6 +599,9 @@ interface RawPrediction {
   line?: number;
   projectedValue?: number;
   recommendation?: string;
+  passLeaning?: string | null;
+  passOutcome?: 'hit' | 'miss' | 'push' | null;
+  isCalibrationOnly?: boolean;
   confidenceScore?: number;
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
@@ -973,6 +976,9 @@ export interface Pick {
   line: number;
   projection?: number;
   recommendation?: string;
+  passLeaning?: string | null;
+  passOutcome?: 'hit' | 'miss' | 'push' | null;
+  isCalibrationOnly?: boolean;
   confidence?: number;
   confidenceLevel?: string;
   projectedValue?: number;
@@ -1076,6 +1082,9 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     projection: (p.projectedValue as number) ?? (p.projection as number),
     // normalize to uppercase OVER/UNDER
     recommendation: ((p.recommendation as string) || '').toUpperCase() || undefined,
+    passLeaning: (p.passLeaning as string) || null,
+    passOutcome: (p.passOutcome as Pick['passOutcome']) || null,
+    isCalibrationOnly: p.isCalibrationOnly as boolean | undefined,
     // normalize confidenceScore → confidence
     confidence: (p.confidenceScore as number) ?? (p.confidence as number),
     confidenceLevel: p.confidenceLevel as string,
@@ -1515,6 +1524,14 @@ export interface ModelScorecard {
   duplicateRowsRemoved?: number;
   resultCounts?: Record<string, number>;
   calibrationOnlyN?: number;
+  passCalibration?: {
+    n: number;
+    hits: number;
+    misses: number;
+    pushes: number;
+    winPct: number;
+    byDirection: Record<string, { hit?: number; miss?: number; push?: number }>;
+  };
   dateRange: { from: string | null; to: string | null };
   classification: {
     finalConfidence: ProbabilityMetrics;
@@ -1545,6 +1562,14 @@ export interface AnalyticsData {
     dnps?: number;
     calibrationOnly?: number;
     actionable?: number;
+    passCalibration?: {
+      n: number;
+      hits: number;
+      misses: number;
+      pushes: number;
+      winPct: number;
+      byDirection: Record<string, { hit?: number; miss?: number; push?: number }>;
+    };
   };
   streak: { type: string | null; count: number };
   recentForm: { result: string; name: string }[];

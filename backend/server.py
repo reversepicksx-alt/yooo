@@ -744,7 +744,8 @@ async def owner_analytics(payload: dict = Body(...)):
         settled_filter,
         {
             "_id": 0, "trackingId": 1, "playerName": 1, "sport": 1,
-            "propType": 1, "line": 1, "recommendation": 1, "venue": 1,
+            "propType": 1, "line": 1, "recommendation": 1, "passLeaning": 1,
+            "venue": 1,
             "position": 1, "leagueId": 1, "leagueName": 1,
             "playerId": 1, "teamId": 1, "opponentId": 1,
             "fixtureId": 1, "fixtureDate": 1, "matchDate": 1,
@@ -804,6 +805,26 @@ async def owner_analytics(payload: dict = Body(...)):
         str(row.get("recommendation") or "").lower() == "pass"
         or bool(row.get("isCalibrationOnly"))
         for row in deduped_rows
+    )
+    pass_calibration_counts = {"hit": 0, "miss": 0, "push": 0}
+    pass_calibration_by_direction: dict = defaultdict(
+        lambda: {"hit": 0, "miss": 0, "push": 0}
+    )
+    for row in deduped_rows:
+        is_pass = (
+            str(row.get("recommendation") or "").lower() == "pass"
+            or bool(row.get("isCalibrationOnly"))
+        )
+        outcome = str(row.get("passOutcome") or "").lower()
+        if not is_pass or outcome not in pass_calibration_counts:
+            continue
+        direction = str(row.get("passLeaning") or "").lower()
+        if direction not in {"over", "under"}:
+            direction = "unknown"
+        pass_calibration_counts[outcome] += 1
+        pass_calibration_by_direction[direction][outcome] += 1
+    pass_calibration_scored = (
+        pass_calibration_counts["hit"] + pass_calibration_counts["miss"]
     )
 
     # Streak: last N settled picks in chronological order
@@ -1035,6 +1056,16 @@ async def owner_analytics(payload: dict = Body(...)):
             "dnps": total_dnps,
             "calibrationOnly": total_passes,
             "actionable": total_hits + total_misses,
+            "passCalibration": {
+                "n": sum(pass_calibration_counts.values()),
+                "hits": pass_calibration_counts["hit"],
+                "misses": pass_calibration_counts["miss"],
+                "pushes": pass_calibration_counts["push"],
+                "winPct": pct(
+                    pass_calibration_counts["hit"], pass_calibration_scored
+                ),
+                "byDirection": dict(pass_calibration_by_direction),
+            },
         },
         "streak": {"type": streak_type, "count": streak_count},
         "recentForm": recent_streak[:10],

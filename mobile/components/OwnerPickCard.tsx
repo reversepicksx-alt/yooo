@@ -80,6 +80,8 @@ function pickDnp(p: Pick) { return getSettledOutcome(p) === 'dnp'; }
 function pickPass(p: Pick) { return getSettledOutcome(p) === 'pass'; }
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   if (p.recommendation === 'OVER' || p.recommendation === 'UNDER') return p.recommendation;
+  const passLean = String(p.passLeaning || '').toUpperCase();
+  if (passLean === 'OVER' || passLean === 'UNDER') return passLean;
   const proj = p.projection ?? p.projectedValue;
   if (proj != null && p.line > 0) return proj > p.line ? 'OVER' : 'UNDER';
   return null;
@@ -101,12 +103,21 @@ function formatMatchTime(iso?: string): string {
 }
 
 // ─── Status badge ────────────────────────────────────────────────────────────
-function StatusPill({ won, lost, push, dnp, pass, live, pending, pendingReview }: Record<string, boolean>) {
+function StatusPill({
+  won, lost, push, dnp, pass, passOutcome, passDirection,
+  live, pending, pendingReview,
+}: Record<string, any>) {
   if (won) return <View style={[pill.root, { backgroundColor: '#39FF14' }]}><Text style={[pill.txt, { color: '#000' }]}>HIT ✓</Text></View>;
   if (lost) return <View style={[pill.root, { backgroundColor: '#FF3B30' }]}><Text style={[pill.txt, { color: '#fff' }]}>MISS</Text></View>;
   if (push) return <View style={[pill.root, { backgroundColor: '#0A84FF' }]}><Text style={[pill.txt, { color: '#fff' }]}>PUSH</Text></View>;
   if (dnp) return <View style={[pill.root, { backgroundColor: '#FF9500' }]}><Text style={[pill.txt, { color: '#fff' }]}>DNP</Text></View>;
-  if (pass) return <View style={[pill.root, { backgroundColor: '#636366' }]}><Text style={[pill.txt, { color: '#fff' }]}>PASS</Text></View>;
+  if (pass) {
+    const outcomeLabel = passOutcome === 'hit' ? 'HIT' : passOutcome === 'miss' ? 'MISS' : passOutcome === 'push' ? 'PUSH' : '';
+    const directionLabel = passDirection ? ` · ${passDirection}` : '';
+    return <View style={[pill.root, { backgroundColor: '#636366' }]}>
+      <Text style={[pill.txt, { color: '#fff' }]}>{`PASS${directionLabel}${outcomeLabel ? ` ${outcomeLabel}` : ''}`}</Text>
+    </View>;
+  }
   if (pendingReview) return <View style={[pill.root, pill.pendingReview]}><Text style={[pill.txt, { color: '#FFD60A' }]}>PENDING REVIEW</Text></View>;
   if (live) return (
     <View style={[pill.root, pill.live]}>
@@ -430,7 +441,12 @@ export default function OwnerPickCard({
                   : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
               </TouchableOpacity>
             )}
-            <StatusPill won={won} lost={lost} push={push} dnp={dnp} pass={pass} live={live} pending={pending} pendingReview={pendingReview} />
+            <StatusPill
+              won={won} lost={lost} push={push} dnp={dnp} pass={pass}
+              passOutcome={pick.passOutcome}
+              passDirection={dir}
+              live={live} pending={pending} pendingReview={pendingReview}
+            />
           </View>
         </View>
 

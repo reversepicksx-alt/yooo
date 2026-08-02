@@ -32,6 +32,42 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _is_pass_row(row: dict) -> bool:
+    return (
+        str(row.get("recommendation") or "").lower() == "pass"
+        or bool(row.get("isCalibrationOnly"))
+    )
+
+
+def _pass_calibration_metrics(rows: list[dict]) -> dict:
+    """Score avoided PASS directions without mixing them into wager metrics."""
+    counts = {"hit": 0, "miss": 0, "push": 0}
+    by_direction: dict[str, dict[str, int]] = {}
+    for row in rows:
+        if not _is_pass_row(row):
+            continue
+        outcome = str(row.get("passOutcome") or "").lower()
+        if outcome not in counts:
+            continue
+        direction = str(row.get("passLeaning") or "").lower()
+        if direction not in {"over", "under"}:
+            direction = "unknown"
+        counts[outcome] += 1
+        bucket = by_direction.setdefault(
+            direction, {"hit": 0, "miss": 0, "push": 0}
+        )
+        bucket[outcome] += 1
+    scored = counts["hit"] + counts["miss"]
+    return {
+        "n": sum(counts.values()),
+        "hits": counts["hit"],
+        "misses": counts["miss"],
+        "pushes": counts["push"],
+        "winPct": round(counts["hit"] / scored * 100, 1) if scored else 0.0,
+        "byDirection": by_direction,
+    }
+
+
 def _event_key(row: dict) -> str:
     recommendation = str(row.get("recommendation") or "").lower()
     if recommendation == "pass":
@@ -219,6 +255,7 @@ def build_scorecard(rows: list[dict]) -> dict:
         "duplicateRowsRemoved": max(0, len(rows) - len(deduped)),
         "resultCounts": dict(result_counts),
         "calibrationOnlyN": calibration_only,
+        "passCalibration": _pass_calibration_metrics(deduped),
         "dateRange": _date_range(ordered),
         "classification": {
             "finalConfidence": _probability_metrics(deduped, "confidenceScore"),
