@@ -10,3 +10,9 @@ Provider stat names are not interchangeable: API-Football `statistics.passes.tot
 **Why:** A legacy settlement used 79 for Andy Najar's pass-attempt prop even though the official fixture row showed 57 total attempts and 52 accurate passes. Treating an unverified numeric value as final also contaminated outcome history and calibration.
 
 **How to apply:** Require explicit result plus verified provenance before showing `FINAL` or using a record for calibration. Keep live `currentValue` separate. `pending_review` is a transient automatic-retry state: prioritize it for exact-fixture/player refetch on the next picks load, promote a verified result immediately, and exclude it from settled totals while the retry is unresolved. Route suspicious positive legacy values through a dry-run-first exact-fixture/player refetch, and preserve the prior value/result/source in an audit record before writing a verified replacement.
+
+Active picks that remain `live` after a fixture finishes need the same exact-fixture fallback as review records; otherwise a missed live-to-final transition can strand them indefinitely.
+
+**Why:** A finished API-Football fixture can be available and fully verifiable even when the initial live lookup missed the UTC-boundary transition.
+
+**How to apply:** Include own active soccer picks in the bounded final-refresh queue, route them through the API-Football-only repair path, and persist the verified fixture ID with the settlement.

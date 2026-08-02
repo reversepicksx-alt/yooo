@@ -50,13 +50,14 @@ function isPendingReview(p: Pick) {
 function isPending(p: Pick) {
   return !isPendingReview(p) && !isSettled(p) && !isLive(p);
 }
-function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
+function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | 'pass' | null {
   const raw = String(p.result || '').toLowerCase();
   const hasVerifiedSource = p.settlementSource?.verified === true;
   if (hasVerifiedSource && (raw === 'hit' || raw === 'won')) return 'hit';
   if (hasVerifiedSource && (raw === 'miss' || raw === 'lost')) return 'miss';
   if (hasVerifiedSource && raw === 'push') return 'push';
   if (hasVerifiedSource && raw === 'dnp') return 'dnp';
+  if (hasVerifiedSource && raw === 'pass') return 'pass';
   if (
     (p.status === 'settled' || p.matchStatus === 'final')
     && p.actualValue != null
@@ -76,6 +77,7 @@ function pickWon(p: Pick) { return getSettledOutcome(p) === 'hit' || p.status ==
 function pickLost(p: Pick) { return getSettledOutcome(p) === 'miss' || p.status === 'lost'; }
 function pickPush(p: Pick) { return getSettledOutcome(p) === 'push'; }
 function pickDnp(p: Pick) { return getSettledOutcome(p) === 'dnp'; }
+function pickPass(p: Pick) { return getSettledOutcome(p) === 'pass'; }
 function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   if (p.recommendation === 'OVER' || p.recommendation === 'UNDER') return p.recommendation;
   const proj = p.projection ?? p.projectedValue;
@@ -99,11 +101,12 @@ function formatMatchTime(iso?: string): string {
 }
 
 // ─── Status badge ────────────────────────────────────────────────────────────
-function StatusPill({ won, lost, push, dnp, live, pending, pendingReview }: Record<string, boolean>) {
+function StatusPill({ won, lost, push, dnp, pass, live, pending, pendingReview }: Record<string, boolean>) {
   if (won) return <View style={[pill.root, { backgroundColor: '#39FF14' }]}><Text style={[pill.txt, { color: '#000' }]}>HIT ✓</Text></View>;
   if (lost) return <View style={[pill.root, { backgroundColor: '#FF3B30' }]}><Text style={[pill.txt, { color: '#fff' }]}>MISS</Text></View>;
   if (push) return <View style={[pill.root, { backgroundColor: '#0A84FF' }]}><Text style={[pill.txt, { color: '#fff' }]}>PUSH</Text></View>;
   if (dnp) return <View style={[pill.root, { backgroundColor: '#FF9500' }]}><Text style={[pill.txt, { color: '#fff' }]}>DNP</Text></View>;
+  if (pass) return <View style={[pill.root, { backgroundColor: '#636366' }]}><Text style={[pill.txt, { color: '#fff' }]}>PASS</Text></View>;
   if (pendingReview) return <View style={[pill.root, pill.pendingReview]}><Text style={[pill.txt, { color: '#FFD60A' }]}>PENDING REVIEW</Text></View>;
   if (live) return (
     <View style={[pill.root, pill.live]}>
@@ -136,6 +139,7 @@ export default function OwnerPickCard({
   const lost = pickLost(pick);
   const push = pickPush(pick);
   const dnp = pickDnp(pick);
+  const pass = pickPass(pick);
   const settled = isSettled(pick);
   const pendingReview = isPendingReview(pick);
   const live = isLive(pick);
@@ -153,7 +157,7 @@ export default function OwnerPickCard({
   // A settled card may only show an official final stat. Never fall back to
   // currentValue here: that is a live/polling value and was the source of
   // misleading "FINAL" values on older saved picks.
-  const explicitResult = ['hit', 'miss', 'push', 'dnp'].includes(String(pick.result || '').toLowerCase());
+  const explicitResult = ['hit', 'miss', 'push', 'dnp', 'pass'].includes(String(pick.result || '').toLowerCase());
   const hasVerifiedFinal = pick.actualValue != null
     && explicitResult
     && pick.settlementSource?.verified === true;
@@ -426,7 +430,7 @@ export default function OwnerPickCard({
                   : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
               </TouchableOpacity>
             )}
-            <StatusPill won={won} lost={lost} push={push} dnp={dnp} live={live} pending={pending} pendingReview={pendingReview} />
+            <StatusPill won={won} lost={lost} push={push} dnp={dnp} pass={pass} live={live} pending={pending} pendingReview={pendingReview} />
           </View>
         </View>
 

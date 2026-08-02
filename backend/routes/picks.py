@@ -1325,12 +1325,30 @@ async def list_picks(req: GetPicksRequest):
                 )
             )
         ]
+        # A pick can remain status=live when the live fixture lookup missed a
+        # UTC-boundary transition. Give active soccer picks the same exact
+        # finished-fixture fallback as review records so a completed match is
+        # not stranded in Live forever.
+        active_soccer = [
+            p for p in picks
+            if _should_process(p)
+            and p.get("sport", "soccer") == "soccer"
+            and p.get("status") in {"live", "pending"}
+            and not p.get("correctedManually")
+            and not p.get("voidReason")
+        ]
         # Review records are the user-visible failure state, so they always
         # get the first refresh slots instead of being crowded out by newer
         # already-settled picks.
         review_ids = {p.get("pickId") for p in review_picks}
+        active_ids = {p.get("pickId") for p in active_soccer}
         refresh_queue = review_picks + [
-            p for p in recently_settled if p.get("pickId") not in review_ids
+            p for p in active_soccer
+            if p.get("pickId") not in review_ids
+        ] + [
+            p for p in recently_settled
+            if p.get("pickId") not in review_ids
+            and p.get("pickId") not in active_ids
         ]
         if refresh_queue:
             for p in refresh_queue[:6]:
@@ -1344,7 +1362,14 @@ async def list_picks(req: GetPicksRequest):
                     if not player_id:
                         continue
                     refreshed = await _settle_soccer_pick(
-                        p, team_id, player_id, opponent, prop_type, league_id
+                        {
+                            **p,
+                            # The exact fallback is API-Football-backed and
+                            # must not route historical active picks through
+                            # obsolete BDL settlement endpoints.
+                            "_settlement_repair": True,
+                        },
+                        team_id, player_id, opponent, prop_type, league_id
                     )
                     if (
                         refreshed
@@ -3651,6 +3676,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 "finalAwayGoals": away_goals,
                 "homeTeam": home_team_name,
                 "awayTeam": away_team_name,
+                "fixtureId": fixture_id,
                 "settledAt": datetime.now(timezone.utc).isoformat(),
                 "settledBy": "live_dnp",
                 "voidReason": "Player not in matchday squad",
@@ -3739,12 +3765,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         _settle_set = {"status": "settled", "result": result_str, "actualValue": current_value,
                       "hitPct": settled_hit_pct, "matchScore": match_score,
                       "minutesPlayed": minutes_played,
+                       "fixtureId": fixture_id,
                       "finalHomeGoals": home_goals,
                       "finalAwayGoals": away_goals,
                       "homeTeam": home_team_name,
                       "awayTeam": away_team_name,
                        "settlementSource": settlement_source,
-                      "scenarioBucket": _scen_bucket,
+                       "scenarioBucket": _scen_bucket,
+                       "settledBy": "api_football_live",
                       "settledAt": datetime.now(timezone.utc).isoformat()}
         if pass_outcome:
             _settle_set["passOutcome"] = pass_outcome
