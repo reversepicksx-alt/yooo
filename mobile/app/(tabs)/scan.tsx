@@ -135,7 +135,7 @@ export default function ScanScreen() {
   // real: even at a neutral tournament site, one team effectively plays like the
   // home side (bigger crowd support) and the other like the away side.
   const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
-  const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp'>('all');
+  const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp' | 'h2h'>('all');
   const [adjustedLine, setAdjustedLine] = useState<number | null>(null);
   const [deselectedLogIndices, setDeselectedLogIndices] = useState<Set<number>>(new Set());
 
@@ -3586,6 +3586,9 @@ export default function ScanScreen() {
               const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
               const oppPoss = prediction.possessionOppAvg;
               const propT = prediction.propType || '';
+              const h2hMatches = prediction.h2hPlayerStats?.matches ?? [];
+              const hasH2H = h2hMatches.length > 0;
+              const isH2H = gameLogFilter === 'h2h';
 
               const filteredLogs = displayLogs.filter(g => {
                 if (gameLogFilter === 'opp') {
@@ -3681,7 +3684,7 @@ export default function ScanScreen() {
                   </View>
 
                   {/* ── Live Hit Rate Bar ── */}
-                  {!allSynthetic && selTotal > 0 && (
+                  {!allSynthetic && selTotal > 0 && !isH2H && (
                     <View style={styles.glHitRateRow}>
                       <View style={styles.glHitRateLeft}>
                         <Text style={styles.glHitRateCount}>
@@ -3708,7 +3711,7 @@ export default function ScanScreen() {
                   )}
 
                   {/* ── Line Adjuster ── */}
-                  {!allSynthetic && effectiveLine != null && (
+                  {!allSynthetic && effectiveLine != null && !isH2H && (
                     <View style={styles.glLineAdjuster}>
                       <TouchableOpacity
                         onPress={() => { setAdjustedLine(+Math.max(0, effectiveLine - 0.5).toFixed(1)); Haptics.selectionAsync(); }}
@@ -3781,6 +3784,16 @@ export default function ScanScreen() {
                           </TouchableOpacity>
                         );
                       })()}
+                      {hasH2H && (
+                        <TouchableOpacity
+                          style={[styles.glTab, gameLogFilter === 'h2h' && styles.glTabActive]}
+                          onPress={() => { setGameLogFilter('h2h'); Haptics.selectionAsync(); }}
+                        >
+                          <Text style={[styles.glTabText, gameLogFilter === 'h2h' && styles.glTabTextActive]}>
+                            H2H
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                       {hasLowMinGames && (
                         <TouchableOpacity
                           style={styles.glTabQuality}
@@ -3800,7 +3813,7 @@ export default function ScanScreen() {
                   )}
 
                   {/* ── OVER RATE strip — updates with ALL / HOME / AWAY filter ── */}
-                  {!allSynthetic && effectiveLine != null && (() => {
+                  {!allSynthetic && effectiveLine != null && !isH2H && (() => {
                     // Use filteredLogs so numbers react to the venue filter tabs
                     const baseVals = filteredLogs.map(g => g.value).filter((v): v is number => v != null);
                     const chips = [
@@ -3865,7 +3878,7 @@ export default function ScanScreen() {
                   })()}
 
                   {/* ── Bar Chart ── */}
-                  {!allSynthetic && (() => {
+                  {!allSynthetic && !isH2H && (() => {
                     if (filteredWithIdx.length === 0) return null;
                     const CHART_H = 112;
                     const BAR_W = 34;
@@ -3981,7 +3994,7 @@ export default function ScanScreen() {
                   })()}
 
                   {/* ── Compact OPP Strength Legend — soccer only ── */}
-                  {prediction.sport === 'soccer' && !allSynthetic && (
+                  {prediction.sport === 'soccer' && !allSynthetic && !isH2H && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: 6, flexWrap: 'wrap' }}>
                       <Text style={{ fontSize: 7, color: '#444', fontWeight: '700', letterSpacing: 0.6 }}>OPP TIER</Text>
                       {([
@@ -3999,7 +4012,7 @@ export default function ScanScreen() {
                   )}
 
                   {/* ── Home/Away Averages ── */}
-                  {!allSynthetic && (prediction.homeAvg != null || prediction.awayAvg != null) && (
+                  {!allSynthetic && !isH2H && (prediction.homeAvg != null || prediction.awayAvg != null) && (
                     <View style={styles.avgRow}>
                       {prediction.homeAvg != null && (
                         <Text style={styles.avgText}>HOME AVG  {prediction.homeAvg.toFixed(1)}</Text>
@@ -4011,7 +4024,7 @@ export default function ScanScreen() {
                   )}
 
                   {/* ── Defensive stats ── */}
-                  {!allSynthetic && (() => {
+                  {!allSynthetic && !isH2H && (() => {
                     const logsWithDef = displayLogs.filter(
                       g => g.blocks != null || g.interceptions != null || g.tackles != null || g.clearances != null
                     );
@@ -4044,66 +4057,42 @@ export default function ScanScreen() {
                     );
                   })()}
 
-                  {/* ── H2H subsection — kept inside the game-log card ── */}
-                  {prediction.h2hPlayerStats && prediction.h2hPlayerStats.matches.length > 0 && (() => {
-                    const h2h = prediction.h2hPlayerStats;
-                    const matches = h2h.matches.slice(0, 6);
-                    const h2hVals = matches.map((m: any) => m.targetStat).filter((v: any) => v != null);
-                    const h2hAvg = h2hVals.length > 0
-                      ? h2hVals.reduce((a: number, b: number) => a + b, 0) / h2hVals.length
+                  {/* ── H2H — compact text view, not a data block ── */}
+                  {isH2H && hasH2H && (() => {
+                    const matches = h2hMatches.slice(0, 8);
+                    const values = matches.map((m: any) => m.targetStat).filter((v: any) => v != null);
+                    const avg = values.length > 0
+                      ? values.reduce((a: number, b: number) => a + b, 0) / values.length
                       : null;
-                    const h2hOver = prediction.line != null
-                      ? h2hVals.filter((v: number) => v > prediction.line!).length
+                    const over = prediction.line != null
+                      ? values.filter((v: number) => v > prediction.line!).length
                       : 0;
-                    const h2hLabel = prediction.opponentName || prediction.opponent || 'OPPONENT';
+                    const opponent = prediction.opponentName || prediction.opponent || 'OPPONENT';
                     return (
-                      <View style={styles.h2hInline}>
-                        <View style={styles.h2hInlineHeader}>
-                          <View style={styles.h2hInlineTitleRow}>
-                            <Ionicons name="swap-horizontal-outline" size={11} color={Colors.primary} />
-                            <Text style={styles.h2hInlineTitle}>H2H · VS {h2hLabel.toUpperCase()}</Text>
-                          </View>
-                          <Text style={styles.h2hInlineMeta}>
-                            {h2h.sampleSize} APP{h2h.sampleSize !== 1 ? 'S' : ''}
-                            {h2hAvg != null ? `  ·  AVG ${h2hAvg.toFixed(1)}` : ''}
-                          </Text>
-                        </View>
-                        {h2hVals.length >= 2 && prediction.line != null && (
-                          <View style={styles.h2hInlineRate}>
-                            <Text style={styles.h2hInlineRateLabel}>OVER LINE</Text>
-                            <Text style={[styles.h2hInlineRateValue, {
-                              color: h2hOver / h2hVals.length >= 0.6
-                                ? Colors.success
-                                : h2hOver / h2hVals.length <= 0.4 ? Colors.error : Colors.textSecondary,
-                            }]}>
-                              {h2hOver}/{h2hVals.length} · {Math.round(h2hOver / h2hVals.length * 100)}%
-                            </Text>
-                          </View>
-                        )}
-                        <View style={styles.h2hInlineRows}>
+                      <View style={styles.h2hTextView}>
+                        <Text style={styles.h2hTextSummary}>
+                          H2H vs {opponent}  ·  {prediction.h2hPlayerStats?.sampleSize ?? matches.length} apps
+                          {avg != null ? `  ·  avg ${avg.toFixed(1)}` : ''}
+                          {values.length > 0 && prediction.line != null ? `  ·  ${over}/${values.length} over` : ''}
+                        </Text>
+                        <View style={styles.h2hTextRows}>
                           {matches.map((m: any, i: number) => {
                             const value = m.targetStat;
                             const isOver = value != null && prediction.line != null && value > prediction.line;
                             const venue = m.venue === 'home' ? 'H' : m.venue === 'away' ? 'A' : '–';
+                            const date = m.date ? m.date.slice(5, 10) : '—';
                             return (
-                              <View key={`${m.date || 'h2h'}-${i}`} style={styles.h2hInlineRow}>
-                                <Text style={styles.h2hInlineDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
-                                <Text style={styles.h2hInlineVenue}>{venue}</Text>
-                                <Text style={styles.h2hInlineOpp} numberOfLines={1}>{m.opponent || h2hLabel}</Text>
-                                {m.teamPossession != null && (
-                                  <Text style={styles.h2hInlinePoss}>{m.teamPossession}%</Text>
-                                )}
-                                <Text style={[styles.h2hInlineStat, {
+                              <Text key={`${m.date || 'h2h'}-${i}`} style={styles.h2hTextRow}>
+                                {date}  {venue}  {m.opponent || opponent}  <Text style={{
                                   color: value == null ? Colors.textTertiary : isOver ? Colors.success : Colors.error,
-                                }]}>
-                                  {value != null ? value : '—'}
-                                </Text>
-                              </View>
+                                  fontWeight: '800',
+                                }}>{value != null ? value : '—'}</Text>
+                              </Text>
                             );
                           })}
                         </View>
-                        {h2h.matches.length > matches.length && (
-                          <Text style={styles.h2hInlineMore}>Showing {matches.length} of {h2h.matches.length} meetings</Text>
+                        {h2hMatches.length > matches.length && (
+                          <Text style={styles.h2hTextMore}>+{h2hMatches.length - matches.length} more meetings</Text>
                         )}
                       </View>
                     );
@@ -6236,29 +6225,17 @@ const styles = StyleSheet.create({
   defStatChipLabel: { fontSize: 8, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.4 },
   defStatChipVal: { fontSize: 10, color: Colors.text, fontWeight: '800' },
 
-  /* ─── Inline H2H subsection ─── */
-  h2hInline: {
-    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',
-    marginTop: 3, paddingTop: 8, gap: 5,
+  /* ─── H2H text view ─── */
+  h2hTextView: { paddingTop: 4, gap: 4 },
+  h2hTextSummary: {
+    fontSize: 10, color: Colors.textSecondary, fontWeight: '600', lineHeight: 15,
   },
-  h2hInlineHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  h2hInlineTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  h2hInlineTitle: { fontSize: 8, fontWeight: '800', color: Colors.primary, letterSpacing: 0.8 },
-  h2hInlineMeta: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600' },
-  h2hInlineRate: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.025)', borderRadius: 5, paddingHorizontal: 7, paddingVertical: 4,
+  h2hTextRows: { gap: 2 },
+  h2hTextRow: {
+    fontSize: 9, color: Colors.textTertiary, lineHeight: 15,
+    fontFamily: 'JetBrainsMono_400Regular',
   },
-  h2hInlineRateLabel: { fontSize: 7, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.6 },
-  h2hInlineRateValue: { fontSize: 9, fontWeight: '800' },
-  h2hInlineRows: { gap: 1 },
-  h2hInlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 20 },
-  h2hInlineDate: { fontSize: 8, color: Colors.textTertiary, width: 58 },
-  h2hInlineVenue: { fontSize: 8, color: Colors.textTertiary, fontWeight: '800', width: 10 },
-  h2hInlineOpp: { flex: 1, fontSize: 9, color: Colors.textSecondary },
-  h2hInlinePoss: { fontSize: 8, color: Colors.textTertiary, width: 28, textAlign: 'right' },
-  h2hInlineStat: { fontSize: 11, fontWeight: '800', width: 24, textAlign: 'right' },
-  h2hInlineMore: { fontSize: 7, color: Colors.textTertiary, textAlign: 'right', marginTop: 1 },
+  h2hTextMore: { fontSize: 8, color: Colors.textTertiary, marginTop: 1 },
 
   /* Sharp verdict card */
   sharpVerdictCard: {
