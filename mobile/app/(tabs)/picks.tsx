@@ -63,15 +63,16 @@ function normalizedResult(p: Pick) {
 }
 function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const result = normalizedResult(p);
-  if (result === 'hit' || result === 'won') return 'hit';
-  if (result === 'miss' || result === 'lost') return 'miss';
-  if (result === 'push') return 'push';
-  if (result === 'dnp') return 'dnp';
+  const hasVerifiedSource = p.settlementSource?.verified === true;
+  if (hasVerifiedSource && (result === 'hit' || result === 'won')) return 'hit';
+  if (hasVerifiedSource && (result === 'miss' || result === 'lost')) return 'miss';
+  if (hasVerifiedSource && result === 'push') return 'push';
+  if (hasVerifiedSource && result === 'dnp') return 'dnp';
   if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
     const line = Number(p.line);
     const actual = Number(p.actualValue);
     const rec = String(p.recommendation || '').toLowerCase();
-    if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
+    if (hasVerifiedSource && Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
       if (actual === line) return 'push';
       return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
     }
@@ -83,7 +84,14 @@ function isLive(p: Pick) {
     || (!p.status && derivedOutcome(p) == null);
 }
 function isSettled(p: Pick) {
-  return p.status === 'pending_review' || derivedOutcome(p) != null;
+  return derivedOutcome(p) != null;
+}
+function isPendingReview(p: Pick) {
+  return p.status === 'pending_review'
+    || normalizedResult(p) === 'pending_review';
+}
+function isHistoryVisible(p: Pick) {
+  return isSettled(p) || isPendingReview(p);
 }
 function pickWon(p: Pick) {
   return derivedOutcome(p) === 'hit' || p.status === 'won';
@@ -127,6 +135,7 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   const misses = picks.filter(pickLost).length;
   const dnps = picks.filter(pickDnp).length;
   const pending = picks.filter(isLive).length;
+  const review = picks.filter(isPendingReview).length;
   const settled = hits + misses;
   const winPct = settled > 0 ? Math.round((hits / settled) * 100) : null;
 
@@ -154,6 +163,10 @@ function RecordBar({ picks }: { picks: Pick[] }) {
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.textSecondary }]}>{pending}</Text>
           <Text style={styles.recordKey}>LIVE</Text>
+        </View>
+        <View style={styles.recordStat}>
+          <Text style={[styles.recordVal, { color: '#FFD60A' }]}>{review}</Text>
+          <Text style={styles.recordKey}>REVIEW</Text>
         </View>
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.dnp }]}>{dnps}</Text>
@@ -936,7 +949,7 @@ export default function PicksScreen() {
     return true;
   }), [picks, searchQuery]);
   const live = filteredPicks.filter(isLive);
-  const history = filteredPicks.filter(isSettled);
+  const history = filteredPicks.filter(isHistoryVisible);
 
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';

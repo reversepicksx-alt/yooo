@@ -31,11 +31,10 @@ const PROP_LABELS: Record<string, string> = {
 };
 
 function isSettled(p: Pick) {
-  return getSettledOutcome(p) != null
-    || p.status === 'pending_review'
-    || String(p.result || '').toLowerCase() === 'pending_review';
+  return getSettledOutcome(p) != null;
 }
 function isLive(p: Pick) {
+  if (isPendingReview(p)) return false;
   if (isSettled(p)) return false;
   return !!(
     (p.matchStatus === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null))
@@ -44,17 +43,20 @@ function isLive(p: Pick) {
     || (p.pace != null && p.pace > 0)
   );
 }
-function isPending(p: Pick) { return !isSettled(p) && !isLive(p); }
 function isPendingReview(p: Pick) {
   return p.status === 'pending_review'
     || String(p.result || '').toLowerCase() === 'pending_review';
 }
+function isPending(p: Pick) {
+  return !isPendingReview(p) && !isSettled(p) && !isLive(p);
+}
 function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const raw = String(p.result || '').toLowerCase();
-  if (raw === 'hit' || raw === 'won') return 'hit';
-  if (raw === 'miss' || raw === 'lost') return 'miss';
-  if (raw === 'push') return 'push';
-  if (raw === 'dnp') return 'dnp';
+  const hasVerifiedSource = p.settlementSource?.verified === true;
+  if (hasVerifiedSource && (raw === 'hit' || raw === 'won')) return 'hit';
+  if (hasVerifiedSource && (raw === 'miss' || raw === 'lost')) return 'miss';
+  if (hasVerifiedSource && raw === 'push') return 'push';
+  if (hasVerifiedSource && raw === 'dnp') return 'dnp';
   if (
     (p.status === 'settled' || p.matchStatus === 'final')
     && p.actualValue != null
@@ -157,7 +159,9 @@ export default function OwnerPickCard({
     && pick.settlementSource?.verified === true;
   const actualValue = hasVerifiedFinal ? pick.actualValue! : null;
   const livePace = pick.pace ?? null;
-  const nowValue = settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
+  const nowValue = pendingReview
+    ? (pick.actualValue ?? pick.currentValue ?? null)
+    : settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
   const paceValue = live ? (livePace ?? projValue) : projValue;
   const paceLabel = dnp ? 'DNP' : pendingReview ? 'REVIEW' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
   // hitPct is a live pace estimate.  Once settled, 0/100 is the outcome,

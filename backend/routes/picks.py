@@ -908,7 +908,7 @@ async def list_picks(req: GetPicksRequest):
             )
 
     for p in picks:
-        if p.get("status") != "settled":
+        if p.get("status") not in {"settled", "pending_review"}:
             continue
         if not _should_process(p):
             # Still apply in-memory DNP coercion for display correctness
@@ -1292,19 +1292,40 @@ async def list_picks(req: GetPicksRequest):
     # API to get the true final value. Never run against other users' picks.
     try:
         now_utc = datetime.now(timezone.utc)
+        review_picks = [
+            p for p in picks
+            if _should_process(p)
+            and p.get("sport", "soccer") == "soccer"
+            and p.get("status") == "pending_review"
+            and not p.get("correctedManually")
+            and not p.get("voidReason")
+        ]
         recently_settled = [
             p for p in picks
             if _should_process(p)
-            and p.get("status") == "settled"
+            and p.get("sport", "soccer") == "soccer"
+            and p.get("status") in {"settled", "pending_review"}
             and not p.get("correctedManually")
             and not p.get("voidReason")
-            and p.get("settledAt")
-            and (now_utc - datetime.fromisoformat(
-                    p["settledAt"].replace("Z", "+00:00")
-                 )).total_seconds() < 8 * 3600
+            and (
+                p.get("status") == "pending_review"
+                or (
+                    p.get("settledAt")
+                    and (now_utc - datetime.fromisoformat(
+                        p["settledAt"].replace("Z", "+00:00")
+                    )).total_seconds() < 8 * 3600
+                )
+            )
         ]
-        if recently_settled:
-            for p in recently_settled[:6]:
+        # Review records are the user-visible failure state, so they always
+        # get the first refresh slots instead of being crowded out by newer
+        # already-settled picks.
+        review_ids = {p.get("pickId") for p in review_picks}
+        refresh_queue = review_picks + [
+            p for p in recently_settled if p.get("pickId") not in review_ids
+        ]
+        if refresh_queue:
+            for p in refresh_queue[:6]:
                 pick_email = _pick_email(p)
                 try:
                     team_id   = p.get("teamId") or 0
@@ -1319,7 +1340,10 @@ async def list_picks(req: GetPicksRequest):
                     )
                     if (
                         refreshed
-                        and refreshed.get("actualValue") is not None
+                        and (
+                            refreshed.get("actualValue") is not None
+                            or refreshed.get("voidReason")
+                        )
                         and (refreshed.get("settlementSource") or {}).get("verified") is True
                     ):
                         new_val = refreshed["actualValue"]
@@ -1332,12 +1356,17 @@ async def list_picks(req: GetPicksRequest):
                             p["actualValue"] = new_val
                             p["voidReason"] = refreshed["voidReason"]
                             meta_set = {
+                                "status": "settled",
                                 "result": new_res,
                                 "actualValue": new_val,
                                 "hitPct": 50,
                                 "voidReason": refreshed["voidReason"],
                                 "settlementSource": refreshed.get("settlementSource"),
                             }
+                            if refreshed.get("fixtureId") is not None:
+                                meta_set["fixtureId"] = refreshed["fixtureId"]
+                                p["fixtureId"] = refreshed["fixtureId"]
+                            meta_set["settlementReview"] = None
                             for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
                                          "homePoss", "awayPoss", "minutesPlayed"):
                                 v = refreshed.get(fld)
@@ -1367,15 +1396,24 @@ async def list_picks(req: GetPicksRequest):
                                     meta_set["passOutcome"] = pass_outcome
                             meta_set["settlementSource"] = refreshed.get("settlementSource")
                             p["settlementSource"] = refreshed.get("settlementSource")
+                            p["status"] = "settled"
+                            meta_set["status"] = "settled"
+                            if refreshed.get("fixtureId") is not None:
+                                meta_set["fixtureId"] = refreshed["fixtureId"]
+                                p["fixtureId"] = refreshed["fixtureId"]
                             if new_val == old_val and new_res == p.get("result"):
                                 p["actualValue"] = new_val
                                 print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: "
                                       f"verified actualValue={new_val}, result={new_res}")
 
                         if meta_set:
+                            update_doc = {"$set": meta_set}
+                            if meta_set.get("settlementReview") is None:
+                                meta_set.pop("settlementReview", None)
+                                update_doc["$unset"] = {"settlementReview": ""}
                             await db.picks.update_one(
                                 {"pickId": p["pickId"], "email": pick_email},
-                                {"$set": meta_set}
+                                update_doc
                             )
                 except Exception as _re:
                     print(f"[FINAL REFRESH] Error for {p.get('playerName','?')}: {_re}")
@@ -3904,7 +3942,8 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             actual_value is not None and actual_value > 0
         ):
             return {
-                "pickId": pick.get("id"), "status": "settled", "result": "dnp",
+                "pickId": pick.get("id"), "fixtureId": match.get("match_id") or match.get("id"),
+                "status": "settled", "result": "dnp",
                 "actualValue": actual_value, "minutesPlayed": minutes_played,
                 "voidReason": f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
                 "matchScore": f"{p_goals}-{o_goals}",
@@ -3923,7 +3962,8 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             }
         result_str, pass_outcome = _settle_pick_result(actual_value, pick.get("line", 0), pick)
         return {
-            "pickId": pick.get("id"), "status": "settled", "result": result_str,
+            "pickId": pick.get("id"), "fixtureId": match.get("match_id") or match.get("id"),
+            "status": "settled", "result": result_str,
             "actualValue": actual_value, "minutesPlayed": minutes_played,
             "matchScore": f"{p_goals}-{o_goals}",
             "homeTeam": match.get("home_team_name", ""),
@@ -4056,7 +4096,11 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                                 prop_type=prop_type,
                                 stat_path=SOCCER_STAT_PATHS.get(prop_type, "statistics"),
                                 fixture_status=recent.get("fixture", {}).get("status", {}).get("short"),
-                                verified=bool(stored_fixture_id),
+                                # A fallback fixture is still verified when the
+                                # official finished fixture, team/opponent
+                                # identity, player row, and stat path all match.
+                                # The method remains visible so it can be audited.
+                                verified=True,
                                 verification_method="fixture_id" if stored_fixture_id else "team_opponent_date_fallback",
                             )
                     break
@@ -4083,6 +4127,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     elif minutes_played < _DNP_THRESHOLD and (minutes_played > 0 or actual_value is not None):
         return {
             "pickId": pick.get("id"),
+                "fixtureId": fixture_id,
             "status": "settled",
             "result": "dnp",
             "actualValue": actual_value,
@@ -4119,6 +4164,7 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         result_str, pass_outcome = _settle_pick_result(actual_value, line, pick)
         return {
             "pickId": pick.get("id"),
+            "fixtureId": fixture_id,
             "status": "settled",
             "result": result_str,
             "actualValue": actual_value,
