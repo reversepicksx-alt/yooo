@@ -20,3 +20,9 @@ The Insights period controls must filter the system ledger on the server before 
 **Why:** The period buttons originally changed only local state, so All Time, Last 30 Days, and Last 7 Days rendered the same all-user chart and totals.
 
 **How to apply:** Accept only `all`, `30d`, or `7d`; apply the cutoff to settledAt/timestamp/createdAt before event deduplication, and refetch when the period changes.
+
+Probability metrics must score only verified directional HIT/MISS events. PUSH, DNP, unknown outcomes, and legacy PASS metadata remain visible in the ledger but are excluded from win rate, Brier score, log loss, calibration bins, and replay.
+
+**Why:** Treating non-directional settled rows as binary misses distorted model-health metrics, while PASS metadata could be double-counted alongside the normalized final outcome.
+
+**How to apply:** Keep outcome counts mutually exclusive; expose legacy PASS observations as audit metadata only, never as a fifth settled result.

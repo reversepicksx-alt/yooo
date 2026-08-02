@@ -392,11 +392,11 @@ export default function AnalyticsDashboard({
                   <Text style={s.chartSubtitle}>ALL USERS · SOCCER</Text>
                 </View>
                 <Text style={s.ownerHealthScope}>
-                  {ownerData.scope?.rawSettled ?? ownerData.overall.total} raw rows · {ownerData.overall.total} deduplicated settled events · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable · {ownerData.overall.calibrationOnly ?? 0} PASS calibration
+                  {ownerData.scope?.rawSettled ?? ownerData.overall.total} raw rows · {ownerData.overall.total} deduplicated settled events · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable
                 </Text>
                 {ownerData.overall.passCalibration?.n ? (
                   <Text style={s.ownerHealthMeta}>
-                    PASS calibration: {ownerData.overall.passCalibration.hits} avoided-direction hits · {ownerData.overall.passCalibration.misses} misses · {ownerData.overall.passCalibration.winPct}% directional accuracy
+                    Legacy PASS metadata (audit only): {ownerData.overall.passCalibration.hits} avoided-direction hits · {ownerData.overall.passCalibration.misses} misses · {ownerData.overall.passCalibration.winPct}% directional accuracy
                   </Text>
                 ) : null}
                 <View style={s.ownerHealthGrid}>
@@ -423,6 +423,11 @@ export default function AnalyticsDashboard({
                 <Text style={s.ownerHealthMeta}>
                   Duplicate rows removed: {ownerData.scope?.duplicateRowsRemoved ?? ownerData.scorecard.duplicateRowsRemoved ?? 0} · Scorecard events: {ownerData.scorecard.n}
                 </Text>
+                {ownerData.overall.outcomeCounts?.unknown ? (
+                  <Text style={s.ownerHealthMeta}>
+                    Unclassified settled rows: {ownerData.overall.outcomeCounts.unknown} · excluded from win rate and probability metrics
+                  </Text>
+                ) : null}
                 {ownerData.scorecard.classification.calibration.length > 0 && (
                   <Text style={s.ownerHealthMeta}>
                     Calibration gaps: {ownerData.scorecard.classification.calibration

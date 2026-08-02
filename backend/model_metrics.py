@@ -39,6 +39,17 @@ def _is_pass_row(row: dict) -> bool:
     )
 
 
+def _is_scored_directional_row(row: dict) -> bool:
+    """Return whether a row is a verified directional HIT/MISS event.
+
+    PUSH, DNP, unknown outcomes, and legacy PASS rows are ledger events but
+    must not be converted into a binary miss for probability metrics.
+    """
+    if _is_pass_row(row):
+        return False
+    return str(row.get("result") or "").lower() in {"hit", "miss"}
+
+
 def _pass_calibration_metrics(rows: list[dict]) -> dict:
     """Score avoided PASS directions without mixing them into wager metrics."""
     counts = {"hit": 0, "miss": 0, "push": 0}
@@ -153,10 +164,9 @@ def _error_metrics(rows: list[dict]) -> dict:
 def _probability_metrics(rows: list[dict], field: str) -> dict:
     scored: list[tuple[float, int]] = []
     for row in rows:
-        # A PASS is a calibration observation, not an actionable directional
-        # prediction.  It must remain in the ledger, but cannot be scored as a
-        # hit or miss without a direction.
-        if str(row.get("recommendation") or "").lower() == "pass":
+        # Only verified directional HIT/MISS rows are binary classification
+        # observations. PUSH/DNP/unknown rows are not losses.
+        if not _is_scored_directional_row(row):
             continue
         confidence = _number(row.get(field))
         if confidence is None:
@@ -191,7 +201,7 @@ def _calibration_bins(rows: list[dict], field: str = "confidenceScore") -> list[
     for label, lower, upper in definitions:
         bucket = []
         for row in rows:
-            if str(row.get("recommendation") or "").lower() == "pass":
+            if not _is_scored_directional_row(row):
                 continue
             confidence = _number(row.get(field))
             if confidence is not None and lower <= confidence < upper:
@@ -246,7 +256,7 @@ def build_scorecard(rows: list[dict]) -> dict:
     calibration_only = 0
     for row in deduped:
         result_counts[str(row.get("result") or "unknown").lower()] += 1
-        if str(row.get("recommendation") or "").lower() == "pass":
+        if _is_pass_row(row):
             calibration_only += 1
 
     return {
@@ -282,6 +292,8 @@ def _walk_forward_classification(ordered: list[dict]) -> dict:
     brier_sum = 0.0
     n = 0
     for row in ordered:
+        if not _is_scored_directional_row(row):
+            continue
         confidence = _number(row.get("confidenceScore"))
         if confidence is None:
             continue
@@ -394,6 +406,8 @@ def walk_forward_replay(rows: list[dict]) -> dict:
 
         # ── Classification (log-loss + Brier) ──────────────────────────────
         confidence = _number(row.get("confidenceScore"))
+        if not _is_scored_directional_row(row):
+            confidence = None
         outcome = 1 if row.get("result") == "hit" else 0
 
         if confidence is not None:

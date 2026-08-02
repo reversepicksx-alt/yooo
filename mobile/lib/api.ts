@@ -1562,6 +1562,13 @@ export interface AnalyticsData {
     dnps?: number;
     calibrationOnly?: number;
     actionable?: number;
+    outcomeCounts?: {
+      hit: number;
+      miss: number;
+      push: number;
+      dnp: number;
+      unknown?: number;
+    };
     passCalibration?: {
       n: number;
       hits: number;

@@ -806,6 +806,16 @@ async def owner_analytics(payload: dict = Body(...)):
         or bool(row.get("isCalibrationOnly"))
         for row in deduped_rows
     )
+    outcome_counts = {
+        "hit": total_hits,
+        "miss": total_misses,
+        "push": total_pushes,
+        "dnp": total_dnps,
+    }
+    outcome_counts["unknown"] = max(
+        0,
+        total_settled - sum(outcome_counts.values()),
+    )
     pass_calibration_counts = {"hit": 0, "miss": 0, "push": 0}
     pass_calibration_by_direction: dict = defaultdict(
         lambda: {"hit": 0, "miss": 0, "push": 0}
@@ -1054,8 +1064,12 @@ async def owner_analytics(payload: dict = Body(...)):
             "winPct": pct(total_hits, total_hits + total_misses),
             "pushes": total_pushes,
             "dnps": total_dnps,
+            # Legacy PASS metadata is an audit dimension, not a fifth settled
+            # outcome. A row already classified HIT/MISS/PUSH/DNP is counted
+            # only in that normal outcome.
             "calibrationOnly": total_passes,
             "actionable": total_hits + total_misses,
+            "outcomeCounts": outcome_counts,
             "passCalibration": {
                 "n": sum(pass_calibration_counts.values()),
                 "hits": pass_calibration_counts["hit"],
