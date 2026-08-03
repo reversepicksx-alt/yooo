@@ -59,7 +59,6 @@ from routes.notifications import router as notifications_router
 from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from routes.sports_config import router as sports_config_router
 from routes.markets import router as markets_router
-from routes.soccer_board import router as soccer_board_router
 from cache import seed_cache, background_refresh_loop
 from model_metrics import build_scorecard, dedupe_prediction_rows
 
@@ -106,7 +105,6 @@ app.include_router(cbase_router)
 app.include_router(notifications_router)
 app.include_router(sports_config_router)
 app.include_router(markets_router)
-app.include_router(soccer_board_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──
@@ -258,11 +256,6 @@ async def _run_startup_tasks():
                 print(f"[CAL ALERTS] refresh failed: {_e}")
             await _a.sleep(6 * 60 * 60)
     asyncio.create_task(_calibration_alerts_loop())
-
-    # Native soccer board: pre-compute rolling projections for upcoming
-    # fixtures every 6 h so the Board tab loads instantly from cache.
-    from soccer_board_builder import soccer_board_loop as _soccer_board_loop
-    asyncio.create_task(_soccer_board_loop(db))
 
     # Odds-tier empirical priors: auto-learn from settled picks every 6h.
     # Mirrors scenario_priors / league_priors cadence. Min sample n=8.
