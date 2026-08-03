@@ -476,6 +476,19 @@ async def save_pick(req: SavePickRequest):
     except (TypeError, ValueError):
         pass
 
+    # Persist manager context so the MANAGER CHANGE badge persists on saved
+    # picks without re-running the prediction.  Only store the minimal fields
+    # needed for the badge and analysis modal — the full context is in the
+    # cached prediction when the user opens the analysis modal.
+    _mgr_ctx = pick.get("managerContext") or {}
+    if isinstance(_mgr_ctx, dict) and (
+        _mgr_ctx.get("isRecent") or _mgr_ctx.get("recentChange")
+    ):
+        doc["managerContext"] = {
+            "isRecent": True,
+            "coachName": _mgr_ctx.get("coachName") or None,
+        }
+
     # Store AI analysis fields directly on sport picks (no separate predictions collection)
     # Soccer, CS2, and WTA all persist AI analysis on the pick for offline analysis modal access.
     if sport in ("cs2", "soccer", "wta"):
@@ -1986,7 +1999,6 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     return {"found": True, "analysis": prediction}
 
 
-
 @router.post("/picks/delete")
 async def delete_pick(req: DeletePickRequest):
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
@@ -2034,7 +2046,6 @@ async def correct_pick(req: CorrectPickRequest):
         }}
     )
     return {"success": True, "result": result_str, "actualValue": req.actualValue}
-
 
 
 # =============================================

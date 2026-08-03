@@ -30,7 +30,7 @@ import PicksCalendar from '@/components/PicksCalendar';
 import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import AIAssistant from '@/components/AIAssistant';
-import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, Pick, AnalysisFactor } from '@/lib/api';
+import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -757,6 +757,22 @@ export default function PicksScreen() {
   const [imageDisclaimerVisible, setImageDisclaimerVisible] = useState(false);
   const sessionErrCount = useRef(0);
   const autoPostedImagesRef = useRef<Set<string>>(new Set());
+  const modalScrollRef = useRef<ScrollView>(null);
+  const managerLayoutY = useRef<number>(0);
+  const pendingScrollToManager = useRef<boolean>(false);
+
+  // Scroll to manager context card once analysis finishes loading
+  React.useEffect(() => {
+    if (!analysisModal || analysisModal.loading) return;
+    if (!pendingScrollToManager.current) return;
+    pendingScrollToManager.current = false;
+    const y = managerLayoutY.current;
+    if (y > 0) {
+      setTimeout(() => {
+        modalScrollRef.current?.scrollTo({ y, animated: true });
+      }, 350);
+    }
+  }, [analysisModal?.loading]);
 
   // One-time owner-only image-use disclaimer (shown once per device install)
   const isOwner = session?.accessType === 'Owner';
@@ -901,6 +917,24 @@ export default function PicksScreen() {
           - Math.abs(Number(a.projectedValue ?? a.projection ?? 0) - Number(a.line ?? 0));
       })[0] ?? null;
   }, [picks]);
+
+  // Manager badge press — open analysis modal for this pick and scroll to manager context
+  const handleManagerBadgePress = useCallback(async (pick: Pick) => {
+    const id = pick.pickId || pick._id || pick.id;
+    if (!id || !session) return;
+    pendingScrollToManager.current = true;
+    setAnalysisModal({ pick, data: null, loading: true });
+    try {
+      const result = await fetchPickAnalysis(session.email, session.token, id);
+      if (result.found && result.analysis) {
+        setAnalysisModal({ pick, data: result.analysis, loading: false });
+      } else {
+        setAnalysisModal({ pick, data: pick as unknown as Record<string, unknown>, loading: false });
+      }
+    } catch {
+      setAnalysisModal({ pick, data: pick as unknown as Record<string, unknown>, loading: false });
+    }
+  }, [session]);
 
   const handleAutoPostImage = useCallback(async (pick: Pick, imageData: string) => {
     if (!session || !pick.pickId || autoPostedImagesRef.current.has(pick.pickId)) return;
@@ -1081,6 +1115,7 @@ export default function PicksScreen() {
                 onAutoPostImage={highestConfidenceActivePick?.pickId === item.pickId
                   ? (imageData) => handleAutoPostImage(item, imageData)
                   : undefined}
+                onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
               />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
@@ -1105,6 +1140,7 @@ export default function PicksScreen() {
                   onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}
                   onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
+                  onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
                 />
               </SwipeablePickRow>
             );
@@ -1314,7 +1350,7 @@ export default function PicksScreen() {
           <View style={mStyles.modalDivider} />
 
           {/* Body */}
-          <ScrollView style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={modalScrollRef} style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
 
             {/* ── Loading state ── */}
             {analysisModal?.loading && (
@@ -1381,9 +1417,11 @@ export default function PicksScreen() {
             )}
 
             {/* ── MANAGER / TACTICAL SHIFT CONTEXT ── */}
-            {!analysisModal?.loading && renderManagerContext(
-              analysisModal?.data as Record<string, unknown> | null,
-            )}
+            <View onLayout={(e) => { managerLayoutY.current = e.nativeEvent.layout.y; }}>
+              {!analysisModal?.loading && renderManagerContext(
+                analysisModal?.data as Record<string, unknown> | null,
+              )}
+            </View>
 
             {/* ── AI TACTICAL BREAKDOWN ── */}
             {!analysisModal?.loading && modalText && (() => {

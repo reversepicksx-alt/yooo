@@ -1319,6 +1319,17 @@ export default function ScanScreen() {
           streakFlag:      (prediction as any).streakFlag,
           rawConfidence:   prediction.rawConfidence ?? prediction.confidenceScore,
         } : {}),
+        // Manager context — persist so the badge shows on the saved pick card
+        // without re-running the prediction.
+        managerContext: (() => {
+          const mc = (prediction as any).managerContext;
+          if (!mc) return undefined;
+          // Only persist the fields the badge and analysis modal need
+          return {
+            isRecent: mc.isRecent === true || mc.recentChange === true,
+            coachName: mc.coachName || mc.newCoachName || undefined,
+          };
+        })(),
         player: {
           id: prediction.playerId || 0,
           name: prediction.playerName || scanResult?.playerName || playerQuery,
@@ -4816,6 +4827,32 @@ export default function ScanScreen() {
                   </View>
                   <View style={{ gap: 0, marginTop: 4 }}>
                     {lines.map((line, i) => renderLine(line, i))}
+                  </View>
+                </View>
+              );
+            })()}
+
+            {/* ─── MANAGER CHANGE WARNING BANNER ─── */}
+            {(prediction as any)?.managerContext?.isRecent === true && (() => {
+              const mc = (prediction as any).managerContext;
+              return (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  backgroundColor: 'rgba(245,158,11,0.1)',
+                  borderWidth: 1, borderColor: 'rgba(245,158,11,0.45)',
+                  borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8,
+                  marginTop: 8,
+                }}>
+                  <Ionicons name="alert-circle-outline" size={15} color="#F59E0B" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#F59E0B', letterSpacing: 1 }}>
+                      MANAGER CHANGE
+                    </Text>
+                    {mc.coachName ? (
+                      <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 1 }}>
+                        {mc.coachName} · projection uses post-change logs only
+                      </Text>
+                    ) : null}
                   </View>
                 </View>
               );

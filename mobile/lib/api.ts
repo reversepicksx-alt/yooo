@@ -1102,6 +1102,13 @@ export interface Pick {
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
   bayesianMetrics?: Record<string, unknown>;
+  // Manager / coaching change context (persisted so badge shows without re-predicting)
+  managerContext?: {
+    isRecent?: boolean;
+    coachName?: string;
+    prevCoachName?: string | null;
+    recentChange?: boolean;
+  };
   // Owner-only media fields (player photos + team crests from API-Football cache)
   ownerPlayerPhoto?: string;
   ownerTeamLogo?: string;
@@ -1183,6 +1190,9 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || undefined,
     ownerTeamLogo: (p.ownerTeamLogo as string) || undefined,
     ownerOpponentLogo: (p.ownerOpponentLogo as string) || undefined,
+    // Manager change badge fields — persisted at save time so the badge shows
+    // without re-running the prediction.
+    managerContext: (p.managerContext as Pick['managerContext']) || undefined,
   }));
 }
 

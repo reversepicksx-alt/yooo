@@ -133,16 +133,23 @@ const pill = StyleSheet.create({
   pendingReview: { backgroundColor: 'rgba(255,214,10,0.12)', borderWidth: 1, borderColor: 'rgba(255,214,10,0.45)' },
   dot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#FF3B30', marginRight: 5 },
   txt: { fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+  manager: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 6, paddingVertical: 3, borderRadius: 20,
+    backgroundColor: 'rgba(245,158,11,0.12)',
+    borderWidth: 1, borderColor: 'rgba(245,158,11,0.45)',
+  },
 });
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage,
+  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress,
 }: {
   pick: Pick; onTrack?: () => void;
   onDelete?: () => void;
   onShareCommunity?: (imageData: string) => void | Promise<void>;
   onAutoPostImage?: (imageData: string) => void | Promise<void>;
+  onManagerBadgePress?: () => void;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
@@ -442,6 +449,19 @@ export default function OwnerPickCard({
               won={won} lost={lost} push={push} dnp={dnp}
               live={live} pending={pending} pendingReview={pendingReview}
             />
+            {pick.managerContext?.isRecent === true && !captureMode && (
+              <TouchableOpacity
+                style={pill.manager}
+                activeOpacity={0.8}
+                onPress={(e) => {
+                  (e as any).stopPropagation?.();
+                  onManagerBadgePress?.();
+                }}
+              >
+                <Ionicons name="alert-circle-outline" size={8} color="#F59E0B" style={{ marginRight: 3 }} />
+                <Text style={[pill.txt, { color: '#F59E0B' }]}>MGR</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
