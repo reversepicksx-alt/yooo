@@ -97,3 +97,4 @@
 - [Compact analysis UI](compact-analysis-ui.md) — prediction analysis should use dense text and compact tabs; H2H belongs beside AWAY, not in a large standalone card.
 - [SportsGameOdds market reference](sportsgameodds-market-reference.md) — use PrizePicks/Underdog lines as optional context only; API-Football remains authoritative for fixtures, math, and settlement.
 - [Community feed payloads](community-feed-payloads.md) — omit historical base64 pick-card images by default; oversized responses can time out and falsely show an empty chat.
+- [Pick deletion cache](pick-deletion-cache.md) — delete every matching canonical pick ID and invalidate the per-user list cache so removed history cannot reappear.

@@ -853,7 +853,7 @@ export default function PicksScreen() {
       const previousPicks = qc.getQueryData<Pick[]>(['picks', session?.email]);
       // Optimistically remove the pick — disappears immediately
       qc.setQueryData<Pick[]>(['picks', session?.email], (old = []) =>
-        old.filter(p => (p.pickId || (p as any)._id || (p as any).id) !== pickId)
+        old.filter(p => p.pickId !== pickId)
       );
       return { previousPicks };
     },
@@ -871,8 +871,14 @@ export default function PicksScreen() {
   });
 
   const handleDelete = useCallback((pick: Pick) => {
-    const id = pick.pickId || pick._id || pick.id;
-    if (!id) return;
+    // The backend owns the canonical identifier. Do not fall back to _id/id:
+    // those are client normalization/key fields and can target the wrong
+    // record or make a failed delete look like a duplicated pick.
+    const id = pick.pickId;
+    if (!id) {
+      Alert.alert('Delete failed', 'This saved pick has no valid ID. Refresh your picks and try again.');
+      return;
+    }
     if (Platform.OS === 'web') {
       if (window.confirm(`Remove ${pick.playerName}?`)) {
         deleteMutation.mutate(id);

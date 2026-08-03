@@ -2001,11 +2001,25 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
 
 @router.post("/picks/delete")
 async def delete_pick(req: DeletePickRequest):
-    session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
+    email = req.email.lower().strip()
+    pick_id = req.pickId.strip()
+    session = await db.sessions.find_one({"email": email, "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
-    await db.picks.delete_one({"pickId": req.pickId, "email": req.email.lower()})
-    return {"success": True}
+    if not pick_id:
+        raise HTTPException(status_code=400, detail="pickId is required")
+
+    # A save race or a legacy record can leave more than one document with
+    # the same canonical pickId.  Delete all of them, not just the first one,
+    # so a "deleted" history card cannot reappear as its duplicate.
+    deleted = await db.picks.delete_many({"pickId": pick_id, "email": email})
+    if deleted.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pick not found")
+
+    # /picks/list is cached for 20s.  Without invalidation, the next refresh
+    # immediately returns the deleted pick and makes deletion look broken.
+    _picks_list_cache.pop(email, None)
+    return {"success": True, "deletedCount": deleted.deleted_count}
 
 
 @router.post("/picks/correct")
