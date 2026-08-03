@@ -253,7 +253,7 @@ export default function BoardScreen() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const data = await getMarketBoard({ hours: 72, limit: 200 });
+      const data = await getMarketBoard({ hours: 72, limit: 100 });
       setMarkets(data?.markets || []);
       setLastUpdated(new Date());
     } catch (e) {
