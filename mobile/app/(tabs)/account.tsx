@@ -121,6 +121,30 @@ function MenuRow({ icon, label, value, valueColor, onPress, danger, loading }: M
   );
 }
 
+function InstructionStep({
+  number,
+  title,
+  text,
+  last = false,
+}: {
+  number: string;
+  title: string;
+  text: string;
+  last?: boolean;
+}) {
+  return (
+    <View style={[styles.instructionStep, !last && styles.instructionStepBorder]}>
+      <View style={styles.instructionNumber}>
+        <Text style={styles.instructionNumberText}>{number}</Text>
+      </View>
+      <View style={styles.instructionCopy}>
+        <Text style={styles.instructionStepTitle}>{title}</Text>
+        <Text style={styles.instructionStepText}>{text}</Text>
+      </View>
+    </View>
+  );
+}
+
 function formatDate(iso?: string): string {
   if (!iso) return '—';
   try {
@@ -439,6 +463,7 @@ export default function AccountScreen() {
   const [usernameInput, setUsernameInput] = useState('');
   const [usernameLoading, setUsernameLoading] = useState(false);
   const [usernameError, setUsernameError] = useState('');
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
 
   // RevenueCat state (iOS native only)
   const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
@@ -803,6 +828,75 @@ export default function AccountScreen() {
           )}
         </View>
 
+        <Text style={styles.sectionLabel}>Getting Started</Text>
+        <View style={styles.instructionsCard}>
+          <TouchableOpacity
+            style={styles.instructionsHeader}
+            onPress={() => {
+              setInstructionsOpen((open) => !open);
+              Haptics.selectionAsync();
+            }}
+            activeOpacity={0.75}
+          >
+            <View style={styles.instructionsIcon}>
+              <Ionicons name="help-circle-outline" size={20} color={Colors.primary} />
+            </View>
+            <View style={styles.instructionsTitleWrap}>
+              <Text style={styles.instructionsTitle}>How to make a prediction</Text>
+              <Text style={styles.instructionsSubtitle}>Find a player, choose a prop, and run the analysis</Text>
+            </View>
+            <Ionicons
+              name={instructionsOpen ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={Colors.textTertiary}
+            />
+          </TouchableOpacity>
+
+          {instructionsOpen && (
+            <View style={styles.instructionsBody}>
+              <InstructionStep
+                number="1"
+                title="Open Predict"
+                text="Tap Predict in the bottom navigation."
+              />
+              <InstructionStep
+                number="2"
+                title="Choose the sport and league"
+                text="Select Soccer or another supported sport, then choose the league for the upcoming match."
+              />
+              <InstructionStep
+                number="3"
+                title="Find your player"
+                text="Use the Player search field. Type the player's name and select the matching player and team from the results."
+              />
+              <InstructionStep
+                number="4"
+                title="Choose the prop"
+                text="Select what you want to analyze, such as shots, passes, tackles, or saves."
+              />
+              <InstructionStep
+                number="5"
+                title="Enter the line"
+                text="Enter the sportsbook or pick'em line you want to compare against, then tap Analyze."
+              />
+              <InstructionStep
+                number="6"
+                title="Read the result"
+                text="Review the projection, OVER/UNDER recommendation, confidence, recent form, matchup, and risk notes before deciding."
+                last
+              />
+              <TouchableOpacity
+                style={styles.instructionsAction}
+                onPress={() => router.push('/(tabs)/scan')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="scan-outline" size={16} color={Colors.background} />
+                <Text style={styles.instructionsActionText}>Go to Predict</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         {isOwner && (
           <>
             <Text style={styles.sectionLabel}>Model Health</Text>
@@ -1051,6 +1145,87 @@ const styles = StyleSheet.create({
   menuLabel: { fontSize: 15, color: Colors.text, fontWeight: '500' },
   menuLabelDanger: { color: Colors.error },
   menuValue: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+
+  // Getting started guide
+  instructionsCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radiusLg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 24,
+    overflow: 'hidden',
+  },
+  instructionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 12,
+  },
+  instructionsIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: Colors.primaryDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  instructionsTitleWrap: { flex: 1 },
+  instructionsTitle: { fontSize: 15, color: Colors.text, fontWeight: '700' },
+  instructionsSubtitle: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  instructionsBody: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  instructionStep: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 13,
+  },
+  instructionStepBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  instructionNumber: {
+    width: 25,
+    height: 25,
+    borderRadius: 13,
+    backgroundColor: Colors.primaryDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  instructionNumberText: { color: Colors.primary, fontSize: 12, fontWeight: '800' },
+  instructionCopy: { flex: 1 },
+  instructionStepTitle: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  instructionStepText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  instructionsAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  instructionsActionText: {
+    color: Colors.background,
+    fontSize: 13,
+    fontWeight: '800',
+  },
 
   // Paywall
   paywallHeader: { alignItems: 'center', gap: 8, marginBottom: 20 },
