@@ -73,13 +73,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="board"
-        options={{
-          title: 'Board',
-          tabBarIcon: ({ focused }) => <TabIcon name="stats-chart" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
         name="picks"
         options={{
           title: 'My Picks',
