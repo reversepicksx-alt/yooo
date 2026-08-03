@@ -80,12 +80,16 @@ function hitRateColor(pct: number | null): string {
 function SkeletonCard() {
   const opacity = useRef(new Animated.Value(0.3)).current;
   useEffect(() => {
-    const anim = Animated.loop(Animated.sequence([
-      Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
-    ]));
-    anim.start();
-    return () => anim.stop();
+    let cancelled = false;
+    const pulse = () => {
+      if (cancelled) return;
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: false }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: false }),
+      ]).start(({ finished }) => { if (finished && !cancelled) pulse(); });
+    };
+    pulse();
+    return () => { cancelled = true; opacity.stopAnimation(); };
   }, []);
   return (
     <Animated.View style={[styles.card, { opacity }]}>
