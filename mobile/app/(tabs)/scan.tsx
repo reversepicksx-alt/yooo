@@ -15,12 +15,10 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useFocusEffect } from 'expo-router';
-import { getBoardPendingMarket, clearBoardPendingMarket } from '@/lib/boardStore';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchPlayersQuick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MarketBoardItem, SoccerMarketBoardItem, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -267,17 +265,6 @@ export default function ScanScreen() {
     }).catch(() => {});
   }, []);
 
-  // Pick up markets selected from the Board tab
-  useFocusEffect(
-    React.useCallback(() => {
-      const pending = getBoardPendingMarket();
-      if (pending) {
-        clearBoardPendingMarket();
-        handleMarketBoardPick(pending);
-      }
-    }, [])
-  );
-
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
   // User can still tap any grey tile to restore it.
@@ -419,135 +406,6 @@ export default function ScanScreen() {
     setMlbVenue('home');
     setMlbNextMatch(null);
     setMlbNextMatchLoading(false);
-  };
-
-  const handleMarketBoardPick = async (market: MarketBoardItem) => {
-    const boardSport = market.sport || '';
-    const supportedSport = ['soccer', 'nba', 'mlb', 'nfl', 'nhl', 'wta'].includes(boardSport);
-    if (!market.analysisSupported || !supportedSport) {
-      Alert.alert(
-        `${market.sportName || 'Provider'} market`,
-        'This market is available from SportsGameOdds, but Reverse Picks does not have a matching analysis engine for it yet.'
-      );
-      return;
-    }
-
-    const lineValue = market.marketLine;
-    const prop = market.propType || '';
-    setSport(boardSport as Sport);
-    setMode('manual');
-    setPhase('idle');
-    setPrediction(null);
-    setPredictionRequest(null);
-    setScanResult(null);
-    setLine(lineValue != null ? String(lineValue) : '');
-    Haptics.selectionAsync();
-
-    const home = market.homeTeam || '';
-    const away = market.awayTeam || '';
-    const seedOpponent = `${home} vs ${away}`;
-    const marketPlayer = market.playerName || '';
-
-    try {
-      if (boardSport === 'soccer') {
-        setPlayerQuery(marketPlayer);
-        setResolvedPlayer(null);
-        setResolvedRole(null);
-        setManualOpponentQuery(away);
-        setResolvedManualOpponent(null);
-        setPropType(PROP_TYPES.some((item) => item.value === prop) ? prop : PROP_TYPES[0].value);
-        setLeagueId(market.leagueId || 0);
-        setLeagueQuery(market.leagueName || '');
-        setAutoMatch(null);
-        setSelectedContext(null);
-        setPlayerContexts([]);
-        const results = await searchPlayersQuick(marketPlayer, market.leagueId || undefined);
-        const candidates = results?.players || [];
-        const resolved = candidates.find((candidate: any) =>
-          [home, away].some((team) => String(candidate.teamName || '').toLowerCase() === team.toLowerCase())
-        ) || candidates[0];
-        if (resolved) {
-          const resolvedTeam = String(resolved.teamName || '').toLowerCase();
-          const opponentName = resolvedTeam === home.toLowerCase() ? away : home;
-          setManualOpponentQuery(opponentName);
-          setResolvedPlayer({
-            playerId: resolved.playerId || 0,
-            playerName: resolved.playerName || marketPlayer,
-            teamId: resolved.teamId || 0,
-            teamName: resolved.teamName || '',
-            leagueId: resolved.leagueId || market.leagueId || 0,
-            position: resolved.position || '',
-          });
-          setPlayerQuery(resolved.playerName || marketPlayer);
-        }
-      } else if (boardSport === 'wta') {
-        setWtaPlayerQuery(marketPlayer);
-        setWtaResolvedPlayer(null);
-        setWtaOpponentQuery(seedOpponent);
-        setWtaResolvedOpponent(null);
-        setWtaPropType(WTA_PROP_TYPES.some((item) => item.value === prop) ? prop : WTA_PROP_TYPES[0].value);
-        const resolved = (await searchWtaPlayers(marketPlayer))[0];
-        if (resolved) {
-          setWtaResolvedPlayer(resolved);
-          setWtaPlayerQuery(resolved.fullName || marketPlayer);
-        }
-      } else {
-        const searchers: Record<string, (query: string) => Promise<any[]>> = {
-          nba: searchNbaPlayers,
-          nhl: searchNhlPlayers,
-          nfl: searchNflPlayers,
-          mlb: searchMlbPlayers,
-        };
-        const validProps: Record<string, { value: string }[]> = {
-          nba: NBA_PROP_TYPES,
-          nhl: NHL_PROP_TYPES,
-          nfl: NFL_PROP_TYPES,
-          mlb: MLB_PROP_TYPES,
-        };
-        const resolvedSetters: Record<string, (value: any) => void> = {
-          nba: setNbaResolvedPlayer,
-          nhl: setNhlResolvedPlayer,
-          nfl: setNflResolvedPlayer,
-          mlb: setMlbResolvedPlayer,
-        };
-        const querySetters: Record<string, (value: string) => void> = {
-          nba: setNbaPlayerQuery,
-          nhl: setNhlPlayerQuery,
-          nfl: setNflPlayerQuery,
-          mlb: setMlbPlayerQuery,
-        };
-        const opponentSetters: Record<string, (value: string) => void> = {
-          nba: setNbaOpponentQuery,
-          nhl: setNhlOpponentQuery,
-          nfl: setNflOpponentQuery,
-          mlb: setMlbOpponentQuery,
-        };
-        const propSetters: Record<string, (value: string) => void> = {
-          nba: setNbaPropType,
-          nhl: setNhlPropType,
-          nfl: setNflPropType,
-          mlb: setMlbPropType,
-        };
-        querySetters[boardSport](marketPlayer);
-        opponentSetters[boardSport](seedOpponent);
-        propSetters[boardSport](
-          validProps[boardSport].some((item) => item.value === prop)
-            ? prop
-            : validProps[boardSport][0].value
-        );
-        const resolved = (await searchers[boardSport](marketPlayer))[0];
-        if (resolved) {
-          resolvedSetters[boardSport](resolved);
-          querySetters[boardSport](resolved.fullName || `${resolved.firstName || ''} ${resolved.lastName || ''}`.trim() || marketPlayer);
-          const teamName = resolved.team?.full_name || '';
-          opponentSetters[boardSport](
-            teamName.toLowerCase() === home.toLowerCase() ? away : home
-          );
-        }
-      }
-    } catch {
-      // Keep the board-filled fields visible; the normal player search remains available.
-    }
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -5545,66 +5403,6 @@ const styles = StyleSheet.create({
   sportListLabel: { fontSize: 14, fontWeight: '600', color: '#ccc', flex: 1 },
   sportListLabelActive: { color: Colors.primary, fontWeight: '700' },
   body: { paddingHorizontal: 20, paddingBottom: 40, flexGrow: 1 },
-  marketBoard: {
-    marginTop: 8, marginBottom: 18, padding: 14, borderRadius: 16,
-    backgroundColor: 'rgba(14,18,16,0.96)', borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.2)',
-  },
-  marketBoardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  marketBoardEyebrow: {
-    color: Colors.primary, fontSize: 10, fontWeight: '900',
-    letterSpacing: 1.4, marginBottom: 4,
-  },
-  marketBoardTitle: { color: Colors.text, fontSize: 17, fontWeight: '800' },
-  marketBoardSub: { color: Colors.textSecondary, fontSize: 11, marginTop: 4, lineHeight: 16 },
-  marketBoardToggle: {
-    marginLeft: 'auto', width: 30, height: 30, borderRadius: 15,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(57,255,20,0.08)',
-  },
-  marketFilterRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, marginBottom: 10,
-  },
-  marketFilterScroll: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingTop: 2, paddingBottom: 2,
-  },
-  marketFilter: {
-    paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  marketFilterActive: { backgroundColor: 'rgba(57,255,20,0.14)', borderWidth: 1, borderColor: 'rgba(57,255,20,0.35)' },
-  marketFilterText: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700' },
-  marketFilterTextActive: { color: Colors.primary },
-  marketRefresh: { marginLeft: 'auto', padding: 7 },
-  marketBoardMessage: {
-    minHeight: 76, alignItems: 'center', justifyContent: 'center',
-    flexDirection: 'row', gap: 8, paddingHorizontal: 8,
-  },
-  marketBoardMessageText: { color: Colors.textSecondary, fontSize: 11, flex: 1, lineHeight: 16 },
-  marketBoardEmpty: { alignItems: 'center', paddingVertical: 18, paddingHorizontal: 12 },
-  marketBoardEmptyTitle: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700', marginTop: 7 },
-  marketBoardEmptyText: { color: Colors.textTertiary, fontSize: 11, textAlign: 'center', lineHeight: 16, marginTop: 5 },
-  marketCard: {
-    padding: 12, marginBottom: 7, borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.035)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  marketCardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  marketPlayer: { color: Colors.text, fontSize: 14, fontWeight: '800' },
-  marketMatch: { color: Colors.textSecondary, fontSize: 10, marginTop: 4 },
-  marketLineBadge: {
-    minWidth: 66, alignItems: 'flex-end', paddingLeft: 8,
-  },
-  marketLine: { color: Colors.primary, fontSize: 20, fontWeight: '900' },
-  marketLineLabel: { color: Colors.textTertiary, fontSize: 9, fontWeight: '700', marginTop: 1 },
-  marketCardBottom: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)',
-  },
-  marketMeta: { color: Colors.textTertiary, fontSize: 10, flex: 1 },
-  marketAnalyze: { color: Colors.primary, fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
-
   /* Upload box */
   uploadBox: {
     backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,

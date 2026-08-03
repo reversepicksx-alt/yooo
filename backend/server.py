@@ -58,7 +58,6 @@ from routes.cbase_routes import router as cbase_router
 from routes.notifications import router as notifications_router
 from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from routes.sports_config import router as sports_config_router
-from routes.markets import router as markets_router
 from cache import seed_cache, background_refresh_loop
 from model_metrics import build_scorecard, dedupe_prediction_rows
 
@@ -104,7 +103,6 @@ app.include_router(lol_router)
 app.include_router(cbase_router)
 app.include_router(notifications_router)
 app.include_router(sports_config_router)
-app.include_router(markets_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──
