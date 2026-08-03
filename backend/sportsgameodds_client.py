@@ -23,6 +23,7 @@ _BASE_URL = "https://api.sportsgameodds.com/v2"
 _BOOKMAKERS = ("prizepicks", "underdog")
 _CACHE_TTL_SECONDS = 45
 _EVENT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_BOARD_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_LOCK = asyncio.Lock()
 
 # API-Football numeric league IDs → SportsGameOdds league IDs.
@@ -56,6 +57,32 @@ _STAT_MAP: dict[str, str] = {
     "goals": "goals",
     "saves": "goalie_saves",
     "goalie_saves": "goalie_saves",
+}
+
+_BOARD_STAT_TYPES: dict[str, str] = {
+    "passes_attempted": "pass_attempts",
+    "shots": "shots",
+    "shots_onGoal": "shots_on_target",
+    "tackles": "tackles",
+    "clearances": "clearances",
+    "interceptions": "interceptions",
+    "crosses": "crosses",
+    "assists": "assists",
+    "goals": "goals",
+    "goalie_saves": "saves",
+}
+
+_BOARD_STAT_LABELS: dict[str, str] = {
+    "passes_attempted": "Passes Attempted",
+    "shots": "Shots",
+    "shots_onGoal": "Shots On Goal",
+    "tackles": "Tackles",
+    "clearances": "Clearances",
+    "interceptions": "Interceptions",
+    "crosses": "Crosses",
+    "assists": "Assists",
+    "goals": "Goals",
+    "goalie_saves": "Saves",
 }
 
 
@@ -323,3 +350,184 @@ async def lookup_soccer_market_context(
                 primary["providerCoverage"] = list(markets.keys())
                 return primary
     return None
+
+
+def _board_player_name(market_name: str, stat_id: str) -> str:
+    """Recover the provider display name from a player market label."""
+    label = _BOARD_STAT_LABELS.get(stat_id, "")
+    text = str(market_name or "").strip()
+    if label:
+        suffix = re.compile(
+            rf"\s+{re.escape(label)}\s+Over/Under(?:\s+\([^)]*\))?$",
+            flags=re.IGNORECASE,
+        )
+        cleaned = suffix.sub("", text).strip()
+        if cleaned and cleaned != text:
+            return cleaned
+    return text
+
+
+def _board_event_is_open(event: dict[str, Any], now: datetime) -> bool:
+    status = event.get("status") or {}
+    if status.get("ended") or status.get("completed") or status.get("cancelled"):
+        return False
+    starts_at = _parse_datetime(status.get("startsAt"))
+    if not starts_at:
+        return False
+    # Keep live events and upcoming events, but never let an old provider
+    # record enter the discovery board because its market is still cached.
+    return starts_at >= now - timedelta(hours=4)
+
+
+def _extract_board_markets(
+    event: dict[str, Any],
+    *,
+    now: datetime,
+    api_league_id: int | None,
+    league_name: str,
+) -> list[dict[str, Any]]:
+    if not _board_event_is_open(event, now):
+        return []
+
+    teams = event.get("teams") or {}
+    home_name = ((teams.get("home") or {}).get("names") or {}).get("long", "")
+    away_name = ((teams.get("away") or {}).get("names") or {}).get("long", "")
+    status = event.get("status") or {}
+    grouped: dict[str, dict[str, Any]] = {}
+
+    for odd in (event.get("odds") or {}).values():
+        if not isinstance(odd, dict):
+            continue
+        stat_id = str(odd.get("statID") or "")
+        prop_type = _BOARD_STAT_TYPES.get(stat_id)
+        if not prop_type or not odd.get("playerID"):
+            continue
+        if odd.get("cancelled") or not odd.get("started") and odd.get("ended"):
+            continue
+
+        player_name = _board_player_name(str(odd.get("marketName") or ""), stat_id)
+        if not player_name:
+            continue
+
+        bookmaker_data: dict[str, dict[str, Any]] = {}
+        for bookmaker in _BOOKMAKERS:
+            book = (odd.get("byBookmaker") or {}).get(bookmaker)
+            if not isinstance(book, dict):
+                continue
+            try:
+                market_line = float(book.get("overUnder"))
+            except (TypeError, ValueError):
+                continue
+            # The board is intentionally an availability surface, not an
+            # archive. A provider market must be live at one supported book.
+            if not book.get("available"):
+                continue
+            bookmaker_data[bookmaker] = {
+                "line": market_line,
+                "odds": book.get("odds"),
+                "lastUpdatedAt": book.get("lastUpdatedAt"),
+            }
+        if not bookmaker_data:
+            continue
+
+        key = "|".join(
+            [
+                str(event.get("eventID") or ""),
+                str(odd.get("playerID") or odd.get("statEntityID") or ""),
+                stat_id,
+            ]
+        )
+        side = str(odd.get("sideID") or "").lower()
+        item = grouped.setdefault(
+            key,
+            {
+                "eventId": event.get("eventID"),
+                "leagueId": api_league_id,
+                "leagueName": league_name or event.get("leagueID") or "Soccer",
+                "eventStart": status.get("startsAt"),
+                "homeTeam": home_name,
+                "awayTeam": away_name,
+                "playerName": player_name,
+                "playerProviderId": odd.get("playerID") or odd.get("statEntityID"),
+                "propType": prop_type,
+                "marketName": odd.get("marketName") or "",
+                "statId": stat_id,
+                "bookmakers": {},
+                "providerCoverage": [],
+                "overOdds": None,
+                "underOdds": None,
+            },
+        )
+        for bookmaker, book in bookmaker_data.items():
+            item["bookmakers"][bookmaker] = book
+            if bookmaker not in item["providerCoverage"]:
+                item["providerCoverage"].append(bookmaker)
+            item["marketLine"] = book["line"]
+        if side in {"over", "under"}:
+            item[f"{side}Odds"] = bookmaker_data.get("prizepicks", next(iter(bookmaker_data.values())))["odds"]
+
+    return list(grouped.values())
+
+
+async def list_soccer_market_board(
+    *,
+    hours: int = 72,
+    league_id: int | None = None,
+    limit: int = 60,
+) -> list[dict[str, Any]]:
+    """Return currently available soccer player markets for discovery."""
+    api_key = os.environ.get("SPORTSGAMEODDS_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    now = datetime.now(timezone.utc)
+    safe_hours = max(6, min(int(hours or 72), 168))
+    safe_limit = max(1, min(int(limit or 60), 100))
+    cache_key = f"{league_id or 'all'}|{safe_hours}"
+    async with _CACHE_LOCK:
+        cached = _BOARD_CACHE.get(cache_key)
+        if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
+            return cached[1][:safe_limit]
+
+    params: dict[str, Any] = {
+        "bookmakerID": ",".join(_BOOKMAKERS),
+        "limit": 100,
+        "startsAfter": now.isoformat().replace("+00:00", "Z"),
+        "startsBefore": (now + timedelta(hours=safe_hours)).isoformat().replace("+00:00", "Z"),
+        "sportID": "SOCCER",
+        "apiKey": api_key,
+    }
+    if league_id:
+        params["leagueID"] = _LEAGUE_MAP.get(int(league_id), str(league_id))
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
+            response = await client.get(f"{_BASE_URL}/events/", params=params)
+            response.raise_for_status()
+            payload = response.json()
+        events = payload.get("data") or []
+        if not isinstance(events, list):
+            events = []
+    except Exception as exc:
+        print(f"[SGO BOARD] unavailable: {type(exc).__name__}: {exc}")
+        return []
+
+    inverse_leagues = {value: key for key, value in _LEAGUE_MAP.items()}
+    board: list[dict[str, Any]] = []
+    for event in events:
+        provider_league = str(event.get("leagueID") or "")
+        event_api_league = int(league_id) if league_id else inverse_leagues.get(provider_league)
+        board.extend(
+            _extract_board_markets(
+                event,
+                now=now,
+                api_league_id=event_api_league,
+                league_name=provider_league.replace("_", " ").title(),
+            )
+        )
+
+    board.sort(key=lambda item: _parse_datetime(item.get("eventStart")) or now)
+    board = board[:safe_limit]
+    async with _CACHE_LOCK:
+        _BOARD_CACHE[cache_key] = (time.monotonic(), board)
+    return board

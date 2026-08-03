@@ -206,6 +206,38 @@ export interface ScanResult {
   error?: string;
 }
 
+export interface SoccerMarketBoardItem {
+  eventId?: string;
+  leagueId?: number | null;
+  leagueName?: string;
+  eventStart?: string;
+  homeTeam?: string;
+  awayTeam?: string;
+  playerName?: string;
+  playerProviderId?: string;
+  propType?: string;
+  marketName?: string;
+  marketLine?: number;
+  statId?: string;
+  bookmakers?: Record<string, { line?: number; odds?: string; lastUpdatedAt?: string }>;
+  providerCoverage?: string[];
+  overOdds?: string | null;
+  underOdds?: string | null;
+}
+
+export async function getSoccerMarketBoard(options?: {
+  hours?: number;
+  leagueId?: number;
+  limit?: number;
+}): Promise<{ markets: SoccerMarketBoardItem[]; source?: string; mode?: string }> {
+  const params = new URLSearchParams();
+  if (options?.hours) params.set('hours', String(options.hours));
+  if (options?.leagueId) params.set('league_id', String(options.leagueId));
+  if (options?.limit) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return apiCall(`/api/markets/soccer${query ? `?${query}` : ''}`);
+}
+
 interface RawPick {
   extracted?: {
     playerName?: string;
