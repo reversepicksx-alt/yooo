@@ -206,10 +206,13 @@ export interface ScanResult {
   error?: string;
 }
 
-export interface SoccerMarketBoardItem {
+export interface MarketBoardItem {
   eventId?: string;
   leagueId?: number | null;
   leagueName?: string;
+  sport?: string;
+  sportName?: string;
+  providerSportId?: string;
   eventStart?: string;
   homeTeam?: string;
   awayTeam?: string;
@@ -217,7 +220,10 @@ export interface SoccerMarketBoardItem {
   playerProviderId?: string;
   propType?: string;
   marketName?: string;
-  marketLine?: number;
+  propLabel?: string;
+  analysisSupported?: boolean;
+  marketLine?: number | null;
+  marketSelection?: string | null;
   statId?: string;
   bookmakers?: Record<string, { line?: number; odds?: string; lastUpdatedAt?: string }>;
   providerCoverage?: string[];
@@ -225,18 +231,24 @@ export interface SoccerMarketBoardItem {
   underOdds?: string | null;
 }
 
-export async function getSoccerMarketBoard(options?: {
+export type SoccerMarketBoardItem = MarketBoardItem;
+
+export async function getMarketBoard(options?: {
   hours?: number;
   leagueId?: number;
   limit?: number;
-}): Promise<{ markets: SoccerMarketBoardItem[]; source?: string; mode?: string }> {
+  sportId?: string;
+}): Promise<{ markets: MarketBoardItem[]; source?: string; mode?: string }> {
   const params = new URLSearchParams();
   if (options?.hours) params.set('hours', String(options.hours));
   if (options?.leagueId) params.set('league_id', String(options.leagueId));
   if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.sportId) params.set('sport_id', options.sportId);
   const query = params.toString();
-  return apiCall(`/api/markets/soccer${query ? `?${query}` : ''}`);
+  return apiCall(`/api/markets/board${query ? `?${query}` : ''}`);
 }
+
+export const getSoccerMarketBoard = getMarketBoard;
 
 interface RawPick {
   extracted?: {

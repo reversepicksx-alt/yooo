@@ -24,6 +24,7 @@ _BOOKMAKERS = ("prizepicks", "underdog")
 _CACHE_TTL_SECONDS = 45
 _EVENT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _BOARD_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_SPORT_CACHE: tuple[float, list[dict[str, Any]]] | None = None
 _CACHE_LOCK = asyncio.Lock()
 
 # API-Football numeric league IDs → SportsGameOdds league IDs.
@@ -59,31 +60,193 @@ _STAT_MAP: dict[str, str] = {
     "goalie_saves": "goalie_saves",
 }
 
-_BOARD_STAT_TYPES: dict[str, str] = {
-    "passes_attempted": "pass_attempts",
-    "shots": "shots",
-    "shots_onGoal": "shots_on_target",
-    "tackles": "tackles",
-    "clearances": "clearances",
-    "interceptions": "interceptions",
-    "crosses": "crosses",
-    "assists": "assists",
-    "goals": "goals",
-    "goalie_saves": "saves",
+_BOARD_PROP_MAP: dict[str, dict[str, str]] = {
+    "SOCCER": {
+        "passes_attempted": "pass_attempts",
+        "shots": "shots",
+        "shots_onGoal": "shots_on_target",
+        "tackles": "tackles",
+        "clearances": "clearances",
+        "interceptions": "interceptions",
+        "crosses": "crosses",
+        "assists": "assists",
+        "goals": "goals",
+        "goalie_saves": "saves",
+    },
+    "BASKETBALL": {
+        "points": "pts",
+        "rebounds": "reb",
+        "assists": "ast",
+        "steals": "stl",
+        "blocks": "blk",
+        "threePointersMade": "fg3m",
+        "turnovers": "tov",
+        "points+rebounds+assists": "pts_reb_ast",
+        "points+rebounds": "pts_reb",
+        "points+assists": "pts_ast",
+        "rebounds+assists": "reb_ast",
+        "blocks+steals": "stl_blk",
+        "fantasyScore": "fantasy_pts",
+    },
+    "BASEBALL": {
+        "batting_hits": "hits",
+        "batting_runs": "runs",
+        "batting_RBI": "rbi",
+        "batting_homeRuns": "home_runs",
+        "batting_totalBases": "total_bases",
+        "batting_strikeouts": "strikeouts",
+        "batting_basesOnBalls": "walks",
+        "batting_hits+runs+rbi": "hits_runs_rbis",
+        "batting_fantasyScore": "hitter_fantasy_points",
+        "pitching_strikeouts": "pitcher_strikeouts",
+        "pitching_pitchesThrown": "pitches_thrown",
+        "pitching_outs": "innings_pitched",
+        "pitching_earnedRuns": "earned_runs",
+        "pitching_hits": "hits_allowed",
+        "pitching_basesOnBalls": "walks_allowed",
+        "pitching_fantasyScore": "pitcher_fantasy_score",
+    },
+    "TENNIS": {
+        "games": "total_games",
+        "sets": "total_sets",
+        "gamesWon": "player_games_won",
+        "setsWon": "player_sets_won",
+    },
+    "HOCKEY": {
+        "goals": "goals",
+        "assists": "assists",
+        "goals+assists": "points",
+        "points": "points",
+        "shots": "shots",
+        "blocks": "blocked_shots",
+        "hits": "hits",
+        "goalie_saves": "saves",
+        "minutesPlayed": "toi",
+    },
+    "FOOTBALL": {
+        "passing_yards": "passing_yards",
+        "passing_touchdowns": "passing_tds",
+        "passing_completions": "completions",
+        "passing_attempts": "pass_attempts",
+        "passing_interceptions": "interceptions",
+        "passing+rushing_yards": "passing_rushing_yards",
+        "rushing_yards": "rushing_yards",
+        "rushing_touchdowns": "rushing_tds",
+        "rushing_attempts": "carries",
+        "receiving_yards": "receiving_yards",
+        "receiving_touchdowns": "receiving_tds",
+        "receiving_receptions": "receptions",
+        "targets": "targets",
+        "fantasyScore": "fantasy_points",
+        "touchdowns": "anytime_td",
+    },
+    "HANDBALL": {
+        "goals": "goals",
+        "assists": "assists",
+        "shots": "shots",
+        "points": "points",
+    },
+    "GOLF": {
+        "points": "points",
+        "fantasyScore": "fantasy_points",
+    },
+    "MMA": {
+        "significant_strikes": "significant_strikes",
+        "takedowns_landed": "takedowns_landed",
+        "fightTime_minutes": "fight_time",
+        "roundsCompleted": "rounds_completed",
+    },
+    "HORSE_RACING": {
+        "points": "points",
+    },
+    "NON_SPORTS": {
+        "points": "points",
+    },
 }
 
-_BOARD_STAT_LABELS: dict[str, str] = {
-    "passes_attempted": "Passes Attempted",
+_BOARD_PROP_LABELS: dict[str, str] = {
+    "pass_attempts": "Pass Attempts",
     "shots": "Shots",
-    "shots_onGoal": "Shots On Goal",
+    "shots_on_target": "Shots On Target",
     "tackles": "Tackles",
     "clearances": "Clearances",
     "interceptions": "Interceptions",
     "crosses": "Crosses",
     "assists": "Assists",
     "goals": "Goals",
-    "goalie_saves": "Saves",
+    "saves": "Saves",
+    "pts": "Points",
+    "reb": "Rebounds",
+    "ast": "Assists",
+    "stl": "Steals",
+    "blk": "Blocks",
+    "fg3m": "3-Pointers Made",
+    "tov": "Turnovers",
+    "pts_reb_ast": "Pts + Reb + Ast",
+    "pts_reb": "Pts + Reb",
+    "pts_ast": "Pts + Ast",
+    "reb_ast": "Reb + Ast",
+    "stl_blk": "Stl + Blk",
+    "fantasy_pts": "Fantasy Points",
+    "hits": "Hits",
+    "runs": "Runs Scored",
+    "rbi": "RBIs",
+    "home_runs": "Home Runs",
+    "total_bases": "Total Bases",
+    "strikeouts": "Strikeouts",
+    "walks": "Walks",
+    "hits_runs_rbis": "H + R + RBI",
+    "hitter_fantasy_points": "Fantasy Points",
+    "pitcher_strikeouts": "Pitcher Strikeouts",
+    "pitches_thrown": "Pitches Thrown",
+    "innings_pitched": "Innings Pitched",
+    "earned_runs": "Earned Runs",
+    "hits_allowed": "Hits Allowed",
+    "walks_allowed": "Walks Allowed",
+    "pitcher_fantasy_score": "Pitcher Fantasy Points",
+    "total_games": "Total Games",
+    "total_sets": "Total Sets",
+    "player_games_won": "Player Games Won",
+    "player_sets_won": "Player Sets Won",
+    "points": "Points",
+    "passing_yards": "Passing Yards",
+    "passing_tds": "Passing TDs",
+    "completions": "Completions",
+    "pass_attempts": "Pass Attempts",
+    "interceptions": "Interceptions",
+    "passing_rushing_yards": "Pass + Rush Yards",
+    "rushing_yards": "Rushing Yards",
+    "rushing_tds": "Rushing TDs",
+    "carries": "Carries",
+    "receiving_yards": "Receiving Yards",
+    "receiving_tds": "Receiving TDs",
+    "receptions": "Receptions",
+    "targets": "Targets",
+    "anytime_td": "Anytime TD",
+    "blocked_shots": "Blocked Shots",
+    "toi": "Time On Ice",
+    "significant_strikes": "Significant Strikes",
+    "takedowns_landed": "Takedowns",
+    "fight_time": "Fight Time",
+    "rounds_completed": "Rounds Completed",
 }
+
+_PROVIDER_SPORT_META: dict[str, dict[str, Any]] = {
+    "SOCCER": {"boardSport": "soccer", "displayName": "Soccer"},
+    "BASKETBALL": {"boardSport": "nba", "displayName": "Basketball"},
+    "BASEBALL": {"boardSport": "mlb", "displayName": "Baseball"},
+    "FOOTBALL": {"boardSport": "nfl", "displayName": "Football"},
+    "HOCKEY": {"boardSport": "nhl", "displayName": "Hockey"},
+    "TENNIS": {"boardSport": "wta", "displayName": "Tennis"},
+    "HANDBALL": {"boardSport": "handball", "displayName": "Handball"},
+    "GOLF": {"boardSport": "golf", "displayName": "Golf"},
+    "MMA": {"boardSport": "mma", "displayName": "MMA"},
+    "HORSE_RACING": {"boardSport": "horse_racing", "displayName": "Horse Racing"},
+    "NON_SPORTS": {"boardSport": "other", "displayName": "Other"},
+}
+
+_BOARD_CACHE_TTL_SECONDS = 45
+_SPORT_CACHE_TTL_SECONDS = 300
 
 
 def _normalise(value: Any) -> str:
@@ -354,7 +517,15 @@ async def lookup_soccer_market_context(
 
 def _board_player_name(market_name: str, stat_id: str) -> str:
     """Recover the provider display name from a player market label."""
-    label = _BOARD_STAT_LABELS.get(stat_id, "")
+    prop_type = next(
+        (
+            mapping.get(stat_id)
+            for mapping in _BOARD_PROP_MAP.values()
+            if stat_id in mapping
+        ),
+        None,
+    )
+    label = _BOARD_PROP_LABELS.get(prop_type or stat_id, "")
     text = str(market_name or "").strip()
     if label:
         suffix = re.compile(
@@ -364,6 +535,10 @@ def _board_player_name(market_name: str, stat_id: str) -> str:
         cleaned = suffix.sub("", text).strip()
         if cleaned and cleaned != text:
             return cleaned
+    # Some provider markets are not Over/Under props (for example
+    # "Player To Record First Basket Yes/No"). Keep the player-facing part
+    # readable rather than exposing the whole market sentence as the name.
+    text = re.split(r"\s+(?:to record|over/under|yes/no|over|under)\b", text, maxsplit=1, flags=re.IGNORECASE)[0].strip()
     return text
 
 
@@ -385,6 +560,7 @@ def _extract_board_markets(
     now: datetime,
     api_league_id: int | None,
     league_name: str,
+    provider_sport_id: str,
 ) -> list[dict[str, Any]]:
     if not _board_event_is_open(event, now):
         return []
@@ -393,14 +569,21 @@ def _extract_board_markets(
     home_name = ((teams.get("home") or {}).get("names") or {}).get("long", "")
     away_name = ((teams.get("away") or {}).get("names") or {}).get("long", "")
     status = event.get("status") or {}
+    sport_id = str(provider_sport_id or event.get("sportID") or "OTHER").upper()
+    sport_meta = _PROVIDER_SPORT_META.get(
+        sport_id,
+        {"boardSport": sport_id.lower(), "displayName": sport_id.replace("_", " ").title()},
+    )
+    prop_map = _BOARD_PROP_MAP.get(sport_id, {})
     grouped: dict[str, dict[str, Any]] = {}
 
     for odd in (event.get("odds") or {}).values():
         if not isinstance(odd, dict):
             continue
         stat_id = str(odd.get("statID") or "")
-        prop_type = _BOARD_STAT_TYPES.get(stat_id)
-        if not prop_type or not odd.get("playerID"):
+        mapped_prop_type = prop_map.get(stat_id)
+        prop_type = mapped_prop_type or f"provider:{stat_id}"
+        if not odd.get("playerID"):
             continue
         if odd.get("cancelled") or not odd.get("started") and odd.get("ended"):
             continue
@@ -414,10 +597,11 @@ def _extract_board_markets(
             book = (odd.get("byBookmaker") or {}).get(bookmaker)
             if not isinstance(book, dict):
                 continue
+            market_line: float | None
             try:
                 market_line = float(book.get("overUnder"))
             except (TypeError, ValueError):
-                continue
+                market_line = None
             # The board is intentionally an availability surface, not an
             # archive. A provider market must be live at one supported book.
             if not book.get("available"):
@@ -443,39 +627,61 @@ def _extract_board_markets(
             {
                 "eventId": event.get("eventID"),
                 "leagueId": api_league_id,
-                "leagueName": league_name or event.get("leagueID") or "Soccer",
+                "leagueName": league_name or event.get("leagueID") or sport_meta["displayName"],
+                "sport": sport_meta["boardSport"],
+                "sportName": sport_meta["displayName"],
+                "providerSportId": sport_id,
                 "eventStart": status.get("startsAt"),
                 "homeTeam": home_name,
                 "awayTeam": away_name,
                 "playerName": player_name,
                 "playerProviderId": odd.get("playerID") or odd.get("statEntityID"),
                 "propType": prop_type,
+                "propLabel": _BOARD_PROP_LABELS.get(
+                    prop_type,
+                    stat_id.replace("_", " ").replace("+", " + ").title(),
+                ),
+                # A matching stat ID is not enough: SportsGameOdds also
+                # exposes binary Yes/No markets with no numeric line. Those
+                # must remain discoverable but cannot safely enter a prop
+                # analyzer.
+                "analysisSupported": bool(
+                    mapped_prop_type
+                    and sport_meta["boardSport"] in {"soccer", "nba", "mlb", "nfl", "nhl", "wta"}
+                    and any(book.get("line") is not None for book in bookmaker_data.values())
+                    and side in {"over", "under"}
+                ),
                 "marketName": odd.get("marketName") or "",
                 "statId": stat_id,
                 "bookmakers": {},
                 "providerCoverage": [],
                 "overOdds": None,
                 "underOdds": None,
+                "marketSelection": None,
             },
         )
         for bookmaker, book in bookmaker_data.items():
             item["bookmakers"][bookmaker] = book
             if bookmaker not in item["providerCoverage"]:
                 item["providerCoverage"].append(bookmaker)
-            item["marketLine"] = book["line"]
+            if book["line"] is not None:
+                item["marketLine"] = book["line"]
         if side in {"over", "under"}:
             item[f"{side}Odds"] = bookmaker_data.get("prizepicks", next(iter(bookmaker_data.values())))["odds"]
+        elif side:
+            item["marketSelection"] = side.upper()
 
     return list(grouped.values())
 
 
-async def list_soccer_market_board(
+async def list_market_board(
     *,
     hours: int = 72,
     league_id: int | None = None,
     limit: int = 60,
+    sport_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return currently available soccer player markets for discovery."""
+    """Return currently available player markets across provider sports."""
     api_key = os.environ.get("SPORTSGAMEODDS_API_KEY", "").strip()
     if not api_key:
         return []
@@ -483,48 +689,65 @@ async def list_soccer_market_board(
     now = datetime.now(timezone.utc)
     safe_hours = max(6, min(int(hours or 72), 168))
     safe_limit = max(1, min(int(limit or 60), 100))
-    cache_key = f"{league_id or 'all'}|{safe_hours}"
+    requested_sport = str(sport_id or "all").upper()
+    cache_key = f"{requested_sport}|{league_id or 'all'}|{safe_hours}"
     async with _CACHE_LOCK:
         cached = _BOARD_CACHE.get(cache_key)
         if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
             return cached[1][:safe_limit]
 
-    params: dict[str, Any] = {
-        "bookmakerID": ",".join(_BOOKMAKERS),
-        "limit": 100,
-        "startsAfter": now.isoformat().replace("+00:00", "Z"),
-        "startsBefore": (now + timedelta(hours=safe_hours)).isoformat().replace("+00:00", "Z"),
-        "sportID": "SOCCER",
-        "apiKey": api_key,
-    }
-    if league_id:
-        params["leagueID"] = _LEAGUE_MAP.get(int(league_id), str(league_id))
+    async def fetch_sport(provider_sport: str) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "bookmakerID": ",".join(_BOOKMAKERS),
+            "limit": 100,
+            "startsAfter": now.isoformat().replace("+00:00", "Z"),
+            "startsBefore": (now + timedelta(hours=safe_hours)).isoformat().replace("+00:00", "Z"),
+            "sportID": provider_sport,
+            "apiKey": api_key,
+        }
+        if league_id:
+            params["leagueID"] = _LEAGUE_MAP.get(int(league_id), str(league_id))
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
+                response = await client.get(f"{_BASE_URL}/events/", params=params)
+                response.raise_for_status()
+                payload = response.json()
+            events = payload.get("data") or []
+            if not isinstance(events, list):
+                events = []
+        except Exception as exc:
+            print(f"[SGO BOARD] {provider_sport} unavailable: {type(exc).__name__}: {exc}")
+            return []
 
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
-            response = await client.get(f"{_BASE_URL}/events/", params=params)
-            response.raise_for_status()
-            payload = response.json()
-        events = payload.get("data") or []
-        if not isinstance(events, list):
-            events = []
-    except Exception as exc:
-        print(f"[SGO BOARD] unavailable: {type(exc).__name__}: {exc}")
-        return []
-
-    inverse_leagues = {value: key for key, value in _LEAGUE_MAP.items()}
-    board: list[dict[str, Any]] = []
-    for event in events:
-        provider_league = str(event.get("leagueID") or "")
-        event_api_league = int(league_id) if league_id else inverse_leagues.get(provider_league)
-        board.extend(
-            _extract_board_markets(
-                event,
-                now=now,
-                api_league_id=event_api_league,
-                league_name=provider_league.replace("_", " ").title(),
+        inverse_leagues = {value: key for key, value in _LEAGUE_MAP.items()}
+        sport_board: list[dict[str, Any]] = []
+        for event in events:
+            provider_league = str(event.get("leagueID") or "")
+            event_api_league = int(league_id) if league_id else inverse_leagues.get(provider_league)
+            sport_board.extend(
+                _extract_board_markets(
+                    event,
+                    now=now,
+                    api_league_id=event_api_league,
+                    league_name=provider_league.replace("_", " ").title(),
+                    provider_sport_id=provider_sport,
+                )
             )
-        )
+        return sport_board
+
+    provider_sports = (
+        [requested_sport]
+        if requested_sport != "ALL"
+        else list(_PROVIDER_SPORT_META)
+    )
+    per_sport = await asyncio.gather(
+        *(fetch_sport(provider_sport) for provider_sport in provider_sports),
+        return_exceptions=True,
+    )
+    board: list[dict[str, Any]] = []
+    for result in per_sport:
+        if isinstance(result, list):
+            board.extend(result)
 
     board.sort(key=lambda item: _parse_datetime(item.get("eventStart")) or now)
     board = board[:safe_limit]

@@ -18,7 +18,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchPlayersQuick, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, SoccerMarketBoardItem, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig, getSoccerMarketBoard } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchPlayersQuick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MarketBoardItem, SoccerMarketBoardItem, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig, getMarketBoard } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -182,10 +182,11 @@ export default function ScanScreen() {
   const [leagueQuery, setLeagueQuery] = useState('');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
-  const [marketBoard, setMarketBoard] = useState<SoccerMarketBoardItem[]>([]);
+  const [marketBoard, setMarketBoard] = useState<MarketBoardItem[]>([]);
   const [marketBoardLoading, setMarketBoardLoading] = useState(false);
   const [marketBoardError, setMarketBoardError] = useState<string | null>(null);
-  const [marketBoardFilter, setMarketBoardFilter] = useState<'all' | 'pass_attempts' | 'saves'>('all');
+  const [marketBoardFilter, setMarketBoardFilter] = useState('all');
+  const [marketBoardSportFilter, setMarketBoardSportFilter] = useState('all');
   const [showMarketBoard, setShowMarketBoard] = useState(true);
 
   // CS2 manual mode fields
@@ -271,11 +272,11 @@ export default function ScanScreen() {
   }, []);
 
   useEffect(() => {
-    if (sport !== 'soccer' || !showMarketBoard || phase !== 'idle' || mode !== 'scan') return;
+    if (!showMarketBoard || phase !== 'idle' || mode !== 'scan') return;
     let active = true;
     setMarketBoardLoading(true);
     setMarketBoardError(null);
-    getSoccerMarketBoard({ hours: 72, limit: 60 })
+    getMarketBoard({ hours: 72, limit: 100 })
       .then((data) => {
         if (!active) return;
         setMarketBoard(data?.markets || []);
@@ -288,7 +289,7 @@ export default function ScanScreen() {
         if (active) setMarketBoardLoading(false);
       });
     return () => { active = false; };
-  }, [sport, showMarketBoard, phase, mode]);
+  }, [showMarketBoard, phase, mode]);
 
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
@@ -435,59 +436,133 @@ export default function ScanScreen() {
     setMlbNextMatchLoading(false);
   };
 
-  const handleMarketBoardPick = async (market: SoccerMarketBoardItem) => {
-    const prop = market.propType || 'pass_attempts';
+  const handleMarketBoardPick = async (market: MarketBoardItem) => {
+    const boardSport = market.sport || '';
+    const supportedSport = ['soccer', 'nba', 'mlb', 'nfl', 'nhl', 'wta'].includes(boardSport);
+    if (!market.analysisSupported || !supportedSport) {
+      Alert.alert(
+        `${market.sportName || 'Provider'} market`,
+        'This market is available from SportsGameOdds, but Reverse Picks does not have a matching analysis engine for it yet.'
+      );
+      return;
+    }
+
     const lineValue = market.marketLine;
-    setSport('soccer');
+    const prop = market.propType || '';
+    setSport(boardSport as Sport);
     setMode('manual');
     setPhase('idle');
     setPrediction(null);
     setPredictionRequest(null);
     setScanResult(null);
-    setPlayerQuery(market.playerName || '');
-    setResolvedPlayer(null);
-    setResolvedRole(null);
-    setManualOpponentQuery(market.awayTeam || '');
-    setResolvedManualOpponent(null);
-    setPropType(prop);
     setLine(lineValue != null ? String(lineValue) : '');
-    setLeagueId(market.leagueId || 0);
-    setLeagueQuery(market.leagueName || '');
-    setAutoMatch(null);
-    setSelectedContext(null);
-    setPlayerContexts([]);
     setMarketBoardError(null);
     Haptics.selectionAsync();
-    // Resolve the provider display name through the existing API-Football
-    // player search before the user can analyze. The market board is only a
-    // discovery surface; it never becomes the identity source.
+
+    const home = market.homeTeam || '';
+    const away = market.awayTeam || '';
+    const seedOpponent = `${home} vs ${away}`;
+    const marketPlayer = market.playerName || '';
+
     try {
-      const results = await searchPlayersQuick(market.playerName || '', market.leagueId || undefined);
-      const candidates = results?.players || [];
-      const eventTeams = [market.homeTeam || '', market.awayTeam || ''];
-      const resolved = candidates.find((candidate: any) =>
-        eventTeams.some((team) => String(candidate.teamName || '').toLowerCase() === team.toLowerCase())
-      ) || candidates[0];
-      if (resolved) {
-        const resolvedTeam = String(resolved.teamName || '').toLowerCase();
-        const homeTeam = String(market.homeTeam || '').toLowerCase();
-        const opponentName = resolvedTeam === homeTeam
-          ? (market.awayTeam || '')
-          : (market.homeTeam || market.awayTeam || '');
-        setResolvedPlayer({
-          playerId: resolved.playerId || 0,
-          playerName: resolved.playerName || market.playerName || '',
-          teamId: resolved.teamId || 0,
-          teamName: resolved.teamName || '',
-          leagueId: resolved.leagueId || market.leagueId || 0,
-          position: resolved.position || '',
-        });
-        setPlayerQuery(resolved.playerName || market.playerName || '');
-        setManualOpponentQuery(opponentName);
+      if (boardSport === 'soccer') {
+        setPlayerQuery(marketPlayer);
+        setResolvedPlayer(null);
+        setResolvedRole(null);
+        setManualOpponentQuery(away);
+        setResolvedManualOpponent(null);
+        setPropType(PROP_TYPES.some((item) => item.value === prop) ? prop : PROP_TYPES[0].value);
+        setLeagueId(market.leagueId || 0);
+        setLeagueQuery(market.leagueName || '');
+        setAutoMatch(null);
+        setSelectedContext(null);
+        setPlayerContexts([]);
+        const results = await searchPlayersQuick(marketPlayer, market.leagueId || undefined);
+        const candidates = results?.players || [];
+        const resolved = candidates.find((candidate: any) =>
+          [home, away].some((team) => String(candidate.teamName || '').toLowerCase() === team.toLowerCase())
+        ) || candidates[0];
+        if (resolved) {
+          const resolvedTeam = String(resolved.teamName || '').toLowerCase();
+          const opponentName = resolvedTeam === home.toLowerCase() ? away : home;
+          setManualOpponentQuery(opponentName);
+          setResolvedPlayer({
+            playerId: resolved.playerId || 0,
+            playerName: resolved.playerName || marketPlayer,
+            teamId: resolved.teamId || 0,
+            teamName: resolved.teamName || '',
+            leagueId: resolved.leagueId || market.leagueId || 0,
+            position: resolved.position || '',
+          });
+          setPlayerQuery(resolved.playerName || marketPlayer);
+        }
+      } else if (boardSport === 'wta') {
+        setWtaPlayerQuery(marketPlayer);
+        setWtaResolvedPlayer(null);
+        setWtaOpponentQuery(seedOpponent);
+        setWtaResolvedOpponent(null);
+        setWtaPropType(WTA_PROP_TYPES.some((item) => item.value === prop) ? prop : WTA_PROP_TYPES[0].value);
+        const resolved = (await searchWtaPlayers(marketPlayer))[0];
+        if (resolved) {
+          setWtaResolvedPlayer(resolved);
+          setWtaPlayerQuery(resolved.fullName || marketPlayer);
+        }
+      } else {
+        const searchers: Record<string, (query: string) => Promise<any[]>> = {
+          nba: searchNbaPlayers,
+          nhl: searchNhlPlayers,
+          nfl: searchNflPlayers,
+          mlb: searchMlbPlayers,
+        };
+        const validProps: Record<string, { value: string }[]> = {
+          nba: NBA_PROP_TYPES,
+          nhl: NHL_PROP_TYPES,
+          nfl: NFL_PROP_TYPES,
+          mlb: MLB_PROP_TYPES,
+        };
+        const resolvedSetters: Record<string, (value: any) => void> = {
+          nba: setNbaResolvedPlayer,
+          nhl: setNhlResolvedPlayer,
+          nfl: setNflResolvedPlayer,
+          mlb: setMlbResolvedPlayer,
+        };
+        const querySetters: Record<string, (value: string) => void> = {
+          nba: setNbaPlayerQuery,
+          nhl: setNhlPlayerQuery,
+          nfl: setNflPlayerQuery,
+          mlb: setMlbPlayerQuery,
+        };
+        const opponentSetters: Record<string, (value: string) => void> = {
+          nba: setNbaOpponentQuery,
+          nhl: setNhlOpponentQuery,
+          nfl: setNflOpponentQuery,
+          mlb: setMlbOpponentQuery,
+        };
+        const propSetters: Record<string, (value: string) => void> = {
+          nba: setNbaPropType,
+          nhl: setNhlPropType,
+          nfl: setNflPropType,
+          mlb: setMlbPropType,
+        };
+        querySetters[boardSport](marketPlayer);
+        opponentSetters[boardSport](seedOpponent);
+        propSetters[boardSport](
+          validProps[boardSport].some((item) => item.value === prop)
+            ? prop
+            : validProps[boardSport][0].value
+        );
+        const resolved = (await searchers[boardSport](marketPlayer))[0];
+        if (resolved) {
+          resolvedSetters[boardSport](resolved);
+          querySetters[boardSport](resolved.fullName || `${resolved.firstName || ''} ${resolved.lastName || ''}`.trim() || marketPlayer);
+          const teamName = resolved.team?.full_name || '';
+          opponentSetters[boardSport](
+            teamName.toLowerCase() === home.toLowerCase() ? away : home
+          );
+        }
       }
     } catch {
-      // Keep the board-filled name visible; the normal manual search remains
-      // available if the upstream identity lookup is rate-limited.
+      // Keep the board-filled fields visible; the normal player search remains available.
     }
   };
 
@@ -1440,7 +1515,7 @@ export default function ScanScreen() {
             )}
 
         {/* ─── AVAILABLE PROPS — discovery layer ─── */}
-        {sport === 'soccer' && mode === 'scan' && phase === 'idle' && (
+        {mode === 'scan' && phase === 'idle' && (
           <View style={styles.marketBoard}>
             <View style={styles.marketBoardHeader}>
               <View>
@@ -1459,27 +1534,44 @@ export default function ScanScreen() {
 
             {showMarketBoard && (
               <>
-                <View style={styles.marketFilterRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.marketFilterScroll}>
                   {([
-                    ['all', 'All'],
-                    ['pass_attempts', 'Passes'],
-                    ['saves', 'GK Saves'],
+                    ['all', 'All Sports'],
+                    ['soccer', 'Soccer'],
+                    ['nba', 'Basketball'],
+                    ['mlb', 'Baseball'],
+                    ['nfl', 'Football'],
+                    ['nhl', 'Hockey'],
+                    ['wta', 'Tennis'],
+                    ['handball', 'Handball'],
+                    ['golf', 'Golf'],
+                    ['mma', 'MMA'],
+                    ['horse_racing', 'Horse Racing'],
+                    ['other', 'Other'],
                   ] as const).map(([value, label]) => (
                     <TouchableOpacity
                       key={value}
-                      onPress={() => setMarketBoardFilter(value)}
-                      style={[styles.marketFilter, marketBoardFilter === value && styles.marketFilterActive]}
+                      onPress={() => setMarketBoardSportFilter(value)}
+                      style={[styles.marketFilter, marketBoardSportFilter === value && styles.marketFilterActive]}
                     >
-                      <Text style={[styles.marketFilterText, marketBoardFilter === value && styles.marketFilterTextActive]}>
+                      <Text style={[styles.marketFilterText, marketBoardSportFilter === value && styles.marketFilterTextActive]}>
                         {label}
                       </Text>
                     </TouchableOpacity>
                   ))}
+                </ScrollView>
+                <View style={styles.marketFilterRow}>
+                  <TouchableOpacity
+                    onPress={() => setMarketBoardFilter('all')}
+                    style={[styles.marketFilter, marketBoardFilter === 'all' && styles.marketFilterActive]}
+                  >
+                    <Text style={[styles.marketFilterText, marketBoardFilter === 'all' && styles.marketFilterTextActive]}>All Props</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
                       setMarketBoardLoading(true);
                       setMarketBoardError(null);
-                      getSoccerMarketBoard({ hours: 72, limit: 60 })
+                      getMarketBoard({ hours: 72, limit: 100 })
                         .then((data) => setMarketBoard(data?.markets || []))
                         .catch((error) => setMarketBoardError(error instanceof Error ? error.message : 'Market board unavailable'))
                         .finally(() => setMarketBoardLoading(false));
@@ -1507,7 +1599,8 @@ export default function ScanScreen() {
 
                 {!marketBoardLoading && !marketBoardError && (() => {
                   const visibleMarkets = marketBoard.filter((market) =>
-                    marketBoardFilter === 'all' || market.propType === marketBoardFilter
+                    (marketBoardSportFilter === 'all' || market.sport === marketBoardSportFilter)
+                    && (marketBoardFilter === 'all' || market.propType === marketBoardFilter)
                   );
                   if (!visibleMarkets.length) {
                     return (
@@ -1518,7 +1611,7 @@ export default function ScanScreen() {
                         </Text>
                         <Text style={styles.marketBoardEmptyText}>
                           {marketBoard.length
-                            ? 'Try All to see every available soccer prop.'
+                            ? 'Try All Sports to see every available provider market.'
                             : 'The board only shows currently available player lines. You can still search any player below.'}
                         </Text>
                       </View>
@@ -1539,16 +1632,18 @@ export default function ScanScreen() {
                           </Text>
                         </View>
                         <View style={styles.marketLineBadge}>
-                          <Text style={styles.marketLine}>{market.marketLine}</Text>
-                          <Text style={styles.marketLineLabel}>{PROP_LABELS[market.propType || ''] || market.propType}</Text>
+                          <Text style={styles.marketLine}>{market.marketLine ?? market.marketSelection ?? '—'}</Text>
+                          <Text style={styles.marketLineLabel}>{market.propLabel || PROP_LABELS[market.propType || ''] || market.propType}</Text>
                         </View>
                       </View>
                       <View style={styles.marketCardBottom}>
                         <Text style={styles.marketMeta}>
-                          {market.leagueName || 'Soccer'}
+                          {market.sportName || 'Provider market'} · {market.leagueName || 'Live'}
                           {market.eventStart ? ` · ${new Date(market.eventStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
                         </Text>
-                        <Text style={styles.marketAnalyze}>ANALYZE <Ionicons name="arrow-forward" size={11} color={Colors.primary} /></Text>
+                        <Text style={[styles.marketAnalyze, !market.analysisSupported && { color: Colors.textTertiary }]}>
+                          {market.analysisSupported ? 'ANALYZE' : 'MARKET ONLY'} <Ionicons name="arrow-forward" size={11} color={market.analysisSupported ? Colors.primary : Colors.textTertiary} />
+                        </Text>
                       </View>
                     </TouchableOpacity>
                   ));
@@ -5586,6 +5681,10 @@ const styles = StyleSheet.create({
   },
   marketFilterRow: {
     flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, marginBottom: 10,
+  },
+  marketFilterScroll: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingTop: 2, paddingBottom: 2,
   },
   marketFilter: {
     paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16,
