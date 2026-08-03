@@ -15,7 +15,7 @@ const getApiBase = (): string => {
 
 // Endpoints that involve AI synthesis — give them a generous timeout
 const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message'];
-const MEDIUM_TIMEOUT_PATHS = ['/api/players/search', '/api/players/', '/api/match-script'];  // search can hit API-Football strategy fallbacks; match-script hits an AI press-intensity call
+const MEDIUM_TIMEOUT_PATHS = ['/api/players/search', '/api/players/', '/api/match-script', '/api/community/messages'];  // search can hit API-Football strategy fallbacks; match-script hits an AI press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
 const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
 const MEDIUM_TIMEOUT_MS    = 40_000;   // 40 s — player search (may fall through to API-Football strategies)
@@ -2543,11 +2543,13 @@ export async function fetchCommunityMessages(params?: {
   since?: string;
   before?: string;
   limit?: number;
+  includeImages?: boolean;
 }): Promise<CommunityMessage[]> {
   const qs = new URLSearchParams();
   if (params?.since) qs.set('since', params.since);
   if (params?.before) qs.set('before', params.before);
   if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.includeImages !== undefined) qs.set('include_images', String(params.includeImages));
   const q = qs.toString();
   return apiCall(`/api/community/messages${q ? `?${q}` : ''}`);
 }

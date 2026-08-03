@@ -9,7 +9,7 @@ from config import db
 router = APIRouter()
 
 
-def _serialize(m: dict) -> dict:
+def _serialize(m: dict, include_image: bool = True) -> dict:
     ts = m.get("createdAt")
     if isinstance(ts, datetime):
         ts_str = ts.isoformat()
@@ -20,7 +20,10 @@ def _serialize(m: dict) -> dict:
         "senderId": m.get("email", ""),
         "name": m.get("displayName", ""),
         "text": m.get("text", ""),
-        "imageData": m.get("imageData"),
+        # Historical pick-card images are large base64 blobs.  The feed can
+        # load its text/history without them; send endpoints and live updates
+        # can still opt in so newly posted images remain visible.
+        "imageData": m.get("imageData") if include_image else None,
         "mentions": m.get("mentions", []),
         "reactions": m.get("reactions", {}),
         "createdAt": ts_str,
@@ -200,6 +203,7 @@ async def get_messages(
     since: Optional[str] = Query(None),
     before: Optional[str] = Query(None),
     limit: int = Query(50, le=100),
+    include_images: bool = Query(False),
 ):
     query: dict = {}
     sort_dir = -1
@@ -218,8 +222,12 @@ async def get_messages(
         except Exception:
             pass
 
+    # Do not download historical pick-card base64 blobs when the client only
+    # needs the text feed.  Serializing them away after the query would still
+    # leave MongoDB transferring megabytes before the response is built.
+    projection = None if include_images else {"imageData": 0}
     msgs = (
-        await db.community_messages.find(query)
+        await db.community_messages.find(query, projection)
         .sort("createdAt", sort_dir)
         .limit(limit)
         .to_list(None)
@@ -228,7 +236,7 @@ async def get_messages(
     if sort_dir == -1:
         msgs.reverse()
 
-    return [_serialize(m) for m in msgs]
+    return [_serialize(m, include_image=include_images) for m in msgs]
 
 
 @router.post("/api/community/messages")

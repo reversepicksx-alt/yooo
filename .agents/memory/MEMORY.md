@@ -96,3 +96,4 @@
 - [Legacy settlement repair routing](legacy-settlement-repair-routing.md) — explicit legacy repairs must bypass old BDL routes and use exact API-Football fixture/player validation; defer mismatches instead of guessing.
 - [Compact analysis UI](compact-analysis-ui.md) — prediction analysis should use dense text and compact tabs; H2H belongs beside AWAY, not in a large standalone card.
 - [SportsGameOdds market reference](sportsgameodds-market-reference.md) — use PrizePicks/Underdog lines as optional context only; API-Football remains authoritative for fixtures, math, and settlement.
+- [Community feed payloads](community-feed-payloads.md) — omit historical base64 pick-card images by default; oversized responses can time out and falsely show an empty chat.

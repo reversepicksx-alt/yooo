@@ -309,6 +309,7 @@ function CommunityScreen() {
 
   const [messages, setMessages] = useState<CommunityMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
@@ -338,12 +339,16 @@ function CommunityScreen() {
   }, [myEmail, isOwner]);
 
   const loadInitial = useCallback(async () => {
+    setLoadError(null);
     try {
-      const data = await fetchCommunityMessages({ limit: 50 });
+      // History loads without multi-megabyte base64 pick-card images.  The
+      // text/history must not time out and then look like an empty chat.
+      const data = await fetchCommunityMessages({ limit: 50, includeImages: false });
       setMessages(data);
       if (data.length) lastTsRef.current = data[data.length - 1].createdAt;
     } catch (e) {
       console.warn('[Community] load error', e);
+      setLoadError('We could not load chat history. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -352,7 +357,7 @@ function CommunityScreen() {
   const pollNew = useCallback(async () => {
     if (!lastTsRef.current) return;
     try {
-      const fresh = await fetchCommunityMessages({ since: lastTsRef.current, limit: 50 });
+      const fresh = await fetchCommunityMessages({ since: lastTsRef.current, limit: 50, includeImages: true });
       if (fresh.length) {
         setMessages((prev) => {
           const existingIds = new Set(prev.map((m) => m.id));
@@ -675,6 +680,17 @@ function CommunityScreen() {
             <ActivityIndicator color={Colors.primary} size="large" />
             <Text style={styles.loadingText}>Loading messages…</Text>
           </View>
+        ) : loadError && messages.length === 0 ? (
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.emptyWrap}>
+              <Ionicons name="cloud-offline-outline" size={42} color={Colors.textTertiary} />
+              <Text style={styles.emptyTitle}>Chat history unavailable</Text>
+              <Text style={styles.emptyBody}>{loadError}</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={loadInitial} activeOpacity={0.8}>
+                <Text style={styles.retryBtnText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
         ) : messages.length === 0 ? (
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={styles.emptyWrap}>
@@ -1056,6 +1072,18 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  retryBtn: {
+    marginTop: 10,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: Colors.primary,
+  },
+  retryBtnText: {
+    color: Colors.background,
+    fontSize: 14,
+    fontWeight: '800',
   },
 
   // Date divider
