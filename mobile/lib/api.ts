@@ -233,6 +233,53 @@ export interface MarketBoardItem {
 
 export type SoccerMarketBoardItem = MarketBoardItem;
 
+// ─── Native Reverse Picks Soccer Board ───────────────────────────────────────
+export interface NativeBoardProp {
+  projected: number;
+  l5Avg: number;
+  samples: number;
+  l5HitPct: number | null;
+  l10HitPct: number | null;
+  settledPicks?: number;
+}
+
+export interface NativeBoardPlayer {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  teamName: string;
+  position: string;
+  isHome: boolean;
+  props: {
+    shots?: NativeBoardProp;
+    pass_attempts?: NativeBoardProp;
+    saves?: NativeBoardProp;
+  };
+}
+
+export interface NativeBoardFixture {
+  fixtureId: number;
+  homeTeam: string;
+  awayTeam: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  startTime: string;
+  leagueId: number;
+  leagueName: string;
+  season: number;
+  players: NativeBoardPlayer[];
+}
+
+export interface NativeSoccerBoard {
+  fixtures: NativeBoardFixture[];
+  updatedAt: string;
+  leagueIds: number[];
+}
+
+export async function getNativeSoccerBoard(): Promise<NativeSoccerBoard> {
+  return apiCall('/api/soccer/board-native');
+}
+
 export async function getMarketBoard(options?: {
   hours?: number;
   leagueId?: number;
