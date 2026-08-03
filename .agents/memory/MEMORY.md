@@ -95,3 +95,4 @@
 - [Soccer settlement source integrity](settlement-source-integrity.md) — provider stat paths and exact-fixture provenance are required before a value can be final or enter calibration.
 - [Legacy settlement repair routing](legacy-settlement-repair-routing.md) — explicit legacy repairs must bypass old BDL routes and use exact API-Football fixture/player validation; defer mismatches instead of guessing.
 - [Compact analysis UI](compact-analysis-ui.md) — prediction analysis should use dense text and compact tabs; H2H belongs beside AWAY, not in a large standalone card.
+- [SportsGameOdds market reference](sportsgameodds-market-reference.md) — use PrizePicks/Underdog lines as optional context only; API-Football remains authoritative for fixtures, math, and settlement.

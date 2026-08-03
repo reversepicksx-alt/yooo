@@ -4153,6 +4153,49 @@ export default function ScanScreen() {
               );
             })()}
 
+            {/* ─── SPORTSGAMEODDS MARKET REFERENCE ─── */}
+            {prediction.sport === 'soccer' && (() => {
+              const sgo = (prediction as any).sportsGameOddsContext as {
+                source?: string; bookmaker?: string; marketLine?: number;
+                lineDifference?: number; marketName?: string; matchedPlayer?: string;
+                homeTeam?: string; awayTeam?: string; available?: boolean;
+                providerCoverage?: string[]; bookmakers?: Record<string, any>;
+              } | undefined;
+              if (!sgo || sgo.marketLine == null) return null;
+              const diff = Number(sgo.lineDifference ?? 0);
+              const absDiff = Math.abs(diff);
+              const diffLabel = diff === 0
+                ? 'Matches market'
+                : diff > 0
+                  ? `Market is ${absDiff.toFixed(1)} higher`
+                  : `Market is ${absDiff.toFixed(1)} lower`;
+              const coverage = (sgo.providerCoverage || [])
+                .map((book) => book === 'prizepicks' ? 'PrizePicks' : book === 'underdog' ? 'Underdog' : book)
+                .join(' + ');
+              return (
+                <View style={{ marginTop: 8, backgroundColor: '#10151A', borderRadius: 10, padding: 12,
+                  borderWidth: 1, borderColor: '#38BDF833' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="analytics-outline" size={11} color="#38BDF8" />
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 1 }}>
+                      {sgo.source || 'SPORTSGAMEODDS'} REFERENCE
+                    </Text>
+                    <Text style={{ marginLeft: 'auto', fontSize: 14, color: Colors.text, fontWeight: '800' }}>
+                      {sgo.marketLine}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: absDiff >= 2 ? '#F59E0B' : Colors.textSecondary, fontWeight: '600' }}>
+                    {diffLabel}{sgo.available === false ? ' · historical/unavailable' : ''}
+                  </Text>
+                  {!!coverage && (
+                    <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 3 }}>
+                      {coverage}{sgo.marketName ? ` · ${sgo.marketName}` : ''}
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+
             {/* ─── REVERSE FORMULA CARD ─── */}
             {prediction.priorSamples != null && prediction.priorSamples >= 3 && (
               <View style={styles.rfCard}>

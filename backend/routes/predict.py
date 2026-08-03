@@ -24,6 +24,7 @@ from utils import (
     resolve_verified_fixture,
 )
 from ai_engine import fetch_web_intel, fetch_ai_press_intensity
+from sportsgameodds_client import lookup_soccer_market_context
 from prop_safety_cache import (
     get_prop_safety as _get_prop_safety,
     get_recent_prop_safety as _get_recent_prop_safety,
@@ -622,6 +623,7 @@ async def predict(req: PredictionRequest):
         # produced contradictory cards such as Corinthians vs Bahia when the
         # actual fixture was Corinthians vs Athletico.
         match_odds_prefetched = None
+        sgo_market_task = None
         if not ai_only_mode and actual_team_id and not _is_bdl_league:
             match_odds_prefetched = await get_match_odds()
             if not match_odds_prefetched:
@@ -652,6 +654,28 @@ async def predict(req: PredictionRequest):
                     "venue": "home" if (match_odds_prefetched or {}).get("playerIsHome") else "away",
                 })
                 actual_team_id = (match_odds_prefetched or {}).get("fixtureTeamId") or actual_team_id
+            if req.sport == "soccer":
+                _sgo_fixture = {
+                    **match_odds_prefetched,
+                    "fixtureHomeName": (
+                        (match_odds_prefetched or {}).get("fixtureTeamName", "")
+                        if (match_odds_prefetched or {}).get("playerIsHome")
+                        else (match_odds_prefetched or {}).get("fixtureOpponentName", "")
+                    ),
+                    "fixtureAwayName": (
+                        (match_odds_prefetched or {}).get("fixtureOpponentName", "")
+                        if (match_odds_prefetched or {}).get("playerIsHome")
+                        else (match_odds_prefetched or {}).get("fixtureTeamName", "")
+                    ),
+                }
+                sgo_market_task = aio.create_task(
+                    lookup_soccer_market_context(
+                        player_name=req.playerName,
+                        prop_type=req.propType,
+                        entered_line=req.line,
+                        fixture=_sgo_fixture,
+                    )
+                )
 
         # Recompute after canonical fixture alignment.
         safe_team_id = actual_team_id if actual_team_id and actual_team_id != 0 else None
@@ -710,6 +734,12 @@ async def predict(req: PredictionRequest):
         player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, match_odds = await aio.gather(
             player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, odds_task
         )
+        sgo_market_context = None
+        if sgo_market_task is not None:
+            try:
+                sgo_market_context = await sgo_market_task
+            except Exception as _sgo_err:
+                print(f"[SGO] prediction context skipped: {type(_sgo_err).__name__}: {_sgo_err}")
         print(f"[TIMING] Wave 1: {_t.time()-_t0:.1f}s")
 
         if actual_team_id == 0 and player_stats:
@@ -7524,6 +7554,10 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["opponent"] = req.opponentName
         prediction["propType"] = req.propType
         prediction["line"] = req.line
+        # Optional market reference only. This never feeds projection,
+        # recommendation, confidence, calibration, or settlement.
+        if sgo_market_context:
+            prediction["sportsGameOddsContext"] = sgo_market_context
         # Tag WC predictions so the mobile UI / settlement loop can handle them correctly
         if _is_wc:
             prediction["wcMode"] = True
