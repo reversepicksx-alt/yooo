@@ -15,10 +15,12 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
+import { getBoardPendingMarket, clearBoardPendingMarket } from '@/lib/boardStore';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchPlayersQuick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MarketBoardItem, SoccerMarketBoardItem, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig, getMarketBoard } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchPlayersQuick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MarketBoardItem, SoccerMarketBoardItem, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -182,12 +184,6 @@ export default function ScanScreen() {
   const [leagueQuery, setLeagueQuery] = useState('');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
-  const [marketBoard, setMarketBoard] = useState<MarketBoardItem[]>([]);
-  const [marketBoardLoading, setMarketBoardLoading] = useState(false);
-  const [marketBoardError, setMarketBoardError] = useState<string | null>(null);
-  const [marketBoardFilter, setMarketBoardFilter] = useState('all');
-  const [marketBoardSportFilter, setMarketBoardSportFilter] = useState('all');
-  const [showMarketBoard, setShowMarketBoard] = useState(true);
 
   // CS2 manual mode fields
   const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
@@ -271,25 +267,16 @@ export default function ScanScreen() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!showMarketBoard || phase !== 'idle' || mode !== 'scan') return;
-    let active = true;
-    setMarketBoardLoading(true);
-    setMarketBoardError(null);
-    getMarketBoard({ hours: 72, limit: 100 })
-      .then((data) => {
-        if (!active) return;
-        setMarketBoard(data?.markets || []);
-      })
-      .catch((error) => {
-        if (!active) return;
-        setMarketBoardError(error instanceof Error ? error.message : 'Market board unavailable');
-      })
-      .finally(() => {
-        if (active) setMarketBoardLoading(false);
-      });
-    return () => { active = false; };
-  }, [showMarketBoard, phase, mode]);
+  // Pick up markets selected from the Board tab
+  useFocusEffect(
+    React.useCallback(() => {
+      const pending = getBoardPendingMarket();
+      if (pending) {
+        clearBoardPendingMarket();
+        handleMarketBoardPick(pending);
+      }
+    }, [])
+  );
 
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
@@ -393,8 +380,6 @@ export default function ScanScreen() {
     setShowPropEditScan(false);
     setShowLineEdit(false);
     setShowLeagueEditScan(false);
-    setMarketBoardFilter('all');
-    setShowMarketBoard(true);
     setResolvedScanPlayer(null);
     setCs2PlayerQuery('');
     setCs2ResolvedPlayer(null);
@@ -456,7 +441,6 @@ export default function ScanScreen() {
     setPredictionRequest(null);
     setScanResult(null);
     setLine(lineValue != null ? String(lineValue) : '');
-    setMarketBoardError(null);
     Haptics.selectionAsync();
 
     const home = market.homeTeam || '';
@@ -1514,144 +1498,6 @@ export default function ScanScreen() {
               </>
             )}
 
-        {/* ─── AVAILABLE PROPS — discovery layer ─── */}
-        {mode === 'scan' && phase === 'idle' && (
-          <View style={styles.marketBoard}>
-            <View style={styles.marketBoardHeader}>
-              <View>
-                <Text style={styles.marketBoardEyebrow}>AVAILABLE PROPS</Text>
-                <Text style={styles.marketBoardTitle}>Browse today’s markets</Text>
-                <Text style={styles.marketBoardSub}>Tap any line to run the full Reverse Picks analysis.</Text>
-              </View>
-              <TouchableOpacity
-                accessibilityLabel={showMarketBoard ? 'Hide available props' : 'Show available props'}
-                onPress={() => setShowMarketBoard((visible) => !visible)}
-                style={styles.marketBoardToggle}
-              >
-                <Ionicons name={showMarketBoard ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.primary} />
-              </TouchableOpacity>
-            </View>
-
-            {showMarketBoard && (
-              <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.marketFilterScroll}>
-                  {([
-                    ['all', 'All Sports'],
-                    ['soccer', 'Soccer'],
-                    ['nba', 'Basketball'],
-                    ['mlb', 'Baseball'],
-                    ['nfl', 'Football'],
-                    ['nhl', 'Hockey'],
-                    ['wta', 'Tennis'],
-                    ['handball', 'Handball'],
-                    ['golf', 'Golf'],
-                    ['mma', 'MMA'],
-                    ['horse_racing', 'Horse Racing'],
-                    ['other', 'Other'],
-                  ] as const).map(([value, label]) => (
-                    <TouchableOpacity
-                      key={value}
-                      onPress={() => setMarketBoardSportFilter(value)}
-                      style={[styles.marketFilter, marketBoardSportFilter === value && styles.marketFilterActive]}
-                    >
-                      <Text style={[styles.marketFilterText, marketBoardSportFilter === value && styles.marketFilterTextActive]}>
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <View style={styles.marketFilterRow}>
-                  <TouchableOpacity
-                    onPress={() => setMarketBoardFilter('all')}
-                    style={[styles.marketFilter, marketBoardFilter === 'all' && styles.marketFilterActive]}
-                  >
-                    <Text style={[styles.marketFilterText, marketBoardFilter === 'all' && styles.marketFilterTextActive]}>All Props</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setMarketBoardLoading(true);
-                      setMarketBoardError(null);
-                      getMarketBoard({ hours: 72, limit: 100 })
-                        .then((data) => setMarketBoard(data?.markets || []))
-                        .catch((error) => setMarketBoardError(error instanceof Error ? error.message : 'Market board unavailable'))
-                        .finally(() => setMarketBoardLoading(false));
-                    }}
-                    style={styles.marketRefresh}
-                    accessibilityLabel="Refresh available props"
-                  >
-                    <Ionicons name="refresh-outline" size={15} color={Colors.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-
-                {marketBoardLoading && (
-                  <View style={styles.marketBoardMessage}>
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                    <Text style={styles.marketBoardMessageText}>Checking PrizePicks and Underdog markets…</Text>
-                  </View>
-                )}
-
-                {!marketBoardLoading && marketBoardError && (
-                  <View style={styles.marketBoardMessage}>
-                    <Ionicons name="cloud-offline-outline" size={18} color={Colors.warning} />
-                    <Text style={styles.marketBoardMessageText}>{marketBoardError}</Text>
-                  </View>
-                )}
-
-                {!marketBoardLoading && !marketBoardError && (() => {
-                  const visibleMarkets = marketBoard.filter((market) =>
-                    (marketBoardSportFilter === 'all' || market.sport === marketBoardSportFilter)
-                    && (marketBoardFilter === 'all' || market.propType === marketBoardFilter)
-                  );
-                  if (!visibleMarkets.length) {
-                    return (
-                      <View style={styles.marketBoardEmpty}>
-                        <Ionicons name="calendar-outline" size={22} color={Colors.textTertiary} />
-                        <Text style={styles.marketBoardEmptyTitle}>
-                          {marketBoard.length ? 'No markets in this filter' : 'No live markets right now'}
-                        </Text>
-                        <Text style={styles.marketBoardEmptyText}>
-                          {marketBoard.length
-                            ? 'Try All Sports to see every available provider market.'
-                            : 'The board only shows currently available player lines. You can still search any player below.'}
-                        </Text>
-                      </View>
-                    );
-                  }
-                  return visibleMarkets.map((market, index) => (
-                    <TouchableOpacity
-                      key={`${market.eventId || 'event'}-${market.playerProviderId || market.playerName}-${market.propType}-${index}`}
-                      onPress={() => handleMarketBoardPick(market)}
-                      style={styles.marketCard}
-                      activeOpacity={0.82}
-                    >
-                      <View style={styles.marketCardTop}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.marketPlayer}>{market.playerName || 'Player'}</Text>
-                          <Text style={styles.marketMatch} numberOfLines={1}>
-                            {market.homeTeam} vs {market.awayTeam}
-                          </Text>
-                        </View>
-                        <View style={styles.marketLineBadge}>
-                          <Text style={styles.marketLine}>{market.marketLine ?? market.marketSelection ?? '—'}</Text>
-                          <Text style={styles.marketLineLabel}>{market.propLabel || PROP_LABELS[market.propType || ''] || market.propType}</Text>
-                        </View>
-                      </View>
-                      <View style={styles.marketCardBottom}>
-                        <Text style={styles.marketMeta}>
-                          {market.sportName || 'Provider market'} · {market.leagueName || 'Live'}
-                          {market.eventStart ? ` · ${new Date(market.eventStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
-                        </Text>
-                        <Text style={[styles.marketAnalyze, !market.analysisSupported && { color: Colors.textTertiary }]}>
-                          {market.analysisSupported ? 'ANALYZE' : 'MARKET ONLY'} <Ionicons name="arrow-forward" size={11} color={market.analysisSupported ? Colors.primary : Colors.textTertiary} />
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ));
-                })()}
-              </>
-            )}
-          </View>
-        )}
 
         {/* ─── MANUAL FORM — Soccer ─── */}
         {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
