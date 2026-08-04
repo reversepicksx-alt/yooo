@@ -136,7 +136,8 @@ async def _check_apple_access(email_lower: str) -> str | None:
                     pass
     return None
 
-REVENUECAT_PROJECT_ID = os.environ.get("REVENUECAT_PROJECT_ID", "3a3fd517")
+REVENUECAT_PROJECT_ID = os.environ.get("REVENUECAT_PROJECT_ID", "proj3a3fd517")
+REVENUECAT_PRO_ENTITLEMENT = os.environ.get("REVENUECAT_PRO_ENTITLEMENT", "pro")
 
 # Sentinel returned by _check_revenuecat_live when the call failed due to a
 # network / server error (as opposed to "customer has no active entitlement").
@@ -176,6 +177,10 @@ async def _check_revenuecat_live(email_lower: str) -> str | None:
             resp.raise_for_status()
             data = resp.json()
         active_items = ((data.get("active_entitlements") or {}).get("items")) or []
+        active_items = [
+            item for item in active_items
+            if item.get("entitlement_id") == REVENUECAT_PRO_ENTITLEMENT
+        ]
         if not active_items:
             return None
         # Pick the entitlement with the furthest-out (or no) expiration.
@@ -217,6 +222,156 @@ async def _check_revenuecat_live(email_lower: str) -> str | None:
     except Exception as e:
         print(f"[REVENUECAT LIVE FALLBACK] Network/timeout error for {email_lower}: {e}")
         return _RC_NETWORK_ERROR
+
+
+def _rc_customer_id_is_allowed_for_email(
+    customer_id: str,
+    email_lower: str,
+    *,
+    allow_anonymous: bool = False,
+) -> bool:
+    """Prevent one signed-in account from claiming another named RC customer.
+
+    Guest purchases are represented by RevenueCat's anonymous IDs. Once the
+    account exists, the app uses the normalized email as its RC app user ID.
+    The server never accepts an arbitrary named customer ID supplied by a
+    modified client.
+    """
+    customer_id = customer_id.strip()
+    return customer_id == email_lower or (
+        allow_anonymous and customer_id.startswith("$RCAnonymousID:")
+    )
+
+
+async def _verify_revenuecat_purchase(
+    customer_id: str,
+    email_lower: str,
+    *,
+    allow_anonymous: bool = False,
+) -> dict | None:
+    """Verify an Apple entitlement directly with RevenueCat V2.
+
+    The request body is intentionally not allowed to provide a product or
+    expiry. Those values are derived here from RevenueCat's server response.
+    The returned record is also written to an identity-only history collection
+    so account deletion cannot reset Apple trial history.
+    """
+    customer_id = (customer_id or "").strip()
+    if not customer_id or not email_lower or not _rc_customer_id_is_allowed_for_email(
+        customer_id, email_lower, allow_anonymous=allow_anonymous
+    ):
+        raise HTTPException(status_code=403, detail="RevenueCat customer identity does not match this account.")
+
+    key = os.environ.get("REVENUECAT_SECRET_API_KEY", "")
+    if not key:
+        print("[REVENUECAT VERIFY] secret API key is not configured")
+        raise HTTPException(status_code=503, detail="Subscription verification is temporarily unavailable.")
+
+    base = f"https://api.revenuecat.com/v2/projects/{REVENUECAT_PROJECT_ID}"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            customer_resp = await client.get(
+                f"{base}/customers/{customer_id}",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if customer_resp.status_code == 404:
+                raise HTTPException(status_code=402, detail="No active Apple subscription was found.")
+            if customer_resp.status_code >= 500:
+                raise RuntimeError(f"RevenueCat customer verification returned {customer_resp.status_code}")
+            customer_resp.raise_for_status()
+            customer = customer_resp.json()
+
+            subs_resp = await client.get(
+                f"{base}/customers/{customer_id}/subscriptions",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if subs_resp.status_code == 404:
+                subscriptions = []
+            elif subs_resp.status_code >= 500:
+                raise RuntimeError(f"RevenueCat subscription verification returned {subs_resp.status_code}")
+            else:
+                subs_resp.raise_for_status()
+                subscriptions = (subs_resp.json().get("items") or [])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[REVENUECAT VERIFY] network/API error for {customer_id[:32]}: {exc}")
+        raise HTTPException(status_code=503, detail="Subscription verification is temporarily unavailable.")
+
+    active_entitlements = (customer.get("active_entitlements") or {}).get("items") or []
+    if not any(
+        item.get("entitlement_id") == REVENUECAT_PRO_ENTITLEMENT
+        for item in active_entitlements
+    ):
+        raise HTTPException(status_code=402, detail="No active Pro subscription was found.")
+    if not active_entitlements:
+        raise HTTPException(status_code=402, detail="No active Apple subscription was found.")
+
+    # Only an Apple subscription that RevenueCat says currently gives access
+    # may activate the account. Do not trust the mobile entitlement object.
+    apple_subs = [
+        sub for sub in subscriptions
+        if sub.get("store") == "app_store" and sub.get("gives_access") is True
+    ]
+    if not apple_subs:
+        raise HTTPException(status_code=402, detail="No active Apple subscription was found.")
+
+    best_sub = max(
+        apple_subs,
+        key=lambda sub: sub.get("current_period_ends_at") or sub.get("ends_at") or 0,
+    )
+    entitlement_expiries = [
+        item.get("expires_at") for item in active_entitlements
+        if item.get("expires_at") is not None
+    ]
+    expiry_ms = max(
+        [value for value in entitlement_expiries if isinstance(value, (int, float))]
+        + [value for value in [
+            best_sub.get("current_period_ends_at"),
+            best_sub.get("ends_at"),
+        ] if isinstance(value, (int, float))]
+        or [None]
+    )
+    expires_iso = None
+    if expiry_ms is not None:
+        expires_iso = datetime.fromtimestamp(expiry_ms / 1000, tz=timezone.utc).isoformat()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    trialing = best_sub.get("status") == "trialing"
+    identity_doc = {
+        "revenueCatCustomerId": customer_id,
+        "originalRevenueCatCustomerId": best_sub.get("original_customer_id") or customer_id,
+        "originalTransactionId": best_sub.get("store_subscription_identifier"),
+        "latestTransactionId": best_sub.get("store_subscription_identifier"),
+        "environment": best_sub.get("environment", "production"),
+        "store": best_sub.get("store"),
+        "trialUsed": trialing,
+        "lastVerifiedAt": now_iso,
+    }
+    # This collection intentionally contains no email. It survives account
+    # deletion and prevents local account state from becoming a trial reset.
+    await db.apple_iap_customer_history.update_one(
+        {"revenueCatCustomerId": customer_id},
+        {
+            "$set": identity_doc,
+            "$setOnInsert": {"firstSeenAt": now_iso},
+            "$addToSet": {"transactionIds": best_sub.get("store_subscription_identifier")},
+        },
+        upsert=True,
+    )
+
+    return {
+        "customer_id": customer_id,
+        "original_customer_id": identity_doc["originalRevenueCatCustomerId"],
+        "product_id": best_sub.get("product_id"),
+        "store_transaction_id": best_sub.get("store_subscription_identifier"),
+        "status": "trialing" if trialing else "active",
+        "expires_at": expires_iso,
+        "expires_at_ms": expiry_ms,
+        "environment": best_sub.get("environment", "production"),
+        "trialing": trialing,
+        "verified_at": now_iso,
+    }
 
 _ANIMALS = [
     "lion", "tiger", "wolf", "bear", "hawk", "eagle", "fox", "shark", "cobra",
@@ -593,8 +748,7 @@ class OwnerLoginRequest(BaseModel):
 class IAPGrantRequest(BaseModel):
     email: str
     session_token: str
-    product_id: str
-    expires_at_ms: int | None = None
+    revenuecat_customer_id: str
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -913,7 +1067,7 @@ async def apple_auth(req: AppleAuthRequest):
 
 @router.post("/iap-grant")
 async def iap_grant(req: IAPGrantRequest):
-    """Fast-path: immediately grant Apple IAP access after purchase (before webhook arrives)."""
+    """Fast-path after purchase, backed by a server-side RevenueCat check."""
     email_lower = req.email.lower().strip()
     session = await db.sessions.find_one(
         {"email": email_lower, "session_token": req.session_token}, {"_id": 0}
@@ -921,21 +1075,22 @@ async def iap_grant(req: IAPGrantRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    expires_iso: str | None = None
-    if req.expires_at_ms:
-        try:
-            expires_iso = datetime.fromtimestamp(req.expires_at_ms / 1000, tz=timezone.utc).isoformat()
-        except Exception:
-            pass
+    verified = await _verify_revenuecat_purchase(req.revenuecat_customer_id, email_lower)
+    now_iso = verified["verified_at"]
 
     await db.apple_iap_subscriptions.update_one(
         {"email": email_lower},
         {"$set": {
             "email":     email_lower,
             "status":    "active",
-            "productId": req.product_id,
-            "expiresAt": expires_iso,
+            "productId": verified.get("product_id"),
+            "expiresAt": verified.get("expires_at"),
+            "revenueCatCustomerId": verified["customer_id"],
+            "originalRevenueCatCustomerId": verified["original_customer_id"],
+            "storeTransactionId": verified.get("store_transaction_id"),
+            "environment": verified.get("environment"),
+            "trialing": verified.get("trialing", False),
+            "lastVerifiedAt": now_iso,
             "updatedAt": now_iso,
         }},
         upsert=True,
@@ -944,7 +1099,7 @@ async def iap_grant(req: IAPGrantRequest):
         {"email": email_lower},
         {"$set": {"access_type": "Premium (Apple)", "last_active": now_iso}},
     )
-    print(f"[IAP GRANT] {email_lower} → Premium (Apple) | product={req.product_id} | expires={expires_iso}")
+    print(f"[IAP GRANT] {email_lower} → Premium (Apple) | customer={verified['customer_id'][:32]} | expires={verified.get('expires_at')}")
     return {"ok": True, "access_type": "Premium (Apple)"}
 
 
@@ -955,8 +1110,7 @@ class DeleteAccountRequest(BaseModel):
 
 class IAPSignupRequest(BaseModel):
     email: str
-    product_id: str
-    expires_at_ms: int | None = None
+    revenuecat_customer_id: str
 
 
 @router.post("/delete-account")
@@ -983,7 +1137,9 @@ async def delete_account(req: DeleteAccountRequest):
     except Exception:
         pass
 
-    # Wipe all user data
+    # Wipe all user data. RevenueCat identity/trial history is deliberately
+    # kept in the identity-only collection, without email, so deletion cannot
+    # be used to reset Apple's one-introductory-offer-per-group rule.
     await db.sessions.delete_many({"email": email_lower})
     await db.apple_iap_subscriptions.delete_many({"email": email_lower})
     await db.stripe_subscriptions.delete_many({"email": email_lower})
@@ -1002,6 +1158,12 @@ async def iap_signup(req: IAPSignupRequest):
     if not email_lower or "@" not in email_lower:
         raise HTTPException(status_code=400, detail="A valid email address is required.")
 
+    verified = await _verify_revenuecat_purchase(
+        req.revenuecat_customer_id,
+        email_lower,
+        allow_anonymous=True,
+    )
+
     # Honour owner / lifetime overrides
     if email_lower in OWNER_EMAILS:
         access_type = "Owner"
@@ -1010,28 +1172,28 @@ async def iap_signup(req: IAPSignupRequest):
     else:
         access_type = "Premium (Apple)"
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    expires_iso: str | None = None
-    if req.expires_at_ms:
-        try:
-            expires_iso = datetime.fromtimestamp(req.expires_at_ms / 1000, tz=timezone.utc).isoformat()
-        except Exception:
-            pass
+    now_iso = verified["verified_at"]
 
     await db.apple_iap_subscriptions.update_one(
         {"email": email_lower},
         {"$set": {
             "email":     email_lower,
             "status":    "active",
-            "productId": req.product_id,
-            "expiresAt": expires_iso,
+            "productId": verified.get("product_id"),
+            "expiresAt": verified.get("expires_at"),
+            "revenueCatCustomerId": verified["customer_id"],
+            "originalRevenueCatCustomerId": verified["original_customer_id"],
+            "storeTransactionId": verified.get("store_transaction_id"),
+            "environment": verified.get("environment"),
+            "trialing": verified.get("trialing", False),
+            "lastVerifiedAt": now_iso,
             "updatedAt": now_iso,
         }},
         upsert=True,
     )
 
     token = await create_session(email_lower, access_type)
-    print(f"[IAP SIGNUP] {email_lower} | product={req.product_id} | expires={expires_iso}")
+    print(f"[IAP SIGNUP] {email_lower} | customer={verified['customer_id'][:32]} | expires={verified.get('expires_at')}")
     return {
         "verified": True,
         "email": email_lower,

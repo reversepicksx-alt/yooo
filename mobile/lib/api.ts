@@ -143,12 +143,11 @@ export async function deleteAccount(email: string, sessionToken: string): Promis
 
 export async function iapSignup(
   email: string,
-  productId: string,
-  expiresAtMs?: number,
+  revenueCatCustomerId: string,
 ): Promise<AuthResponse & { has_access?: boolean; message?: string }> {
   return apiCall('/api/auth/iap-signup', {
     method: 'POST',
-    body: JSON.stringify({ email, product_id: productId, expires_at_ms: expiresAtMs ?? null }),
+    body: JSON.stringify({ email, revenuecat_customer_id: revenueCatCustomerId }),
   });
 }
 

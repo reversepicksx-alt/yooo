@@ -75,6 +75,7 @@ export default function PaywallScreen() {
   const {
     packages, isLoading, purchase, restore,
     isPurchasing, isRestoring, refetchOfferings,
+    hasThreeDayFreeTrial,
   } = useSubscription();
 
   const [selectedPkg, setSelectedPkg] = useState<PurchasesPackage | null>(null);
@@ -82,27 +83,25 @@ export default function PaywallScreen() {
 
   // Guest-mode: purchase completed but no account yet — collect email to create one
   const [showEmailCapture, setShowEmailCapture] = useState(false);
-  const [pendingProductId, setPendingProductId] = useState<string>('');
-  const [pendingExpiresAtMs, setPendingExpiresAtMs] = useState<number | undefined>(undefined);
+  const [pendingRevenueCatCustomerId, setPendingRevenueCatCustomerId] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
   const [guestEmailError, setGuestEmailError] = useState('');
   const [guestEmailLoading, setGuestEmailLoading] = useState(false);
 
-  const syncBackendAndEnter = useCallback(async (productId: string, expiresAtMs?: number) => {
+  const syncBackendAndEnter = useCallback(async (revenueCatCustomerId: string) => {
     if (!session?.email || !session?.token) return;
-    try {
-      await fetch('/api/auth/iap-grant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: session.email,
-          session_token: session.token,
-          product_id: productId,
-          expires_at_ms: expiresAtMs ?? null,
-        }),
-      });
-    } catch {
-      // webhook will sync eventually
+    const response = await fetch('/api/auth/iap-grant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: session.email,
+        session_token: session.token,
+        revenuecat_customer_id: revenueCatCustomerId,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.detail || 'Apple subscription verification failed. Please try again.');
     }
     // Update local session so future gate checks pass
     await loginWithResponse({
@@ -130,8 +129,8 @@ export default function PaywallScreen() {
       if (!ent) return;
       enteredFromEntitlementRef.current = true;
       if (session?.email && session?.token && session.accessType === 'NoSubscription') {
-        const expMs = ent.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
-        await syncBackendAndEnter(ent.productIdentifier, expMs);
+        const customerId = await Purchases.getAppUserID();
+        await syncBackendAndEnter(customerId);
       }
       router.replace('/(tabs)/scan');
     }).catch(() => {});
@@ -145,18 +144,17 @@ export default function PaywallScreen() {
       const customerInfo = await purchase(pkg);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const ent = customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
-      const expMs = ent?.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
-      const productId = pkg.product?.identifier ?? pkg.identifier;
+       if (!ent) throw new Error('Apple completed the purchase, but the Pro entitlement is not active yet. Please tap Restore Purchases.');
+       const customerId = await Purchases.getAppUserID();
 
       if (!session?.email) {
         // New user — collect email to create account
-        setPendingProductId(productId);
-        setPendingExpiresAtMs(expMs);
+         setPendingRevenueCatCustomerId(customerId);
         setShowEmailCapture(true);
         return;
       }
 
-      await syncBackendAndEnter(productId, expMs);
+       await syncBackendAndEnter(customerId);
       router.replace('/(tabs)/scan');
     } catch (e: any) {
       if (e?.userCancelled) return;
@@ -175,10 +173,13 @@ export default function PaywallScreen() {
     setGuestEmailLoading(true);
     setGuestEmailError('');
     try {
-      const result = await iapSignup(trimmed, pendingProductId, pendingExpiresAtMs);
+      // Link the anonymous StoreKit purchase to the account identity before
+      // asking the server to verify it. The server will then only accept the
+      // named customer ID equal to this email.
+      await Purchases.logIn(trimmed);
+      const customerId = await Purchases.getAppUserID();
+      const result = await iapSignup(trimmed, customerId);
       if (result.session_token && result.email) {
-        // Log in to RevenueCat with the new email to link the purchase
-        try { await Purchases.logIn(trimmed); } catch {}
         await loginWithResponse({
           email: result.email,
           session_token: result.session_token,
@@ -204,15 +205,14 @@ export default function PaywallScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const ent = customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
       if (ent) {
-        const expMs = ent.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
+        const customerId = await Purchases.getAppUserID();
         if (!session?.email) {
           // New device / not logged in yet — collect email to link the restored purchase
-          setPendingProductId(ent.productIdentifier);
-          setPendingExpiresAtMs(expMs);
+          setPendingRevenueCatCustomerId(customerId);
           setShowEmailCapture(true);
           return;
         }
-        await syncBackendAndEnter(ent.productIdentifier, expMs);
+        await syncBackendAndEnter(customerId);
         router.replace('/(tabs)/scan');
       } else {
         Alert.alert('No Purchases Found', 'There are no active subscriptions to restore.');
@@ -379,6 +379,9 @@ export default function PaywallScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.planTitle}>{title}</Text>
                     {period ? <Text style={styles.planPeriod}>{period}</Text> : null}
+                    {hasThreeDayFreeTrial(pkg) ? (
+                      <Text style={styles.trialLabel}>3-day free trial</Text>
+                    ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={styles.planPrice}>{price}</Text>
@@ -453,7 +456,9 @@ export default function PaywallScreen() {
 
         {/* Apple disclosure */}
         <Text style={styles.disclosure}>
-          Subscription automatically renews at the same price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.
+          {selectedPkg && hasThreeDayFreeTrial(selectedPkg)
+            ? `3-day free trial, then ${selectedPkg.product?.priceString ?? 'the displayed weekly price'} per week. Your Apple ID is charged after the trial unless cancelled at least 24 hours before it ends. Subscriptions automatically renew weekly. Manage or cancel anytime in Apple Settings.`
+            : 'Subscription automatically renews at the displayed price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.'}
         </Text>
       </ScrollView>
     </View>
@@ -508,6 +513,7 @@ const styles = StyleSheet.create({
   planTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
   planDesc: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
   planPeriod: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
+  trialLabel: { color: Colors.primary, fontSize: 11, fontWeight: '800', marginTop: 4 },
   planPrice: { color: Colors.text, fontSize: 16, fontWeight: '800' },
   checkDot: {
     width: 20, height: 20, borderRadius: 10,

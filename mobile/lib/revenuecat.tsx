@@ -77,6 +77,27 @@ function useSubscriptionContext() {
     refetchOnMount: true,
   });
 
+  const packages = offeringsQuery.data?.current?.availablePackages ?? [];
+
+  const introEligibilityQuery = useQuery({
+    queryKey: ["revenuecat", "intro-eligibility", packages.map(pkg => pkg.product?.identifier).sort().join(",")],
+    enabled: Platform.OS === "ios" && packages.length > 0,
+    queryFn: async () => {
+      const productIds = packages
+        .map(pkg => pkg.product?.identifier)
+        .filter((id): id is string => Boolean(id));
+      if (Platform.OS !== "ios" || productIds.length === 0) return {};
+      try {
+        return await Purchases.checkTrialOrIntroductoryPriceEligibility(productIds);
+      } catch (e: any) {
+        console.warn("[RevenueCat] introductory offer eligibility unavailable:", e?.message ?? e);
+        return {};
+      }
+    },
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
   const purchaseMutation = useMutation({
     mutationFn: async (pkg: PurchasesPackage) => {
       const { customerInfo } = await Purchases.purchasePackage(pkg);
@@ -103,12 +124,26 @@ function useSubscriptionContext() {
     Platform.OS !== "web" &&
     customerInfo?.entitlements.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER] !== undefined;
 
-  const packages = offeringsQuery.data?.current?.availablePackages ?? [];
+  const introEligibility = introEligibilityQuery.data ?? {};
+  const isIntroEligible = (productId: string) => {
+    // INTRO_ELIGIBILITY_STATUS_ELIGIBLE is 2 in RevenueCat's public SDK.
+    return Platform.OS === "ios" && introEligibility[productId]?.status === 2;
+  };
+  const hasThreeDayFreeTrial = (pkg: PurchasesPackage) => {
+    const intro = pkg.product?.introPrice;
+    if (!intro || intro.price !== 0 || !isIntroEligible(pkg.product.identifier)) return false;
+    return (
+      intro.period === "P3D" ||
+      (intro.periodUnit === "DAY" && intro.periodNumberOfUnits === 3)
+    );
+  };
 
   return {
     customerInfo,
     offerings: offeringsQuery.data,
     packages,
+    isIntroEligible,
+    hasThreeDayFreeTrial,
     isSubscribed,
     isLoading: customerInfoQuery.isLoading || offeringsQuery.isLoading,
     pkgLoading: offeringsQuery.isLoading || offeringsQuery.isFetching,

@@ -315,20 +315,22 @@ export default function AuthScreen() {
             const rcInfo = await Purchases.getCustomerInfo();
             const hasEnt = rcInfo?.entitlements?.active?.['pro'] !== undefined;
             if (hasEnt) {
-              const exp    = rcInfo.entitlements.active['pro'].expirationDate;
-              const expMs  = exp ? new Date(exp).getTime() : undefined;
-              await fetch('/api/auth/iap-grant', {
+              const revenueCatCustomerId = await Purchases.getAppUserID();
+              const grantResponse = await fetch('/api/auth/iap-grant', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  email:          result.email,
-                  session_token:  result.session_token,
-                  product_id:     rcInfo.entitlements.active['pro'].productIdentifier || 'unknown',
-                  expires_at_ms:  expMs ?? null,
+                  email: result.email,
+                  session_token: result.session_token,
+                  revenuecat_customer_id: revenueCatCustomerId,
                 }),
               });
-              result.access_type = 'Premium (Apple)';
-              result.has_access  = true;
+              if (grantResponse.ok) {
+                result.access_type = 'Premium (Apple)';
+                result.has_access = true;
+              } else {
+                console.warn('[IAP] Server rejected RevenueCat entitlement grant');
+              }
             }
           } catch (rcErr) {
             console.warn('[IAP] RC fast-path grant failed:', rcErr);

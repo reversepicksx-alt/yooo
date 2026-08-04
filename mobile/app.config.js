@@ -12,7 +12,7 @@ export default {
     ios: {
       supportsTablet: false,
       bundleIdentifier: "com.reversepicks.app",
-      buildNumber: "117",
+      buildNumber: "118",
       icon: "./assets/rp-icon.png",
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,

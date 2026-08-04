@@ -40,6 +40,11 @@ async def revenuecat_webhook(request: Request):
     expiration_ms   = event.get("expiration_at_ms")
     purchased_ms    = event.get("purchased_at_ms")
     environment     = event.get("environment", "PRODUCTION")
+    original_app_user_id = (event.get("original_app_user_id") or app_user_id).strip()
+    transaction_id = event.get("transaction_id")
+    original_transaction_id = event.get("original_transaction_id") or transaction_id
+    period_type = event.get("period_type")
+    is_trial_period = bool(event.get("is_trial_period")) or period_type in {"TRIAL", "INTRO"}
 
     if not app_user_id:
         return {"ok": True, "note": "no app_user_id — skipped"}
@@ -61,7 +66,29 @@ async def revenuecat_webhook(request: Request):
                 "purchasedAt": bought_iso,
                 "updatedAt":   now_iso,
                 "environment": environment,
+                "revenueCatCustomerId": event.get("app_user_id"),
+                "originalRevenueCatCustomerId": original_app_user_id,
+                "storeTransactionId": transaction_id,
+                "originalTransactionId": original_transaction_id,
+                "periodType": period_type,
+                "trialing": is_trial_period,
             }},
+            upsert=True,
+        )
+        await db.apple_iap_customer_history.update_one(
+            {"revenueCatCustomerId": event.get("app_user_id")},
+            {
+                "$set": {
+                    "originalRevenueCatCustomerId": original_app_user_id,
+                    "originalTransactionId": original_transaction_id,
+                    "latestTransactionId": transaction_id,
+                    "environment": environment.lower(),
+                    "trialUsed": is_trial_period,
+                    "lastWebhookAt": now_iso,
+                },
+                "$setOnInsert": {"firstSeenAt": now_iso},
+                "$addToSet": {"transactionIds": transaction_id},
+            },
             upsert=True,
         )
 

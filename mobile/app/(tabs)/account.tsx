@@ -18,7 +18,7 @@ import {
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
 } from '@/lib/api';
 import { useSubscription } from '@/lib/revenuecat';
-import type { PurchasesPackage } from 'react-native-purchases';
+import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
 // ── Skeleton loader ────────────────────────────────────────────────────────────
 function SkeletonLine({ w, h = 14, mt = 0 }: { w: string | number; h?: number; mt?: number }) {
@@ -168,21 +168,22 @@ function formatExpiryDate(ms?: number): string {
 // ── Apple IAP Paywall (iOS native only) ────────────────────────────────────
 
 function IAPPaywall() {
-  const { packages, isLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
+  const { packages, isLoading, purchase, restore, isPurchasing, isRestoring, hasThreeDayFreeTrial } = useSubscription();
   const { email, session } = useAuth();
   const [buyingId, setBuyingId] = useState<string | null>(null);
   const [confirmPkg, setConfirmPkg] = useState<PurchasesPackage | null>(null);
 
-  const grantBackend = async (productId: string, expiresAtMs?: number) => {
+  const grantBackend = async () => {
     if (!email || !session?.token) return;
-    try {
-      await fetch('/api/auth/iap-grant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, session_token: session.token, product_id: productId, expires_at_ms: expiresAtMs ?? null }),
-      });
-    } catch (e) {
-      console.warn('[IAP] backend grant failed (webhook will sync shortly):', e);
+    const customerId = await Purchases.getAppUserID();
+    const response = await fetch('/api/auth/iap-grant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, session_token: session.token, revenuecat_customer_id: customerId }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.detail || 'Apple subscription verification failed. Please try again.');
     }
   };
 
@@ -192,11 +193,10 @@ function IAPPaywall() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const customerInfo = await purchase(pkg);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const entitlement = customerInfo?.entitlements?.active?.['pro'];
-      const expiresMs = entitlement?.expirationDate
-        ? new Date(entitlement.expirationDate).getTime()
-        : undefined;
-      await grantBackend(pkg.product?.identifier ?? pkg.identifier, expiresMs);
+      if (!customerInfo?.entitlements?.active?.['pro']) {
+        throw new Error('Apple completed the purchase, but the Pro entitlement is not active yet. Please tap Restore Purchases.');
+      }
+      await grantBackend();
       Alert.alert('Subscribed!', 'Welcome to Reverse Picks Pro. Your subscription is now active.');
     } catch (e: any) {
       if (e?.userCancelled) return;
@@ -212,13 +212,7 @@ function IAPPaywall() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const customerInfo = await restore();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const entitlement = customerInfo?.entitlements?.active?.['pro'];
-      if (entitlement) {
-        const expiresMs = entitlement.expirationDate
-          ? new Date(entitlement.expirationDate).getTime()
-          : undefined;
-        await grantBackend(entitlement.productIdentifier, expiresMs);
-      }
+      if (customerInfo?.entitlements?.active?.['pro']) await grantBackend();
       Alert.alert('Restored', 'Your purchases have been restored.');
     } catch (e: any) {
       Alert.alert('Restore Failed', getErrorMessage(e));
@@ -295,6 +289,7 @@ function IAPPaywall() {
                 <View style={styles.planInfo}>
                   <Text style={styles.planName}>{title}</Text>
                   {desc ? <Text style={styles.planDesc}>{desc}</Text> : null}
+                    {hasThreeDayFreeTrial(pkg) && <Text style={styles.trialLabel}>3-day free trial</Text>}
                 </View>
                 <View style={styles.planRight}>
                   <Text style={styles.planPrice}>{priceStr}</Text>
@@ -324,7 +319,9 @@ function IAPPaywall() {
       </TouchableOpacity>
 
       <Text style={styles.paywallDisclosure}>
-        Subscriptions automatically renew unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel at any time in{' '}
+        {packages.some(pkg => hasThreeDayFreeTrial(pkg))
+          ? 'Eligible new subscribers get a 3-day free trial on the weekly plan, then the displayed weekly price. Your Apple ID is charged after the trial unless cancelled at least 24 hours before it ends. Subscriptions automatically renew. Manage or cancel at any time in '
+          : 'Subscriptions automatically renew unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel at any time in '}
         <Text style={{ color: Colors.primary }} onPress={() => Linking.openURL('https://apps.apple.com/account/subscriptions')}>
           Apple Settings
         </Text>
@@ -1224,6 +1221,7 @@ const styles = StyleSheet.create({
   planOptionCurrent: { backgroundColor: Colors.primaryDim },
   planInfo: { flex: 1 },
   planDesc: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  trialLabel: { fontSize: 11, color: Colors.primary, fontWeight: '800', marginTop: 4 },
   planName: { fontSize: 16, fontWeight: '700', color: Colors.text },
   planNameCurrent: { color: Colors.primary },
   planRight: { alignItems: 'flex-end', gap: 2 },
