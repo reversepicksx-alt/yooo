@@ -409,103 +409,137 @@ export default function OwnerPickCard({
     await shareImageFile(tweetText);
   };
 
+  const shareSheet = Platform.OS === 'web' ? (
+    <Modal visible={shareSheetVisible} transparent animationType="slide" onRequestClose={() => setShareSheetVisible(false)}>
+      <TouchableOpacity style={styles.ssOverlay} activeOpacity={1} onPress={() => setShareSheetVisible(false)}>
+        <View style={styles.ssSheet}>
+          <Text style={styles.ssTitle}>Share Pick</Text>
+          <TouchableOpacity style={styles.ssOption} onPress={handleSaveImage} activeOpacity={0.75}>
+            <Ionicons name="download-outline" size={20} color="#fff" />
+            <Text style={styles.ssOptionText}>Save Image to Device</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.ssOption} onPress={handleShareToX} activeOpacity={0.75}>
+            <Text style={styles.ssXIcon}>𝕏</Text>
+            <Text style={styles.ssOptionText}>Post to X (Twitter)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.ssOption, styles.ssCancel]} onPress={() => setShareSheetVisible(false)} activeOpacity={0.75}>
+            <Text style={styles.ssCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  ) : null;
+
   if (compact) {
     return (
-      <View ref={cardRef} style={styles.compactCard}>
-        <View style={[styles.stripe, styles.compactStripe, { backgroundColor: accentColor }]} />
-        <View style={styles.compactInner}>
-          <View style={styles.compactTopRow}>
-            <View style={styles.identity}>
-              {pick.ownerPlayerPhoto && !photoFailed ? (
-                <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.compactAvatar}
-                  onError={() => setPhotoFailed(true)} />
-              ) : (
-                <View style={[styles.compactAvatar, styles.avatarFallback]}>
-                  <Text style={styles.compactAvatarLetter}>{pick.playerName?.charAt(0) || '?'}</Text>
+      <>
+        <View ref={cardRef} style={styles.compactCard}>
+          <View style={[styles.stripe, styles.compactStripe, { backgroundColor: accentColor }]} />
+          <View style={styles.compactInner}>
+            <View style={styles.compactTopRow}>
+              <View style={styles.identity}>
+                {pick.ownerPlayerPhoto && !photoFailed ? (
+                  <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.compactAvatar}
+                    onError={() => setPhotoFailed(true)} />
+                ) : (
+                  <View style={[styles.compactAvatar, styles.avatarFallback]}>
+                    <Text style={styles.compactAvatarLetter}>{pick.playerName?.charAt(0) || '?'}</Text>
+                  </View>
+                )}
+                <View style={styles.nameBlock}>
+                  <Text style={styles.compactPlayerName} numberOfLines={1}>{pick.playerName}</Text>
+                  <Text style={styles.compactSubText} numberOfLines={1}>
+                    {pick.teamName || 'Team'}
+                    <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
+                  </Text>
                 </View>
-              )}
-              <View style={styles.nameBlock}>
-                <Text style={styles.compactPlayerName} numberOfLines={1}>{pick.playerName}</Text>
-                <Text style={styles.compactSubText} numberOfLines={1}>
-                  {pick.teamName || 'Team'}
-                  <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
-                </Text>
+              </View>
+              <View style={styles.compactRightCluster}>
+                {Platform.OS === 'web' && onDelete && !captureMode && (
+                  // @ts-ignore
+                  <button type="button"
+                    onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+                    onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+                    onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+                    style={{ all: 'unset', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center' }}>
+                    <Ionicons name="trash-outline" size={13} color={Colors.error} />
+                  </button>
+                )}
+                {!captureMode && (
+                  <TouchableOpacity
+                    onPress={handleShare}
+                    style={styles.compactShareBtn}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Share or save pick image"
+                  >
+                    {sharing
+                      ? <ActivityIndicator size="small" color={Colors.primary} />
+                      : <Ionicons name="arrow-up-circle-outline" size={16} color={Colors.primary} />}
+                  </TouchableOpacity>
+                )}
+                {onShareCommunity && !captureMode && (
+                  <TouchableOpacity
+                    onPress={handleShareCommunity}
+                    style={styles.compactShareBtn}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Share pick with community"
+                  >
+                    <Ionicons name="people-outline" size={14} color={Colors.primary} />
+                  </TouchableOpacity>
+                )}
+                <StatusPill
+                  won={won} lost={lost} push={push} dnp={dnp}
+                  live={live} pending={pending} pendingReview={pendingReview}
+                />
+                {pick.managerContext?.isRecent === true && !captureMode && (
+                  <View style={styles.compactManagerDot}>
+                    <Ionicons name="alert-circle-outline" size={12} color="#F59E0B" />
+                  </View>
+                )}
               </View>
             </View>
-            <View style={styles.compactRightCluster}>
-              {Platform.OS === 'web' && onDelete && !captureMode && (
-                // @ts-ignore
-                <button type="button"
-                  onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
-                  onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
-                  onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
-                  style={{ all: 'unset', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center' }}>
-                  <Ionicons name="trash-outline" size={13} color={Colors.error} />
-                </button>
-              )}
-              {!captureMode && (
-                <TouchableOpacity onPress={handleShare} style={styles.compactShareBtn} activeOpacity={0.7}>
-                  {sharing
-                    ? <ActivityIndicator size="small" color={Colors.primary} />
-                    : <Ionicons name="arrow-up-circle-outline" size={16} color={Colors.primary} />}
-                </TouchableOpacity>
-              )}
-              {onShareCommunity && !captureMode && (
-                <TouchableOpacity onPress={handleShareCommunity} style={styles.compactShareBtn} activeOpacity={0.7}>
-                  <Ionicons name="people-outline" size={14} color={Colors.primary} />
-                </TouchableOpacity>
-              )}
-              <StatusPill
-                won={won} lost={lost} push={push} dnp={dnp}
-                live={live} pending={pending} pendingReview={pendingReview}
-              />
-              {pick.managerContext?.isRecent === true && !captureMode && (
-                <View style={styles.compactManagerDot}>
-                  <Ionicons name="alert-circle-outline" size={12} color="#F59E0B" />
-                </View>
-              )}
-            </View>
-          </View>
 
-          <View style={styles.compactBottomRow}>
-            {dir ? (
-              <View style={[styles.compactDir, { borderColor: accentColor + '55', backgroundColor: accentColor + '12' }]}>
-                <Text style={[styles.compactDirText, { color: accentColor }]} numberOfLines={1}>{dirLabel}</Text>
-              </View>
-            ) : <View style={styles.compactDirPlaceholder} />}
-            <View style={styles.compactStatsRow}>
-              {!pending && nowValue != null && (
-                <View style={styles.compactStat}>
-                  <Text style={styles.compactStatLabel}>{settled && hasVerifiedFinal ? 'FINAL' : live ? 'NOW' : 'PEND'}</Text>
-                  <Text style={[styles.compactStatValue, {
-                    color: nowValue != null && lineValue != null
-                      ? ((isOver && nowValue >= lineValue) || (isUnder && nowValue <= lineValue)) ? '#39FF14' : '#FF3B30'
-                      : Colors.text,
-                  }]}>{fmt(nowValue)}</Text>
+            <View style={styles.compactBottomRow}>
+              {dir ? (
+                <View style={[styles.compactDir, { borderColor: accentColor + '55', backgroundColor: accentColor + '12' }]}>
+                  <Text style={[styles.compactDirText, { color: accentColor }]} numberOfLines={1}>{dirLabel}</Text>
                 </View>
-              )}
-              <View style={styles.compactStat}>
-                <Text style={styles.compactStatLabel}>LINE</Text>
-                <Text style={styles.compactStatValue}>{fmt(lineValue)}</Text>
+              ) : <View style={styles.compactDirPlaceholder} />}
+              <View style={styles.compactStatsRow}>
+                {!pending && nowValue != null && (
+                  <View style={styles.compactStat}>
+                    <Text style={styles.compactStatLabel}>{settled && hasVerifiedFinal ? 'FINAL' : live ? 'NOW' : 'PEND'}</Text>
+                    <Text style={[styles.compactStatValue, {
+                      color: nowValue != null && lineValue != null
+                        ? ((isOver && nowValue >= lineValue) || (isUnder && nowValue <= lineValue)) ? '#39FF14' : '#FF3B30'
+                        : Colors.text,
+                    }]}>{fmt(nowValue)}</Text>
+                  </View>
+                )}
+                <View style={styles.compactStat}>
+                  <Text style={styles.compactStatLabel}>LINE</Text>
+                  <Text style={styles.compactStatValue}>{fmt(lineValue)}</Text>
+                </View>
+                <View style={styles.compactStat}>
+                  <Text style={styles.compactStatLabel}>{paceLabel}</Text>
+                  <Text style={[styles.compactStatValue, { color: live ? Colors.primary : Colors.text }]}>{fmt(paceValue)}</Text>
+                </View>
+                {live && onTrack && (
+                  <TouchableOpacity onPress={onTrack} style={styles.compactTrackBtn} activeOpacity={0.7}>
+                    <Ionicons name="pulse" size={11} color={Colors.primary} />
+                  </TouchableOpacity>
+                )}
               </View>
-              <View style={styles.compactStat}>
-                <Text style={styles.compactStatLabel}>{paceLabel}</Text>
-                <Text style={[styles.compactStatValue, { color: live ? Colors.primary : Colors.text }]}>{fmt(paceValue)}</Text>
-              </View>
-              {live && onTrack && (
-                <TouchableOpacity onPress={onTrack} style={styles.compactTrackBtn} activeOpacity={0.7}>
-                  <Ionicons name="pulse" size={11} color={Colors.primary} />
-                </TouchableOpacity>
-              )}
             </View>
+            {captureMode && (
+              <Text style={styles.captureDisclaimer}>
+                Images © API-Football · images shown for informational purposes only.
+              </Text>
+            )}
           </View>
-          {captureMode && (
-            <Text style={styles.captureDisclaimer}>
-              Images © API-Football · images shown for informational purposes only.
-            </Text>
-          )}
         </View>
-      </View>
+        {shareSheet}
+      </>
     );
   }
 
@@ -663,27 +697,7 @@ export default function OwnerPickCard({
         )}
       </View>
 
-      {/* ── Share sheet (web only) ──────────────────────────── */}
-      {Platform.OS === 'web' && (
-        <Modal visible={shareSheetVisible} transparent animationType="slide" onRequestClose={() => setShareSheetVisible(false)}>
-          <TouchableOpacity style={styles.ssOverlay} activeOpacity={1} onPress={() => setShareSheetVisible(false)}>
-            <View style={styles.ssSheet}>
-              <Text style={styles.ssTitle}>Share Pick</Text>
-              <TouchableOpacity style={styles.ssOption} onPress={handleSaveImage} activeOpacity={0.75}>
-                <Ionicons name="download-outline" size={20} color="#fff" />
-                <Text style={styles.ssOptionText}>Save Image to Device</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.ssOption} onPress={handleShareToX} activeOpacity={0.75}>
-                <Text style={styles.ssXIcon}>𝕏</Text>
-                <Text style={styles.ssOptionText}>Post to X (Twitter)</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.ssOption, styles.ssCancel]} onPress={() => setShareSheetVisible(false)} activeOpacity={0.75}>
-                <Text style={styles.ssCancelText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      )}
+      {shareSheet}
     </View>
   );
 }
