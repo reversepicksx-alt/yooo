@@ -99,3 +99,4 @@
 - [Community feed payloads](community-feed-payloads.md) — omit historical base64 pick-card images by default; oversized responses can time out and falsely show an empty chat.
 - [Pick deletion cache](pick-deletion-cache.md) — delete every matching canonical pick ID and invalidate the per-user list cache so removed history cannot reappear.
 - [Settlement production version](settlement-production-version.md) — terminal settlement fixes must be published; an older healthy VM build can recreate review states.
+- [AI spend governance](ai-spend-governance.md) — user-facing explanations share a persistent atomic token budget; background enrichment is opt-in and must never silently bypass it.

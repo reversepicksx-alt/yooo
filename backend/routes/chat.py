@@ -88,7 +88,10 @@ async def chat_message(req: ChatMessageRequest):
 Return JSON: {{"playerName": "name or null", "teamName": "name or null", "leagueName": "name or null", "needsData": true/false}}
 Set needsData=true if the user is asking about a specific player's stats, matchup, or performance.
 Message: "{req.message}" """
-        extract_resp = await extractor.send_message(UserMessage(text=extract_prompt))
+        # Do not spend a second Gemini call just to identify entities. The
+        # answer call below can handle the user's natural-language question
+        # directly; live stats enrichment is intentionally skipped here.
+        extract_resp = '{"playerName": null, "teamName": null, "leagueName": null, "needsData": false}'
         extract_text = extract_resp.strip()
         if extract_text.startswith("```"):
             lines = extract_text.split("\n")

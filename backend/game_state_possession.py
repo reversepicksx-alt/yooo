@@ -67,6 +67,7 @@ async def get_tactical_style(team_name: str, db) -> dict:
         "source": "cache" | "gemini" | "default",
     }
     """
+    from config import AI_BACKGROUND_ENRICHMENT_ENABLED
     cache_key = f"tactical_style:{team_name.lower().strip()}"
 
     # ── Cache lookup ─────────────────────────────────────────────────────────
@@ -76,6 +77,14 @@ async def get_tactical_style(team_name: str, db) -> dict:
             return {**doc.get("d", {}), "source": "cache"}
     except Exception:
         pass
+
+    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        return {
+            "possession_cede_when_leading": 0.30,
+            "possession_chase_when_trailing": 0.30,
+            "style_notes": "deterministic neutral fallback",
+            "source": "default",
+        }
 
     # ── Gemini call ──────────────────────────────────────────────────────────
     try:

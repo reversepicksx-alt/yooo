@@ -189,9 +189,10 @@ async def _run_startup_tasks():
     async def _check_ai_api():
         import os as _os
         _log = __import__("logging").getLogger("server")
-        from config import GEMINI_AI_ENABLED
-        if not GEMINI_AI_ENABLED:
-            _log.warning("[AI] Gemini disabled by emergency credit protection — math-only mode active.")
+        from config import GEMINI_AI_ENABLED, AI_BACKGROUND_ENRICHMENT_ENABLED
+        if not GEMINI_AI_ENABLED or not AI_BACKGROUND_ENRICHMENT_ENABLED:
+            _log.info("[AI] Startup probe skipped — no background AI spend.")
+            _log.info("[AI] User-facing explanations remain enabled; background enrichment is disabled.")
             return
         _key = _os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY", "")
         if not _key:
@@ -467,8 +468,11 @@ async def _auto_backfill_positions():
 
         print(f"[AUTO-BACKFILL] Cache resolved: {updated}/{len(picks)}. Unresolved: {len(unresolved)}")
 
-        # Step 3: Use Gemini to batch-resolve remaining positions
-        if unresolved:
+        # Step 3: Background Gemini position backfill is intentionally
+        # disabled. New predictions use cached/provider/generic position data;
+        # this maintenance job must not consume the explanation budget.
+        from config import AI_BACKGROUND_ENRICHMENT_ENABLED
+        if unresolved and AI_BACKGROUND_ENRICHMENT_ENABLED:
             from ai_engine import _ai_call as _gemini_pos
             import json as _json
             # Deduplicate by player name+sport

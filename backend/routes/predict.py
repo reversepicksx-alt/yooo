@@ -16,6 +16,7 @@ from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
     INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER, GEMINI_AI_ENABLED,
+    AI_BACKGROUND_ENRICHMENT_ENABLED,
 )
 from models import PredictionRequest
 from utils import (
@@ -4832,6 +4833,8 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
 
                     async def resolve_pos_grok() -> str:
                         """Call Gemini to resolve position. Returns raw POSITION|ROLE string."""
+                        if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+                            return ""
                         from ai_engine import _ai_call
                         sys_msg = "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."
                         return await _ai_call(
@@ -6117,6 +6120,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     max_tokens=4000,
                     timeout=45,
                     json_mode=False,
+                    budget_source="prediction-explanation",
                 )
                 if not text:
                     return None
@@ -9811,40 +9815,32 @@ from the projection.
                 print(f"[PRED CACHE READ] skipped: {_cache_read_err}")
 
             if _final_ai_result is None and GEMINI_AI_ENABLED:
-                from ai_engine import (
-                    check_prediction_budget as _check_budget,
-                    increment_prediction_budget as _incr_budget,
-                )
-                if await _check_budget():
-                    try:
-                        _final_ai_result = await aio.wait_for(
-                            call_grok(
-                                label="gemini-final-ledger",
-                                model="gemini-2.0-flash",
-                                prompt_override=_final_ai_prompt,
-                            ),
-                            timeout=50,
-                        )
-                        if _final_ai_result and _final_ai_result.get("tacticalBreakdown"):
-                            await _incr_budget()
-                            try:
-                                await db.ai_response_cache.replace_one(
-                                    {"_k": _soc_ck},
-                                    {
-                                        "_k": _soc_ck,
-                                        "v": _final_ai_result,
-                                        "ledgerFingerprint": _ledger_fingerprint,
-                                        "ts": datetime.now(timezone.utc),
-                                    },
-                                    upsert=True,
-                                )
-                            except Exception as _cache_write_err:
-                                print(f"[PRED CACHE WRITE] skipped: {_cache_write_err}")
-                    except Exception as _final_ai_err:
-                        print(f"[AI FINAL LEDGER] synthesis failed: {_final_ai_err}")
-                        _final_ai_result = None
-                else:
-                    print("[AI BUDGET] Daily limit reached — final math-only prediction.")
+                try:
+                    _final_ai_result = await aio.wait_for(
+                        call_grok(
+                            label="gemini-final-ledger",
+                            model="gemini-2.0-flash",
+                            prompt_override=_final_ai_prompt,
+                        ),
+                        timeout=50,
+                    )
+                    if _final_ai_result and _final_ai_result.get("tacticalBreakdown"):
+                        try:
+                            await db.ai_response_cache.replace_one(
+                                {"_k": _soc_ck},
+                                {
+                                    "_k": _soc_ck,
+                                    "v": _final_ai_result,
+                                    "ledgerFingerprint": _ledger_fingerprint,
+                                    "ts": datetime.now(timezone.utc),
+                                },
+                                upsert=True,
+                            )
+                        except Exception as _cache_write_err:
+                            print(f"[PRED CACHE WRITE] skipped: {_cache_write_err}")
+                except Exception as _final_ai_err:
+                    print(f"[AI FINAL LEDGER] synthesis failed: {_final_ai_err}")
+                    _final_ai_result = None
             else:
                 print("[AI DISABLED] Gemini final-ledger synthesis skipped.")
 

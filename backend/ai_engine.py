@@ -9,21 +9,22 @@ import httpx
 import asyncio
 import traceback
 from datetime import datetime, timezone, timedelta
-from config import db, GEMINI_AI_ENABLED
+from config import db, GEMINI_AI_ENABLED, AI_BACKGROUND_ENRICHMENT_ENABLED
 
 AI_MODEL = "gemini-2.5-flash"
 GEMINI_FLASH = "gemini-2.5-flash"
 GEMINI_PRO = "gemini-2.5-pro"
 
-# ── Daily prediction generation budget guard ──────────────────────────────
-# Stored in /tmp/ — ephemeral, resets on container/VM restart (≈ daily in prod).
-# Only interactive prediction synthesis calls are counted; background jobs
-# (press intensity, web intel, positions) do NOT consume this budget.
-import json as _json_budget
+# ── Shared daily AI spend guard ───────────────────────────────────────────
+# This budget is shared by prediction explanations, tactical chat, OCR, and
+# every other Gemini entry point.  It is persisted in MongoDB so a VM restart
+# cannot reset the protection.  The unit is a conservative estimated token
+# charge, not a provider invoice; the default is intentionally far below a
+# typical $5/day Flash budget.
 import os as _os_budget
 
-_AI_BUDGET_PATH = "/tmp/rp_ai_budget.json"
 _budget_asyncio_lock = None  # lazily initialised
+_AI_DAILY_TOKEN_LIMIT = int(_os_budget.environ.get("AI_DAILY_TOKEN_LIMIT", "180000"))
 
 
 def _get_budget_lock():
@@ -33,87 +34,116 @@ def _get_budget_lock():
     return _budget_asyncio_lock
 
 
-def _read_budget_file() -> tuple[dict, bool]:
-    """Read the budget JSON file. Returns (data_dict, was_corrupt).
-
-    - If the file is missing, returns ({}, False) — treated as a fresh day.
-    - If the file exists but is malformed, returns ({}, True) and logs a warning.
-    """
-    if not _os_budget.path.exists(_AI_BUDGET_PATH):
-        return {}, False
-    try:
-        with open(_AI_BUDGET_PATH, "r") as _f:
-            return _json_budget.load(_f), False
-    except Exception as _read_err:
-        print(f"[AI BUDGET] WARNING: budget file corrupt/unreadable ({_read_err}). Treating as zero.")
-        return {}, True
-
-
 async def check_prediction_budget() -> bool:
-    """Returns True if AI synthesis can proceed; False when daily limit is hit.
+    """Compatibility status check for older admin callers.
 
-    Does NOT increment the counter — call increment_prediction_budget() only
-    after a successful tacticalBreakdown is confirmed.
-
-    The limit comes from AI_DAILY_GENERATION_LIMIT (config.py / env var).
-    Fails open: any I/O error returns True so a broken counter never blocks
-    actual predictions.
+    The persistent shared token budget is authoritative; actual reservations
+    happen inside the shared AI wrapper immediately before uncached calls.
     """
-    from config import AI_DAILY_GENERATION_LIMIT as _LIMIT
+    status = await get_ai_budget_status()
+    return bool(status.get("available"))
+
+
+async def reserve_ai_budget(estimated_tokens: int, source: str = "unknown") -> bool:
+    """Atomically reserve estimated Gemini usage before an uncached call.
+
+    The reserve is deliberately fail-closed.  If MongoDB is unavailable, we
+    must not spend blindly and risk exceeding the owner's daily ceiling.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    estimate = max(1, min(int(estimated_tokens or 1), _AI_DAILY_TOKEN_LIMIT))
+    async with _get_budget_lock():
+        try:
+            # Ensure the document exists, then use a conditional atomic
+            # increment. The condition prevents two VM workers from both
+            # observing the same remaining budget and overshooting it.
+            await db.ai_daily_budget.update_one(
+                {"_id": today},
+                {
+                    "$setOnInsert": {
+                        "tokens": 0,
+                        "calls": 0,
+                        "createdAt": datetime.now(timezone.utc),
+                    }
+                },
+                upsert=True,
+            )
+            updated = await db.ai_daily_budget.update_one(
+                {
+                    "_id": today,
+                    "tokens": {"$lte": _AI_DAILY_TOKEN_LIMIT - estimate},
+                },
+                {
+                    "$inc": {"tokens": estimate, "calls": 1},
+                    "$set": {"updatedAt": datetime.now(timezone.utc)},
+                },
+            )
+            if updated.modified_count != 1:
+                current = await db.ai_daily_budget.find_one({"_id": today}, {"tokens": 1})
+                used = int((current or {}).get("tokens", 0))
+                print(
+                    f"[AI BUDGET] Denied {source}: {used}+{estimate} > "
+                    f"{_AI_DAILY_TOKEN_LIMIT} estimated tokens."
+                )
+                return False
+            current = await db.ai_daily_budget.find_one({"_id": today}, {"tokens": 1})
+            used = int((current or {}).get("tokens", 0))
+            print(f"[AI BUDGET] Reserved {estimate} for {source}: {used}/{_AI_DAILY_TOKEN_LIMIT}.")
+            return True
+        except Exception as _be:
+            print(f"[AI BUDGET] Storage error ({_be}) — denying uncached AI call.")
+            return False
+
+
+async def get_ai_budget_status() -> dict:
+    """Return the persistent daily estimated-token budget for admin visibility."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     async with _get_budget_lock():
         try:
-            data, _corrupt = _read_budget_file()
-            count = int(data.get(today, 0))
-            if count >= _LIMIT:
-                print(f"[AI BUDGET] Daily limit {_LIMIT} reached ({count} calls). Math-only fallback.")
-                return False
-            print(f"[AI BUDGET] Budget OK: {count}/{_LIMIT} calls used today.")
-            return True
+            current = await db.ai_daily_budget.find_one({"_id": today}, {"tokens": 1, "calls": 1})
+            used = int((current or {}).get("tokens", 0))
+            calls = int((current or {}).get("calls", 0))
+            return {
+                "date": today,
+                "tokens": used,
+                "calls": calls,
+                "limit": _AI_DAILY_TOKEN_LIMIT,
+                "remaining": max(0, _AI_DAILY_TOKEN_LIMIT - used),
+                "available": used < _AI_DAILY_TOKEN_LIMIT,
+            }
         except Exception as _be:
-            print(f"[AI BUDGET] Counter error ({_be}) — proceeding with AI (fail-open).")
-            return True
+            print(f"[AI BUDGET] Status read error ({_be}) — treating as unavailable.")
+            return {
+                "date": today, "tokens": 0, "calls": 0,
+                "limit": _AI_DAILY_TOKEN_LIMIT, "remaining": 0,
+                "available": False, "error": str(_be),
+            }
 
 
 async def increment_prediction_budget() -> None:
     """Increment the daily AI synthesis counter.
 
-    Called only after a successful tacticalBreakdown response has been confirmed
-    and cached. Keeps only today's key in the file to avoid unbounded growth.
+    Kept as a no-op compatibility shim for older prediction-route code.
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    async with _get_budget_lock():
-        try:
-            data, _corrupt = _read_budget_file()
-            count = int(data.get(today, 0))
-            with open(_AI_BUDGET_PATH, "w") as _f:
-                _json_budget.dump({today: count + 1}, _f)
-            from config import AI_DAILY_GENERATION_LIMIT as _LIMIT
-            print(f"[AI BUDGET] Incremented → {count + 1}/{_LIMIT} today.")
-        except Exception as _be:
-            print(f"[AI BUDGET] WARNING: failed to increment counter ({_be}).")
+    # Legacy prediction route shim.  The shared reserve now charges before
+    # every uncached Gemini request, so incrementing here would double-charge.
+    return
 
 
 async def get_prediction_budget_status() -> dict:
     """Return today's AI generation count and limit for admin visibility."""
-    from config import AI_DAILY_GENERATION_LIMIT as _LIMIT
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    async with _get_budget_lock():
-        try:
-            data, corrupt = _read_budget_file()
-            count = int(data.get(today, 0))
-            return {"date": today, "count": count, "limit": _LIMIT, "remaining": max(0, _LIMIT - count), "corrupt": corrupt}
-        except Exception as _be:
-            print(f"[AI BUDGET] Status read error ({_be}).")
-            return {"date": today, "count": 0, "limit": _LIMIT, "remaining": _LIMIT, "corrupt": True, "error": str(_be)}
+    status = await get_ai_budget_status()
+    # Preserve the old response keys used by the owner dashboard.
+    status["count"] = status.get("calls", 0)
+    return status
 
 
 # Keep the old name as a shim so any stale call sites still work.
 async def check_and_increment_prediction_budget() -> bool:
-    """Deprecated shim — prefer check_prediction_budget() + increment_prediction_budget().
+    """Deprecated status-only shim for callers that still use the old name.
 
-    This version still increments eagerly (pre-call) for backward compatibility
-    if called directly, but the main predict route now uses the split API.
+    The shared token reservation is performed by _ai_call and direct LlmChat
+    callers immediately before uncached requests.
     """
     ok = await check_prediction_budget()
     if ok:
@@ -146,6 +176,7 @@ async def _ai_call(
     timeout: int = 40,
     model: str | None = None,
     json_mode: bool = False,
+    budget_source: str = "user-explanation",
 ) -> str:
     """Core AI call — Replit Gemini AI Integration (billed to Replit credits)."""
     if not GEMINI_AI_ENABLED:
@@ -165,6 +196,16 @@ async def _ai_call(
             return _hit["v"]
     except Exception:
         pass
+
+    if budget_source.startswith("background") and not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        print(f"[AI BUDGET] Skipping {budget_source} — background enrichment disabled.")
+        return ""
+
+    # Reserve for both attempts because a transient failure can still consume
+    # provider credits before the retry.  Cached responses never reach here.
+    estimated_tokens = max(1, (len(prompt) + len(system)) // 4) + max_tokens
+    if not await reserve_ai_budget(estimated_tokens * 2, budget_source):
+        return ""
 
     from google import genai as _genai
     from google.genai import types as _gtypes
@@ -235,7 +276,7 @@ async def _ai_search_call(
     model: str | None = None,
 ) -> str:
     """AI call with knowledge-based response (search deprecated — routes to Gemini)."""
-    return await _ai_call(prompt, max_tokens=max_tokens, timeout=timeout)
+    return await _ai_call(prompt, max_tokens=max_tokens, timeout=timeout, budget_source="background-search")
 
 
 # Aliases — all route through _ai_call → Replit Gemini
@@ -259,7 +300,10 @@ async def _gemini_search_call(
     timeout: int = 25,
     model: str | None = None,
 ) -> str:
-    return await _ai_call(prompt, max_tokens=max_tokens, timeout=timeout)
+    return await _ai_call(
+        prompt, max_tokens=max_tokens, timeout=timeout,
+        budget_source="background-search",
+    )
 
 
 _web_intel_cache: dict = {}
@@ -292,6 +336,11 @@ async def fetch_web_intel(
             print(f"[WEB INTEL] Cache hit: {player_team} vs {opponent}")
             return result
 
+    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        print("[WEB INTEL] Background enrichment disabled — using deterministic context.")
+        _web_intel_cache[cache_key] = (now, "")
+        return ""
+
     context_str = f"{league} — {match_round}" if (league or match_round) else "upcoming match"
     prompt = (
         f"Give me a concise pre-match intelligence briefing (max 200 words) for: "
@@ -321,7 +370,10 @@ async def fetch_web_intel(
         f"(4) historical head-to-head tendencies. "
         f"Focus on known tactical identities. Be specific and analytical."
     )
-    result = await _ai_call(knowledge_prompt, timeout=15, max_tokens=350)
+    result = await _ai_call(
+        knowledge_prompt, timeout=15, max_tokens=350,
+        budget_source="background-web-intel",
+    )
     if result:
         result = _html.unescape(result)
         print(f"[WEB INTEL] Gemini knowledge fallback: {result[:120]}...")
@@ -365,6 +417,9 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
       11+    : Low press / deep block
     """
     import re as _re
+    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        print("[PRESS AI] Background enrichment disabled — using structural press heuristic.")
+        return None
     if not _REPLIT_GEMINI_KEY or not opponent:
         return None
 
@@ -533,7 +588,10 @@ async def _fetch_ai_press_intensity_inner(
     parsed = None
     used_source = None
     try:
-        txt = await _ai_call(prompt, temperature=0, max_tokens=200, timeout=timeout)
+        txt = await _ai_call(
+            prompt, temperature=0, max_tokens=200, timeout=timeout,
+            budget_source="background-press",
+        )
         if txt:
             parsed = _parse_json(txt)
             if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
@@ -544,7 +602,10 @@ async def _fetch_ai_press_intensity_inner(
     # Strategy 2: retry with slightly higher temperature if score came back null
     if not parsed or parsed.get("score") is None:
         try:
-            txt = await _ai_call(prompt, temperature=0.3, max_tokens=200, timeout=15)
+            txt = await _ai_call(
+                prompt, temperature=0.3, max_tokens=200, timeout=15,
+                budget_source="background-press-retry",
+            )
             if txt:
                 parsed = _parse_json(txt)
                 if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
@@ -724,6 +785,9 @@ async def generate_match_review(pick_id: str) -> bool:
     review. Never fabricates stats.
     Returns True if a review was written.
     """
+    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        print("[MATCH REVIEW] Background enrichment disabled — skipping Gemini review.")
+        return False
     try:
         # Keep this import local: ai_engine has several optional API paths, and
         # match-review generation must resolve the provider client explicitly
@@ -858,7 +922,10 @@ async def generate_match_review(pick_id: str) -> bool:
             "Ground every claim in the NUMBERS above — cite the exact minute, team, player, or stat value. "
             "No hedging, no filler. Plain text only. One paragraph."
         )
-        review = await _ai_call(prompt, temperature=0.3, max_tokens=400, timeout=35)
+        review = await _ai_call(
+            prompt, temperature=0.3, max_tokens=400, timeout=35,
+            budget_source="background-match-review",
+        )
         review = (review or "").strip()
         if not review:
             await db.picks.update_one(

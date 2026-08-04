@@ -38,6 +38,20 @@ class LlmChat:
     async def send_message(self, message: UserMessage) -> str:
         if not GEMINI_AI_ENABLED:
             return ""
+        # Direct LlmChat callers share the same persistent spend guard as
+        # ai_engine._ai_call.  This closes the old bypass used by chat, OCR,
+        # Tactical, and POTD routes.
+        try:
+            from ai_engine import reserve_ai_budget
+            text_tokens = (len(message.text or "") + len(self.system_message or "")) // 4
+            image_tokens = 5000 if message.file_contents else 0
+            source = "direct-chat"
+            if message.file_contents:
+                source = "ocr-explanation"
+            if not await reserve_ai_budget(text_tokens + image_tokens + 1800, source):
+                return ""
+        except Exception:
+            return ""
         return await self._send_gemini(message)
 
     async def _send_gemini(self, message: UserMessage) -> str:
@@ -71,7 +85,7 @@ class LlmChat:
             contents.append({"role": "user", "parts": current_parts})
 
             cfg = _gtypes.GenerateContentConfig(
-                max_output_tokens=8192,
+                max_output_tokens=1800,
                 thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
             )
             if self.system_message:
@@ -84,6 +98,8 @@ class LlmChat:
                 ),
             )
             result = (resp.text or "").strip()
+            if result.startswith("[LLM Error:"):
+                return ""
             self._history.append({"role": "user", "parts": [message.text]})
             self._history.append({"role": "model", "parts": [result]})
             return result

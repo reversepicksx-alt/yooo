@@ -261,6 +261,10 @@ Return ONLY valid JSON array."""
 
 async def _fetch_data_context(message: str) -> str:
     """Extract player/team entities from the message, fetch real data from cache + API."""
+    from config import AI_BACKGROUND_ENRICHMENT_ENABLED
+    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        print("[TACTICAL DATA] Background entity enrichment disabled.")
+        return ""
     context_parts = []
 
     try:
@@ -487,6 +491,7 @@ async def tactical_message(req: TacticalMessageRequest):
             temperature=0.7,
             max_tokens=2000,
             timeout=45,
+            budget_source="tactical-explanation",
         )
         _grok_ok = bool(ai_response)
         if not _grok_ok:
@@ -503,6 +508,7 @@ async def tactical_message(req: TacticalMessageRequest):
                 temperature=0.5,
                 max_tokens=2000,
                 timeout=40,
+                budget_source="tactical-explanation-retry",
             )
             _grok_ok = bool(ai_response)
             if not _grok_ok:
@@ -510,29 +516,10 @@ async def tactical_message(req: TacticalMessageRequest):
         except Exception as _e:
             print(f"[TACTICAL] Gemini fallback failed: {_e}")
 
-    # ── Synthesis layer ──
-    try:
-        gemini = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"tac-synth-{uuid.uuid4().hex[:8]}",
-            system_message=SYNTH_SYSTEM,
-        ).with_model("gemini", "gemini-2.5-flash")
-
-        synth_prompt = f"""User asked: "{user_msg}"
-
-{full_context if full_context else "[No live data]"}
-
-Tactical analysis:
-{ai_response}
-
-Synthesize into a polished response. Format with markdown. NEVER mention any AI model names."""
-
-        if history_text:
-            synth_prompt = f"[Conversation context]\n{history_text}\n[End context]\n\n{synth_prompt}"
-
-        final_response = await gemini.send_message(UserMessage(text=synth_prompt))
-    except Exception:
-        final_response = ai_response if ai_response and not ai_response.startswith("[") else "Analysis failed. Please try again."
+    # The primary response is already instructed to be concise and structured.
+    # A second Gemini synthesis call added cost without adding user-visible
+    # evidence, so return the explanation directly.
+    final_response = ai_response if ai_response and not ai_response.startswith("[") else "Analysis failed. Please try again."
 
     session["history"].append({"role": "user", "content": user_msg})
     session["history"].append({"role": "assistant", "content": final_response})

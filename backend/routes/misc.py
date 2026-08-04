@@ -357,6 +357,16 @@ async def pick_of_the_day():
     if cached:
         return cached
 
+    from config import AI_BACKGROUND_ENRICHMENT_ENABLED
+    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+        result = {
+            "date": today,
+            "available": False,
+            "message": "Daily pick generation is disabled while background AI cost protection is active.",
+        }
+        await db.potd.update_one({"date": today}, {"$set": result}, upsert=True)
+        return result
+
     # Fetch today's fixtures to find live games
     try:
         fixtures = await api_football_request("fixtures", {"date": today, "status": "NS"})

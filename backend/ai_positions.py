@@ -285,6 +285,9 @@ POSITION|ROLE"""
 
     # ── AI call ──────────────────────────────────────────────────────────────
     try:
+        from config import AI_BACKGROUND_ENRICHMENT_ENABLED
+        if not AI_BACKGROUND_ENRICHMENT_ENABLED:
+            raise RuntimeError("background position AI disabled")
         from ai_engine import _ai_call
         sys_msg = (
             "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\n"

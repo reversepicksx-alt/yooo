@@ -1154,6 +1154,7 @@ export default function PicksScreen() {
             const card = (
               <OwnerPickCard
                 pick={item}
+                compact
                 onTrack={() => setLiveTrackerPick(item)}
                 onDelete={onDeleteForItem}
                 onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
@@ -1182,6 +1183,7 @@ export default function PicksScreen() {
               <SwipeablePickRow onDelete={onDeleteForItem}>
                 <OwnerPickCard
                   pick={item}
+                  compact
                   onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}
                   onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}

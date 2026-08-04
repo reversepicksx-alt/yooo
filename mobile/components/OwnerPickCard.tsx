@@ -153,13 +153,14 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress,
+  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress, compact = false,
 }: {
   pick: Pick; onTrack?: () => void;
   onDelete?: () => void;
   onShareCommunity?: (imageData: string) => void | Promise<void>;
   onAutoPostImage?: (imageData: string) => void | Promise<void>;
   onManagerBadgePress?: () => void;
+  compact?: boolean;
 }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
@@ -232,8 +233,8 @@ export default function OwnerPickCard({
   const cardRef = useRef<View>(null);
   const autoCapturePickRef = useRef<string>('');
 
-  const tweetText = `${APP_STORE_URL}\nvia @Reversepickss`;
-  const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss`;
+  const tweetText = `${APP_STORE_URL}\nvia @Reversepickss\nImages © API-Football · images shown for informational purposes only.`;
+  const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss\nImages © API-Football · images shown for informational purposes only.`;
 
   const handleShare = async () => {
     setSharing(true);
@@ -402,6 +403,106 @@ export default function OwnerPickCard({
     await shareImageFile(tweetText);
   };
 
+  if (compact) {
+    return (
+      <View ref={cardRef} style={styles.compactCard}>
+        <View style={[styles.stripe, styles.compactStripe, { backgroundColor: accentColor }]} />
+        <View style={styles.compactInner}>
+          <View style={styles.compactTopRow}>
+            <View style={styles.identity}>
+              {pick.ownerPlayerPhoto && !photoFailed ? (
+                <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.compactAvatar}
+                  onError={() => setPhotoFailed(true)} />
+              ) : (
+                <View style={[styles.compactAvatar, styles.avatarFallback]}>
+                  <Text style={styles.compactAvatarLetter}>{pick.playerName?.charAt(0) || '?'}</Text>
+                </View>
+              )}
+              <View style={styles.nameBlock}>
+                <Text style={styles.compactPlayerName} numberOfLines={1}>{pick.playerName}</Text>
+                <Text style={styles.compactSubText} numberOfLines={1}>
+                  {pick.teamName || 'Team'}
+                  <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
+                </Text>
+              </View>
+            </View>
+            <View style={styles.compactRightCluster}>
+              {Platform.OS === 'web' && onDelete && !captureMode && (
+                // @ts-ignore
+                <button type="button"
+                  onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+                  onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+                  onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+                  style={{ all: 'unset', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center' }}>
+                  <Ionicons name="trash-outline" size={13} color={Colors.error} />
+                </button>
+              )}
+              {!captureMode && (
+                <TouchableOpacity onPress={handleShare} style={styles.compactShareBtn} activeOpacity={0.7}>
+                  {sharing
+                    ? <ActivityIndicator size="small" color={Colors.primary} />
+                    : <Ionicons name="arrow-up-circle-outline" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              )}
+              {onShareCommunity && !captureMode && (
+                <TouchableOpacity onPress={handleShareCommunity} style={styles.compactShareBtn} activeOpacity={0.7}>
+                  <Ionicons name="people-outline" size={14} color={Colors.primary} />
+                </TouchableOpacity>
+              )}
+              <StatusPill
+                won={won} lost={lost} push={push} dnp={dnp}
+                live={live} pending={pending} pendingReview={pendingReview}
+              />
+              {pick.managerContext?.isRecent === true && !captureMode && (
+                <View style={styles.compactManagerDot}>
+                  <Ionicons name="alert-circle-outline" size={12} color="#F59E0B" />
+                </View>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.compactBottomRow}>
+            {dir ? (
+              <View style={[styles.compactDir, { borderColor: accentColor + '55', backgroundColor: accentColor + '12' }]}>
+                <Text style={[styles.compactDirText, { color: accentColor }]} numberOfLines={1}>{dirLabel}</Text>
+              </View>
+            ) : <View style={styles.compactDirPlaceholder} />}
+            <View style={styles.compactStatsRow}>
+              {!pending && nowValue != null && (
+                <View style={styles.compactStat}>
+                  <Text style={styles.compactStatLabel}>{settled && hasVerifiedFinal ? 'FINAL' : live ? 'NOW' : 'PEND'}</Text>
+                  <Text style={[styles.compactStatValue, {
+                    color: nowValue != null && lineValue != null
+                      ? ((isOver && nowValue >= lineValue) || (isUnder && nowValue <= lineValue)) ? '#39FF14' : '#FF3B30'
+                      : Colors.text,
+                  }]}>{fmt(nowValue)}</Text>
+                </View>
+              )}
+              <View style={styles.compactStat}>
+                <Text style={styles.compactStatLabel}>LINE</Text>
+                <Text style={styles.compactStatValue}>{fmt(lineValue)}</Text>
+              </View>
+              <View style={styles.compactStat}>
+                <Text style={styles.compactStatLabel}>{paceLabel}</Text>
+                <Text style={[styles.compactStatValue, { color: live ? Colors.primary : Colors.text }]}>{fmt(paceValue)}</Text>
+              </View>
+              {live && onTrack && (
+                <TouchableOpacity onPress={onTrack} style={styles.compactTrackBtn} activeOpacity={0.7}>
+                  <Ionicons name="pulse" size={11} color={Colors.primary} />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          {captureMode && (
+            <Text style={styles.captureDisclaimer}>
+              Images © API-Football · images shown for informational purposes only.
+            </Text>
+          )}
+        </View>
+      </View>
+    );
+  }
+
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <View
@@ -529,6 +630,11 @@ export default function OwnerPickCard({
             </Text>
           )}
         </View>
+        {captureMode && (
+          <Text style={styles.captureDisclaimer}>
+            Images © API-Football · images shown for informational purposes only.
+          </Text>
+        )}
 
         {/* ── Track live btn ─────────────────────────────── */}
         {live && !won && !lost && pick.sport === 'soccer' && onTrack && (
@@ -674,7 +780,7 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     ${ctxHTML}
     <!-- Attribution -->
     <div style="margin-top:8px">
-      <span style="font-size:9px;color:rgba(255,255,255,0.25);font-weight:500">Images © API-Football · informational use only</span>
+      <span style="font-size:9px;color:rgba(255,255,255,0.25);font-weight:500">Images © API-Football · images shown for informational purposes only</span>
     </div>
   </div>
 </div>`;
@@ -695,6 +801,54 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
+  },
+  compactCard: {
+    flexDirection: 'row',
+    minHeight: 62,
+    backgroundColor: '#0A0A0A',
+    borderRadius: 9,
+    marginBottom: 2,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  compactStripe: { width: 3, borderTopLeftRadius: 9, borderBottomLeftRadius: 9 },
+  compactInner: { flex: 1, paddingHorizontal: 8, paddingVertical: 4 },
+  compactTopRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    minHeight: 31,
+  },
+  compactAvatar: {
+    width: 25, height: 25, borderRadius: 12.5,
+    backgroundColor: '#1A1A1A', borderWidth: 1.25, borderColor: 'rgba(57,255,20,0.3)',
+  },
+  compactAvatarLetter: { color: Colors.primary, fontSize: 11, fontWeight: '900' },
+  compactPlayerName: { color: '#fff', fontSize: 12.5, fontWeight: '800', letterSpacing: -0.2 },
+  compactSubText: { color: 'rgba(255,255,255,0.4)', fontSize: 8.5, fontWeight: '600', marginTop: 1 },
+  compactRightCluster: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 5 },
+  compactShareBtn: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: 'rgba(57,255,20,0.08)', alignItems: 'center', justifyContent: 'center',
+  },
+  compactManagerDot: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
+  compactBottomRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 2, minHeight: 23,
+  },
+  compactDir: {
+    maxWidth: '58%', borderWidth: 1, borderRadius: 5,
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  compactDirPlaceholder: { flex: 1 },
+  compactDirText: { fontSize: 9, fontWeight: '900', letterSpacing: 0.25 },
+  compactStatsRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginLeft: 6 },
+  compactStat: { alignItems: 'center', minWidth: 25 },
+  compactStatLabel: { color: 'rgba(255,255,255,0.32)', fontSize: 6.5, fontWeight: '800', letterSpacing: 0.35 },
+  compactStatValue: { color: '#fff', fontSize: 12.5, fontWeight: '900', lineHeight: 14 },
+  compactTrackBtn: {
+    width: 21, height: 21, borderRadius: 10.5,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(57,255,20,0.08)',
   },
   stripe: {
     width: 3,
@@ -758,6 +912,10 @@ const styles = StyleSheet.create({
   footRow: { marginTop: 4, gap: 2 },
   footTime: { color: 'rgba(255,255,255,0.3)', fontSize: 9, fontWeight: '600' },
   footScore: { color: 'rgba(255,255,255,0.25)', fontSize: 8.5, fontWeight: '500' },
+  captureDisclaimer: {
+    color: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: '500',
+    marginTop: 6, lineHeight: 11,
+  },
   liveBtn: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
     marginTop: 5, paddingHorizontal: 8, paddingVertical: 3,
