@@ -107,9 +107,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen name="notifications" options={{ href: null }} />
-      <Tabs.Screen name="analytics"    options={{ href: null }} />
-      <Tabs.Screen name="toptable"     options={{ href: null }} />
-      <Tabs.Screen name="intel"        options={{ href: null }} />
     </Tabs>
   );
 }

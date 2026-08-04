@@ -897,32 +897,6 @@ export default function AccountScreen() {
           )}
         </View>
 
-        {isOwner && (
-          <>
-            <Text style={styles.sectionLabel}>Model Health</Text>
-            <View style={styles.menuGroup}>
-              <MenuRow
-                icon="analytics-outline"
-                label="Model Scorecard"
-                value="Confidence, calibration & projection accuracy"
-                onPress={() => router.push('/(tabs)/analytics')}
-              />
-              <MenuRow
-                icon="bulb-outline"
-                label="Soccer Intel"
-                value="Soccer-only patterns and market insights"
-                onPress={() => router.push('/(tabs)/intel')}
-              />
-              <MenuRow
-                icon="bar-chart-outline"
-                label="Top Table"
-                value="Prop accuracy by player and line"
-                onPress={() => router.push('/(tabs)/toptable')}
-              />
-            </View>
-          </>
-        )}
-
         {/* ── iOS native: Apple IAP subscription section ── */}
         {isIOSNative && !isLifetime && !isOwner && (
           <>
