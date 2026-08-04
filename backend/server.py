@@ -1342,7 +1342,11 @@ async def force_settle():
         # batches, without requiring the owner to refresh the app 20 times.
         repair_batches = []
         for _ in range(12):
-            summary = await _repair_pending_review_soccer_batch(limit=40)
+            summary = await _repair_pending_review_soccer_batch(
+                limit=40,
+                include_legacy=True,
+                ignore_cooldown=True,
+            )
             repair_batches.append(summary)
             if summary["found"] == 0 or summary["repaired"] == 0:
                 break

@@ -44,8 +44,17 @@ function isLive(p: Pick) {
   );
 }
 function isPendingReview(p: Pick) {
+  const raw = String(p.result || '').toLowerCase();
+  const hasFinalOutcome = ['hit', 'miss', 'push', 'dnp'].includes(raw)
+    && p.actualValue != null
+    && (
+      p.settlementSource?.verified === true
+      || p.settlementSource?.verificationMethod === 'legacy_numeric_reconciliation'
+      || p.status === 'settled'
+    );
+  if (hasFinalOutcome) return false;
   return p.status === 'pending_review'
-    || String(p.result || '').toLowerCase() === 'pending_review';
+    || raw === 'pending_review';
 }
 function isPending(p: Pick) {
   return !isPendingReview(p) && !isSettled(p) && !isLive(p);
@@ -53,11 +62,12 @@ function isPending(p: Pick) {
 function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const raw = String(p.result || '').toLowerCase();
   const hasVerifiedSource = p.settlementSource?.verified === true;
-  if (hasVerifiedSource && (raw === 'hit' || raw === 'won')) return 'hit';
-  if (hasVerifiedSource && (raw === 'miss' || raw === 'lost')) return 'miss';
-  if (hasVerifiedSource && raw === 'push') return 'push';
-  if (hasVerifiedSource && raw === 'dnp') return 'dnp';
-  if (hasVerifiedSource && raw === 'pass') {
+  const isExplicitFinal = p.status === 'settled' || p.matchStatus === 'final';
+  if ((hasVerifiedSource || isExplicitFinal) && (raw === 'hit' || raw === 'won')) return 'hit';
+  if ((hasVerifiedSource || isExplicitFinal) && (raw === 'miss' || raw === 'lost')) return 'miss';
+  if ((hasVerifiedSource || isExplicitFinal) && raw === 'push') return 'push';
+  if ((hasVerifiedSource || isExplicitFinal) && raw === 'dnp') return 'dnp';
+  if ((hasVerifiedSource || isExplicitFinal) && raw === 'pass') {
     // A verified final value is always HIT, MISS, or PUSH. Older saved rows
     // may still say PASS; use their stored directional settlement outcome.
     if (p.passOutcome === 'hit') return 'hit';
@@ -67,7 +77,7 @@ function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   if (
     (p.status === 'settled' || p.matchStatus === 'final')
     && p.actualValue != null
-    && p.settlementSource?.verified === true
+      && (p.settlementSource?.verified === true || isExplicitFinal)
   ) {
     const line = Number(p.line);
     const actual = Number(p.actualValue);

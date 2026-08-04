@@ -1303,6 +1303,7 @@ async def _repair_pending_review_soccer_batch(
     *,
     include_legacy: bool = False,
     pick_ids: list[str] | None = None,
+    ignore_cooldown: bool = False,
 ) -> dict:
     """Repair a bounded batch of legacy soccer pending-review picks.
 
@@ -1328,6 +1329,12 @@ async def _repair_pending_review_soccer_batch(
             "result": {"$in": ["hit", "miss", "push", "dnp", "pass"]},
             "settlementSource.verified": {"$ne": True},
             "correctedManually": {"$ne": True},
+            # Do not re-select rows that this repair already reconciled from
+            # a legacy stored final. Without this exclusion, the force-drain
+            # repeatedly picked the same first legacy row forever.
+            "settlementSource.verificationMethod": {
+                "$ne": "legacy_numeric_reconciliation",
+            },
         })
 
     candidate_filters = [
@@ -1339,9 +1346,18 @@ async def _repair_pending_review_soccer_batch(
             ]
         },
     ]
+    # Legacy rows are normalized by the user-picks consistency pass. Once
+    # that marker exists, never send the same row back through provider repair
+    # or the force-drain can repeatedly select it while it is being read.
+    if include_legacy:
+        candidate_filters.append({
+            "settlementSource.verificationMethod": {
+                "$ne": "legacy_numeric_reconciliation",
+            },
+        })
     # A specifically requested pick is an explicit retry/debug operation and
     # must bypass the normal deferred-record cooldown.
-    if not pick_ids:
+    if not pick_ids and not ignore_cooldown:
         candidate_filters.append({
             "$or": [
                 {"settlementRepairLastAttemptAt": {"$exists": False}},
@@ -1417,6 +1433,89 @@ async def _repair_pending_review_soccer_batch(
             or source.get("verified") is not True
             or (result.get("actualValue") is None and not result.get("voidReason"))
         ):
+            # Legacy review rows already contain a stored final numeric value.
+            # They were stranded when the source-audit field was introduced:
+            # the consistency guard kept resetting their explicit result to
+            # pending_review, even though no live match lookup was needed.
+            # Reconcile that stored final deterministically instead of
+            # leaving the owner with an endless review badge. This is
+            # explicitly marked unverified so it remains distinguishable in
+            # calibration audits; it never fabricates a provider stat.
+            stored_actual = pick_doc.get("actualValue")
+            try:
+                stored_actual = float(stored_actual) if stored_actual is not None else None
+                stored_line = float(pick_doc.get("line", 0))
+            except (TypeError, ValueError):
+                stored_actual = None
+                stored_line = 0.0
+            if stored_actual is not None:
+                from routes.picks import _settle_pick_result
+                stored_result, stored_pass_outcome = _settle_pick_result(
+                    stored_actual, stored_line, pick_doc
+                )
+                now_iso = datetime.now(timezone.utc).isoformat()
+                legacy_source = {
+                    "provider": "legacy-stored-final",
+                    "fixtureId": pick_doc.get("fixtureId"),
+                    "playerId": pick_doc.get("playerId"),
+                    "propType": pick_doc.get("propType"),
+                    "statPath": "stored.actualValue",
+                    "fixtureStatus": "FT",
+                    "verified": False,
+                    "verificationMethod": "legacy_numeric_reconciliation",
+                    "recordedAt": now_iso,
+                }
+                legacy_update = {
+                    "status": "settled",
+                    "result": stored_result,
+                    "actualValue": stored_actual,
+                    "hitPct": (
+                        50 if stored_result in {"push", "dnp", "pass"}
+                        else 100 if stored_result == "hit"
+                        else 0
+                    ),
+                    "settledAt": pick_doc.get("settledAt") or now_iso,
+                    "resettledAt": now_iso,
+                    "settledBy": "legacy_final_reconciliation",
+                    "settlementSource": legacy_source,
+                    "settlementRepairAudit": {
+                        "previous": {
+                            "status": pick_doc.get("status"),
+                            "result": pick_doc.get("result"),
+                            "actualValue": pick_doc.get("actualValue"),
+                            "settlementSource": pick_doc.get("settlementSource"),
+                            "settlementReview": pick_doc.get("settlementReview"),
+                        },
+                        "replacement": {
+                            "result": stored_result,
+                            "actualValue": stored_actual,
+                            "settlementSource": legacy_source,
+                        },
+                        "correctedBy": "legacy_final_reconciliation",
+                        "correctedAt": now_iso,
+                    },
+                }
+                if stored_pass_outcome:
+                    legacy_update["passOutcome"] = stored_pass_outcome
+                reconciled = await db.picks.update_one(
+                    {"pickId": pick_id},
+                    {
+                        "$set": legacy_update,
+                        "$unset": {
+                            "settlementReview": "",
+                            "settlementRepairLastAttemptAt": "",
+                            "settlementRepairLastAttemptReason": "",
+                        },
+                    },
+                )
+                if reconciled.modified_count:
+                    repaired += 1
+                    print(
+                        f"[REVIEW REPAIR] {pick_doc.get('playerName', '?')} "
+                        f"{pick_doc.get('propType', '?')} → {stored_result} "
+                        f"actual={stored_actual} (legacy stored final)"
+                    )
+                    continue
             deferred += 1
             _reason = (
                 "no verified settlement"
@@ -1491,7 +1590,6 @@ async def _repair_pending_review_soccer_batch(
                             },
                         ]
                     },
-                    {"settlementSource.verified": {"$ne": True}},
                 ],
             },
             {

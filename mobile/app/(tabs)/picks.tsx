@@ -64,11 +64,12 @@ function normalizedResult(p: Pick) {
 function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const result = normalizedResult(p);
   const hasVerifiedSource = p.settlementSource?.verified === true;
-  if (hasVerifiedSource && (result === 'hit' || result === 'won')) return 'hit';
-  if (hasVerifiedSource && (result === 'miss' || result === 'lost')) return 'miss';
-  if (hasVerifiedSource && result === 'push') return 'push';
-  if (hasVerifiedSource && result === 'dnp') return 'dnp';
-  if (hasVerifiedSource && result === 'pass') {
+  const isExplicitFinal = p.status === 'settled' || p.matchStatus === 'final';
+  if ((hasVerifiedSource || isExplicitFinal) && (result === 'hit' || result === 'won')) return 'hit';
+  if ((hasVerifiedSource || isExplicitFinal) && (result === 'miss' || result === 'lost')) return 'miss';
+  if ((hasVerifiedSource || isExplicitFinal) && result === 'push') return 'push';
+  if ((hasVerifiedSource || isExplicitFinal) && result === 'dnp') return 'dnp';
+  if ((hasVerifiedSource || isExplicitFinal) && result === 'pass') {
     // A verified final value is always an actionable settlement outcome.
     // Older rows may still carry result=pass; use their stored avoided
     // direction/outcome so history renders them like every other pick.
@@ -80,7 +81,7 @@ function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
     const line = Number(p.line);
     const actual = Number(p.actualValue);
     const rec = String(p.recommendation || '').toLowerCase();
-    if (hasVerifiedSource && Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
+    if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
       if (actual === line) return 'push';
       return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
     }
@@ -95,11 +96,21 @@ function isSettled(p: Pick) {
   return derivedOutcome(p) != null;
 }
 function isPendingReview(p: Pick) {
+  const result = normalizedResult(p);
+  const hasFinalOutcome = ['hit', 'miss', 'push', 'dnp'].includes(result)
+    && p.actualValue != null
+    && (
+      p.settlementSource?.verified === true
+      || p.settlementSource?.verificationMethod === 'legacy_numeric_reconciliation'
+      || p.status === 'settled'
+    );
+  if (hasFinalOutcome) return false;
   return p.status === 'pending_review'
-    || normalizedResult(p) === 'pending_review';
+    || result === 'pending_review';
 }
 function isHistoryVisible(p: Pick) {
-  return isSettled(p) || isPendingReview(p);
+  return isSettled(p) || isPendingReview(p)
+    || (p.status === 'settled' && p.actualValue != null);
 }
 function pickWon(p: Pick) {
   return derivedOutcome(p) === 'hit' || p.status === 'won';
@@ -140,6 +151,7 @@ function PulsingDot() {
 
 
 function RecordBar({ picks }: { picks: Pick[] }) {
+  const [expanded, setExpanded] = useState(false);
   const hits = picks.filter(pickWon).length;
   const misses = picks.filter(pickLost).length;
   const dnps = picks.filter(pickDnp).length;
@@ -158,56 +170,83 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   }
 
   return (
-    <View style={styles.recordBar}>
-      <Text style={styles.recordLabel}>YOUR RECORD</Text>
-      <View style={styles.recordStats}>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.success }]}>{hits}</Text>
-          <Text style={styles.recordKey}>HITS</Text>
-        </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.error }]}>{misses}</Text>
-          <Text style={styles.recordKey}>MISS</Text>
-        </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.textSecondary }]}>{pending}</Text>
-          <Text style={styles.recordKey}>LIVE</Text>
-        </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: '#FFD60A' }]}>{review}</Text>
-          <Text style={styles.recordKey}>REVIEW</Text>
-        </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.dnp }]}>{dnps}</Text>
-          <Text style={styles.recordKey}>DNP</Text>
-        </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.primary }]}>
-            {winPct != null ? `${winPct}%` : '—'}
+    <TouchableOpacity
+      activeOpacity={0.8}
+      onPress={() => setExpanded((value) => !value)}
+      style={[styles.recordBar, expanded && styles.recordBarExpanded]}
+      accessibilityRole="button"
+      accessibilityLabel={expanded ? 'Hide record details' : 'Show record details'}
+    >
+      <View style={styles.recordCompactRow}>
+        <View style={styles.recordCompactTitle}>
+          <Text style={styles.recordLabel}>YOUR RECORD</Text>
+          <Text style={styles.recordCompactSummary}>
+            <Text style={{ color: Colors.success }}>{hits}W</Text>
+            <Text style={styles.recordSummaryMuted}> · </Text>
+            <Text style={{ color: Colors.error }}>{misses}L</Text>
+            <Text style={styles.recordSummaryMuted}> · </Text>
+            <Text style={{ color: Colors.primary }}>{winPct != null ? `${winPct}%` : '—'}</Text>
           </Text>
-          <Text style={styles.recordKey}>WIN%</Text>
         </View>
-        <View style={styles.recordStat}>
-          <Text style={[styles.recordVal, { color: Colors.accent }]}>
-            {streak > 0 ? `${streak}W` : '—'}
-          </Text>
-          <Text style={styles.recordKey}>STRK</Text>
-        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={16}
+          color={Colors.textTertiary}
+        />
       </View>
-      <View style={styles.progressWrap}>
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              { width: `${picks.length > 0 ? Math.max(8, Math.min(100, (settled / picks.length) * 100)) : 0}%` },
-            ]}
-          />
+
+      {expanded && (
+        <View style={styles.recordDetails}>
+          <View style={styles.recordStats}>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: Colors.success }]}>{hits}</Text>
+              <Text style={styles.recordKey}>HITS</Text>
+            </View>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: Colors.error }]}>{misses}</Text>
+              <Text style={styles.recordKey}>MISS</Text>
+            </View>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: Colors.textSecondary }]}>{pending}</Text>
+              <Text style={styles.recordKey}>LIVE</Text>
+            </View>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: '#FFD60A' }]}>{review}</Text>
+              <Text style={styles.recordKey}>REVIEW</Text>
+            </View>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: Colors.dnp }]}>{dnps}</Text>
+              <Text style={styles.recordKey}>DNP</Text>
+            </View>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: Colors.primary }]}>
+                {winPct != null ? `${winPct}%` : '—'}
+              </Text>
+              <Text style={styles.recordKey}>WIN%</Text>
+            </View>
+            <View style={styles.recordStat}>
+              <Text style={[styles.recordVal, { color: Colors.accent }]}>
+                {streak > 0 ? `${streak}W` : '—'}
+              </Text>
+              <Text style={styles.recordKey}>STRK</Text>
+            </View>
+          </View>
+          <View style={styles.progressWrap}>
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${picks.length > 0 ? Math.max(8, Math.min(100, (settled / picks.length) * 100)) : 0}%` },
+                ]}
+              />
+            </View>
+            <Text style={styles.progressText}>
+              {settled}/{picks.length} settled
+            </Text>
+          </View>
         </View>
-        <Text style={styles.progressText}>
-          {settled}/{picks.length} settled
-        </Text>
-      </View>
-    </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
@@ -2021,10 +2060,21 @@ const styles = StyleSheet.create({
   progressText: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', textAlign: 'right' },
 
   recordBar: {
-    marginHorizontal: 20, marginBottom: 12, backgroundColor: Colors.card,
-    borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.border, padding: 14, gap: 8,
+    marginHorizontal: 20, marginBottom: 8, backgroundColor: Colors.card,
+    borderRadius: 10, borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 12, paddingVertical: 8,
+  },
+  recordBarExpanded: {
+    paddingVertical: 12, gap: 8,
   },
   recordLabel: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.5 },
+  recordCompactRow: {
+    minHeight: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  recordCompactTitle: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  recordCompactSummary: { fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
+  recordSummaryMuted: { color: Colors.textTertiary },
+  recordDetails: { gap: 8 },
   recordStats: { flexDirection: 'row', justifyContent: 'space-between' },
   recordStat: { alignItems: 'center', flex: 1 },
   recordVal: { fontSize: 18, fontWeight: '800', color: Colors.text },

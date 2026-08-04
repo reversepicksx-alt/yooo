@@ -1016,31 +1016,49 @@ async def list_picks(req: GetPicksRequest):
             correct, pass_outcome = _settle_pick_result(p["actualValue"], p.get("line", 0), p)
             _explicit_result = str(p.get("result") or "").lower() in {"hit", "miss", "push", "dnp"}
             _verified_final = (p.get("settlementSource") or {}).get("verified") is True
-            _needs_soccer_source_review = (
-                _sport == "soccer"
-                and not p.get("correctedManually")
-                and not _verified_final
-            )
-            if _needs_soccer_source_review or (not _explicit_result and not _verified_final):
-                # A numeric value without an auditable final source is not
-                # calibration data. Keep it visible for review, but never
-                # infer hit/miss/push from a possibly stale currentValue.
-                p["result"] = "pending_review"
+            # A legacy record may have a real stored final value and an
+            # explicit outcome but predate settlementSource. Do not send it
+            # back into an endless review loop just because the audit marker
+            # was added later. Only a numeric value with no outcome remains
+            # reviewable.
+            if not _explicit_result and not _verified_final:
+                # This is a legacy numeric final, not a live currentValue:
+                # reconcile it once and mark the source as legacy/unverified.
+                # Keeping it in pending_review here created a race with the
+                # repair sweep, which could settle it only for the next list
+                # request before this guard put it back into review.
+                _legacy_source = {
+                    "provider": "legacy-stored-final",
+                    "fixtureId": p.get("fixtureId"),
+                    "playerId": p.get("playerId"),
+                    "propType": p.get("propType"),
+                    "statPath": "stored.actualValue",
+                    "fixtureStatus": "FT",
+                    "verified": False,
+                    "verificationMethod": "legacy_numeric_reconciliation",
+                    "recordedAt": datetime.now(timezone.utc).isoformat(),
+                }
+                p["result"] = correct
+                p["status"] = "settled"
+                p["settlementSource"] = _legacy_source
+                p["settledAt"] = p.get("settledAt") or datetime.now(timezone.utc).isoformat()
+                p.pop("settlementReview", None)
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": pick_email},
                     {"$set": {
-                        "status": "pending_review",
-                        "result": "pending_review",
-                        "settlementReview": {
-                            "reason": "actualValue has no explicit result or verified settlement source",
-                            "actualValue": p["actualValue"],
-                            "previousResult": p.get("result"),
-                            "markedBy": "picks_consistency_guard",
-                            "markedAt": datetime.now(timezone.utc).isoformat(),
-                        },
+                        "status": "settled",
+                        "result": correct,
+                        "hitPct": 100 if correct == "hit" else 0 if correct == "miss" else 50,
+                        "settledAt": p["settledAt"],
+                        "settlementSource": _legacy_source,
+                        "settledBy": "legacy_final_reconciliation",
+                    },
+                    "$unset": {
+                        "settlementReview": "",
+                        "settlementRepairLastAttemptAt": "",
+                        "settlementRepairLastAttemptReason": "",
                     }},
                 )
-                p["status"] = "pending_review"
                 continue
             # A verified final can never remain a user-facing PASS. Older
             # records used PASS for calibration-only rows; once the exact
@@ -1050,7 +1068,13 @@ async def list_picks(req: GetPicksRequest):
                 str(p.get("recommendation") or "").lower() == "pass"
                 and correct in {"hit", "miss", "push"}
             )
-            if correct != p.get("result") or _legacy_pass:
+            needs_settled_state_repair = (
+                p.get("status") == "pending_review"
+                or bool(p.get("settlementReview"))
+            ) and (
+                _explicit_result or _verified_final
+            )
+            if correct != p.get("result") or _legacy_pass or needs_settled_state_repair:
                 p["result"] = correct
                 if _legacy_pass:
                     _pass_direction = _pass_lean(p)
@@ -1060,7 +1084,11 @@ async def list_picks(req: GetPicksRequest):
                     p.pop("passLeaning", None)
                     p.pop("isCalibrationOnly", None)
                 print(f"[CONSISTENCY] Correcting {p.get('playerName','')} {p.get('propType','')} → {correct}")
-                updates = {"result": correct}
+                updates = {
+                    "result": correct,
+                    "status": "settled",
+                    "settledAt": p.get("settledAt") or datetime.now(timezone.utc).isoformat(),
+                }
                 updates["hitPct"] = 100 if correct == "hit" else 0 if correct == "miss" else 50
                 unset = {}
                 if _legacy_pass and _pass_direction:
@@ -1071,6 +1099,12 @@ async def list_picks(req: GetPicksRequest):
                         "passReason": "",
                         "isCalibrationOnly": "",
                     }
+                if needs_settled_state_repair:
+                    unset.update({
+                        "settlementReview": "",
+                        "settlementRepairLastAttemptAt": "",
+                        "settlementRepairLastAttemptReason": "",
+                    })
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": pick_email},
                     {"$set": updates, "$unset": unset} if unset else {"$set": updates}
@@ -4170,9 +4204,11 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     recent = None
     stored_fixture_id = pick.get("fixtureId")
     if stored_fixture_id:
-        # A saved fixture ID is authoritative. If it is unavailable or its
-        # teams do not match this pick, defer rather than searching another
-        # finished fixture by opponent name.
+        # A saved fixture ID is authoritative. The stored opponentId can be
+        # stale for legacy picks when a provider changes/normalizes team IDs,
+        # so the exact finished fixture must be validated by the player's team
+        # (and later by the player's row/stat), not by reusing that stale
+        # opponent ID as a hard blocker.
         try:
             exact_rows = await api_football_request(
                 "fixtures", {"id": int(stored_fixture_id)}
@@ -4182,16 +4218,14 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             exact_home = (exact or {}).get("teams", {}).get("home", {}).get("id")
             exact_away = (exact or {}).get("teams", {}).get("away", {}).get("id")
             team_match = not team_id or team_id in (exact_home, exact_away)
-            opp_id = pick.get("opponentId")
-            opponent_match = not opp_id or opp_id in (exact_home, exact_away)
-            if exact and exact_status in ("FT", "AET", "PEN") and team_match and opponent_match:
+            if exact and exact_status in ("FT", "AET", "PEN") and team_match:
                 recent = exact
             else:
                 print(
                     f"[SETTLE-DEFER] {pick.get('playerName','')} stored fixture "
                     f"{stored_fixture_id} failed exact validation "
                     f"(status={exact_status}, teams={exact_home}/{exact_away}, "
-                    f"pick={team_id}/{opp_id})"
+                    f"playerTeam={team_id}, storedOpponent={pick.get('opponentId')})"
                 )
                 return None
         except Exception as _exact_err:
