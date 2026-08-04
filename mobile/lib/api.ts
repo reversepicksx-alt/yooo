@@ -1069,6 +1069,11 @@ export interface Pick {
   ownerPlayerPhoto?: string;
   ownerTeamLogo?: string;
   ownerOpponentLogo?: string;
+  // Post-save coaching change flag — set by background job when the team's
+  // coach changed AFTER this pick was saved.  Triggers the RE-RUN SUGGESTED badge.
+  managerChangedAfterPick?: boolean;
+  managerChangeCoachName?: string;
+  managerChangeDate?: string;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -1149,6 +1154,10 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     // Manager change badge fields — persisted at save time so the badge shows
     // without re-running the prediction.
     managerContext: (p.managerContext as Pick['managerContext']) || undefined,
+    // Post-save coaching change flag — set by background job
+    managerChangedAfterPick: (p.managerChangedAfterPick as boolean) || undefined,
+    managerChangeCoachName: (p.managerChangeCoachName as string) || undefined,
+    managerChangeDate: (p.managerChangeDate as string) || undefined,
   }));
 }
 

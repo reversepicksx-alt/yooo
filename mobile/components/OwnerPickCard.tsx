@@ -149,6 +149,12 @@ const pill = StyleSheet.create({
     backgroundColor: 'rgba(245,158,11,0.12)',
     borderWidth: 1, borderColor: 'rgba(245,158,11,0.45)',
   },
+  rerun: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 6, paddingVertical: 3, borderRadius: 20,
+    backgroundColor: 'rgba(255,107,53,0.12)',
+    borderWidth: 1, borderColor: 'rgba(255,107,53,0.5)',
+  },
 });
 
 // ─── Main component ──────────────────────────────────────────────────────────
@@ -572,6 +578,12 @@ export default function OwnerPickCard({
                 <Ionicons name="alert-circle-outline" size={8} color="#F59E0B" style={{ marginRight: 3 }} />
                 <Text style={[pill.txt, { color: '#F59E0B' }]}>MGR</Text>
               </TouchableOpacity>
+            )}
+            {pick.managerChangedAfterPick === true && !settled && !captureMode && (
+              <View style={pill.rerun}>
+                <Ionicons name="refresh-outline" size={8} color="#FF6B35" style={{ marginRight: 3 }} />
+                <Text style={[pill.txt, { color: '#FF6B35' }]}>RE-RUN</Text>
+              </View>
             )}
           </View>
         </View>

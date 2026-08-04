@@ -2411,6 +2411,17 @@ async def _run_auto_settlement():
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")
 
+    # ── Post-save manager change check ────────────────────────────────────────
+    # Runs after settlement so the coaching check doesn't burn API-Football
+    # quota during the critical settlement window. Each pick is checked at most
+    # once per 24 hours; the checker itself handles throttling.
+    try:
+        from manager_change_checker import run_manager_change_check
+        from utils import api_football_request as _mgr_api_fn
+        await run_manager_change_check(db, _mgr_api_fn)
+    except Exception as _mgr_err:
+        print(f"[MGR CHECK] Skipped this run: {_mgr_err}")
+
 
 async def _try_settle_wc_via_gemini(pick: dict) -> bool:
     """
