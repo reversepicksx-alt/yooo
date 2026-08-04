@@ -863,7 +863,14 @@ async def list_picks(req: GetPicksRequest):
     # The owner's "see all users" calibration view is available in /picks/matchups.
     # Fetching 5,000 large documents from Atlas takes 120+ seconds — unacceptable.
     is_owner_view = requester_email in OWNER_EMAILS
-    picks = await db.picks.find({"email": requester_email}, {"_id": 0}).sort("timestamp", -1).to_list(None)
+    # User deletion is a soft hide, not a data deletion. Hidden picks must
+    # still be loaded here because this endpoint also drives pull-based live
+    # settlement; they are removed only from the response after processing.
+    # Calibration and analytics independently read the full collection.
+    picks = await db.picks.find(
+        {"email": requester_email},
+        {"_id": 0},
+    ).sort("timestamp", -1).to_list(None)
 
     # Budget cut: NFL/NBA/MLB are no longer offered; hide them from settled picks too.
     _HIDDEN_SPORTS = {"mlb", "nba", "nfl"}
@@ -1498,11 +1505,17 @@ async def list_picks(req: GetPicksRequest):
     # ───────────────────────────────────────────────────────────────────────
 
     # Owner-only: attach player photos and team crests from API-Football cache.
-    await _enrich_owner_media(picks, requester_email)
+    # Do not spend enrichment work on records hidden from the user's History.
+    visible_picks = [p for p in picks if p.get("hiddenFromUser") is not True]
+    await _enrich_owner_media(visible_picks, requester_email)
 
-    # Cache the processed result so rapid re-polls skip the full pipeline
-    _picks_list_cache[requester_email] = {"ts": _time_mod.monotonic(), "picks": picks}
-    return {"picks": picks}
+    # Cache only the user-visible result. Hidden records remain persisted and
+    # have already gone through the settlement pipeline above.
+    _picks_list_cache[requester_email] = {
+        "ts": _time_mod.monotonic(),
+        "picks": visible_picks,
+    }
+    return {"picks": visible_picks}
 
 
 # In-memory cache for /picks/matchups: email -> {ts, result}. TTL 60s.
@@ -2009,17 +2022,32 @@ async def delete_pick(req: DeletePickRequest):
     if not pick_id:
         raise HTTPException(status_code=400, detail="pickId is required")
 
-    # A save race or a legacy record can leave more than one document with
-    # the same canonical pickId.  Delete all of them, not just the first one,
-    # so a "deleted" history card cannot reappear as its duplicate.
-    deleted = await db.picks.delete_many({"pickId": pick_id, "email": email})
-    if deleted.deleted_count == 0:
+    # This is intentionally a soft delete.  Keep the full prediction ledger
+    # for settlement, calibration, replay, and model analytics; only hide the
+    # records from this user's History/list response.
+    # A save race or legacy record can leave duplicate documents, so mark all
+    # matching canonical pickId records instead of updating only one.
+    hidden = await db.picks.update_many(
+        {"pickId": pick_id, "email": email},
+        {
+            "$set": {
+                "hiddenFromUser": True,
+                "hiddenAt": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+    if hidden.matched_count == 0:
         raise HTTPException(status_code=404, detail="Pick not found")
 
-    # /picks/list is cached for 20s.  Without invalidation, the next refresh
-    # immediately returns the deleted pick and makes deletion look broken.
+    # /picks/list is cached for 20s. Invalidate it so the hidden pick
+    # disappears immediately rather than waiting for the TTL.
     _picks_list_cache.pop(email, None)
-    return {"success": True, "deletedCount": deleted.deleted_count}
+    return {
+        "success": True,
+        "hidden": True,
+        "hiddenCount": hidden.matched_count,
+        "deletedCount": 0,
+    }
 
 
 @router.post("/picks/correct")
