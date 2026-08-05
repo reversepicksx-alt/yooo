@@ -477,11 +477,11 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
     # Sort by timestamp descending (newest first)
     rows.sort(key=lambda r: str(r.get("timestamp", "")), reverse=True)
 
-    # AI on-the-fly resolution for any remaining empty positions
+    # Deterministic on-the-fly resolution for any remaining empty positions
     unresolved = [r for r in rows if not r.get("position")]
     if unresolved:
         try:
-            from ai_positions import resolve_positions_ai_batch
+            from ai_positions import resolve_positions_batch
             seen = set()
             batch = []
             for r in unresolved:
@@ -489,7 +489,7 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
                     seen.add(r["player"])
                     batch.append({"playerName": r["player"], "sport": sport})
             if batch:
-                resolved = await resolve_positions_ai_batch(batch)
+                resolved = await resolve_positions_batch(batch)
                 for r in rows:
                     if not r["position"] and r["player"] in resolved:
                         r["position"] = resolved[r["player"]].get("position", "")
@@ -500,7 +500,7 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
                             {"$set": {"position": r["position"], "role": r["role"]}}
                         )
         except Exception as e:
-            print(f"[INTEL SHEET] AI position resolve error: {e}")
+            print(f"[INTEL SHEET] deterministic position resolve error: {e}")
 
     return {
         "total": total_h + total_m,

@@ -6,10 +6,9 @@ Self-Learning Miss Analysis Engine
 - No manual triggers — fully autonomous feedback loop
 """
 import traceback
-import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
-from config import db, EMERGENT_LLM_KEY
+from config import db
 from models import BaseModel
 from typing import Optional
 
@@ -28,10 +27,7 @@ class GetMissesRequest(BaseModel):
 
 
 async def _run_miss_postmortem(pick: dict) -> dict:
-    """Run 3-AI consensus analysis on why a prediction missed."""
-    from openai import OpenAI
-    import asyncio
-
+    """Build deterministic postmortem reasoning for a missed prediction."""
     player_name = pick.get("playerName", "Unknown")
     team_name = pick.get("teamName", "Unknown")
     opponent = pick.get("opponentName", "Unknown")
@@ -45,132 +41,48 @@ async def _run_miss_postmortem(pick: dict) -> dict:
     match_score = pick.get("matchScore", "")
     sport = pick.get("sport", "soccer")
 
-    # Calculate how far off we were
-    diff = abs(actual - projected) if actual is not None and projected else 0
-    direction = "over" if actual > line else "under" if actual < line else "push"
-
-    prompt = f"""You are a sports analytics expert analyzing a MISSED prediction. Be brutally honest about what went wrong.
-
-PREDICTION DETAILS:
-- Player: {player_name} ({team_name})
-- Opponent: {opponent}
-- Venue: {venue.upper()}
-- Sport: {sport.upper()}
-- Prop: {prop_type.replace('_', ' ').title()}
-- Line: {line}
-- Our Pick: {recommendation.upper()} {line}
-- Our Projection: {projected}
-- Actual Result: {actual}
-- Final Score: {match_score or 'Unknown'}
-- Confidence: {confidence}%
-
-The prediction was OFF by {diff:.1f} units. We projected {projected} but the actual was {actual}.
-
-Analyze WHY this prediction missed. Consider:
-1. Was the projection mathematically flawed? (too high/low baseline)
-2. Could the game context explain it? (blowout, early sub, red card, defensive game)
-3. Was venue impact miscalculated?
-4. Was the opponent's defensive/offensive strength underestimated?
-5. Is this a systematic pattern? (e.g., this prop type is historically volatile)
-
-Respond in EXACTLY this JSON format:
-{{
-  "primary_reason": "One clear sentence explaining the main reason it missed",
-  "factors": ["factor1", "factor2", "factor3"],
-  "projection_error": "too_high" or "too_low",
-  "error_magnitude": "minor" (0-15% off) or "moderate" (15-30%) or "major" (30%+),
-  "game_context_factor": true/false,
-  "calibration_suggestion": "A specific adjustment rule for future similar predictions",
-  "lesson": "One sentence takeaway for the system"
-}}
-
-Return ONLY valid JSON, no markdown or explanation."""
-
-    import json as jmod
-
-    async def call_grok_analysis(label: str) -> tuple:
-        """AI call with JSON mode for reliable parsing."""
-        try:
-            from ai_engine import _ai_call
-            text = await _ai_call(prompt, temperature=0, max_tokens=500, timeout=20, json_mode=True)
-            if not text:
-                return label, None
-            return label, jmod.loads(text)
-        except Exception as e:
-            print(f"[MISS ANALYSIS] {label} error: {e}")
-            return label, None
-
-    async def call_grok_analysis_retry(label: str) -> tuple:
-        """Second AI call — non-JSON mode with manual parse as fallback."""
-        import re as _re
-        try:
-            from ai_engine import _ai_call
-            text = await _ai_call(prompt, temperature=0, max_tokens=500, timeout=20)
-            if not text:
-                return label, None
-            text = text.strip()
-            if text.startswith("```"):
-                text = _re.sub(r"```(?:json)?\s*", "", text)
-                text = _re.sub(r"```\s*$", "", text).strip()
-            start = text.find("{")
-            if start >= 0:
-                return label, jmod.loads(text[start:])
-            return label, None
-        except Exception as e:
-            print(f"[MISS ANALYSIS] {label} error: {e}")
-            return label, None
-
-    tasks = [
-        call_grok_analysis("GR1"),
-        call_grok_analysis_retry("GR2"),
+    projected_val = float(projected or 0)
+    actual_val = float(actual or 0)
+    line_val = float(line or 0)
+    diff_to_projection = actual_val - projected_val
+    diff_to_line = actual_val - line_val
+    direction = "over" if actual_val > line_val else "under" if actual_val < line_val else "push"
+    projection_error = "too_low" if actual_val > projected_val else "too_high" if actual_val < projected_val else "matched"
+    abs_error = abs(diff_to_projection)
+    if abs_error <= max(0.25, abs(line_val) * 0.15):
+        magnitude = "minor"
+    elif abs_error <= max(0.5, abs(line_val) * 0.30):
+        magnitude = "moderate"
+    else:
+        magnitude = "major"
+    factors = [
+        f"projection_vs_line_delta:{(projected_val - line_val):+.2f}",
+        f"actual_vs_projection_delta:{diff_to_projection:+.2f}",
+        f"actual_vs_line_delta:{diff_to_line:+.2f}",
+        f"direction:{direction}",
+        f"confidence:{confidence}",
     ]
-    results = await asyncio.gather(*tasks)
-
-    analyses = {}
-    for label, data in results:
-        if data:
-            analyses[label] = data
-
-    if not analyses:
-        return None
-
-    # Build consensus
-    reasons = [a.get("primary_reason", "") for a in analyses.values() if a]
-    factors = []
-    for a in analyses.values():
-        if a:
-            factors.extend(a.get("factors", []))
-    # Deduplicate factors
-    seen = set()
-    unique_factors = []
-    for f in factors:
-        f_lower = f.lower().strip()
-        if f_lower not in seen:
-            seen.add(f_lower)
-            unique_factors.append(f)
-
-    lessons = [a.get("lesson", "") for a in analyses.values() if a and a.get("lesson")]
-    calibration_suggestions = [a.get("calibration_suggestion", "") for a in analyses.values() if a and a.get("calibration_suggestion")]
-
-    # Determine consensus on error direction
-    errors = [a.get("projection_error", "") for a in analyses.values() if a]
-    error_dir = max(set(errors), key=errors.count) if errors else "unknown"
-
-    magnitudes = [a.get("error_magnitude", "moderate") for a in analyses.values() if a]
-    magnitude = max(set(magnitudes), key=magnitudes.count) if magnitudes else "moderate"
-
-    game_context = any(a.get("game_context_factor", False) for a in analyses.values() if a)
-
+    if match_score:
+        factors.append(f"settlement_context:{match_score}")
+    primary_reason = (
+        f"Projection drifted {projection_error.replace('_', ' ')} versus the settled outcome; "
+        f"actual landed {direction} the line by {diff_to_line:+.1f}."
+    )
+    calibration_suggestion = (
+        f"Apply a small directional bias for similar {sport} {prop_type} picks at {venue} "
+        f"when confidence is {confidence}% and settlement follows the same line direction."
+    )
+    lesson = "Use line alignment, actual settlement direction, and confidence together before treating the projection as stable."
     return {
-        "primaryReason": reasons[0] if reasons else "Analysis unavailable",
-        "allReasons": {k: v.get("primary_reason", "") for k, v in analyses.items()},
-        "factors": unique_factors[:5],
-        "projectionError": error_dir,
+        "primaryReason": primary_reason,
+        "allReasons": {"deterministic": primary_reason},
+        "factors": factors[:5],
+        "projectionError": projection_error,
         "errorMagnitude": magnitude,
-        "gameContextFactor": game_context,
-        "calibrationSuggestions": calibration_suggestions,
-        "lessons": lessons,
-        "modelsResponded": list(analyses.keys()),
+        "gameContextFactor": bool(match_score) or abs(diff_to_line) > abs(abs_error),
+        "calibrationSuggestions": [calibration_suggestion],
+        "lessons": [lesson],
+        "modelsResponded": ["deterministic"],
         "analyzedAt": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -12,7 +12,7 @@ trailing.
 
 Three independent signals (all async, combined into a single adjusted_poss):
 
-  1. Gemini Tactical Style Flag (cached 7 days per team)
+   1. Tactical Style Flag (deterministic, cached 7 days per team)
        - possession_cede_when_leading  : 0.0 (maintain) → 1.0 (fully cede)
        - possession_chase_when_trailing: 0.0 (no change) → 1.0 (full press)
 
@@ -52,107 +52,29 @@ MIN_SETTLED_N = 3
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Signal 1: Gemini Tactical Style Flag
+# Signal 1: deterministic tactical-style flag
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def get_tactical_style(team_name: str, db) -> dict:
-    """
-    Returns Gemini-rated tactical style for a team, cached 7 days.
-
-    Return shape:
-    {
-        "possession_cede_when_leading":   float,  # 0.0–1.0
-        "possession_chase_when_trailing": float,  # 0.0–1.0
-        "style_notes": str,
-        "source": "cache" | "gemini" | "default",
-    }
-    """
-    from config import AI_BACKGROUND_ENRICHMENT_ENABLED
+    """Return deterministic tactical style for a team, cached 7 days."""
     cache_key = f"tactical_style:{team_name.lower().strip()}"
 
     # ── Cache lookup ─────────────────────────────────────────────────────────
     try:
         doc = await db.tactical_style_cache.find_one({"_k": cache_key})
         if doc and doc.get("ts", 0) > time.time() - 7 * 86400:
-            return {**doc.get("d", {}), "source": "cache"}
+            cached = doc.get("d", {}) or {}
+            cached["source"] = "cache"
+            return cached
     except Exception:
         pass
 
-    if not AI_BACKGROUND_ENRICHMENT_ENABLED:
-        return {
-            "possession_cede_when_leading": 0.30,
-            "possession_chase_when_trailing": 0.30,
-            "style_notes": "deterministic neutral fallback",
-            "source": "default",
-        }
-
-    # ── Gemini call ──────────────────────────────────────────────────────────
-    try:
-        from ai_engine import _ai_call
-
-        prompt = (
-            f"Rate {team_name}'s tactical possession style on TWO dimensions (0.0–1.0).\n\n"
-            f"1. possession_cede_when_leading\n"
-            f"   How much does {team_name} DROP possession after scoring and leading 1-0?\n"
-            f"   0.0 = maintains possession fully (Spain, Man City, Barcelona)\n"
-            f"   0.5 = moderate shift toward counter / lower press (typical mid-table)\n"
-            f"   1.0 = fully cedes possession and defends deep when ahead "
-            f"(Mourinho-era Chelsea/Inter, Deschamps-era France, Saudi league clubs)\n\n"
-            f"2. possession_chase_when_trailing\n"
-            f"   How much does {team_name} GAIN possession when chasing a 1-0 deficit?\n"
-            f"   0.0 = rarely changes approach (low-block underdog)\n"
-            f"   0.5 = moderate territorial push (most mid-tier teams)\n"
-            f"   1.0 = dominant press for full possession dominance when behind "
-            f"(Klopp-era Liverpool, Spain, Netherlands)\n\n"
-            f"Base your scores on this team's known manager philosophy and tactical DNA.\n"
-            f"For unknown / amateur teams use 0.30 / 0.30 as neutral defaults.\n\n"
-            f"Respond with ONLY valid JSON (no markdown fences):\n"
-            f'{{\"possession_cede_when_leading\": 0.XX, '
-            f'\"possession_chase_when_trailing\": 0.XX, '
-            f'\"style_notes\": \"one sentence\"}}'
-        )
-
-        raw = await _ai_call(prompt, temperature=0, max_tokens=160, timeout=12)
-        raw = (raw or "").strip()
-        # Strip any accidental markdown fences
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1] if len(parts) > 1 else raw
-            if raw.lower().startswith("json"):
-                raw = raw[4:]
-        raw = raw.strip()
-
-        data = json.loads(raw)
-        result = {
-            "possession_cede_when_leading":   float(max(0.0, min(1.0, data.get("possession_cede_when_leading", 0.3)))),
-            "possession_chase_when_trailing": float(max(0.0, min(1.0, data.get("possession_chase_when_trailing", 0.3)))),
-            "style_notes": str(data.get("style_notes", ""))[:200],
-        }
-
-        # ── Cache 7 days ─────────────────────────────────────────────────────
-        try:
-            await db.tactical_style_cache.update_one(
-                {"_k": cache_key},
-                {"$set": {"_k": cache_key, "d": result, "ts": time.time()}},
-                upsert=True,
-            )
-        except Exception:
-            pass
-
-        print(
-            f"[TACTICAL STYLE] {team_name}: cede={result['possession_cede_when_leading']:.2f} "
-            f"chase={result['possession_chase_when_trailing']:.2f} — {result['style_notes']}"
-        )
-        return {**result, "source": "gemini"}
-
-    except Exception as e:
-        print(f"[TACTICAL STYLE] Gemini call failed for {team_name}: {e}")
-        return {
-            "possession_cede_when_leading":   0.30,
-            "possession_chase_when_trailing": 0.30,
-            "style_notes": "default",
-            "source": "default",
-        }
+    return {
+        "possession_cede_when_leading": 0.30,
+        "possession_chase_when_trailing": 0.30,
+        "style_notes": "deterministic neutral fallback",
+        "source": "default",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

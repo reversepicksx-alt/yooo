@@ -15,13 +15,13 @@ let html = fs.readFileSync(distHtml, 'utf8');
 const headInject = `
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
   <title>Reverse Picks — Elite Prop Intelligence</title>
-  <meta name="description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
+  <meta name="description" content="Deterministic soccer player prop analytics. Bayesian projections, structured analysis, and data-driven predictions." />
   <link rel="icon" type="image/png" href="/rp-icon.png" />
   <link rel="shortcut icon" href="/rp-icon.png" />
   <link rel="apple-touch-icon" href="/rp-icon.png" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Reverse Picks — Elite Prop Intelligence" />
-  <meta property="og:description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
+  <meta property="og:description" content="Deterministic soccer player prop analytics. Bayesian projections, structured analysis, and data-driven predictions." />
   <meta name="theme-color" content="#050505" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

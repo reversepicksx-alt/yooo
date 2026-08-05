@@ -189,10 +189,9 @@ class TestBasketballRemoval:
         grok_path = "/app/backend/grok_engine.py"
         with open(grok_path, "r") as f:
             content = f.read()
-        
-        # Should not have basketball auto-settlement
-        assert "_try_settle_basketball" not in content, "Basketball settlement in grok_engine"
-        print("PASS: grok_engine.py only handles soccer")
+        assert "deterministic-compat" in content
+        assert "_try_settle_basketball" not in content
+        print("PASS: grok_engine.py uses deterministic compatibility shim")
 
 
 class TestScanPropEndpoint:

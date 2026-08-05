@@ -29,7 +29,6 @@ import StreaksAchievements from '@/components/StreaksAchievements';
 import PicksCalendar from '@/components/PicksCalendar';
 import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
-import AIAssistant from '@/components/AIAssistant';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -790,7 +789,6 @@ export default function PicksScreen() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [socialOpen, setSocialOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [imageDisclaimerVisible, setImageDisclaimerVisible] = useState(false);
@@ -1011,9 +1009,8 @@ export default function PicksScreen() {
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
   const _rawModalText = (analysisModal?.data?.tacticalBreakdown ?? analysisModal?.pick?.tacticalBreakdown ?? analysisModal?.data?.reasoning ?? analysisModal?.pick?.reasoning ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary ?? analysisModal?.pick?.sharpSummary) as string | undefined;
-  // Filter out stale placeholder text that was stored while AI was still pending
-  const modalText = (_rawModalText && !_rawModalText.startsWith('AI analysis loading')) ? _rawModalText : undefined;
-  const modalAiSource = String(analysisModal?.data?.aiSource ?? analysisModal?.pick?.aiSource ?? '').toLowerCase();
+  // Filter out stale placeholder text that was stored while analysis was still pending
+  const modalText = (_rawModalText && !_rawModalText.startsWith('Structured analysis loading')) ? _rawModalText : undefined;
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
   const capturedModalFactors = (
     (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]
@@ -1427,7 +1424,7 @@ export default function PicksScreen() {
                       {isHit ? 'VERDICT: HIT' : 'VERDICT: MISS'}
                     </Text>
                     <View style={{ marginLeft: 'auto', backgroundColor: accent + '22', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 2 }}>
-                      <Text style={{ fontSize: 9, fontWeight: '700', color: accent, letterSpacing: 0.8 }}>POST-MATCH AI</Text>
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: accent, letterSpacing: 0.8 }}>POST-MATCH LEDGER</Text>
                     </View>
                   </View>
                   {review ? (
@@ -1470,7 +1467,7 @@ export default function PicksScreen() {
               )}
             </View>
 
-            {/* ── AI TACTICAL BREAKDOWN ── */}
+            {/* ── STRUCTURED ANALYSIS BREAKDOWN ── */}
             {!analysisModal?.loading && modalText && (() => {
               const pick = analysisModal?.pick as any;
               const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
@@ -1486,12 +1483,12 @@ export default function PicksScreen() {
                   <View style={mStyles.aiBlocks}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                       <Ionicons
-                        name={modalAiSource === 'gemini' ? 'sparkles-outline' : 'calculator-outline'}
+                        name="calculator-outline"
                         size={13}
-                        color={modalAiSource === 'gemini' ? Colors.primary : Colors.textTertiary}
+                        color={Colors.textTertiary}
                       />
-                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 1.1, color: modalAiSource === 'gemini' ? Colors.primary : Colors.textTertiary }}>
-                        {modalAiSource === 'gemini' ? 'GEMINI · FULL TACTICAL ANALYSIS' : 'FULL MODEL EXPLANATION'}
+                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 1.1, color: Colors.textTertiary }}>
+                        DETERMINISTIC · FULL MODEL EXPLANATION
                       </Text>
                     </View>
                     {renderAnalysisBlocks(modalText, modalRec)}
@@ -1562,7 +1559,6 @@ export default function PicksScreen() {
             <View style={styles.menuGrid}>
               <MenuItem icon="calendar" label="Calendar" onPress={() => { setMenuOpen(false); setCalendarOpen(true); }} />
               <MenuItem icon="people" label="Social Feed" onPress={() => { setMenuOpen(false); setSocialOpen(true); }} />
-              <MenuItem icon="chatbubbles" label="AI Assistant" onPress={() => { setMenuOpen(false); setAiOpen(true); }} />
               <MenuItem icon="notifications" label="Alerts" onPress={() => { setMenuOpen(false); setAlertsOpen(true); }} />
               <MenuItem icon="trophy" label="Streaks" onPress={() => { setMenuOpen(false); setStreaksOpen(true); }} />
             </View>
@@ -1609,8 +1605,6 @@ export default function PicksScreen() {
       {/* ── Custom Alerts ── */}
       <CustomAlerts visible={alertsOpen} onClose={() => setAlertsOpen(false)} />
 
-      {/* ── AI Assistant ── */}
-      <AIAssistant visible={aiOpen} onClose={() => setAiOpen(false)} />
     </View>
   );
 }

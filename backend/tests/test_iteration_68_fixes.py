@@ -12,7 +12,7 @@ Tests:
 8. Player resolution: 'Joshua Kimmich' should resolve to J. Kimmich at Bayern München - via /api/re-resolve
 9. Player resolution: 'Harry Kane' should resolve correctly - via /api/re-resolve
 10. Backend server starts without errors
-11. Grok model names are correctly configured
+11. Deterministic policy fields are correctly configured
 12. PredictionRequest.opponentId is optional with default 0
 """
 import pytest
@@ -256,19 +256,11 @@ class TestPlayerResolutionViaAPI:
         print(f"✓ 'Harry Kane' resolved to {player_name} (ID: {player_id}) at {team_name}")
 
 
-class TestGrokModelConfiguration:
-    """Test that Grok model names are correctly configured"""
-    
-    def test_grok_model_names(self):
-        """Verify grok model names are consistent (grok-4-1-fast-non-reasoning, not grok-4.1-fast)"""
+class TestDeterministicPolicyFields:
+    def test_grok_compat_shim_is_deterministic(self):
         from grok_engine import GROK_MODEL, GROK_REASONING_MODEL
-        
-        # The fix changed grok-4.1-fast to grok-4-1-fast-non-reasoning
-        assert "4.1" not in GROK_MODEL, f"GROK_MODEL still has old format: {GROK_MODEL}"
-        assert "4-1" in GROK_MODEL or "grok-3" in GROK_MODEL.lower(), f"GROK_MODEL unexpected format: {GROK_MODEL}"
-        
-        print(f"✓ GROK_MODEL: {GROK_MODEL}")
-        print(f"✓ GROK_REASONING_MODEL: {GROK_REASONING_MODEL}")
+        assert GROK_MODEL == "deterministic-compat"
+        assert GROK_REASONING_MODEL == "deterministic-compat"
 
 
 class TestPredictionRequestModel:

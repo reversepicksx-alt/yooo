@@ -46,7 +46,7 @@ export default function PrivacyPolicyScreen() {
           We do not sell, rent, or trade your personal information to third parties. We share data only with:{'\n\n'}
           • <Text style={styles.bold}>Apple / App Store</Text> — for In-App Purchase processing and subscription management.{'\n\n'}
           • <Text style={styles.bold}>RevenueCat</Text> — for subscription entitlement tracking. RevenueCat's privacy policy is available at revenuecat.com/privacy.{'\n\n'}
-          • <Text style={styles.bold}>Google Gemini / xAI Grok</Text> — anonymised match context is sent to AI providers to generate predictions. No personal identifying information is included in these requests.
+          • <Text style={styles.bold}>Reverse Picks model</Text> — predictions and explanations are calculated from the recorded match context and statistical model. We do not send match context to external language-generation providers.
         </Text>
 
         <Text style={styles.section}>4. Data Retention</Text>

@@ -1,13 +1,12 @@
 """
 WNBA prediction routes — /api/wnba/*
 """
-import asyncio
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, XAI_API_KEY
+from config import db
 import wnba_client
 import wnba_engine
 
@@ -15,58 +14,6 @@ log = logging.getLogger("wnba_routes")
 router = APIRouter(prefix="/api/wnba", tags=["wnba"])
 
 CURRENT_WNBA_SEASON = wnba_client.CURRENT_WNBA_SEASON
-
-
-# ── AI analysis ───────────────────────────────────────────────────────────────
-
-async def _get_wnba_ai_analysis(
-    player_name: str, position: str, prop_type: str, line: float,
-    venue: str, opponent: str, projection: float,
-    p_over: float, p_under: float, recommendation: str,
-    game_logs: list, prior_mean: float, streak_flag: str,
-) -> dict:
-    try:
-        from ai_engine import _ai_call
-
-        prop_label = prop_type.replace("_", " ").title()
-        rec_label  = recommendation.upper()
-        conf       = round(max(p_over, p_under))
-        field      = wnba_engine.WNBA_PROPS.get(prop_type, prop_type)
-        ctx_lines  = []
-        for i, g in enumerate(game_logs[:7]):
-            val  = g.get(field, "?")
-            date = g.get("date", "")
-            ctx_lines.append(f"  G{i+1} ({date}): {val} {prop_label}")
-        game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
-
-        streak_text = ""
-        if streak_flag == "OVER_STREAK":
-            streak_text = " OVER streak across last 4+ games."
-        elif streak_flag == "UNDER_STREAK":
-            streak_text = " UNDER streak across last 4+ games."
-
-        prompt = f"""You are a sharp WNBA prop betting analyst. Analyze this pick concisely.
-
-PLAYER: {player_name} ({position or "Forward/Guard/Center"})
-PROP: {prop_label} | LINE: {line} | VENUE: {venue.upper()} vs {opponent or "opponent"}
-PROJECTION: {projection} | P(OVER): {p_over}% | P(UNDER): {p_under}%
-RECOMMENDATION: {rec_label} ({conf}% confidence)
-PRIOR MEAN: {prior_mean}{streak_text}
-
-RECENT GAME LOG:
-{game_ctx}
-
-Write a sharp 2-3 sentence analysis of the {rec_label}. Focus on form, matchup, and usage. Be direct."""
-
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {
-            "sharpSummary":      text[:600] if text else "",
-            "tacticalBreakdown": text,
-            "reasoning":         f"Bayesian projection: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%",
-        }
-    except Exception as e:
-        log.warning(f"[WNBA AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
 
 # ── Player search ─────────────────────────────────────────────────────────────
@@ -178,8 +125,6 @@ async def wnba_predict(req: WnbaPredictRequest):
 
     log.info(f"[WNBA PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
 
-    # Try requested season first; fall back one year if no game logs yet
-    # (common early in a new season before all players have played).
     seasons_to_try = [req.season, req.season - 1]
     game_logs = []
     season_avg = {}
@@ -232,22 +177,6 @@ async def wnba_predict(req: WnbaPredictRequest):
     elif result["recommendation"] == "over" and result["projection"] < req.line:
         result["projection"] = round(req.line + 0.5, 1)
 
-    ai_task = asyncio.create_task(_get_wnba_ai_analysis(
-        player_name    = req.playerName,
-        position       = position,
-        prop_type      = prop_type,
-        line           = req.line,
-        venue          = venue,
-        opponent       = req.opponentName or "",
-        projection     = result["projection"],
-        p_over         = p_over,
-        p_under        = p_under,
-        recommendation = result["recommendation"],
-        game_logs      = game_logs,
-        prior_mean     = result["priorMean"],
-        streak_flag    = result["streakFlag"],
-    ))
-
     field = wnba_engine.WNBA_PROPS.get(prop_type, prop_type)
     game_log_tiles = []
     for g in game_logs[:10]:
@@ -261,10 +190,7 @@ async def wnba_predict(req: WnbaPredictRequest):
             "ast":      g.get("ast"),
         })
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
     return {
         "sport":            "wnba",

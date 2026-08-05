@@ -1,13 +1,12 @@
 """
 NFL prediction routes — /api/nfl/*
 """
-import asyncio
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, XAI_API_KEY
+from config import db
 import nfl_client
 import nfl_engine
 
@@ -15,75 +14,6 @@ log = logging.getLogger("nfl_routes")
 router = APIRouter(prefix="/api/nfl", tags=["nfl"])
 
 CURRENT_NFL_SEASON = nfl_client.CURRENT_NFL_SEASON
-
-
-# ── AI analysis ───────────────────────────────────────────────────────────────
-
-async def _get_nfl_ai_analysis(
-    player_name: str, position: str, prop_type: str, line: float,
-    venue: str, opponent: str, projection: float,
-    p_over: float, p_under: float, recommendation: str,
-    game_logs: list, prior_mean: float, streak_flag: str,
-    game_total: Optional[float] = None,
-) -> dict:
-    import json as _json
-    try:
-        from ai_engine import _ai_call
-
-        prop_label = prop_type.replace("_", " ").title()
-        rec_label  = recommendation.upper()
-        conf       = round(max(p_over, p_under))
-        field      = nfl_engine.NFL_PROPS.get(prop_type, prop_type)
-        ctx_lines  = []
-        for i, g in enumerate(game_logs[:6]):
-            val  = g.get(field, "?")
-            date = g.get("date", "")
-            wk   = g.get("week", "")
-            opp  = g.get("opponent", "")
-            wl   = "W" if g.get("won") is True else "L" if g.get("won") is False else ""
-            ctx_lines.append(f"  Wk{wk} ({date}{' ' + wl if wl else ''}): {val} {prop_label}" + (f" vs {opp}" if opp else ""))
-        game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
-
-        streak_text = ""
-        if streak_flag == "OVER_STREAK":
-            streak_text = " OVER streak across last 4+ games."
-        elif streak_flag == "UNDER_STREAK":
-            streak_text = " UNDER streak across last 4+ games."
-
-        prompt = f"""You are a sharp NFL prop betting analyst. Analyze this pick.
-
-PLAYER: {player_name} ({position or "NFL"})
-PROP: {prop_label} | LINE: {line} | VENUE: {venue.upper()} vs {opponent or "opponent"}
-PROJECTION: {projection:.1f} | P(OVER): {p_over:.1f}% | P(UNDER): {p_under:.1f}%
-RECOMMENDATION: {rec_label} ({conf}% confidence)
-SEASON BASELINE: {prior_mean:.1f}{streak_text}
-{"GAME O/U: " + str(game_total) if game_total else ""}
-
-RECENT GAME LOG:
-{game_ctx}
-
-Return ONLY valid JSON (no markdown fences):
-{{
-  "sharpSummary": "<1 sharp decisive sentence under 22 words naming the single biggest factor>",
-  "keyFactors": ["<factor with specific number>", "<factor 2>", "<factor 3>"],
-  "reasoning": "<2-3 sharp sentences covering matchup, usage trend, and game script — cite exact numbers>",
-  "tacticalBreakdown": "<4-5 sentences: season baseline context, recent form vs line, opponent defence quality, game-script risk (pace/spread), and why the model picked {rec_label}>"
-}}"""
-
-        text = (await _ai_call(prompt, json_mode=True, temperature=0.6, max_tokens=800, timeout=30) or "").strip()
-        try:
-            data = _json.loads(text)
-            return {
-                "sharpSummary":      data.get("sharpSummary", ""),
-                "keyFactors":        data.get("keyFactors", []),
-                "reasoning":         data.get("reasoning", ""),
-                "tacticalBreakdown": data.get("tacticalBreakdown", ""),
-            }
-        except Exception:
-            return {"sharpSummary": text[:300] if text else "", "keyFactors": [], "tacticalBreakdown": text, "reasoning": ""}
-    except Exception as e:
-        log.warning(f"[NFL AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
 
 # ── Player search ─────────────────────────────────────────────────────────────
@@ -255,24 +185,6 @@ async def nfl_predict(req: NflPredictRequest):
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
 
-    # ── AI analysis ───────────────────────────────────────────────────────────
-    ai_task = asyncio.create_task(_get_nfl_ai_analysis(
-        player_name    = req.playerName,
-        position       = position,
-        prop_type      = prop_type,
-        line           = req.line,
-        venue          = venue,
-        opponent       = req.opponentName or "",
-        projection     = result["projection"],
-        p_over         = p_over,
-        p_under        = p_under,
-        recommendation = result["recommendation"],
-        game_logs      = game_logs,
-        prior_mean     = result["priorMean"],
-        streak_flag    = result["streakFlag"],
-        game_total     = req.gameTotal,
-    ))
-
     field = nfl_engine.NFL_PROPS.get(prop_type, prop_type)
     game_log_tiles = []
     for g in game_logs[:10]:
@@ -289,10 +201,7 @@ async def nfl_predict(req: NflPredictRequest):
             "receptions":       g.get("receptions"),
         })
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
     return {
         "sport":            "nfl",

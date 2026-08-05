@@ -13,10 +13,10 @@ const getApiBase = (): string => {
   return 'http://localhost:8000';
 };
 
-// Endpoints that involve AI synthesis — give them a generous timeout
+// Endpoints that involve structured synthesis — give them a generous timeout
 const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message'];
 const PLAYER_SEARCH_PATH   = '/api/players/search';
-const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits an AI press-intensity call
+const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
 const PLAYER_SEARCH_TIMEOUT_MS = 3_000;
 const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
@@ -332,8 +332,8 @@ export interface PredictionResult {
     awayAvg?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   };
-  /** Identifies whether the explanation contains a real Gemini narrative or math fallback text. */
-  aiSource?: 'gemini' | 'math' | string;
+  /** Explanation source. Active predictions use the deterministic model. */
+  aiSource?: 'model' | 'deterministic_model' | string;
   blendNote?: string;
   aiProjection?: number;
   bayesianComponent?: number;
@@ -556,7 +556,7 @@ export interface PredictionResult {
   coinFlip?: boolean;
   prizePicksContext?: string;
   scenarioProbabilities?: { best: number; base: number; worst: number };
-  /** True when AI text generation is still running in the background; frontend should poll */
+  /** Retained for compatibility with older saved responses; active predictions are complete. */
   aiPending?: boolean;
   /** Populated when the player was resolved by name and multiple cache entries share the same
    *  abbreviated name (e.g. "J. Valencia" for three different players). The frontend should
@@ -610,7 +610,7 @@ interface RawPrediction {
   playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   reasoning?: string;
   tacticalBreakdown?: string;
-  aiSource?: 'gemini' | 'math' | string;
+  aiSource?: 'model' | 'deterministic_model' | string;
   sharpSummary?: string;
   tacticalAlerts?: string[];
   analysisFactors?: AnalysisFactor[];
@@ -957,27 +957,6 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
   };
 }
 
-/**
- * F5: Poll for AI narrative completion after receiving a math-only prediction.
- * Returns the AI result (tacticalBreakdown, sharpSummary, etc.) when ready.
- */
-export async function pollAiNarrative(
-  request: Record<string, unknown>
-): Promise<{ ready: boolean; failed: boolean; data: Record<string, unknown> | null }> {
-  const raw = await apiCall<{
-    ready: boolean;
-    failed: boolean;
-    data: Record<string, unknown> | null;
-  }>('/api/predict/ai-poll', {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
-  return {
-    ready: raw.ready ?? false,
-    failed: raw.failed ?? false,
-    data: raw.data ?? null,
-  };
-}
 
 export interface Pick {
   _id?: string;
@@ -1056,7 +1035,7 @@ export interface Pick {
   projHomePoss?: number | null;
   projAwayPoss?: number | null;
   oppAvgPoss?: number | null;
-  // AI analysis fields (persisted for offline analysis modal)
+  // Deterministic model explanation fields (persisted for offline analysis modal)
   sharpSummary?: string;
   reasoning?: string;
   tacticalBreakdown?: string;
@@ -1066,7 +1045,7 @@ export interface Pick {
     awayAvg?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   };
-  aiSource?: 'gemini' | 'math' | string;
+  aiSource?: 'model' | 'deterministic_model' | string;
   tacticalAlerts?: string[];
   gameScript?: Record<string, unknown>;
   analysisFactors?: AnalysisFactor[];
@@ -1150,7 +1129,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     projHomePoss: (p.projHomePoss as number) ?? null,
     projAwayPoss: (p.projAwayPoss as number) ?? null,
     oppAvgPoss: (p.oppAvgPoss as number) ?? null,
-    // AI analysis fields persisted on pick
+    // Structured analysis fields persisted on pick
     sharpSummary: (p.sharpSummary as string) || undefined,
     reasoning: (p.reasoning as string) || undefined,
     tacticalBreakdown: (p.tacticalBreakdown as string) || undefined,

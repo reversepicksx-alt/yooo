@@ -1158,7 +1158,7 @@ def compute_cs2_projection(
         elif over5 <= 1:
             streak_flag = "❄️ UNDER streak (4+ of last 5)"
 
-    # ── Tactical metrics (exposed to AI analysis & response) ─────────────────
+    # ── Tactical metrics exposed in the structured response ─────────────────
     _kpr_field_out = "killsPerRound_m1m2" if prop_type in MATCH_LEVEL_PROPS else "killsPerRound"
     kpr_vals_out = [m.get(_kpr_field_out, 0) for m in map_logs if (m.get(_kpr_field_out) or 0) > 0]
 

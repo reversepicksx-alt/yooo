@@ -8,15 +8,9 @@ import statistics as stats_mod
 import traceback
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
-from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-from openai import OpenAI
-
 from config import (
-    db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
-    WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
-    INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER, GEMINI_AI_ENABLED,
-    AI_BACKGROUND_ENRICHMENT_ENABLED,
+    db, CURRENT_SEASON, WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
+    INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER,
 )
 from models import PredictionRequest
 from utils import (
@@ -24,14 +18,13 @@ from utils import (
     decimal_to_american, set_api_request_priority, reset_api_request_priority,
     resolve_verified_fixture,
 )
-from ai_engine import fetch_web_intel, fetch_ai_press_intensity
 from sportsgameodds_client import lookup_soccer_market_context
 from prop_safety_cache import (
     get_prop_safety as _get_prop_safety,
     get_recent_prop_safety as _get_recent_prop_safety,
 )
 import soccer_bdl_client as _bdl_soc
-# game_script_intelligence removed — was distorting confidence scores for GK pass picks
+# game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -276,23 +269,6 @@ import time as _time
 _match_dom_cache: dict = {}
 _MATCH_DOM_TTL = 3600 * 6  # 6 hours
 
-# ── Background AI synthesis task registry ─────────────────────────────────────
-# asyncio.create_task() does NOT keep a strong reference to the task by itself —
-# if the only reference (a local variable in the request handler) goes out of
-# scope once the HTTP response is returned, the event loop is free to garbage
-# collect the task mid-flight, silently killing the AI synthesis before it ever
-# writes to ai_response_cache/ai_pending_jobs. This was the root cause of
-# "AI analysis loading..." getting stuck forever on some picks. Keeping a
-# strong reference in this module-level set (with a done-callback to clean up)
-# guarantees every fired background synthesis task actually runs to completion.
-_bg_ai_tasks: set = set()
-
-def _track_bg_task(task):
-    _bg_ai_tasks.add(task)
-    task.add_done_callback(_bg_ai_tasks.discard)
-    return task
-
-
 def _fixture_matchup(fixture: dict, team_id: int) -> dict | None:
     """Return the canonical matchup for team_id from an API-Football fixture."""
     home = fixture.get("teams", {}).get("home", {}) or {}
@@ -356,9 +332,9 @@ async def predict(req: PredictionRequest):
     access = sess.get("access_type", "")
     if not access or access == "NoSubscription":
         raise HTTPException(status_code=403, detail="Active subscription required")
-    # User-triggered predictions must not be starved by the shared background
-    # soft budget. The provider's actual 429/daily-quota response still trips
-    # the real circuit breaker in utils.py.
+        # User-triggered predictions must not be starved by the shared background
+        # soft budget. The HTTP 429/daily-quota response still trips the real
+        # circuit breaker in utils.py.
     _priority_token = set_api_request_priority(True)
     try:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -437,7 +413,7 @@ async def predict(req: PredictionRequest):
 
             API-Football's headtohead endpoint is season-scoped when `season`
             is supplied. A single current-season request silently omits older
-            meetings, so search the recent six provider seasons and merge them.
+            meetings, so search the recent six seasons and merge them.
             """
             if not team_id or not opponent_id:
                 return []
@@ -1771,7 +1747,7 @@ async def predict(req: PredictionRequest):
         # ── VENUE ALIGNMENT: override user-selected venue with fixture reality ──
         # If the user typed a venue that contradicts the actual fixture assignment
         # (e.g. selected HOME for a team API-Football designated as AWAY), the entire
-        # pipeline — game log filtering, possession calculation, and AI prompt — must
+        # pipeline — game log filtering, possession calculation, and structured evidence — must
         # use a SINGLE consistent venue. We trust the fixture data because it determines
         # the actual match context (home/away possession, opponent venue, etc.).
         _pih_after_odds = match_odds.get("playerIsHome") if match_odds else None
@@ -1949,15 +1925,8 @@ async def predict(req: PredictionRequest):
             "hasRealPossData": False,
         }
 
-        # Wave 2: Fetch deep fixture data + Situation Engine in parallel
-        # AI digest, web intel, and AI press intensity removed — Gemini is summary-only.
-        # Press intensity falls back to the heuristic engine; digest/web intel were
-        # pre-processing context that AI no longer needs for math.
+        # Wave 2: Fetch deep fixture data + Situation Engine in parallel.
         from situation_engine import build_game_situation
-
-        async def _noop_str(): return ""
-        async def _noop_none(): return None
-        ai_digest_task = _noop_str()
 
         # Situation engine inputs
         # Use the fixture's canonical home/away assignment (from match_odds) when available,
@@ -1991,36 +1960,21 @@ async def predict(req: PredictionRequest):
             opponent_id=req.opponentId,
         )
 
-        # Web intel: live injury/lineup news from AI web search
-        web_intel_task = fetch_web_intel(
-            player_team=corrected_team_name or req.teamName or "",
-            opponent=req.opponentName or "",
-            match_date=(match_odds or {}).get("matchDate", ""),
-            match_round=(match_odds or {}).get("matchRound", ""),
-            league=(match_odds or {}).get("matchLeague", ""),
-            timeout=18,
-        )
-        ai_press_task = fetch_ai_press_intensity(
-            opponent=req.opponentName or "",
-            league=(match_odds or {}).get("matchLeague", ""),
-            timeout=15,
-        )
-
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            ai_digest_task, situation_task, web_intel_task, ai_press_task,
+            situation_task,
             return_exceptions=True
         )
         try:
             results = await aio.wait_for(all_wave2, timeout=55)
         except aio.TimeoutError:
-            results = [None, None, None, None, None, None, None]
+            results = [None, None, None, None]
             print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 55s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
-        ai_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
+        game_situation = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else {}
 
         # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
         _manager_ctx = {}
@@ -2056,9 +2010,6 @@ async def predict(req: PredictionRequest):
                     )
             except Exception as _pd_err:
                 print(f"[MANAGER POSS DRIFT] error: {_pd_err}")
-        game_situation = results[4] if len(results) > 4 and not isinstance(results[4], (Exception, type(None))) else {}
-        web_intel = results[5] if len(results) > 5 and not isinstance(results[5], (Exception, type(None))) else ""
-        ai_press_intensity = results[6] if len(results) > 6 and not isinstance(results[6], (Exception, type(None))) else None
         if not game_situation:
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
 
@@ -3286,7 +3237,7 @@ async def predict(req: PredictionRequest):
             historical_data["playerGameLogs"] = game_log_summary
 
         # =============================================
-        # EARLY BAYESIAN — Compute math BEFORE AI prompt
+        # EARLY BAYESIAN — Compute math BEFORE structured evidence assembly
         # This anchors the AI's reasoning so it doesn't
         # contradict the mathematical evidence.
         # =============================================
@@ -4064,7 +4015,6 @@ async def predict(req: PredictionRequest):
                 position=_bayes_position,
                 hyperprior_mean=_bayes_hyperprior,
                 expected_minutes=_exp_mins,
-                ai_press_intensity=ai_press_intensity,
                 league_calibration=_league_calib,
                 game_script=_game_script,
                 scenario_priors_result=_scenario_priors_result,
@@ -4112,7 +4062,7 @@ async def predict(req: PredictionRequest):
                 )
                 _poss_for_baseline = match_dominance.get("expectedPoss", 50.0) if match_dominance else 50.0
                 _team_avg_passes   = match_dominance.get("teamAvgPasses") if match_dominance else None
-                _press_label       = (ai_press_intensity or {}).get("label") if ai_press_intensity else None
+                _press_label       = None
                 _pos_baseline = get_positional_baseline(
                     position=_pos_for_baseline,
                     expected_poss=_poss_for_baseline,
@@ -4484,7 +4434,7 @@ Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_ba
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
 >>> DIRECTION LOCK: The model's verdict is {bdir} {req.line} with projection {_pf_proj}. This is FINAL. Your ENTIRE analysis — every section, every sentence — must explain and support the {bdir} verdict. Do NOT argue for {'OVER' if bdir == 'UNDER' else 'UNDER'}. Do NOT present "tension" or "balanced" views. The math has already weighed all factors; your job is to narrate WHY the {bdir} verdict is tactically correct. Set aiProjection to a number on the {bdir} side of {req.line} (i.e. {'below' if bdir == 'UNDER' else 'above'} {req.line}). <<<"""
-                # ── Inject quality-filtered hit rate into AI prompt ──────────────
+                # ── Inject quality-filtered hit rate into structured evidence ─────
                 _ql_hr   = (historical_data.get("playerGameLogs") or {}).get("hitRates", {})
                 _ql_tot  = _ql_hr.get("qualityTotal", 0)
                 if _ql_tot >= 3 and req.line:
@@ -4538,7 +4488,7 @@ The Reverse Formula has already boosted the projected {req.propType} by {_redist
                         bayesian_prompt_anchor += f"""
 [LINEUP WARNING — REDUCED INVOLVEMENT]
 {_lineup_alert}. Confidence capped at 45%. Flag this clearly in your analysis as a significant risk factor."""
-                # Inject press intensity context into AI prompt
+                # Inject press intensity context into structured evidence
                 _pi = early_bayes.get("pressIntensity", {})
                 if _pi.get("label") not in (None, "Unknown", "Low") and req.propType in {"pass_attempts", "passes"}:
                     _pi_label = _pi["label"]
@@ -4564,7 +4514,7 @@ High opponent possession = the subject player's team has less time on the ball �
 Mathematical possession penalty already applied: ×{_pi_mult} reduction to pass projection.
 CRITICAL: This opponent dominates ball possession. Do NOT project pass totals near season average — the subject player's team will have significantly reduced time with the ball."""
 
-                # Inject positional baseline context into the AI prompt
+                # Inject positional baseline context into structured evidence
                 _pb = (early_bayes or {}).get("positionalBaseline")
                 if _pb and _pb.get("note") and "within realistic range" not in _pb.get("note", ""):
                     _pb_group = _pb.get("posGroup", "")
@@ -4582,7 +4532,7 @@ Realistic range for {_pb_group} in {_pb_tier}-possession team: p25={_pb_p25} / p
 The raw projection ({_pb_from:.1f}) was outside this range and has been corrected to {_pb_to:.1f}.
 IMPORTANT: In your analysis, explain WHY this player's current team context limits their output relative to their historical numbers. Do NOT cite the player's stats from a previous higher-possession club as evidence the OVER is likely."""
 
-                # Inject game tempo context into the AI prompt
+                # Inject game tempo context into structured evidence
                 if game_tempo.get("expectedTempo") != "normal" and req.propType in {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}:
                     tempo_label = game_tempo["expectedTempo"].upper()
                     exp_goals = game_tempo.get("expectedTotalGoals", "?")
@@ -4605,7 +4555,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # =============================================
         # BUILD REAL RECENT SAMPLES FROM GAME LOGS
         # =============================================
-        # These replace Gemini-generated samples with actual API-Sports data
+        # These replace generated samples with actual API-Sports data
         real_recent_samples = []
         if player_game_logs:
             gl_target_field_map = {
@@ -4642,7 +4592,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # =============================================
         # UPGRADE #4: Per-90 minute normalization
         # =============================================
-        # Extract per-90 rates from player's season stats so Gemini sees
+        # Extract per-90 rates from player's season stats so the structured model sees
         # normalized numbers, not raw totals skewed by minutes played
         per90_stats = {}
         if player_stats:
@@ -4950,7 +4900,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 player_role = req.roleOverride or ""
                 print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
             else:
-                # Check cache (with 30-day expiry and prompt-version check)
+                # Check cache (with 30-day expiry and version check)
                 from config import POSITION_PROMPT_VERSION
                 cached_pos = await db.player_positions.find_one(
                     {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1, "source": 1}
@@ -4960,7 +4910,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     # Manual overrides are permanent — never re-resolve regardless of version or TTL
                     if cached_pos.get("source") == "manual_override":
                         cache_valid = True
-                    # Check prompt version first — stale version always forces re-resolution
+                    # Check version first — stale version always forces re-resolution
                     elif cached_pos.get("promptVersion", 0) < POSITION_PROMPT_VERSION:
                         stored_version = cached_pos.get("promptVersion", 0)
                         print(f"[POS RESOLVE] Prompt version outdated (v{stored_version} < v{POSITION_PROMPT_VERSION}): {req.playerName} — re-resolving")
@@ -4990,7 +4940,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         # A versioned cache entry is not enough: API-Sports'
                         # generic category is a hard safety boundary.  A
                         # Defender must never inherit ST/Poacher math just
-                        # because an earlier AI resolution was wrong.
+                        # because an earlier resolution was wrong.
                         print(
                             f"[POS RESOLVE] Category guard: {req.playerName} "
                             f"{player_position} rejects {cached_specific}/{cached_pos.get('role', '')}"
@@ -5012,154 +4962,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
 
             if not specific_position:
-                try:
-                    from openai import OpenAI as SyncOpenAI
-
-                    # Build advisory (not hard-constraining) category hint based on API-Sports category.
-                    # We always allow ALL positions — stats evidence can override the API category.
-                    # API-Football sometimes miscategorizes players (e.g., CM tagged as "Attacker"),
-                    # so treating the category as a hard constraint causes systematic errors.
-                    pos_list = "GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS"
-                    allowed_positions = None  # allow all — stats are the authority
-                    suggested_positions = GENERIC_TO_SPECIFIC.get(player_position, None)
-                    if suggested_positions and player_position:
-                        pos_hint_list = ", ".join(sorted(suggested_positions))
-                        category_hint = (
-                            f"\nAPI-Sports categorizes this player as: {player_position} "
-                            f"(suggested positions: {pos_hint_list}). "
-                            f"Use the stats below to confirm — if the stats strongly suggest a different position, "
-                            f"you may pick ANY position from the full list: {pos_list}."
-                        )
-                    else:
-                        category_hint = ""
-
-                    # STATS-AWARE: Extract position-relevant stats for evidence-based resolution
-                    stats_evidence = ""
-                    stats_list = player_stats.get("statistics", []) if player_stats else []
-                    if stats_list:
-                        latest = stats_list[-1] if stats_list else {}
-                        tck = latest.get("tackles", {})
-                        duels = latest.get("duels", {})
-                        pss = latest.get("passes", {})
-                        drb = latest.get("dribbles", {})
-                        sht = latest.get("shots", {})
-                        gls = latest.get("goals", {})
-                        fls = latest.get("fouls", {})
-                        cards = latest.get("cards", {})
-                        games = latest.get("games", {})
-                        clr_total = tck.get("clearances", 0) or 0
-                        apps_total = max(1, games.get("appearances", 1) or 1)
-                        clr_pg = round(clr_total / apps_total, 1)
-                        stats_evidence = f"""
-ACTUAL SEASON STATS (use these to determine position — stats don't lie):
-- Appearances: {games.get('appearances', '?')}, Minutes: {games.get('minutes', '?')}, Rating: {games.get('rating', '?')}
-- Tackles: {tck.get('total', 0)}, Interceptions: {tck.get('interceptions', 0)}, Blocks: {tck.get('blocks', 0)}
-- Clearances (season total): {clr_total} → {clr_pg}/game  ← KEY CB SIGNAL (≥2.0/game = almost certainly CB; <1.0/game with forward runs = fullback)
-- Duels won: {duels.get('won', 0)}/{duels.get('total', 0)}
-- Passes total: {pss.get('total', 0)}, Key passes: {pss.get('key', 0)}, Accuracy: {pss.get('accuracy', '?')}%
-- Dribbles: {drb.get('attempts', 0)} attempts, {drb.get('success', 0)} successful
-- Shots: {sht.get('total', 0)}, On target: {sht.get('on', 0)}
-- Goals: {gls.get('total', 0)}, Assists: {gls.get('assists', 0)}
-- Fouls drawn: {fls.get('drawn', 0)}, Committed: {fls.get('committed', 0)}
-- Yellow cards: {cards.get('yellow', 0)}, Red: {cards.get('red', 0)}
-POSITION CLUES — distinguish DEEP vs ADVANCED roles:
-- CB (Centre-Back): CENTRAL defender — stays in the middle/back line, does NOT overlap forward. CB is the correct code for ALL central defenders regardless of whether they play on the left or right side of a back-4. A right-sided CB is STILL CB, NEVER RB. Key stats: clearances ≥2/game (strongest CB signal), high aerial duels, low dribbles (<0.8/game), low shots (<0.4/game). Examples: Van Dijk, Kompany, Dias, Stones, Akanji, Botman, Finn Surman.
-- RB / LB (Fullback): WIDE defenders who overlap forward. Low clearances (<1.5/game), higher dribbles/crosses. NEVER assign RB/LB to a player who is primarily a central defender.
-- CDM / deep-lying playmaker (regista): the team's tempo-setter and build-up hub. HIGHEST pass volume on the team (touches the ball most when in possession), VERY HIGH pass accuracy, sits DEEPEST in midfield, LOW shots, LOW dribbles. Interceptions can be moderate (a regista is a passer first, not a destroyer). Role = "Deep-Lying Playmaker". Vitinha at PSG = CDM / Deep-Lying Playmaker (regista) — he is the metronome who orchestrates from deep and leads the team in touches/passes. He is NOT a Box-to-Box runner and NOT a CAM.
-- CDM (ball-winning pivot): HIGH interceptions/tackles, high pass accuracy, LOW key passes, LOW shots. Role = "Ball Winner" or "Anchor".
-- CM (box-to-box): balanced tackles + passes + key passes, MODERATE shots AND noticeable dribbles/forward runs, contributes goals/assists. Role = "Box-to-Box". Only pick this when the player visibly gets forward (shots + key passes + dribbles all moderate-to-high), NOT for a deep metronome.
-- CAM (advanced playmaker): HIGH key passes (3+), moderate dribbles, LOW tackles. Plays AHEAD of midfield.
-- Winger: high dribbles/crosses, low tackles
-- ST: high shots/goals, low tackles
-
-CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates tempo, with VERY HIGH pass accuracy + LOW shots + LOW dribbles = CDM / Deep-Lying Playmaker (regista), NOT Box-to-Box and NOT CAM. Box-to-Box requires visible forward output (shots + dribbles + goal contributions). CAM requires high key passes (3+)."""
-
-                    pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {corrected_team_name}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
-
-                    # GROK POSITION RESOLUTION
-                    is_defender = player_position != "Goalkeeper"
-
-                    async def resolve_pos_grok() -> str:
-                        """Call Gemini to resolve position. Returns raw POSITION|ROLE string."""
-                        if not AI_BACKGROUND_ENRICHMENT_ENABLED:
-                            return ""
-                        from ai_engine import _ai_call
-                        sys_msg = "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."
-                        return await _ai_call(
-                            pos_prompt, system=sys_msg,
-                            temperature=0, max_tokens=20, timeout=15,
-                        )
-
-                    def parse_pos_response(resp_text, allowed):
-                        parts = resp_text.strip().split("|")
-                        pos = parts[0].strip().upper().replace(".", "").replace(",", "") if parts else ""
-                        role = parts[1].strip() if len(parts) > 1 else ""
-                        if pos in (allowed or {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}):
-                            return pos, role
-                        return None, None
-
-                    valid_positions = allowed_positions or {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}
-
-                    if is_defender:
-                        try:
-                            grok_text = await resolve_pos_grok()
-                            grok_pos, grok_role = parse_pos_response(grok_text, valid_positions)
-
-                            if grok_pos:
-                                pos_code = grok_pos
-                                role_text = grok_role or ""
-                                print(f"[POS RESOLVE] Gemini: {req.playerName} → {pos_code}")
-                            else:
-                                raise ValueError("Gemini returned invalid position")
-                        except Exception as e:
-                            print(f"[POS RESOLVE] Gemini position failed ({e}), retrying...")
-                            grok_text2 = await resolve_pos_grok()
-                            pos_code, role_text = parse_pos_response(grok_text2, valid_positions)
-                            if not pos_code:
-                                raise ValueError("Gemini returned invalid position on retry")
-                    else:
-                        # Non-defenders: single Gemini call (with stats context)
-                        pos_text = await resolve_pos_grok()
-                        pos_code, role_text = parse_pos_response(pos_text, valid_positions)
-                        if not pos_code:
-                            raise ValueError("AI returned invalid position on retry")
-
-                    if pos_code:
-                        specific_position = pos_code
-                        # Validate role matches position
-                        valid_roles = POSITION_ROLE_MAP.get(pos_code, set())
-                        if role_text and valid_roles and role_text not in valid_roles:
-                            print(f"[POS RESOLVE] Role '{role_text}' invalid for {pos_code}, defaulting to first valid role")
-                            role_text = sorted(valid_roles)[0] if valid_roles else ""
-                        elif not role_text and valid_roles:
-                            role_text = sorted(valid_roles)[0]
-                        player_role = role_text
-                        await db.player_positions.update_one(
-                            {"playerId": req.playerId},
-                            {"$set": {
-                                "playerId": req.playerId,
-                                "playerName": req.playerName,
-                                "team": corrected_team_name,
-                                "genericPosition": player_position,
-                                "specificPosition": specific_position,
-                                "role": player_role,
-                                "promptVersion": POSITION_PROMPT_VERSION,
-                                "updatedAt": datetime.now(timezone.utc).isoformat(),
-                            }},
-                            upsert=True
-                        )
-                        print(f"[POS RESOLVE] AI resolved: {req.playerName} → {specific_position} | {player_role} (cached)")
-                    else:
-                        print("[POS RESOLVE] AI returned invalid position")
-                except Exception as e:
-                    print(f"[POS RESOLVE] Error: {e}")
-
-                # Gemini is intentionally disabled for credit protection. If
-                # the API category is known but there is no valid specific
-                # cache, use the conservative category default instead of
-                # leaving the engine with a stale or impossible attacking
-                # position.
-                if not specific_position and player_position in GENERIC_TO_SPECIFIC:
+                # If the API category is known but there is no valid specific
+                # cache, use the conservative category default directly.
+                if player_position in GENERIC_TO_SPECIFIC:
                     category_defaults = {
                         "Goalkeeper": ("GK", "Shot-Stopper"),
                         "Defender": ("CB", "Stopper"),
@@ -5167,9 +4972,23 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                         "Attacker": ("ST", "Pressing Forward"),
                     }
                     specific_position, player_role = category_defaults[player_position]
+                    await db.player_positions.update_one(
+                        {"playerId": req.playerId},
+                        {"$set": {
+                            "playerId": req.playerId,
+                            "playerName": req.playerName,
+                            "team": corrected_team_name,
+                            "genericPosition": player_position,
+                            "specificPosition": specific_position,
+                            "role": player_role,
+                            "promptVersion": POSITION_PROMPT_VERSION,
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }},
+                        upsert=True
+                    )
                     print(
                         f"[POS RESOLVE] Category fallback: {req.playerName} "
-                        f"{player_position} → {specific_position} | {player_role}"
+                        f"{player_position} → {specific_position} | {player_role} (cached)"
                     )
         else:
             specific_position = player_position
@@ -5194,7 +5013,7 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                 from positional_baseline import get_positional_baseline, apply_positional_squeeze
                 _poss_rb = match_dominance.get("expectedPoss", 50.0) if match_dominance else 50.0
                 _tavg_rb = match_dominance.get("teamAvgPasses") if match_dominance else None
-                _plab_rb = (ai_press_intensity or {}).get("label") if ai_press_intensity else None
+                _plab_rb = None
                 _pos_baseline_new = get_positional_baseline(
                     position=specific_position,
                     expected_poss=_poss_rb,
@@ -5267,99 +5086,9 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                 print(f"[DEF PASS MULT] {req.playerName}: poss={_def_exp_poss:.1f}% → ×{_def_old_mult}→×{_def_new_mult}")
 
         # =============================================
-        # MULTI-AI CONSENSUS ENGINE (3 AIs)
-        # Gemini Flash (GK) — single AI engine
+        # Deterministic projection ledger
         # =============================================
-        PREDICTION_SYSTEM = """You are a soccer prop analyst. The Reverse Formula math engine has ALREADY computed the final projection and recommendation — your ONLY job is to explain the tactical reasons WHY that math verdict is correct. You are an explainer and narrator of the model's output, NOT an independent analyst reaching your own conclusions.
-
-⚠️ CRITICAL RULE — READ FIRST:
-The [MATHEMATICAL ENGINE] block in the user message contains the model's verdict (e.g. "projects 48.0 UNDER"). That verdict is FINAL and LOCKED. Every word you write must support and explain that direction. You MUST NOT write analysis that argues for the opposite side, even if your own tactical instinct says otherwise. If you personally would have called OVER, your job is still to explain why the model's UNDER verdict is tactically defensible.
-
-REQUIRED JSON FIELDS:
-
-"aiProjection": A number close to the Reverse Formula projection — your tactical read should align with the math direction. If the math says UNDER the line, your aiProjection must be below the line. If OVER, above it. Do NOT produce a number that contradicts the model's direction.
-
-"reasoning": 4-6 sentences explaining the TACTICAL REASONS why the model's verdict is correct. Explain the specific structural factors in THIS matchup that suppress or inflate this stat in the direction the model has already identified. Cite real numbers from the game logs and opponent data. This is NOT independent analysis — it is tactical explanation of the model's output.
-
-"tacticalBreakdown": Rich markdown (~1800 chars) with these MANDATORY sections. Every section must be written to SUPPORT the model's direction:
-
-  **Verdict** — One decisive sentence stating the model's call, projection, and edge. Must match the [MATHEMATICAL ENGINE] direction exactly.
-
-  **Matchup** — Explain WHY the opponent's defensive or pressing shape creates the outcome the model has identified. Focus only on the factors that SUPPORT the model's direction. For GKs: does this opponent press high forcing back-passes, or do they sit deep letting the GK play out calmly? For midfielders: how does the opponent's shape specifically affect VOLUME in the model's predicted direction? Cite the [POSITION COMPARISON] average.
-
-  **Situation** — Read the MONEYLINE and possession context to explain why game flow supports the model's verdict. If the model says UNDER, explain the structural game-flow reasons volume will be suppressed. If OVER, explain the amplification factors. Do NOT present a "tension" — commit to the direction the math has already chosen.
-
-  **Analysis** — MANDATORY: Reference each recent game BY NAME with its exact number (e.g. "72 vs Villarreal, 43 vs Osasuna"). For every outlier — explain the tactical reason WHY that number happened. Identify which past game is most tactically similar to TODAY'S OPPONENT and use it as your anchor. The historical pattern must support the model's direction. Home/away split matters — explain WHY structurally.
-
-  **Scenarios** — Three tactical scenarios with specific stat ranges. If [FIRST GOAL PROFILE] is provided, use those rates. The BASE CASE scenario must land in the direction the model projects. Worst/best cases represent deviation risk:
-  Best case: [trigger] → [range]
-  Base case: [expected game flow] → [range — must be on the model's side of the line]
-  Worst case: [risk trigger] → [range]
-  Populate scenarioProbabilities.best / .base / .worst as decimals summing to 1.0.
-
-  **Risk** — What specific event would INVALIDATE the model's call? Be precise about timing and mechanism.
-
-  **TL;DR** — 1-2 sentences closing the case for the model's verdict. Must state the direction and WHY the model is right. No hedging, no "tension" — the math has spoken.
-
-"sharpSummary": 2 decisive sentences stating WHY the model's projection is correct and what the market misses. Must commit to the direction — do NOT describe tension or present both sides. This is the first thing users read — it must reinforce the badge they see.
-
-"scenarioAnalysis": 3 sentences covering best/base/worst scenarios with values that bracket the model's projection on the correct side of the line.
-
-"keyEvidence": The 3 most important data points supporting the model's direction, including opponent positional allowance and its tactical explanation.
-
-"gameFlowDynamics": How expected possession and game state specifically drive volume in the MODEL'S PREDICTED DIRECTION. Be tactical, not generic.
-
-"sensitivityTests": One specific scenario that would flip the model's recommendation (the main risk).
-"subRisk": One specific substitution or rotation risk with timing.
-"uncertaintyNote": One honest limitation of this projection.
-
-"qualitySignal": Exactly one sentence summarizing the quality-filtered (60+ min games) hit rate. Use the exact sentence provided in the [QUALITY-FILTERED HIT RATE] block if present (e.g. "9 of 11 full-game appearances (82%) went OVER 47.5 — 3 sub-60-min games excluded."). If no quality data was provided, set to empty string "".
-
-"keyFactors": Array of exactly 3 strings (max 65 chars each). The 3 most decisive tactical facts that explain the model's verdict. Each MUST cite a specific number or rate. Must directly support the model's direction. Bad: "Player has good form". Good: "6/8 home starts vs low-block teams went OVER 52". Good: "Away avg 43 passes — 12 below home avg (venue split key)". Good: "Opp allows 58% poss avg — CDM becomes recycling hub".
-
-POSITION-SPECIFIC REASONING FRAMEWORKS (apply the relevant one):
-
-GOALKEEPER (pass_attempts/saves):
-- pass_attempts: The INVERTED possession rule is everything. Low team possession = defenders constantly recycling under pressure to the GK = volume explosion. High team possession = GK barely involved in build-up = volume suppression. But READ THE OPPONENT — a team that presses relentlessly forces even dominant-possession GKs into rapid distribution. For saves: opponent SoT rate × GK save% × match tempo = your anchor. A high-block defensive team facing a prolific attacker on a high-tempo away game is the max-saves scenario.
-
-STRIKER/FORWARD (shots, goals, assists):
-- Think about SPACE, not just volume. A striker facing a high defensive line gets in behind for shots. A striker facing a deep block needs service from midfield — check if that midfield creates. Shots depend on penalty box entries, not just possession. An isolated striker in a low-block game can still pop off 4-5 shots if the team plays direct.
-
-MIDFIELDER (passes, key_passes, assists):
-- Ball-circulation midfielders: possession % is the primary driver. Every 5% more possession = roughly 8-12 more passes for the deepest midfielder. Key passes / assists: look at how many times the team reaches the final third AND how the striker presses — a high striker press creates more through-ball opportunities.
-- CRITICAL — HOME CDM DEEP-BLOCK RULE: When a dominant home team (60%+ expected possession) faces a deep-sitting weak opponent (opponent expected possession < 36%), the CDM/DM/DLP becomes a ball-RECYCLING HUB. The deep block creates endless short-cycle sequences that all funnel back through the deepest midfielder. In this scenario, the CDM's pass count EXCEEDS their historical season average — sometimes significantly. Do NOT apply a low-motivation or dead-rubber penalty to CDM pass counts when the dominant team is still retaining comfortable possession — the passes still happen, they are just slower-paced and more circular. A CDM averaging 55 passes/game can easily hit 75-85 in this scenario. This is the single biggest source of CDM pass prop errors.
-
-MIDFIELDER ROLE CLASSIFICATION (applies to all CDM/DM/CM pass props):
-Identify which role the player actually performs — the same position label covers wildly different volume profiles:
-  • BALL-PLAYING PIVOT / REGISTA / DLP (e.g. Rodri, Busquets, Kroos, Thiago): These players ARE the possession system. Every recycling sequence goes through them. In dominant-possession scenarios, they accumulate 90-130+ passes. In chase/underdog mode, they remain the first option out of pressure. Pass volume scales strongly with team possession AND with match intensity — both possession dominance AND trailing scripts push this role's count UP. This role is the primary driver of the cross-team GK correlation below.
-  • BOX-TO-BOX / MEZZALA (e.g. De Bruyne, Milinkovic-Savic, Kimmich): High volume but distributed — they move between areas. Still possession-sensitive but less extreme than the pivot.
-  • DESTROYER / ANCHOR / HOLDING MID (e.g. Kanté, Henderson, Elneny): Lower pass volume because direct play bypasses them under pressure. In chase/underdog mode, team often switches to long balls, REDUCING this role's pass count relative to normal. Do NOT apply possession-dominant CDM logic to destroyers.
-  • PRESS-FIRST CDM: Similar to destroyer. High energy, low distribution. Possession has less impact on their pass count.
-
-CROSS-TEAM SCRIPT EFFECTS — CORRELATED, NOT INVERSE (critical for all positions):
-  • When a ball-playing pivot (Rodri, Busquets) dominates possession for their team → the OPPONENT'S GOALKEEPER's pass attempts go UP simultaneously. They are CORRELATED, not inverse. The low-block pass-back loop, over-hit crosses, and goal kicks all create GK pass volume. Do NOT interpret a high-possession midfielder's volume as a negative signal for the opponent's GK.
-  • A dominant home CDM recycling 100+ passes → opponent GK averages 60+ pass attempts from clearances/distributions under press. Both rise together.
-  • Dominant fullback overlaps (many crosses) → opponent GK has more aerial collections → more distributions. Correlated UP.
-  • When this player's team is the DOMINANT possession side: CBs and CDMs on the DEFENDING side will have more tackles/clearances (inverse props rise for them). But pass volume for the defending side's CDM goes DOWN (direct play bypasses them).
-
-DEFENDER (passes, tackles, clearances):
-- Ball-playing CBs in 55%+ possession teams easily hit 70-90 passes. The key variable is HOW the team builds — short from back (inflates defender passes) vs long-ball (suppresses). Tackles/clearances invert with possession: low possession = more defensive actions.
-
-CRITICAL ACCURACY RULES:
-- NEVER double-count minutes. A player averaging 43 passes in 26 minutes per game — the 43 IS their game output. Do NOT scale down.
-- Match context OVERRIDES raw averages for pass-dependent props in high-possession scenarios.
-- GOALKEEPER INVERTED RULE: Low possession = MORE GK passes. High possession = FEWER GK passes. An away GK holding a lead = maximum volume scenario.
-- CROSS-TEAM CORRELATION RULE: When the opponent's CDM/DM dominates possession (65%+), the defending GK's passes go UP (correlated). They do NOT go down. The mechanism is: low-block → back-passes to GK + over-hit crosses + goal kicks. Never penalise a GK's projection because the opponent's midfielders are generating high pass volume — that IS the mechanism causing this GK's volume to rise.
-- ROLE SENSITIVITY: Ball-playing pivots are 3× more sensitive to possession context than destroyers. Always identify the player's role before applying possession multipliers. Applying "CDM possession dominant" logic to a destroyer who plays direct-ball anchor is a common over-projection error.
-- NEVER say "Bayesian" — always say "Reverse Formula".
-- DIRECTION LOCK: Your analysis direction MUST match the [MATHEMATICAL ENGINE] verdict. If math says UNDER, write UNDER analysis. If math says OVER, write OVER analysis. This is non-negotiable.
-
-CALIBRATION RULES:
-- TIGHT EDGE: If projected value is within ±1.0 of the line, cap confidence at 60%.
-- BINARY LINES (0.5): UNDER 0.5 confidence NEVER exceeds 55%.
-- DEFENDER PASSES: Ball-playing CBs/LBs in possession teams hit 60-90+ per game routinely.
-
-JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","qualitySignal":"","keyFactors":[],"tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"scenarioProbabilities":{"best":0,"base":0,"worst":0},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
+        # Build structured evidence from the fetched data.
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -5756,6 +5485,47 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             except Exception as _ee:
                 print(f"[POS ENRICH] Batch timeout/error: {_ee}")
 
+        # POSITION CONTEXT: Aggregate same-position comparison rows for the
+        # deterministic opponent profile, math adjustments, and factor ledger.
+        position_context = ""
+        position_comp_data = None
+        if display_position:
+            pos_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfielder": "MID", "Attacker": "FWD"}
+            pos_short = specific_position if specific_position else pos_map.get(player_position, player_position)
+            position_context = f"\n[PLAYER POSITION] {req.playerName} plays as {pos_short}"
+            if player_role:
+                position_context += f" — Role: {player_role}"
+            if specific_position and player_position:
+                position_context += f" (API category: {player_position})"
+            if position_comparison:
+                comp_values = [
+                    p.get("statValue") for p in position_comparison
+                    if p.get("statValue") is not None
+                ]
+                comp_per90 = [
+                    p.get("per90") for p in position_comparison
+                    if p.get("per90") is not None
+                ]
+                comp_poss = [
+                    p.get("teamPossession") for p in position_comparison
+                    if p.get("teamPossession") is not None
+                ]
+                comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else 0
+                comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else 0
+                comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
+                position_comp_data = {
+                    "position": display_position,
+                    "positionShort": pos_short,
+                    "players": position_comparison,
+                    "avgStatValue": comp_avg,
+                    "avgPer90": comp_per90_avg,
+                    "avgPossession": comp_poss_avg,
+                    "sampleSize": len(comp_values),
+                    "propType": req.propType,
+                    "opponent": req.opponentName,
+                    "venue": player_venue,
+                }
+
         # ── CATEGORY SAFETY VALVE ──────────────────────────────────────────────
         # Hard override: API-Football generic category is the ground truth.  If a
         # stale/wrong position cache resolved an attacking role for a player the
@@ -5786,55 +5556,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             except Exception:
                 pass
 
-        # POSITION CONTEXT: Compute position-specific baseline from game logs + comparison
-        position_context = ""
-        position_comp_data = None
-        if display_position:
-            pos_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfielder": "MID", "Attacker": "FWD"}
-            pos_short = specific_position if specific_position else pos_map.get(player_position, player_position)
-            position_context = f"\n[PLAYER POSITION] {req.playerName} plays as {pos_short}"
-            if player_role:
-                position_context += f" — Role: {player_role}"
-            if specific_position and player_position:
-                position_context += f" (API category: {player_position})"
-            if position_comparison:
-                comp_values = [p["statValue"] for p in position_comparison]
-                comp_per90 = [p["per90"] for p in position_comparison if p.get("per90")]
-                comp_poss = [p["teamPossession"] for p in position_comparison if p.get("teamPossession")]
-                comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else 0
-                comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else 0
-                comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
-                comp_lines = []
-                for p in position_comparison[:7]:
-                    p_pos_label = f"{p.get('position', '?')}"
-                    if p.get('role'):
-                        p_pos_label += f" ({p['role']})"
-                    poss_str = f" | team poss: {p['teamPossession']}%" if p.get('teamPossession') else ""
-                    comp_lines.append(f"  {p['name']} [{p_pos_label}] ({p['team']}, {p.get('venue','').upper()}) — {p['statValue']} {req.propType} in {p['minutes']}min (per90: {p['per90']}) | {p['date']} | rating: {p.get('rating', 'N/A')}{poss_str}")
-                venue_note = f"All comparisons are {player_venue.upper()} performances only."
-                poss_note = f"\nAverage team possession in these matches: {comp_poss_avg}%" if comp_poss_avg else ""
-                position_context += f"""
-[POSITION COMPARISON — {pos_short}s vs {req.opponentName} ({player_venue.upper()} only)]
-{req.playerName} is a {pos_short}{f' ({player_role})' if player_role else ''}. {venue_note}
-Below are other {player_position}s who played {player_venue.upper()} against {req.opponentName} recently:
-{chr(10).join(comp_lines)}
-Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len(comp_values)} players{poss_note}
->>> Compare {req.playerName}'s projected {req.propType} against this positional baseline.
->>> Factor in possession context: teams with more possession tend to have more passing/creative stats; teams with less tend to have more defensive/counter-attacking stats.
->>> Consider {req.playerName}'s team expected possession profile vs the opponent. <<<"""
-                position_comp_data = {
-                    "position": display_position,
-                    "positionShort": pos_short,
-                    "players": position_comparison,
-                    "avgStatValue": comp_avg,
-                    "avgPer90": comp_per90_avg,
-                    "avgPossession": comp_poss_avg,
-                    "sampleSize": len(comp_values),
-                    "propType": req.propType,
-                    "opponent": req.opponentName,
-                    "venue": player_venue,
-                }
-
         # ── First-Goal Profile (both teams, concurrent) ──────────────────────────
         _fg_team: dict = {}
         _fg_opp:  dict = {}
@@ -5856,18 +5577,22 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             except Exception as _fge:
                 print(f"[FIRST GOAL] engine failed: {_fge}")
 
-        # Compose data for AI prediction
-        final_data_parts = []
+        # Build structured evidence from the fetched data.
+        # External narrative generation is retired; keep this compatibility
+        # slot empty while the deterministic data digest and ledger remain the
+        # authoritative evidence sources.
+        ai_digest = ""
+        evidence_blocks = []
         if ai_digest:
-            final_data_parts.append(f"[AI INTEL BRIEF]\n{ai_digest}")
+            evidence_blocks.append(f"[STRUCTURED EVIDENCE — MODEL DIGEST]\n{ai_digest}")
         if data_digest:
-            final_data_parts.append(f"[DATA DIGEST]\n{data_digest}")
+            evidence_blocks.append(f"[STRUCTURED EVIDENCE — DATA DIGEST]\n{data_digest}")
         if wave2_supplement:
-            final_data_parts.append(f"[GAME LOGS]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
+            evidence_blocks.append(f"[STRUCTURED EVIDENCE — WAVE2 SUPPLEMENT]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
 
         if _fg_team.get("available"):
-            _fg_prompt_block = (
-                f"[FIRST GOAL PROFILE — last {_fg_team.get('dataPoints', 0)} matches]\n"
+            _fg_evidence_block = (
+                f"[FIRST-GOAL EVIDENCE — last {_fg_team.get('dataPoints', 0)} matches]\n"
                 f"Team ({corrected_team_name}) scored first: {round(_fg_team.get('teamScoredFirstPct', 0) * 100)}% of games\n"
                 f"Opponent ({req.opponentName}) scored first: {round(_fg_team.get('opponentScoredFirstPct', 0) * 100)}% of games\n"
                 f"No goal / goalless half: {round(_fg_team.get('noGoalPct', 0) * 100)}% of games\n"
@@ -5878,601 +5603,19 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
                 f">>> Use these rates to anchor scenarioProbabilities in your JSON. They are real data, not estimates. <<<"
             )
             if _fg_opp.get("available"):
-                _fg_prompt_block += (
+                _fg_evidence_block += (
                     f"\nOpponent ({req.opponentName}) first-goal profile (their own recent matches): "
                     f"scored first {round(_fg_opp.get('teamScoredFirstPct', 0) * 100)}% / "
                     f"conceded first {round(_fg_opp.get('opponentScoredFirstPct', 0) * 100)}%"
                 )
-            final_data_parts.append(_fg_prompt_block)
-
-        # ── Script regime context block (all positions) ──────────────────────────
-        # Builds a match-script situation summary so the AI can reason about
-        # role-specific effects and cross-team correlations without having to
-        # derive them from raw possession numbers alone.
-        script_regime_context = ""
-        try:
-            _sr_own_poss = float(match_dominance.get("expectedPoss") or 50.0)
-            _sr_opp_poss = float(match_dominance.get("oppExpectedPoss") or 50.0)
-            _sr_pos_upper = (player_position or "").upper()
-            _sr_role_lower = (player_role or "").lower()
-            _sr_is_mid = _sr_pos_upper in {
-                "CDM", "DM", "DMF", "CM", "MC", "CMF", "CAM", "AM", "OM", "ACM",
-                "CM", "MIDFIELDER",
-            }
-            _sr_is_gk_pos = _sr_pos_upper in {"GK", "GKP", "GOALKEEPER", "KEEPER"}
-
-            # Identify regime
-            _dominant_team = None
-            _sr_regime = "balanced"
-            if _sr_own_poss >= 62.0 and _sr_opp_poss < 40.0:
-                _dominant_team = corrected_team_name
-                _sr_regime = "dominant"
-            elif _sr_opp_poss >= 62.0 and _sr_own_poss < 40.0:
-                _dominant_team = req.opponentName
-                _sr_regime = "pinned"
-            elif _sr_own_poss >= 57.0:
-                _sr_regime = "slight_control"
-            elif _sr_opp_poss >= 57.0:
-                _sr_regime = "slight_pressure"
-
-            # Role classification for midfielders
-            _sr_is_pivot = any(r in _sr_role_lower for r in (
-                "ball-playing", "ball playing", "regista", "deep-lying playmaker",
-                "pivot", "playmaker", "half-back",
-            ))
-            _sr_is_destroyer = any(r in _sr_role_lower for r in (
-                "destroyer", "anchor", "ball winner", "holding midfielder", "defensive midfielder",
-            ))
-
-            _sr_lines = []
-            if _sr_regime == "dominant":
-                _sr_lines.append(
-                    f"SCRIPT REGIME: DOMINANT ({corrected_team_name} {_sr_own_poss:.0f}% vs "
-                    f"{req.opponentName} {_sr_opp_poss:.0f}%)"
-                )
-                if _sr_is_mid:
-                    if _sr_is_pivot:
-                        _sr_lines.append(
-                            f"Role effect: {req.playerName} is a BALL-PLAYING PIVOT — the possession recycling hub. "
-                            f"Every sequence goes through them. Deep-block by {req.opponentName} creates endless "
-                            f"short-cycle triangles ALL routed through this player. Volume is maximised."
-                        )
-                    elif _sr_is_destroyer:
-                        _sr_lines.append(
-                            f"Role effect: {req.playerName} is a DESTROYER/ANCHOR — team dominates through ball-playing "
-                            f"CBs and wider midfielders. This player waits and breaks play up rather than circulating. "
-                            f"Their pass volume does NOT scale as strongly with possession dominance as a pivot would."
-                        )
-                    else:
-                        _sr_lines.append(
-                            f"Match script: dominant possession for {corrected_team_name}. Midfielders circulate "
-                            f"frequently. Volume scales positively with possession advantage."
-                        )
-                if _sr_is_gk_pos:
-                    _sr_lines.append(
-                        f"GK effect: Own team dominant ({_sr_own_poss:.0f}%) — GK is barely touched in build-up. "
-                        f"Volume SUPPRESSED. BUT: check cross-team note if opponent possession is very high — "
-                        f"in this dominant scenario opp poss is only {_sr_opp_poss:.0f}% (low) so suppression applies."
-                    )
-            elif _sr_regime == "pinned":
-                _sr_lines.append(
-                    f"SCRIPT REGIME: PINNED/LOW-BLOCK ({corrected_team_name} {_sr_own_poss:.0f}% vs "
-                    f"{req.opponentName} {_sr_opp_poss:.0f}% dominant)"
-                )
-                if _sr_is_mid:
-                    if _sr_is_pivot:
-                        _sr_lines.append(
-                            f"Role effect: {req.playerName} is a BALL-PLAYING PIVOT facing a dominant opponent. "
-                            f"Their team plays direct/reactive rather than building. Volume is REDUCED — even pivots "
-                            f"can't circulate much when the team is permanently pinned deep and playing long."
-                        )
-                    elif _sr_is_destroyer:
-                        _sr_lines.append(
-                            f"Role effect: {req.playerName} is a DESTROYER/ANCHOR. In pinned-back scripts, their "
-                            f"team plays direct — BYPASSING this player. Pass volume likely BELOW season average."
-                        )
-                if _sr_is_gk_pos:
-                    _sr_lines.append(
-                        f"⚡ GK CROSS-TEAM CORRELATION: {req.opponentName} controls {_sr_opp_poss:.0f}% possession. "
-                        f"{req.playerName}'s pass attempts go UP — low-block defence forces constant back-passes to GK, "
-                        f"over-hit crosses create collections, and frequent goal kicks all count as pass attempts. "
-                        f"The opponent's high-possession MID and this GK's pass volume are CORRELATED ↑↑, not inverse."
-                    )
-            elif _sr_regime in ("slight_control", "slight_pressure"):
-                _lbl = "SLIGHT POSSESSION CONTROL" if _sr_regime == "slight_control" else "SLIGHT POSSESSION PRESSURE"
-                _sr_lines.append(
-                    f"SCRIPT REGIME: {_lbl} ({corrected_team_name} {_sr_own_poss:.0f}% vs "
-                    f"{req.opponentName} {_sr_opp_poss:.0f}%)"
-                )
-                if _sr_is_mid:
-                    _sr_lines.append(
-                        "Mild possession edge — role classification matters most here. "
-                        "Ball-playing pivots still see meaningful volume boost; destroyers see minimal change."
-                    )
-
-            if _sr_lines:
-                script_regime_context = "[MATCH SCRIPT REGIME & CROSS-TEAM EFFECTS]\n" + "\n".join(_sr_lines)
-        except Exception as _sre:
-            print(f"[SCRIPT REGIME] context build error: {_sre}")
-
-        if final_data_parts:
-            final_data = "\n\n".join(final_data_parts)[:10000]
-            if saves_context:
-                final_data += f"\n\n{saves_context}"
-            if gk_pass_context:
-                final_data += f"\n\n{gk_pass_context}"
-            if script_regime_context:
-                final_data += f"\n\n{script_regime_context}"
-            # NOTE: position_context is injected separately in the prompt (never truncated)
-        else:
-            final_data = json.dumps(historical_data, default=str)[:8000]
+            evidence_blocks.append(_fg_evidence_block)
 
         # =============================================
-        # MATCH DOMINANCE CONTEXT — kept as separate prompt block (not inside final_data)
+        # Deterministic synthesis: projection comes ONLY from the math engine.
         # =============================================
-        dom_context = ""
-        if match_dominance.get("expectedPoss", 50) != 50 or match_dominance.get("notes"):
-            dom_notes = "\n".join(f"  - {n}" for n in match_dominance.get("notes", []))
-            _ep = match_dominance['expectedPoss']
-            _op = match_dominance['oppExpectedPoss']
-            if _is_gk_for_passes:
-                # ── GK pass prop: inverted possession logic ──────────────────────────
-                # The generic DLP/CM/CAM outfield instruction MUST NOT appear here;
-                # it causes the AI to flip possession numbers to reconcile UNDER with
-                # high-possession scenarios ("team must have 35% because it's UNDER").
-                _gk_dom_note = (
-                    f">>> ⚠️  GOALKEEPER PASS PROP — INVERTED POSSESSION RULE — READ CAREFULLY:\n"
-                    f">>> {corrected_team_name} have {_ep}% expected possession. {req.opponentName} have {_op}%.\n"
-                    f">>> DO NOT FLIP THESE NUMBERS. {corrected_team_name} = {_ep}%. {req.opponentName} = {_op}%.\n"
-                    f">>> For a GK, HIGH team possession ({_ep}%) = FEWER passes. The team recycles through\n"
-                    f">>>   midfield, rarely needing to go back to the keeper.\n"
-                    f">>> The UNDER is predicted BECAUSE {corrected_team_name} dominates — NOT because they struggle.\n"
-                    f">>> CORRECT narrative: '{corrected_team_name} control {_ep}% possession, keeping the ball\n"
-                    f">>>   through midfield and rarely needing back-passes to the GK — suppressing his volume.'\n"
-                    f">>> FORBIDDEN: Do NOT say '{corrected_team_name} struggle/fight for possession' or assign\n"
-                    f">>>   {_op}% to {corrected_team_name}. That number belongs to {req.opponentName}. <<<"
-                )
-                dom_context = f"""
-[MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
-Expected possession for {corrected_team_name}: {_ep}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
-Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
-{_gk_dom_note}"""
-            else:
-                dom_context = f"""
-[MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
-Expected possession for {corrected_team_name}: {_ep}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
-Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
->>> CRITICAL: The two possession numbers above are FINAL. Do NOT derive team names from any game-log opponent abbreviations (e.g. TOR, CIN, PHI) — those are historical matches, not this fixture.
->>> {corrected_team_name} = {_ep}% | {req.opponentName} = {_op}%. These labels are authoritative. Never swap or reassign them.
->>> If expected possession is HIGHER than season average, pass-dependent players (DLP, CM, CAM) WILL exceed their historical averages.
->>> A deep-lying playmaker on a team expected at 65%+ possession will have significantly MORE pass attempts than their season average suggests.
->>> Conversely, defenders on low-possession teams will have MORE tackles/interceptions than average.
->>> DO NOT just project from historical averages when match context predicts a clear possession advantage or disadvantage.
->>> NARRATIVE ALIGNMENT: Your `keyMatchupFactor` and `gameFlowDynamics` MUST match the computed possession numbers above. If {req.opponentName} has HIGHER expected possession, say they control possession — never claim {corrected_team_name} dominates possession if their number is lower. <<<"""
-
-        # Build match context (round/stage, knockout detection)
-        match_context = ""
-        if match_odds:
-            match_round = match_odds.get("matchRound", "")
-            match_league_name = match_odds.get("matchLeague", "")
-            match_date = match_odds.get("matchDate", "")
-            if match_round or match_league_name:
-                knockout_keywords = ["final", "quarter", "semi", "round of", "knockout", "elimination", "playoff"]
-                is_knockout = any(kw in match_round.lower() for kw in knockout_keywords) if match_round else False
-                match_context = f"\n[MATCH CONTEXT] {match_league_name} — {match_round}"
-                if match_date:
-                    match_context += f" | Date: {match_date[:10]}"
-                if is_knockout:
-                    match_context += (
-                        "\n** KNOCKOUT/ELIMINATION MATCH — The mathematical engine has already "
-                        "applied a ×1.10 extra-time probability uplift to all count-stat projections "
-                        "(pass_attempts, shots, saves, etc.) because ~30% of knockout games go to "
-                        "extra time (+30 min). Do NOT separately penalise count stats for 'caution' — "
-                        "the ET adjustment is already baked in. Focus your tactical analysis on: "
-                        "(1) which team is the effective favourite and how that shapes possession "
-                        "dominance; (2) whether the player's role (ball-winner vs recycler) means "
-                        "their volume rises or falls specifically in a knockout defensive setup; "
-                        "(3) any confirmed lineup/injury intel that changes the base outlook. "
-                        "If the match can still end in a draw after 90 min → ET → penalties, "
-                        "surface that uncertainty in your uncertaintyNote.**"
-                    )
-
-        # ── SITUATION ENGINE CONTEXT BLOCK ─────────────────────────────────────
-        _sit_context_block = game_situation.get("contextBlock", "")
-        if _sit_context_block:
-            match_context += f"\n\n{_sit_context_block}"
-
-        # ── WEB INTELLIGENCE ────────────────────────────────────────────────────
-        if web_intel:
-            match_context += (
-                f"\n\n[LIVE WEB INTELLIGENCE — Pre-match intel fetched in real-time TODAY]\n{web_intel}\n"
-                f">>> CRITICAL INSTRUCTION: The web intelligence above is authoritative real-time data. "
-                f"(1) Manager/coach names MUST come ONLY from this web intel or the LINEUP section — "
-                f"DO NOT reference any coach or manager by name from your training data, as coaching staff "
-                f"changes frequently and your training knowledge IS OUTDATED. "
-                f"(2) If the web intel does not confirm the current manager's name, describe the team's "
-                f"tactical approach WITHOUT naming the coach. "
-                f"(3) Lineup, formation, and injury information from this section overrides all training knowledge. <<<"
-            ) 
-
-        # ── LINEUP / FORMATION CONTEXT — feeds real formation matchup into the AI write-up ──
-        _pl = locals().get("_pitch_lineup") or {}
-        if _pl.get("formation") or _pl.get("opponentFormation"):
-            _pl_status_txt = "CONFIRMED" if _pl.get("status") == "confirmed" else "PROJECTED (based on last match, not yet officially confirmed)"
-            _own_coach_txt = f", coach {_pl.get('coach')}" if _pl.get("coach") else ""
-            _opp_coach_txt = f", coach {_pl.get('opponentCoach')}" if _pl.get("opponentCoach") else ""
-            match_context += (
-                f"\n\n[LINEUP — {_pl_status_txt}]\n"
-                f"{corrected_team_name or req.teamName}: {_pl.get('formation') or 'unknown'} formation{_own_coach_txt}\n"
-                f"{req.opponentName}: {_pl.get('opponentFormation') or 'unknown'} formation{_opp_coach_txt}\n"
-                ">>> Write ONE short paragraph of tactical analysis grounded in this exact formation matchup "
-                "(e.g. numerical overloads/underloads in specific zones, where the subject player's zone sits relative "
-                "to the opponent's shape, how the opponent's setup should specifically help or hurt this prop). "
-                "Do not give generic team-form commentary — reference the actual formations above. <<<"
-            )
-        if locals().get("_risk_signals", {}).get("note"):
-            match_context += f"\n\n[VOLATILITY] {_risk_signals['note']}"
-
-        _pp_ctx_dict: dict = {}
-
-        # Inject hit rate context into prompt
-        hit_rate_context = ""
-        hit_rates = wave2_supplement.get("playerGameLogs", {}).get("hitRates")
-        if hit_rates:
-            hit_rate_context = f"""
-[OVER/UNDER HIT RATE — CRITICAL DATA]
-{hit_rates['summary']}
->>> If over-rate >= 65%, strongly lean OVER. If under-rate >= 65%, lean UNDER. If neither exceeds 60%, treat as close call — lower confidence. <<<"""
-
-        # Team disambiguation notes — injected when similar-named clubs could be confused
-        _TEAM_DISAMBIGUATION = {
-            "los angeles fc": "LAFC (Los Angeles FC) — NOT LA Galaxy. These are two completely separate MLS clubs. Do NOT mention LA Galaxy.",
-            "lafc": "LAFC (Los Angeles FC) — NOT LA Galaxy. These are two completely separate MLS clubs. Do NOT mention LA Galaxy.",
-            "la galaxy": "LA Galaxy (Los Angeles Galaxy) — NOT LAFC. These are two completely separate MLS clubs. Do NOT mention LAFC.",
-            "los angeles galaxy": "LA Galaxy (Los Angeles Galaxy) — NOT LAFC. These are two completely separate MLS clubs. Do NOT mention LAFC.",
-            "new york city fc": "New York City FC (NYCFC) — NOT New York Red Bulls. Do NOT mention Red Bulls.",
-            "new york red bulls": "New York Red Bulls — NOT NYCFC, NOT Toronto FC. This player's CURRENT club is New York Red Bulls. If you know this player from a previous club (e.g. Toronto FC), that is OUTDATED. They NOW play for New York Red Bulls. Do NOT mention Toronto FC, NYCFC, or any other club.",
-            "toronto fc": "Toronto FC — Do NOT confuse players who formerly played here with current Toronto FC players. If this player is listed as playing for Toronto FC, that is their CURRENT club.",
-        }
-        _team_disambig = _TEAM_DISAMBIGUATION.get((corrected_team_name or "").lower().strip(), "")
-        _disambig_note = f"\nTEAM DISAMBIGUATION: {_team_disambig}" if _team_disambig else ""
-
-        # ── FORMATTED RECENT GAME LOG ──────────────────────────────────────────
-        import re as _re_log
-        _recent_log_str = ""
-        _gl_data = wave2_supplement.get("playerGameLogs", {})
-        _gl_games = _gl_data.get("games", [])
-        if _gl_games:
-            _fmt_games = []
-            for _gs in _gl_games[-8:]:
-                # raw format: "2025-03-15 vs Osasuna (away, 90min[, 4-2-3-1]): 43"
-                _m = _re_log.match(
-                    r"(\d{4}-(\d{2})-(\d{2})) vs (.+?) \((.+?), (\d+)min(?:, ([^)]+))?\): (.+)",
-                    _gs,
-                )
-                if _m:
-                    _date_lbl  = f"{int(_m.group(2))}/{int(_m.group(3))}"
-                    _opp_lbl   = _m.group(4).strip()
-                    _venue_lbl = _m.group(5).strip()
-                    _min_lbl   = _m.group(6)
-                    _form_lbl  = (_m.group(7) or "").strip()  # formation, optional
-                    _val_lbl   = _m.group(8).strip()
-                    _form_part = f", {_form_lbl}" if _form_lbl else ""
-                    _fmt_games.append(
-                        f"{_val_lbl} vs {_opp_lbl} ({_date_lbl}, {_min_lbl}min, {_venue_lbl}{_form_part})"
-                    )
-                else:
-                    _fmt_games.append(_gs)
-            _gl_raw_avg  = _gl_data.get("rawAvg", "?")
-            _gl_home_avg = _gl_data.get("homeAvg", "?")
-            _gl_away_avg = _gl_data.get("awayAvg", "?")
-            _gl_sample   = _gl_data.get("sampleSize", len(_fmt_games))
-            _recent_log_str = f"""
-[PLAYER RECENT GAME LOG — {req.propType.upper()} — LAST {len(_fmt_games)} GAMES]
-⚠️ These are {corrected_team_name}'s matches. All opponent names below are teams {corrected_team_name} played AGAINST — they are NOT this player's team.
-{" | ".join(_fmt_games)}
-Season avg: {_gl_raw_avg} | Home avg: {_gl_home_avg} | Away avg: {_gl_away_avg} | Sample: {_gl_sample} games
->>> CRITICAL INSTRUCTION: In your Analysis section you MUST reference each of these games by opponent name and exact number. For every high result AND every low result, explain the specific tactical reason WHY that number happened (opponent style, defensive shape, game state, possession context). Then identify which past game above is most tactically similar to today's opponent ({req.opponentName}) and explicitly name it as your anchor. <<<"""
-
-        # ── SUPPRESSION / AMPLIFICATION CONTEXT ─────────────────────────────────
-        # When the model's projection is significantly below the player's season avg
-        # (UNDER call) or above it (OVER call), AI tends to anchor on the season avg
-        # and argue the wrong direction.  Inject an explicit "here is the gap and why"
-        # block so Gemini explains the suppression/amplification instead of fighting it.
-        _suppression_context = ""
-        if early_bayes and early_bayes.get("priorMean") and bayesian_prompt_anchor:
-            _eb_prior = early_bayes["priorMean"]
-            _eb_proj  = _pf_proj
-            _eb_dir   = bdir
-            _gap_from_avg = round(_eb_prior - _eb_proj, 1)   # + = UNDER scenario, - = OVER
-            _gap_pct  = abs(_gap_from_avg) / max(_eb_prior, 1) * 100
-            _venue_avg_label = "away avg" if player_venue == "away" else "home avg"
-            _venue_avg_val   = _gl_away_avg if player_venue == "away" else _gl_home_avg
-
-            if _eb_dir == "UNDER" and _gap_from_avg >= 8:
-                # Model projects significantly BELOW season average — explain suppression
-                _suppression_context = f"""
-[MODEL SUPPRESSION SIGNAL — READ THIS BEFORE WRITING ANYTHING]
-⚠️ The season average is {_eb_prior} but the Reverse Formula projects only {_eb_proj} — a suppression of {_gap_from_avg} passes ({_gap_pct:.0f}% below average). The {_venue_avg_label} is {_venue_avg_val}.
-This means the model has found SPECIFIC MATCHUP-SUPPRESSION FACTORS that override the seasonal norm.
-Your Analysis section MUST focus on: WHY does THIS specific opponent ({req.opponentName}) suppress this stat below the season average? Look at the game logs for games where the output was low — those opponents share traits with today's matchup. The HIGH games in the log are NOT the anchor — the LOW games that resemble today's opponent are the anchor.
-Do NOT reference or anchor to the highest games in the log. The model's {_eb_proj} projection is correct — explain it by finding the tactical suppression factors, not by citing games where the output was high.
-Suppression factors to explore: opponent defensive shape reducing ball access, specific pressing patterns, H2H history vs this opponent, positional opponent allowance ({req.opponentName}'s CDM/MF positional avg is likely below seasonal norm)."""
-
-            elif _eb_dir == "OVER" and _gap_from_avg <= -8:
-                # Model projects significantly ABOVE season average — explain amplification
-                _gap_above = abs(_gap_from_avg)
-                _suppression_context = f"""
-[MODEL AMPLIFICATION SIGNAL — READ THIS BEFORE WRITING ANYTHING]
-⚠️ The season average is {_eb_prior} but the Reverse Formula projects {_eb_proj} — an amplification of {_gap_above} above average ({_gap_pct:.0f}% above norm). The {_venue_avg_label} is {_venue_avg_val}.
-This means the model has found SPECIFIC MATCHUP-AMPLIFICATION FACTORS that drive the output above the seasonal norm.
-Your Analysis section MUST focus on: WHY does THIS specific opponent ({req.opponentName}) amplify this stat above the season average? Look at the game logs for the player's highest outputs — those opponents share traits with today's matchup. The LOW games are NOT the anchor.
-Amplification factors to explore: opponent defensive passivity, possession dominance scenario, positional matchup that inflates volume."""
-
-        _prop_display = req.propType
-
-        # ── H2H Intelligence block for AI prompt ──────────────────────────────
-        _h2h_snap = historical_data.get("h2hPlayerStats") or {}
-        _h2h_prompt_block = ""
-        if _h2h_snap.get("sampleSize", 0) > 0:
-            _hb = "[HEAD-TO-HEAD INTELLIGENCE — MANDATORY REFERENCE]\n"
-            if _h2h_snap.get("teamMeetings"):
-                _hb += f"Total team meetings (last {H2H_HISTORY_SEASONS} seasons): {_h2h_snap['teamMeetings']}"
-                if _h2h_snap.get("seasonsCovered"):
-                    _hb += f" ({_h2h_snap['seasonsCovered']['range']})"
-                _hb += "\n"
-            _hb += f"Player appeared in {_h2h_snap['sampleSize']} of those games with minutes vs {req.opponentName}\n"
-            if _h2h_snap.get("avgVsOpponent") is not None:
-                _hb += (
-                    f"Player H2H avg ({req.propType}): {_h2h_snap['avgVsOpponent']:.1f} "
-                    f"(season avg is {wave2_supplement.get('playerGameLogs',{}).get('rawAvg','?')})\n"
-                )
-            if _h2h_snap.get("trendDirection") and _h2h_snap["trendDirection"] != "stable":
-                _hb += f"H2H trend: {_h2h_snap['trendDirection'].upper()} over recent appearances\n"
-            if _h2h_snap.get("venueHitRate") and _h2h_snap["venueHitRate"]["total"] >= 2:
-                _vhr = _h2h_snap["venueHitRate"]
-                _hb += (
-                    f"At {_vhr['venue'].upper()} vs this opponent: {_vhr['hits']}/{_vhr['total']} times "
-                    f"exceeded line {req.line} ({_vhr['pct']}% hit rate)\n"
-                )
-            _hb += ">>> MANDATORY: Your keyEvidence and matchup analysis MUST explicitly cite this H2H record. <<<\n"
-            _h2h_prompt_block = _hb
-
-        # ── Opponent Defensive Profile block for AI prompt ─────────────────────
-        _opp_def_prompt_block = ""
-        try:
-            _pcd_pp = position_comp_data if isinstance(position_comp_data, dict) else {}
-            _pcd_avg_pp = _pcd_pp.get("avgStatValue")
-            if not _pcd_avg_pp:
-                _pcd_raw_pp = [p.get("statValue") for p in (_pcd_pp.get("players") or []) if p.get("statValue") is not None]
-                if _pcd_raw_pp:
-                    _pcd_avg_pp = round(sum(_pcd_raw_pp) / len(_pcd_raw_pp), 1)
-            _pcd_n_pp = int(_pcd_pp.get("sampleSize") or len(_pcd_pp.get("players") or []))
-            if _pcd_avg_pp is not None and _pcd_n_pp >= 2:
-                _odf_b = (
-                    f"[OPPONENT DEFENSIVE PROFILE — {req.opponentName} vs {display_position or req.propType.replace('_',' ')}]\n"
-                    f"{req.opponentName} allows {float(_pcd_avg_pp):.1f} {req.propType.replace('_',' ')} "
-                    f"per game to {display_position or 'same-position'} players (n={_pcd_n_pp} fixtures)\n"
-                )
-                _ps_avg_pp = wave2_supplement.get("playerGameLogs", {}).get("rawAvg")
-                if _ps_avg_pp and float(_ps_avg_pp) > 0:
-                    _delta_pp = round((float(_pcd_avg_pp) / float(_ps_avg_pp) - 1) * 100, 1)
-                    _dir_pp = "ABOVE" if _delta_pp > 0 else "BELOW"
-                    _odf_b += f"That is {abs(_delta_pp):.1f}% {_dir_pp} this player's season average of {_ps_avg_pp}\n"
-                    if abs(_delta_pp) >= 15:
-                        _odf_b += (
-                            f">>> STRONG {'FAVOURABLE' if _delta_pp > 0 else 'UNFAVOURABLE'} MATCHUP: "
-                            f"cite this opponent allowance rate as a PRIMARY factor in keyEvidence <<<\n"
-                        )
-                    else:
-                        _odf_b += ">>> Cite this opponent allowance data explicitly in your matchup analysis. <<<\n"
-                _opp_def_prompt_block = _odf_b
-        except Exception:
-            pass
-
-        # ── MANAGER CHANGE PROMPT BLOCK ──────────────────────────────────────────
-        _manager_change_block = ""
-        try:
-            if _manager_ctx.get("isRecent") and _manager_ctx.get("coachStartDate"):
-                _mc = _manager_ctx
-                _ms = _manager_split_info if "_manager_split_info" in dir() else {}
-                _mpd = _manager_possession_drift
-                _mb  = (
-                    f"\n\n[⚠ MANAGER CHANGE — CRITICAL SYSTEM CONTEXT — READ BEFORE ANALYSIS]\n"
-                    f"CONFIRMED: {req.teamName} appointed {_mc.get('coachName','new manager')} "
-                    f"{_mc.get('daysElapsed')} days ago (from {_mc.get('coachStartDate')}).\n"
-                )
-                if _mc.get("prevCoachName"):
-                    _mb += f"Previous coach: {_mc['prevCoachName']}\n"
-                if _ms.get("preAvg") is not None and _ms.get("postAvg") is not None:
-                    _mb += (
-                        f"Stat split ({req.propType}): "
-                        f"pre-{_mc.get('coachName','new coach')} avg = {_ms['preAvg']} "
-                        f"({_ms.get('preCount',0)} games)  →  "
-                        f"post-{_mc.get('coachName','new coach')} avg = {_ms['postAvg']} "
-                        f"({_ms.get('postCount',0)} games)\n"
-                    )
-                    if _ms.get("thinSample"):
-                        _mb += (
-                            f"⚠ THIN SAMPLE: Only {_ms.get('postCount',0)} games under "
-                            f"{_mc.get('coachName','new coach')} — high uncertainty; lean on "
-                            f"the post-change trend over the full history.\n"
-                        )
-                    else:
-                        _mb += "✓ Model used ONLY post-change game logs for this projection.\n"
-                if _mpd.get("isShift"):
-                    _mb += (
-                        f"Team possession drift: season avg {_mpd['seasonAvg']}% → "
-                        f"last-5 avg {_mpd['last5Avg']}% ({_mpd['drift']:+.1f}pp) — "
-                        f"TACTICAL IDENTITY SHIFT CONFIRMED.\n"
-                    )
-                _mb += (
-                    ">>> MANDATORY: The manager change is the PRIMARY narrative driver for this "
-                    "prediction. In keyEvidence and matchup analysis you MUST: "
-                    "(1) explicitly name the new coach and state the tactical identity shift, "
-                    "(2) reference the pre vs post statistical split above, "
-                    "(3) discuss whether this player's role in the new system is a PRIMARY beneficiary "
-                    "(higher volume) or secondary (lower volume), "
-                    "(4) set your uncertaintyNote to reflect thin-sample risk if applicable. <<<"
-                )
-                _manager_change_block = _mb
-        except Exception as _mcb_err:
-            print(f"[MANAGER BLOCK] error: {_mcb_err}")
-
-        prompt = f"""⛔⛔⛔ PLAYER IDENTITY — READ THIS FIRST — MANDATORY ⛔⛔⛔
-Player name: {req.playerName}. Current team: {corrected_team_name}. Opponent today: {req.opponentName}.
-RULES:
-1. This player's team is {corrected_team_name}. Use ONLY this team name. Never say they play for Toronto FC, NYCFC, or any other club.
-2. If your training data associates "{req.playerName}" with a different club, that information is OUTDATED. They NOW play for {corrected_team_name}.
-3. Do NOT add, change, or combine the player's name. The name is exactly: {req.playerName}. Do NOT append another player's name to it.
-4. Opponent abbreviations and names in game logs (e.g. TOR, CIN, PHI) are teams {corrected_team_name} played AGAINST — they are NOT this player's club.
-⛔⛔⛔ END IDENTITY LOCK ⛔⛔⛔
-
-{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {_prop_display} line {req.line}
-IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}
-Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
-{pronoun_note}
-{_recent_log_str}
-{hit_rate_context}
-            {bayesian_prompt_anchor}
-            {_suppression_context}
-            {dom_context}
-            {position_context}
-            {_h2h_prompt_block}{_opp_def_prompt_block}{_manager_change_block}{final_data[:3500]}
-
-Analyze ALL data thoroughly. Return JSON only."""
-
-        async def call_gemini(label="grok-fallback", model=GROK_MODEL, prompt_override=None):
-            """Gemini fallback — mirrors call_grok but as a named secondary attempt."""
-            return await call_grok(label=label, model=model, prompt_override=prompt_override)
-
-        # =============================================
-        # AI SYNTHESIS: Gemini primary, secondary fallback
-        # Projection comes ONLY from the math engine — AI projectedValue is NEVER used.
-        # =============================================
-        ai_result = None
-
-        # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
-
-        async def call_grok(label="ai", model=None, prompt_override=None):
-            """Primary AI synthesis — Replit Gemini AI Integration."""
-            from ai_engine import _ai_call as _engine_call
-            import re as _re
-            import html as _html
-            try:
-                text = await _engine_call(
-                    prompt_override if prompt_override is not None else prompt,
-                    system=PREDICTION_SYSTEM,
-                    temperature=0.0,
-                    max_tokens=4000,
-                    timeout=45,
-                    json_mode=False,
-                    budget_source="prediction-explanation",
-                )
-                if not text:
-                    return None
-                text = _re.sub(r"```(?:json)?\s*", "", text)
-                text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
-                text = _html.unescape(text).strip()
-                start = text.find("{")
-                if start >= 0:
-                    candidate = text[start:]
-                    try:
-                        result = json.loads(candidate)
-                        # Gemini occasionally returns string fields as nested dicts
-                        _STR_FIELDS = ("tacticalBreakdown","sharpSummary","reasoning",
-                                       "scenarioAnalysis","keyEvidence","sensitivityTests",
-                                       "subRisk","gameFlowDynamics","uncertaintyNote",
-                                       "confidenceLevel","recommendation")
-                        for _sf in _STR_FIELDS:
-                            if _sf in result and not isinstance(result[_sf], str):
-                                _sf_val = result[_sf]
-                                if _sf_val and isinstance(_sf_val, dict):
-                                    if _sf == "tacticalBreakdown":
-                                        # Format sections as readable markdown
-                                        _parts = []
-                                        for _k, _v in _sf_val.items():
-                                            if isinstance(_v, str) and _v.strip():
-                                                _parts.append(f"**{_k}**\n{_v.strip()}")
-                                        result[_sf] = "\n\n".join(_parts) if _parts else ""
-                                    else:
-                                        # For sharpSummary/reasoning/etc, join string values
-                                        _sv = [str(v) for v in _sf_val.values() if v and str(v).strip()]
-                                        result[_sf] = " ".join(_sv) if _sv else ""
-                                else:
-                                    result[_sf] = str(_sf_val) if _sf_val else ""
-                        result["_source"] = label
-                        return result
-                    except json.JSONDecodeError:
-                        pass
-                    for end_pos in range(len(text), start, -1):
-                        if text[end_pos - 1] == "}":
-                            try:
-                                result = json.loads(text[start:end_pos])
-                                result["_source"] = label
-                                return result
-                            except json.JSONDecodeError:
-                                continue
-                    _repaired: dict = {"_source": label, "_repaired": True}
-                    for _key in ("sharpSummary", "tacticalBreakdown", "reasoning", "aiProjection",
-                                 "confidenceScore", "confidenceLevel", "recommendation"):
-                        _m = _re.search(rf'"{_key}"\s*:\s*"((?:[^"\\]|\\.)*)', text[start:])
-                        if _m:
-                            _repaired[_key] = _m.group(1)
-                    if _repaired.get("tacticalBreakdown") or _repaired.get("sharpSummary"):
-                        print(f"[MULTI-AI] {label} — JSON truncated, repaired: {list(_repaired.keys())}")
-                        return _repaired
-                print(f"[MULTI-AI] {label} non-JSON response: {text[:300]!r}")
-                raise ValueError("No valid JSON in AI response")
-            except Exception as e:
-                print(f"[MULTI-AI] {label} failed: {e}")
-                return None
-
-        # AI is deliberately deferred until the final projection ledger exists.
-        # Looking up or generating a narrative here would allow a stale/preflight
-        # projection to be cached against the request.
-        ai_result = None
-        _pred_cached = None
-        _ai_task = None
-        print("[AI] Narrative deferred until final projection ledger is locked.")
-
-        # If no cached AI and background task is running, seed with math-only result
-        if not ai_result:
-            if early_bayes and early_bayes.get("posteriorMean"):
-                pv = early_bayes["posteriorMean"]
-                _raw_bayes_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50))
-                _capped_conf = min(_raw_bayes_conf, 72)
-                ai_result = {
-                    "projectedValue": pv,
-                    "recommendation": early_bayes.get("recommendation", "over"),
-                    "confidenceScore": _capped_conf,
-                    "reasoning": "",
-                    "_source": "bayesian_async_pending",
-                }
-                print(f"[AI-ASYNC] Math-only seed while AI runs in background: {pv}")
-            else:
-                pv = req.line
-                ai_result = {
-                    "projectedValue": pv,
-                    "recommendation": "over",
-                    "confidenceScore": 50,
-                    "reasoning": "",
-                    "_source": "fallback_async_pending",
-                }
-                print(f"[AI-ASYNC] Fallback seed while AI runs: {pv}")
-        else:
-            # Cached AI available — use its source marker for timing
-            pass
-
-        source_model = ai_result.get("_source", "gemini")
-        print(f"[TIMING] {source_model} ready: {_t.time()-_t0:.1f}s, proj={pv}")
-
-        prediction = ai_result.copy()
-        prediction.pop("_source", None)
-        prediction["projectedValue"] = pv
-        prediction["recommendation"] = "over" if pv > req.line else "under"
-        prediction["sport"] = req.sport
+        _raw_model_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50)) if early_bayes else 50
+        prediction = {"projectedValue": pv, "recommendation": "over" if pv > req.line else "under", "confidenceScore": min(_raw_model_conf, 72), "reasoning": "", "sport": req.sport}
         # Expose current opponent quality tier so the frontend can display it.
         # Standings-based rank only exists when the CURRENT prediction's league_id
         # has a domestic/qualifying-group table — this silently fails for
@@ -6524,8 +5667,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                         prediction["currentOppTierSource"] = "oddsImplied"
                 except (TypeError, ValueError):
                     pass
-        # Tell frontend AI text is loading in background
-        prediction["aiPending"] = _ai_task is not None and not _pred_cached
+        # The deterministic explanation is complete in this response.
+        prediction["aiPending"] = False
 
         # scenarioProbabilities: prefer AI-assigned values; fall back to first-goal math
         _sp = prediction.get("scenarioProbabilities")
@@ -6579,7 +5722,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         }
 
         # =============================================
-        # BAYESIAN — Reuse early computation (already done before AI prompt)
+        # BAYESIAN — Reuse early computation (already done before structured evidence assembly)
         # =============================================
         real_bayes = early_bayes
         if real_bayes:
@@ -6641,8 +5784,8 @@ Analyze ALL data thoroughly. Return JSON only."""
             },
         }
 
-        # Mirror condPossAdj into bayesianMetrics so the mobile tactical-AI
-        # prompt can find it at pred.bayesianMetrics.condPossAdj
+        # Mirror condPossAdj into bayesianMetrics so the mobile structured-evidence
+        # view can find it at pred.bayesianMetrics.condPossAdj
         _cp_res = locals().get("_cond_poss_result")
         if _cp_res and prediction.get("bayesianMetrics") is not None:
             prediction["bayesianMetrics"]["condPossAdj"] = {
@@ -6668,7 +5811,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # BAYESIAN-ONLY PROJECTION
         #
         # The math OWNS the number. Period.
-        # Gemini provides tactical reasoning text only — no numeric influence.
+        # Structured evidence provides tactical reasoning text only — no numeric influence.
         # The Bayesian posterior IS the projected value.
         # =============================================
         if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
@@ -7185,7 +6328,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             if divergence_pct > 10 and bayesian_rec != early_rec:
                 print(f"[BAYES ADJUST] Early={early_proj}({early_rec}) → Full Bayes={bayesian_posterior}({bayesian_rec}) — {divergence_pct:.0f}% shift after all adjustments.")
 
-            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — MATH IS FINAL. Gemini = explanation only.")
+            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — ledger math is final. Structured evidence is explanation only.")
 
             # ── Apply nightly-learned bias offsets ──────────────────────────
             # GK pass_attempts UNDER: the GK inverted possession model already achieves
@@ -7246,10 +6389,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "bayesianConfidence": round(bayesian_prob * 100, 1),
                 "fusedProjection": bayesian_posterior,
                 "fusedRecommendation": bayesian_rec,
-                "weights": {"math": 1.0, "gemini": 0},  # Gemini = explanation only, zero weight in projection
+                "weights": {"math": 1.0, "structuredEvidence": 0},  # Structured evidence = explanation only, zero weight in projection
                 "agreement": bayesian_rec == early_rec,
                 "divergencePct": round(divergence_pct, 1),
-                "note": "projectedValue is determined entirely by the Reverse Formula math engine. Gemini writes explanation text only.",
+                "note": "projectedValue is determined entirely by the Reverse Formula math engine. Structured evidence writes explanation text only.",
             }
 
             pass  # Math Lock runs after PASS GATE below — see [MATH LOCK] block
@@ -7907,22 +7050,15 @@ Analyze ALL data thoroughly. Return JSON only."""
                 if v is not None:
                     s["value"] = int(round(v))
 
-        # ── BAYESIAN IS FINAL — AI IS ANALYSIS ONLY ──────────────────────────
+        # ── BAYESIAN IS FINAL ────────────────────────────────────────────────
         # The Bayesian math projection is the sole source of truth for both the
-        # projectedValue and the OVER/UNDER recommendation. The AI tactical
-        # projection is stored for display context only and never moves the number.
+        # projectedValue and the OVER/UNDER recommendation. Structured
+        # explanation text is display context only and never moves the number.
         # Rationale: the 85/15 blend was causing the final projected value to cross
         # the line when the AI disagreed, silently flipping the recommendation
         # against the math. The user's money follows the math — the math decides.
-        _ai_proj_raw = None
-        if ai_result:
-            _ai_proj_raw = ai_result.get("aiProjection") or ai_result.get("projectedValue") or None
         _bayes_final = prediction.get("projectedValue", req.line)
         prediction["bayesianComponent"] = _bayes_final
-        if _ai_proj_raw and isinstance(_ai_proj_raw, (int, float)) and 0 < _ai_proj_raw < 500:
-            prediction["aiProjection"] = _ai_proj_raw
-            prediction["blendNote"] = f"Reverse Formula {_bayes_final} (math only) | AI tactical read: {_ai_proj_raw} (context only, not applied)"
-            print(f"[MATH ONLY] Bayes={_bayes_final} locked. AI={_ai_proj_raw} stored for display only — not applied to projection.")
 
         # ═══════════════════════════════════════════════════════════════════
         # NARROW EDGE — GK PASS_ATTEMPTS ONLY
@@ -8139,7 +7275,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             )
 
             # ── SHARP SUMMARY DIRECTION GUARD ─────────────────────────────────
-            # The prediction cache stores AI narrative. When BAYESIAN TRUTH pins
+            # The prediction cache stores deterministic narrative. When BAYESIAN TRUTH pins
             # a different direction than what the AI wrote (common when the AI
             # explains OVER but Bayesian says UNDER), the sharpSummary displayed
             # to users flatly contradicts the recommendation badge.
@@ -8185,8 +7321,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                         f"despite the cautious market pricing."
                     )
                     prediction["sharpSummary"] = _replacement_summary
-                    # Do not discard a substantive Gemini explanation when the
-                    # final Bayesian pass changes direction. Gemini is called
+                    # Do not discard a substantive structured explanation when the
+                    # final Bayesian pass changes direction. The deterministic model is called
                     # before the full posterior is available, so this can happen
                     # even though the explanation contains valuable matchup,
                     # role, manager, and game-flow evidence. Replace only the
@@ -8229,16 +7365,16 @@ Analyze ALL data thoroughly. Return JSON only."""
                             flags=re.IGNORECASE | re.DOTALL,
                         )
                         prediction["tacticalBreakdown"] = _final_note + _existing_td.strip()
-                        prediction["aiSource"] = "gemini"
+                        prediction["aiSource"] = "model"
                         print(
                             f"[DIRECTION GUARD] {req.playerName}/{req.propType}: "
-                            f"final rec={_bt_dir.upper()} — reconciled Gemini narrative "
+                            f"final rec={_bt_dir.upper()} — reconciled deterministic narrative "
                             f"without discarding tactical evidence"
                         )
                     else:
                         # No substantive AI text exists, so the normal math
                         # fallback below remains the correct source marker.
-                        prediction["aiSource"] = "math"
+                        prediction["aiSource"] = "model"
                     # Keep the daily AI cache. The final direction is computed
                     # fresh on every request, and this same reconciliation is
                     # applied to cached prose when necessary.
@@ -9142,27 +8278,26 @@ Analyze ALL data thoroughly. Return JSON only."""
             f"{_m_ev_note}"
         )
 
-        _ai_td = prediction.get("tacticalBreakdown", "")
-        if not isinstance(_ai_td, str):
-            _ai_td = json.dumps(_ai_td) if _ai_td else ""
-        _ai_ss = prediction.get("sharpSummary", "")
-        if not isinstance(_ai_ss, str):
-            _ai_ss = json.dumps(_ai_ss) if _ai_ss else ""
+        _analysis_text = prediction.get("tacticalBreakdown", "")
+        if not isinstance(_analysis_text, str):
+            _analysis_text = json.dumps(_analysis_text) if _analysis_text else ""
+        _summary_text = prediction.get("sharpSummary", "")
+        if not isinstance(_summary_text, str):
+            _summary_text = json.dumps(_summary_text) if _summary_text else ""
 
-        if _ai_td and len(_ai_td.strip()) > 100:
-            # ── AI produced a real narrative — keep it, append math footer ──
-            prediction["tacticalBreakdown"] = _ai_td.strip() + "\n\n---\n" + _m_math + "\n" + _m_tldr
-            prediction["aiSource"] = "gemini"
-            # Keep AI's sharpSummary if it's non-empty and substantive
-            if not (_ai_ss and len(_ai_ss.strip()) > 20):
+        if _analysis_text and len(_analysis_text.strip()) > 100:
+            # Keep the deterministic explanation and append the final math footer.
+            prediction["tacticalBreakdown"] = _analysis_text.strip() + "\n\n---\n" + _m_math + "\n" + _m_tldr
+            prediction["aiSource"] = "model"
+            if not (_summary_text and len(_summary_text.strip()) > 20):
                 prediction["sharpSummary"] = _m_sharp_summary
-            print(f"[AI SUMMARY] Using AI tacticalBreakdown ({len(_ai_td)} chars) + math footer appended")
+            print(f"[MODEL SUMMARY] Using deterministic tacticalBreakdown ({len(_analysis_text)} chars) + math footer appended")
         else:
-            # ── AI failed or returned empty — fall back to pure-math breakdown ──
+            # ── Missing explanation — use the reproducible math breakdown ──
             prediction["tacticalBreakdown"] = _m_full_block
             prediction["sharpSummary"] = _m_sharp_summary
-            prediction["aiSource"] = "math"
-            print(f"[PURE MATH] AI summary absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
+            prediction["aiSource"] = "model"
+            print(f"[PURE MODEL] Explanation absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
 
         # ── Game Script — attach computed scenario probabilities + script analysis
         # The gameScript engine uses Poisson(λ_h) × Poisson(λ_a) to forecast likely
@@ -9890,7 +9025,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[MODEL FACTORS] snapshot failed: {_af_err}")
             prediction["analysisFactors"] = []
 
-        # ── FINAL PROJECTION LEDGER + LEDGER-BOUND AI ─────────────────────────
+        # ── FINAL PROJECTION LEDGER + DETERMINISTIC EXPLANATION ───────────────
         # This is intentionally the last model boundary.  The earlier
         # analysisFactors snapshot is evidence-oriented; factorLedger is the
         # ordered numeric audit trail used by the explanation model.
@@ -9928,7 +9063,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             # projection after the Bayesian Truth block refreshed pOver/pUnder.
             # Recompute the probabilities from the value the user actually
             # sees, using the same predictive standard deviation used earlier.
-            # This keeps the ledger, bayesianMetrics, badge, and AI prompt on
+            # This keeps the ledger, bayesianMetrics, badge, and structured evidence on
             # one final numeric snapshot.
             _final_bm = prediction.setdefault("bayesianMetrics", {})
             _final_line_num = float(req.line) if req.line is not None else 0.0
@@ -10062,7 +9197,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         prediction["confidenceLevel"] = "High" if _final_adj >= 70 else "Medium"
 
             # Confidence is a separate control stream from projection. Keep it
-            # explicit so Gemini can explain a PASS/RISKY/capped result without
+            # explicit so the deterministic explanation can explain a PASS/RISKY/capped result without
             # implying the cap changed the math projection.
             _raw_conf_final = prediction.get("rawConfidence")
             _display_conf_final = prediction.get("confidenceScore", 50)
@@ -10102,98 +9237,11 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["factorLedgerVersion"] = "projection-ledger-v1"
             prediction["factorLedgerFingerprint"] = _ledger_fingerprint
 
-            # Use the final ledger as an authoritative suffix rather than
-            # relying on any earlier preflight values embedded in `prompt`.
-            _final_ledger_prompt = f"""
-
-⛔ FINAL LEDGER — AUTHORITATIVE AND COMPLETE ⛔
-The following values are the exact values shown to the user. Do not recompute,
-round differently, or use any earlier estimate in the request. Explain every
-factor with status "applied" in sequence order. Mention skipped/unavailable
-factors only as limitations. Never invent a numeric adjustment that is absent
-from this ledger. Projection and recommendation are mathematical; Gemini must
-not change them.
-
-{json.dumps(_ledger_payload, indent=2, default=str)}
-
-Your opening Verdict, sharpSummary, TL;DR, aiProjection, scenario base case,
-and every probability claim must agree with FINAL. If recommendation is PASS,
-describe it as no actionable edge rather than a winning OVER/UNDER pick. If
-confidence or safety was capped, say that explicitly and distinguish the cap
-from the projection.
-"""
-            _final_ai_prompt = prompt + _final_ledger_prompt
-            _soc_ck = (
-                f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|"
-                f"{req.opponentName or ''}|{today_str}|{_ledger_fingerprint}"
-            )
-            _final_ai_result = None
-            _ai_cache_hit = False
-            try:
-                _pred_hit = await db.ai_response_cache.find_one(
-                    {"_k": _soc_ck}, {"_id": 0, "v": 1}
-                )
-                if (
-                    _pred_hit
-                    and isinstance(_pred_hit.get("v"), dict)
-                    and _pred_hit["v"].get("tacticalBreakdown")
-                ):
-                    _final_ai_result = _pred_hit["v"]
-                    _ai_cache_hit = True
-                    print(f"[PRED CACHE HIT] final ledger {_ledger_fingerprint}")
-            except Exception as _cache_read_err:
-                print(f"[PRED CACHE READ] skipped: {_cache_read_err}")
-
-            if _final_ai_result is None and GEMINI_AI_ENABLED:
-                try:
-                    _final_ai_result = await aio.wait_for(
-                        call_grok(
-                            label="gemini-final-ledger",
-                            model="gemini-2.0-flash",
-                            prompt_override=_final_ai_prompt,
-                        ),
-                        timeout=50,
-                    )
-                    if _final_ai_result and _final_ai_result.get("tacticalBreakdown"):
-                        try:
-                            await db.ai_response_cache.replace_one(
-                                {"_k": _soc_ck},
-                                {
-                                    "_k": _soc_ck,
-                                    "v": _final_ai_result,
-                                    "ledgerFingerprint": _ledger_fingerprint,
-                                    "ts": datetime.now(timezone.utc),
-                                },
-                                upsert=True,
-                            )
-                        except Exception as _cache_write_err:
-                            print(f"[PRED CACHE WRITE] skipped: {_cache_write_err}")
-                except Exception as _final_ai_err:
-                    print(f"[AI FINAL LEDGER] synthesis failed: {_final_ai_err}")
-                    _final_ai_result = None
-            else:
-                print("[AI DISABLED] Gemini final-ledger synthesis skipped.")
-
-            # Merge only narrative fields. Deterministic fixture, player,
-            # projection, recommendation, and model metrics remain untouched.
-            _narrative_fields = (
-                "aiProjection", "reasoning", "tacticalBreakdown", "sharpSummary",
-                "scenarioAnalysis", "keyEvidence", "sensitivityTests", "subRisk",
-                "gameFlowDynamics", "uncertaintyNote", "qualitySignal", "keyFactors",
-            )
-            if _final_ai_result:
-                for _field in _narrative_fields:
-                    if _field in _final_ai_result:
-                        prediction[_field] = _final_ai_result[_field]
-                prediction["aiSource"] = "gemini"
-                prediction["aiPending"] = False
-                prediction["aiLedgerFingerprint"] = _ledger_fingerprint
-            else:
-                prediction["aiSource"] = "math"
-                prediction["aiPending"] = False
+            from deterministic_explanations import build_deterministic_explanation
+            build_deterministic_explanation(prediction, _ledger_payload)
 
             # Rebuild the authoritative math footer after all late calibration
-            # and guard stages. This prevents a correct AI narrative from being
+            # and guard stages. This prevents a correct structured narrative from being
             # followed by stale pre-calibration numbers.
             _final_bm = prediction.get("bayesianMetrics") or {}
             _fpv = prediction.get("projectedValue", req.line)
@@ -10212,22 +9260,12 @@ from the projection.
                 f"Confidence: {_display_conf_final:.0f}% ({prediction.get('confidenceLevel', 'Medium')})\n"
                 f"Ledger: {_ledger_fingerprint} | Factors recorded: {len(_factor_ledger)}"
             )
-            _existing_final_td = prediction.get("tacticalBreakdown")
-            if isinstance(_existing_final_td, str) and len(_existing_final_td.strip()) > 100 and _final_ai_result:
-                prediction["tacticalBreakdown"] = _existing_final_td.strip() + "\n\n---\n" + _final_math_footer
-            else:
-                prediction["tacticalBreakdown"] = _final_math_footer
-            prediction["sharpSummary"] = (
-                f"Reverse Formula final call: {_fp_s} {_frec} {_fl_s} "
-                f"with {_fpwin:.1f}% probability and {_fedge:.1f} edge. "
-                f"Confidence is {_display_conf_final:.0f}% ({prediction.get('confidenceLevel', 'Medium')}); "
-                f"{prediction.get('safetyRating', 'risk not rated')} safety."
-            )
+            prediction["tacticalBreakdown"] += "\n\n---\n" + _final_math_footer
         except Exception as _ledger_err:
             # The ledger is diagnostic/explanatory and must never take down a
             # valid math prediction. Keep the explicit math source marker.
             print(f"[FINAL LEDGER] failed: {_ledger_err}")
-            prediction["aiSource"] = "math"
+            prediction["aiSource"] = "model"
             prediction["aiPending"] = False
 
         prediction["_ts"] = datetime.now(timezone.utc)
@@ -10248,7 +9286,7 @@ from the projection.
 
         return prediction
     except (json.JSONDecodeError, aio.TimeoutError):
-        # Return a safe fallback prediction
+        # Return a safe fallback deterministic model prediction
         return {
             "player": {"id": req.playerId, "name": req.playerName, "team": req.teamName, "position": "Unknown"},
             "opponent": req.opponentName,
@@ -10262,9 +9300,9 @@ from the projection.
             "recentSamples": [],
             "bayesianMetrics": {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"},
             "probabilityCurve": [],
-            "reasoning": "AI analysis returned an invalid format. Displaying fallback prediction.",
+            "reasoning": "Deterministic model returned an invalid format. Displaying fallback prediction.",
             "tacticalInsights": "",
-            "explanation": "Fallback prediction due to AI parsing error."
+            "explanation": "Fallback prediction due to deterministic model parsing error."
         }
     except HTTPException:
         raise  # Re-raise HTTPException directly (e.g., 400 for teamId=0)
@@ -10275,21 +9313,6 @@ from the projection.
         reset_api_request_priority(_priority_token)
 
 
-# ── AI async polling endpoint ──────────────────────────────────────────────
-# F5 decoupling: frontend polls for AI narrative after receiving math result
-@router.post("/predict/ai-poll")
-async def ai_poll(req: PredictionRequest):
-    _ck = f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|{req.opponentName or ''}|{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-    try:
-        _hit = await db.ai_pending_jobs.find_one({"_k": _ck}, {"_id": 0})
-        if _hit and _hit.get("done"):
-            if _hit.get("failed"):
-                return {"ready": True, "failed": True, "data": None}
-            return {"ready": True, "failed": False, "data": _hit.get("v")}
-        return {"ready": False, "failed": False, "data": None}
-    except Exception as e:
-        print(f"[AI-POLL] error: {e}")
-        return {"ready": False, "failed": False, "data": None}
 # ─────────────────────────────────────────────────────────────────────────
 
 

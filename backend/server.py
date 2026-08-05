@@ -173,41 +173,12 @@ async def _run_startup_tasks():
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
     asyncio.create_task(_overdue_subscription_sweep())
-    # Auto-backfill positions for picks missing them (runs once at startup)
-    asyncio.create_task(_auto_backfill_positions())
     # Fix MLB picks saved with sport='soccer' before the sport-detection fix
     asyncio.create_task(_backfill_mlb_sport())
-    # AI Engine background tasks
-    from ai_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop, match_review_sweeper_loop
+    # Data-only background tasks. Explanations and enrichment are deterministic.
+    from ai_engine import auto_settlement_loop, mlb_live_loop
     asyncio.create_task(auto_settlement_loop())
-    asyncio.create_task(match_review_sweeper_loop())
-    asyncio.create_task(auto_scout_loop())
-    asyncio.create_task(pattern_mining_loop())
     asyncio.create_task(mlb_live_loop())
-
-    # Startup AI probe — verifies Replit Gemini integration is reachable
-    async def _check_ai_api():
-        import os as _os
-        _log = __import__("logging").getLogger("server")
-        from config import GEMINI_AI_ENABLED, AI_BACKGROUND_ENRICHMENT_ENABLED
-        if not GEMINI_AI_ENABLED or not AI_BACKGROUND_ENRICHMENT_ENABLED:
-            _log.info("[AI] Startup probe skipped — no background AI spend.")
-            _log.info("[AI] User-facing explanations remain enabled; background enrichment is disabled.")
-            return
-        _key = _os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY", "")
-        if not _key:
-            _log.warning("[AI] AI_INTEGRATIONS_GEMINI_API_KEY not set — predictions will return empty AI narrative.")
-            return
-        try:
-            from ai_engine import _ai_call
-            _ping = await _ai_call("Reply with the single word: ready", max_tokens=10, timeout=15)
-            if _ping:
-                print(f"[AI] Replit Gemini integration active — model gemini-2.5-flash ready.")
-            else:
-                _log.warning("[AI] Gemini probe returned empty response.")
-        except Exception as _e:
-            _log.warning(f"[AI] Gemini probe error: {_e}")
-    asyncio.create_task(_check_ai_api())
 
     # League-aware empirical calibration: load on startup, refresh every 6h
     from league_priors import ensure_loaded as ensure_league_priors_loaded
@@ -394,13 +365,11 @@ async def _backfill_mlb_sport():
 
 
 async def _auto_backfill_positions():
-    """Auto-backfill missing positions on startup using cache + Gemini AI fallback."""
+    """Backfill missing positions from already-persisted model/provider data."""
     import asyncio
     await asyncio.sleep(15)  # Wait for caches to load first
     try:
         from calibration import LEAGUE_NAMES
-        from config import XAI_API_KEY
-        import httpx
         all_league_names = set(LEAGUE_NAMES.values())
 
         # Step 1: Clean invalid positions (league IDs/names, cross-sport contamination)
@@ -468,72 +437,7 @@ async def _auto_backfill_positions():
 
         print(f"[AUTO-BACKFILL] Cache resolved: {updated}/{len(picks)}. Unresolved: {len(unresolved)}")
 
-        # Step 3: Background Gemini position backfill is intentionally
-        # disabled. New predictions use cached/provider/generic position data;
-        # this maintenance job must not consume the explanation budget.
-        from config import AI_BACKGROUND_ENRICHMENT_ENABLED
-        if unresolved and AI_BACKGROUND_ENRICHMENT_ENABLED:
-            from ai_engine import _ai_call as _gemini_pos
-            import json as _json
-            # Deduplicate by player name+sport
-            unique_players = {}
-            for u in unresolved:
-                key = f"{u['playerName']}|{u['sport']}"
-                if key not in unique_players:
-                    unique_players[key] = u
-
-            # Batch into chunks of 30
-            player_list = list(unique_players.values())
-            for i in range(0, len(player_list), 30):
-                batch = player_list[i:i+30]
-                player_lines = []
-                for idx, pl in enumerate(batch):
-                    player_lines.append(f"{idx+1}. {pl['playerName']} ({pl['sport']})")
-
-                prompt = f"""For each player below, return ONLY their primary position abbreviation.
-
-Soccer positions: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST
-
-Also return a short role description (e.g., "Inverted Winger", "Deep-Lying Playmaker", "Box-to-Box").
-
-Players:
-{chr(10).join(player_lines)}
-
-Return JSON array: [{{"name":"...","position":"XX","role":"..."}}]
-Only the JSON array, no markdown."""
-
-                try:
-                    raw = await _gemini_pos(prompt, temperature=0, max_tokens=1000, timeout=25, json_mode=True)
-                    if raw:
-                        content = raw.strip()
-                        if content.startswith("```"):
-                            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-                            content = content.rsplit("```", 1)[0]
-                        resolved = _json.loads(content.strip())
-                        grok_updated = 0
-                        for r in resolved:
-                            rname = r.get("name", "")
-                            rpos = r.get("position", "")
-                            rrole = r.get("role", "")
-                            if rname and rpos:
-                                await db.picks.update_many(
-                                    {"playerName": rname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
-                                    {"$set": {"position": rpos, "role": rrole or ""}}
-                                )
-                                matching = [u for u in batch if u["playerName"] == rname]
-                                for m in matching:
-                                    if m.get("playerId"):
-                                        await db.player_positions.update_one(
-                                            {"playerId": m["playerId"]},
-                                            {"$set": {"playerId": m["playerId"], "specificPosition": rpos, "role": rrole or ""}},
-                                            upsert=True
-                                        )
-                                grok_updated += 1
-                        print(f"[AUTO-BACKFILL] Gemini resolved: {grok_updated} players (batch {i//30+1})")
-                except Exception as e:
-                    print(f"[AUTO-BACKFILL] Gemini batch error: {e}")
-
-        print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, AI batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
+        print(f"[AUTO-BACKFILL] Done. Cache/provider-resolved: {updated}; unresolved: {len(unresolved)}")
     except Exception as e:
         print(f"[AUTO-BACKFILL] Error: {e}")
 

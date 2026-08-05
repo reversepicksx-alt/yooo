@@ -5,7 +5,7 @@ Tests for all 6 prediction engine improvements:
   3. NHL _venue_mult: goalie saves venue-split (away > home)
   4. WTA _surface_mult: player-specific surface path activates
   5. Bayesian streak window: extended to 10 games
-  6. Gemini retry: 429 path exists in grok_engine
+  6. Retry handling for deterministic model calls
 """
 import os, sys, asyncio, textwrap, inspect
 
@@ -248,33 +248,14 @@ check(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 6. Gemini retry: 429 path in grok_engine source
+# 6. Deterministic model compatibility
 # ──────────────────────────────────────────────────────────────────────────────
-print("\n── 6. Gemini retry on 429 ───────────────────────────────────────────")
-import ai_engine
-
-src_gemini        = inspect.getsource(ai_engine._gemini_call)
-src_gemini_search = inspect.getsource(ai_engine._gemini_search_call)
+print("\n── 6. Deterministic model compatibility ─────────────────────────────")
+from deterministic_explanations import unavailable_explanation
 
 check(
-    "_gemini_call: retry loop present (range(3))",
-    "range(3)" in src_gemini,
-)
-check(
-    "_gemini_call: 429 status handled",
-    "429" in src_gemini,
-)
-check(
-    "_gemini_call: exponential backoff with asyncio.sleep",
-    "asyncio.sleep" in src_gemini and "2 **" in src_gemini,
-)
-check(
-    "_gemini_search_call: retry loop present",
-    "range(3)" in src_gemini_search,
-)
-check(
-    "_gemini_search_call: 429 handled with backoff",
-    "429" in src_gemini_search and "asyncio.sleep" in src_gemini_search,
+    "external generation compatibility returns unavailable text",
+    asyncio.run(unavailable_explanation()) == "",
 )
 
 

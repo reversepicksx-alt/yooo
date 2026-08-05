@@ -108,11 +108,11 @@ const PWA_TAGS = `    <style>html,body{background:#050505!important;margin:0;pad
     <link rel="icon" type="image/png" href="/rp-icon.png" />
     <link rel="shortcut icon" href="/rp-icon.png" />
     <link rel="apple-touch-icon" href="/rp-icon.png" />
-    <meta name="description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
+    <meta name="description" content="Deterministic soccer player prop analytics. Bayesian projections, structured analysis, and data-driven predictions." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://reversepicks.com/" />
     <meta property="og:title" content="Reverse Picks \u2014 Elite Prop Intelligence" />
-    <meta property="og:description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
+    <meta property="og:description" content="Deterministic soccer player prop analytics. Bayesian projections, structured analysis, and data-driven predictions." />
     <meta property="og:image" content="https://reversepicks.com/rp-icon.png" />
     <meta property="og:site_name" content="Reverse Picks" />
     <meta name="twitter:card" content="summary" />
@@ -379,7 +379,7 @@ const server = http.createServer((req, res) => {
   <p>By using the Reverse Picks mobile application (the "App"), you agree to these Terms of Use. If you do not agree, do not use the App.</p>
 
   <h2>1. Description of Service</h2>
-  <p>Reverse Picks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate gambling. Predictions are statistical projections, not financial or betting advice.</p>
+  <p>Reverse Picks provides deterministic player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate gambling. Predictions are statistical projections, not financial or betting advice.</p>
 
   <h2>2. Subscriptions and Billing</h2>
   <p>Reverse Picks offers auto-renewable subscriptions. Payment is charged to your Apple ID at confirmation. Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in your Apple ID Account Settings.</p>

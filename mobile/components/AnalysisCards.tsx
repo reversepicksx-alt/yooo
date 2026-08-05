@@ -1,5 +1,5 @@
 /**
- * AnalysisCards.tsx — Shared render helpers for AI analysis data cards.
+ * AnalysisCards.tsx — Shared render helpers for structured analysis data cards.
  *
  * Used by both picks.tsx (analysis modal) and scan.tsx (immediate result view)
  * so the two surfaces always show identical cards from the same code.

@@ -18,7 +18,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -119,7 +119,6 @@ export default function ScanScreen() {
   const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [predictionRequest, setPredictionRequest] = useState<Record<string, unknown> | null>(null);
-  const [aiNarrativeLoading, setAiNarrativeLoading] = useState(false);
   const [tacticalAnalysis, setTacticalAnalysis] = useState<string | null>(null);
   const [showAltPlayers, setShowAltPlayers] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
@@ -702,13 +701,6 @@ export default function ScanScreen() {
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setAiNarrativeLoading(!!result.aiPending);
-      if (result.aiPending) {
-        // The API returns the math result first while Gemini finishes in the
-        // background. Start polling immediately so the full factor-by-factor
-        // Tactical AI explanation reaches the visible result screen.
-        void pollForAiNarrative(req, result);
-      }
     } catch (e: unknown) {
       if (e instanceof Error && e.message === '__CANCELLED__') return;
       const msg = e instanceof Error ? e.message : 'Analysis failed — try again';
@@ -716,68 +708,6 @@ export default function ScanScreen() {
       setPhase(inManual ? 'idle' : 'detected');
     } finally {
       cancelAbortRef.current = null;
-    }
-  };
-
-  /**
-   * F5: Poll for AI narrative in background. Updates the prediction state
-   * in-place when the AI synthesis completes, without re-rendering the whole screen.
-   */
-  const pollForAiNarrative = async (
-    req: Record<string, unknown>,
-    baseResult: PredictionResult,
-    attempts = 0
-  ) => {
-    // Backend can run TWO sequential Gemini calls (primary + fallback, 45s
-    // timeout each) plus DB writes before the narrative is ready, so give it
-    // comfortable headroom rather than giving up while it's still working —
-    // 60 * 3s = 180s max. The user would rather wait than see a permanently
-    // stuck "AI analysis loading..." placeholder.
-    if (attempts >= 60) {
-      setAiNarrativeLoading(false);
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 3000));
-    try {
-      const poll = await pollAiNarrative(req);
-      if (poll.ready && poll.data) {
-        const data = poll.data;
-        const polledTacticalBreakdown = (data.tacticalBreakdown as string) || '';
-        const polledReasoning = (data.reasoning as string) || '';
-        const completedNarrative = polledTacticalBreakdown || polledReasoning;
-        // Keep the dedicated narrative render state in sync with prediction.
-        // The first response is often math-only; Gemini finishes in this poll.
-        // Updating only prediction here left the visible Tactical AI section
-        // permanently blank after the background request completed.
-        if (completedNarrative.trim().length > 0) {
-          setTacticalAnalysis(completedNarrative);
-        }
-        setPrediction((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            tacticalBreakdown: polledTacticalBreakdown || prev.tacticalBreakdown,
-            sharpSummary: (data.sharpSummary as string) || prev.sharpSummary,
-            reasoning: polledReasoning || prev.reasoning,
-            scenarioAnalysis: (data.scenarioAnalysis as string) || prev.scenarioAnalysis,
-            keyEvidence: (data.keyEvidence as string) || prev.keyEvidence,
-            gameFlowDynamics: (data.gameFlowDynamics as string) || prev.gameFlowDynamics,
-            aiProjection: (data.aiProjection as number) || prev.aiProjection,
-            aiSource: (data.aiSource as PredictionResult['aiSource']) || 'gemini',
-            aiPending: false,
-          };
-        });
-        setAiNarrativeLoading(false);
-        return;
-      }
-      if (poll.failed) {
-        setAiNarrativeLoading(false);
-        return;
-      }
-      // Not ready yet — recurse
-      pollForAiNarrative(req, baseResult, attempts + 1);
-    } catch {
-      setAiNarrativeLoading(false);
     }
   };
 
@@ -1122,7 +1052,7 @@ export default function ScanScreen() {
         playerIsHome: typeof (prediction as any).isHome === 'boolean'
           ? (prediction as any).isHome
           : undefined,
-        // Soccer: persist AI analysis on the pick so the analysis modal can show it
+        // Soccer: persist structured analysis on the pick so the analysis modal can show it
         ...(sport === 'soccer' ? {
           sharpSummary:      prediction.sharpSummary  || undefined,
           reasoning:         prediction.reasoning      || prediction.tacticalBreakdown || undefined,
@@ -1132,7 +1062,7 @@ export default function ScanScreen() {
           tacticalAlerts:    prediction.tacticalAlerts || undefined,
           bayesianMetrics:   (prediction as any).bayesianMetrics || undefined,
         } : {}),
-        // WTA: persist tennis-specific fields and AI analysis
+        // WTA: persist tennis-specific fields and structured analysis
         ...(sport === 'wta' ? {
           playerId:        prediction.playerId,
           opponentId:      (prediction as any).opponentId,
@@ -1151,7 +1081,7 @@ export default function ScanScreen() {
           momentumMean:    (prediction as any).bayesianMetrics?.momentumMean,
           sampleSize:      (prediction as any).bayesianMetrics?.sampleSize,
         } : {}),
-        // CS2: persist AI analysis directly on the pick so the analysis modal can show it
+        // CS2: persist structured analysis directly on the pick so the analysis modal can show it
         ...(sport === 'cs2' ? {
           sharpSummary:    prediction.sharpSummary  || undefined,
           reasoning:       prediction.reasoning      || prediction.tacticalBreakdown || undefined,
@@ -1164,7 +1094,7 @@ export default function ScanScreen() {
           sampleSize:      (prediction as any).bayesianMetrics?.sampleSize,
           streakFlag:      (prediction as any).streakFlag,
         } : {}),
-        // NBA/NHL/MLB: persist Bayesian metrics + AI analysis
+        // NBA/NHL/MLB: persist Bayesian metrics + structured analysis
         ...(['nba', 'nhl', 'mlb'].includes(sport) ? {
           sharpSummary:    prediction.sharpSummary        || undefined,
           reasoning:       prediction.reasoning            || prediction.tacticalBreakdown || undefined,
@@ -1252,7 +1182,7 @@ export default function ScanScreen() {
           <Image source={require('../../assets/logo.png')} style={styles.scanHeaderLogo} resizeMode="contain" />
           <View>
             <Text style={styles.scanHeaderTitle}>REVERSE PICKS</Text>
-            <Text style={styles.scanHeaderSub}>AI Player Props</Text>
+            <Text style={styles.scanHeaderSub}>Structured Player Props</Text>
           </View>
         </View>
         <NotificationBell />
@@ -1269,7 +1199,7 @@ export default function ScanScreen() {
             <Ionicons name="lock-closed" size={48} color={Colors.primary} style={{ marginBottom: 16 }} />
             <Text style={styles.paywallOverlayTitle}>Unlock Predictions</Text>
             <Text style={styles.paywallOverlayBody}>
-              Get unlimited AI player prop predictions, tactical breakdowns, and sharp summaries.
+              Get unlimited deterministic player prop projections, structured breakdowns, and sharp summaries.
             </Text>
             <TouchableOpacity
               style={styles.paywallOverlayBtn}
@@ -4432,7 +4362,7 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* AI sharp summary */}
+                  {/* Structured sharp summary */}
                   {summary2 ? (
                     <Text style={[styles.scoutSectionBody, { color:Colors.text, fontWeight:'600', marginTop:10, marginBottom:6 }]}>
                       {summary2}
@@ -4594,7 +4524,7 @@ export default function ScanScreen() {
                     </Text>
                   )}
 
-                  {/* AI key factors */}
+                  {/* Structured key factors */}
                   {kf.length > 0 && (
                     <View style={{ marginTop: 8, gap: 5 }}>
                       {kf.slice(0, 4).map((factor, i) => (
@@ -4609,7 +4539,7 @@ export default function ScanScreen() {
               );
             })()}
 
-            {/* ─── FULL TACTICAL AI ANALYSIS ─── */}
+            {/* ─── FULL STRUCTURED ANALYSIS ─── */}
             {(tacticalAnalysis || prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary) && (() => {
               const isOver = prediction.recommendation === 'OVER';
               const isUnder = prediction.recommendation === 'UNDER';
@@ -4677,10 +4607,10 @@ export default function ScanScreen() {
                   <View style={styles.scoutHeader}>
                     <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.primary} />
                     <Text style={styles.scoutTitle}>
-                      {prediction.aiSource === 'gemini' ? 'TACTICAL AI' : 'MODEL EXPLANATION'}
+                      MODEL EXPLANATION
                     </Text>
                     <Text style={{ fontSize: 9, color: Colors.textTertiary, marginLeft: 'auto', fontWeight: '600' }}>
-                      {prediction.aiSource === 'gemini' ? 'GEMINI · FULL ANALYSIS' : 'FULL ANALYSIS'}
+                      DETERMINISTIC · FULL ANALYSIS
                     </Text>
                   </View>
                   <View style={{ gap: 0, marginTop: 4 }}>

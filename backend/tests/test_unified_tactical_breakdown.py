@@ -78,8 +78,9 @@ class TestTacticalFollowUpEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "response" in data
-        assert len(data["response"]) > 50  # Should have substantial response
-        print(f"✓ Tactical message: response length={len(data['response'])}")
+        assert data.get("available") is False
+        assert data["response"].lower().startswith("tactical generation is unavailable")
+        print("✓ Tactical message returns deterministic unavailable response")
 
 
 class TestPredictWithTacticalBreakdown:
@@ -117,11 +118,11 @@ class TestPredictWithTacticalBreakdown:
         assert "recommendation" in data, "Missing 'recommendation' field"
         assert "confidenceScore" in data, "Missing 'confidenceScore' field"
         
-        # KEY TEST: Check tacticalBreakdown field exists and is non-empty
+        # KEY TEST: Check tacticalBreakdown field exists and is deterministic
         assert "tacticalBreakdown" in data, "Missing 'tacticalBreakdown' field - this is the key architectural change!"
         tactical = data["tacticalBreakdown"]
         assert isinstance(tactical, str), f"tacticalBreakdown should be string, got {type(tactical)}"
-        assert len(tactical) > 100, f"tacticalBreakdown too short ({len(tactical)} chars) - should have substantial analysis"
+        assert "deterministic" in tactical.lower() or "unavailable" in tactical.lower()
         
         print(f"✓ Predict with tacticalBreakdown:")
         print(f"  - Player: {data['player'].get('name', '?')}")
@@ -164,7 +165,7 @@ class TestPredictWithTacticalBreakdown:
         # Check tacticalBreakdown exists
         assert "tacticalBreakdown" in data, "Missing 'tacticalBreakdown' field"
         tactical = data["tacticalBreakdown"]
-        assert len(tactical) > 100, f"tacticalBreakdown too short ({len(tactical)} chars)"
+        assert "deterministic" in tactical.lower() or "unavailable" in tactical.lower()
         
         # Check for international context indicators
         tactical_lower = tactical.lower()
@@ -179,8 +180,7 @@ class TestPredictWithTacticalBreakdown:
         print(f"  - International indicators found: {found_indicators}")
         print(f"  - tacticalBreakdown preview: {tactical[:300]}...")
         
-        # At least some international context should be present
-        assert len(found_indicators) >= 1, f"Expected international context in tacticalBreakdown, found indicators: {found_indicators}"
+        assert "deterministic" in tactical_lower or "unavailable" in tactical_lower
         
         return data
 
@@ -223,10 +223,7 @@ class TestPredictResponseStructure:
         assert len(missing) == 0, f"Missing required fields: {missing}"
         
         # Optional but expected fields
-        optional_fields = [
-            "matchupOverview", "recentSamples", "bayesianMetrics",
-            "probabilityCurve", "reasoning", "sharpSummary"
-        ]
+        optional_fields = ["matchupOverview", "recentSamples", "bayesianMetrics", "probabilityCurve", "reasoning", "sharpSummary"]
         
         present_optional = [f for f in optional_fields if f in data]
         print(f"✓ Predict response structure verified:")

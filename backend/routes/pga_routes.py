@@ -1,13 +1,11 @@
 """
 PGA Tour prediction routes — /api/pga/*
 """
-import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import XAI_API_KEY
 import pga_client
 import pga_engine
 
@@ -15,42 +13,6 @@ log = logging.getLogger("pga_routes")
 router = APIRouter(prefix="/api/pga", tags=["pga"])
 
 CURRENT_PGA_SEASON = pga_client.CURRENT_PGA_SEASON
-
-
-async def _get_ai_analysis(
-    player_name: str, prop_type: str, line: float, tournament: str,
-    projection: float, p_over: float, p_under: float,
-    recommendation: str, round_logs: list,
-) -> dict:
-    try:
-        from ai_engine import _ai_call
-        prop_label = pga_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
-        conf = round(max(p_over, p_under))
-        ctx_lines = []
-        for i, r in enumerate(round_logs[:5]):
-            val = r.get(pga_engine.PGA_PROPS.get(prop_type, prop_type), "?")
-            ctx_lines.append(
-                f"  R{i+1} ({r.get('date','?')}, {r.get('tournament','?')}): "
-                f"{val} {prop_label}, pos={r.get('finish_pos','?')}, birdies={r.get('birdies','?')}"
-            )
-        ctx = "\n".join(ctx_lines) or "  (no recent data)"
-        prompt = f"""You are a sharp PGA Tour prop betting analyst.
-
-GOLFER: {player_name} | PROP: {prop_label} | LINE: {line}
-TOURNAMENT: {tournament or 'upcoming event'}
-PROJECTION: {projection} | P(OVER)={p_over}% | P(UNDER)={p_under}%
-RECOMMENDATION: {recommendation.upper()} ({conf}% confidence)
-
-RECENT ROUND LOG:
-{ctx}
-
-Write a sharp 2-3 sentence analysis focusing on course fit, current form, and stat trends. Be direct."""
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {"sharpSummary": text[:600], "tacticalBreakdown": text,
-                "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
-    except Exception as e:
-        log.warning(f"[PGA AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
 
 @router.get("/players/search")
@@ -127,23 +89,13 @@ async def pga_predict(req: PgaPredictRequest):
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
 
-    ai_task = asyncio.create_task(_get_ai_analysis(
-        player_name=req.playerName, prop_type=prop_type, line=req.line,
-        tournament=req.tournament or "",
-        projection=result["projection"], p_over=p_over, p_under=p_under,
-        recommendation=result["recommendation"], round_logs=round_logs,
-    ))
-
     prop_field = pga_engine.PGA_PROPS.get(prop_type, prop_type)
     game_log_tiles = [{"date": g.get("date",""), "value": g.get(prop_field),
                        "tournament": g.get("tournament",""), "finish_pos": g.get("finish_pos"),
                        "birdies": g.get("birdies"), "putts": g.get("putts")}
                       for g in round_logs[:10]]
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
     return {
         "sport": "pga", "playerName": req.playerName, "playerId": player_id,

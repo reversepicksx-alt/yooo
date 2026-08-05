@@ -18,7 +18,6 @@ load_dotenv(dotenv_path=_ENV_FILE, override=False)
 # is set, load_dotenv leaves it untouched → production Atlas URL is used.
 MONGO_URL = os.environ.get("MONGO_URL", "")
 DB_NAME = os.environ.get("DB_NAME")
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY") or os.environ.get("API_SPORTS_KEY")
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 API_FOOTBALL_DOCS = "https://www.api-football.com/documentation-v3"
@@ -28,20 +27,6 @@ API_FOOTBALL_LEAGUE_IDS = "https://dashboard.api-football.com/soccer/ids"
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
 # All emails that should receive owner-level access (only the product owner)
 OWNER_EMAILS = {OWNER_EMAIL}
-# XAI_API_KEY — xAI/Grok removed. Sentinel keeps all "if XAI_API_KEY:" guards
-# truthy so minor-sport route files don't need edits. Real key is gone.
-_gemini_avail = bool(os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY"))
-XAI_API_KEY = "gemini-via-replit" if _gemini_avail else None
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GROK_MODEL = "gemini-2.5-flash"
-GROK_REASONING_MODEL = "gemini-2.5-flash"
-# AI is reserved for user-facing prediction explanations. Background tactical
-# enrichment is disabled by default and must not consume the explanation
-# budget. Set explicitly only when a deliberate experiment requires it.
-GEMINI_AI_ENABLED = True
-AI_BACKGROUND_ENRICHMENT_ENABLED = os.environ.get(
-    "AI_BACKGROUND_ENRICHMENT_ENABLED", ""
-).lower() in {"1", "true", "yes"}
 # ── Dynamic settings (overridable via admin panel, persisted in MongoDB) ──
 _dynamic_settings = {}
 

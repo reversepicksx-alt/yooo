@@ -492,8 +492,8 @@ async def save_pick(req: SavePickRequest):
             "coachName": _mgr_ctx.get("coachName") or None,
         }
 
-    # Store AI analysis fields directly on sport picks (no separate predictions collection)
-    # Soccer, CS2, and WTA all persist AI analysis on the pick for offline analysis modal access.
+    # Store structured analysis fields directly on sport picks (no separate
+    # predictions collection) for offline analysis modal access.
     if sport in ("cs2", "soccer", "wta"):
         for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs"):
             val = pick.get(field)
@@ -525,7 +525,7 @@ async def save_pick(req: SavePickRequest):
     # ── MLB / CS2 position fix ─────────────────────────────────────────────────
     # MLB picks: always set baseball-appropriate position/role.  Old picks were
     # saved without a sport field so picks.py defaulted to "soccer" and called
-    # resolve_position_ai — giving pitchers labels like "GK · Shot-Stopper".
+    # resolve_position_deterministic — giving pitchers labels like "GK · Shot-Stopper".
     _MLB_PROP_TYPES_SET = {
         "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
         "walks_allowed", "pitches_thrown", "batters_faced",
@@ -563,12 +563,12 @@ async def save_pick(req: SavePickRequest):
                 doc["position"] = "Batter"
                 doc["role"] = "Batter"
 
-    # AI-powered position resolution if position is missing (soccer only,
+    # Deterministic position resolution if position is missing (soccer only,
     # never for MLB/CS2 prop types).
     elif sport == "soccer" and doc["propType"] not in _MLB_PROP_TYPES_SET and (not doc["position"] or doc["position"] in ("Unknown", "unknown", "")):
         try:
-            from ai_positions import resolve_position_ai
-            resolved = await resolve_position_ai(doc["playerName"], "soccer")
+            from ai_positions import resolve_position_deterministic
+            resolved = await resolve_position_deterministic(doc["playerName"], "soccer")
             if resolved.get("position"):
                 doc["position"] = resolved["position"]
                 doc["role"] = resolved.get("role", doc["role"])
@@ -1937,39 +1937,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     prediction = None
     collection = db.predictions
 
-    # Strategy 0: Check ai_pending_jobs for same-day cached AI result.
-    # This handles picks saved while AI was still pending — the job finishes
-    # after the pick is saved, so the pick doc has no AI text yet.
-    try:
-        from datetime import timezone as _tz
-        _today = datetime.now(_tz.utc).strftime("%Y-%m-%d")
-        _pid_or_name = pick.get("playerId") or pick.get("playerName", "")
-        _line_val = pick.get("line", "")
-        _opp_name = pick.get("opponentName", "")
-        _job_ck = f"soc|{_pid_or_name}|{prop_type}|{_line_val}|{_opp_name}|{_today}"
-        _job_hit = await db.ai_pending_jobs.find_one(
-            {"_k": _job_ck, "done": True, "failed": {"$ne": True}},
-            {"_id": 0, "v": 1}
-        )
-        if _job_hit and _job_hit.get("v"):
-            _ai_v = _job_hit["v"]
-            if _ai_v.get("tacticalBreakdown") or _ai_v.get("sharpSummary") or _ai_v.get("reasoning"):
-                _merged = {**_ai_v}
-                for _mf in ("projectedValue", "bayesianMetrics", "gameScript", "moneyline",
-                            "tacticalAlerts", "pOver", "pUnder", "confidenceScore", "confidenceLevel",
-                            "analysisFactors", "modelInputSnapshot", "factorLedger",
-                            "factorLedgerVersion", "factorLedgerFingerprint"):
-                    _mv = pick.get(_mf)
-                    if _mv is not None and not _merged.get(_mf):
-                        _merged[_mf] = _mv
-                # The pending AI payload can predate the saved pick or belong
-                # to another line. The saved market line is authoritative.
-                _merged["line"] = pick.get("line")
-                return {"found": True, "analysis": _merged}
-    except Exception:
-        pass
-
-    # Strategy 1: Match by player ID + prop type + canonical line.
+    # Match by player ID + prop type + canonical line.
     # A player can have multiple predictions for the same prop at different
     # lines. Matching only player/prop returned stale Line Intel (for example
     # 53.5) for a saved pick whose actual line was 68.5.
@@ -4664,28 +4632,23 @@ async def _settle_wta_pick(pick: dict) -> Optional[dict]:
 
 @router.post("/picks/{pick_id}/review")
 async def on_demand_match_review(pick_id: str):
-    """Trigger on-demand post-match AI review for a settled pick.
-    Idempotent — returns existing review if already generated."""
-    from ai_engine import generate_match_review
+    """Return an existing deterministic review, if one is already stored."""
     pick = await db.picks.find_one({"pickId": pick_id})
     if not pick:
         raise HTTPException(status_code=404, detail="Pick not found")
     if pick.get("matchReview"):
         return {"ok": True, "matchReview": pick["matchReview"]}
-    await generate_match_review(pick_id)
-    updated = await db.picks.find_one({"pickId": pick_id}, {"matchReview": 1})
     return {
-        "ok": bool(updated and updated.get("matchReview")),
-        "matchReview": updated.get("matchReview") if updated else None,
+        "ok": False,
+        "available": False,
+        "message": "Post-match language generation is unavailable.",
+        "matchReview": None,
     }
 
 
 @router.post("/picks/{pick_id}/review/regenerate")
 async def force_regenerate_match_review(pick_id: str, request: Request):
-    """Force-regenerate post-match AI review — clears any stale/incomplete
-    review (e.g. generated before red card data was available) and rebuilds
-    from scratch using the latest fixture events from API-Football.
-    Admin-only endpoint."""
+    """Legacy endpoint retained as an explicit unavailable response."""
     body = {}
     try:
         body = await request.json()
@@ -4693,20 +4656,14 @@ async def force_regenerate_match_review(pick_id: str, request: Request):
         pass
     if body.get("adminSecret") != _os.environ.get("ADMIN_SECRET", ""):
         raise HTTPException(status_code=403, detail="Forbidden")
-    from ai_engine import generate_match_review
     pick = await db.picks.find_one({"pickId": pick_id})
     if not pick:
         raise HTTPException(status_code=404, detail="Pick not found")
-    # Clear existing review so generate_match_review can claim it
-    await db.picks.update_one(
-        {"pickId": pick_id},
-        {"$unset": {"matchReview": "", "matchReviewStatus": "", "matchReviewAt": ""}},
-    )
-    ok = await generate_match_review(pick_id)
-    updated = await db.picks.find_one({"pickId": pick_id}, {"matchReview": 1})
     return {
-        "ok": ok,
-        "matchReview": updated.get("matchReview") if updated else None,
+        "ok": False,
+        "available": False,
+        "message": "Post-match language generation is unavailable.",
+        "matchReview": pick.get("matchReview"),
     }
 
 

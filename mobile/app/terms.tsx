@@ -30,7 +30,7 @@ export default function TermsScreen() {
 
         <Text style={styles.section}>2. Description of Service</Text>
         <Text style={styles.body}>
-          Reverse Picks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate, facilitate, or encourage gambling. All predictions are statistical projections and do not constitute financial, legal, or betting advice. Past performance of predictions does not guarantee future results.
+          Reverse Picks provides deterministic player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate, facilitate, or encourage gambling. All predictions are statistical projections and do not constitute financial, legal, or betting advice. Past performance of predictions does not guarantee future results.
         </Text>
 
         <Text style={styles.section}>3. Subscriptions and Billing</Text>

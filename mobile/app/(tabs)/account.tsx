@@ -264,7 +264,7 @@ function IAPPaywall() {
       <View style={styles.paywallHeader}>
         <Ionicons name="flash" size={28} color={Colors.primary} />
         <Text style={styles.paywallTitle}>Reverse Picks Pro</Text>
-        <Text style={styles.paywallSub}>AI-powered soccer player props analytics</Text>
+        <Text style={styles.paywallSub}>Model-powered soccer player props analytics</Text>
       </View>
 
       <View style={styles.menuGroup}>
@@ -965,7 +965,7 @@ export default function AccountScreen() {
         <Text style={styles.sectionLabel}>About</Text>
         <View style={styles.menuGroup}>
           <MenuRow icon="football-outline" label="Sport" value="Soccer (All Major Leagues)" />
-          <MenuRow icon="analytics-outline" label="Engine" value="Reverse Formula + AI" />
+          <MenuRow icon="analytics-outline" label="Engine" value="Reverse Formula + Model" />
           <MenuRow icon="information-circle-outline" label="Version" value="1.0.0" />
         </View>
 
@@ -977,7 +977,7 @@ export default function AccountScreen() {
 
         <View style={styles.footer}>
           <Image source={require('../../assets/logo.png')} style={styles.footerLogo} resizeMode="contain" />
-          <Text style={styles.footerText}>Reverse Picks · Soccer AI Analytics</Text>
+          <Text style={styles.footerText}>Reverse Picks · Soccer Model Analytics</Text>
         </View>
       </ScrollView>
 

@@ -1,54 +1,16 @@
 """
 MMA prediction routes — /api/mma/*
 """
-import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import XAI_API_KEY
 import mma_client
 import mma_engine
 
 log = logging.getLogger("mma_routes")
 router = APIRouter(prefix="/api/mma", tags=["mma"])
-
-
-async def _get_ai_analysis(
-    fighter_name: str, opponent: str, prop_type: str, line: float,
-    projection: float, p_over: float, p_under: float,
-    recommendation: str, fight_logs: list,
-) -> dict:
-    try:
-        from ai_engine import _ai_call
-        prop_label = mma_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
-        conf = round(max(p_over, p_under))
-        ctx_lines = []
-        for i, f in enumerate(fight_logs[:5]):
-            result = "W" if f.get("won") else "L"
-            val = f.get(mma_engine.MMA_PROPS.get(prop_type, prop_type), "?")
-            ctx_lines.append(
-                f"  Fight {i+1} ({f.get('date','?')}, {result} vs {f.get('opponent','?')} "
-                f"by {f.get('method','?')} R{f.get('round','?')}): {val} {prop_label}"
-            )
-        ctx = "\n".join(ctx_lines) or "  (no recent data)"
-        prompt = f"""You are a sharp MMA prop betting analyst.
-
-FIGHTER: {fighter_name} vs {opponent or 'opponent'} | PROP: {prop_label} | LINE: {line}
-PROJECTION: {projection} | P(OVER)={p_over}% | P(UNDER)={p_under}%
-RECOMMENDATION: {recommendation.upper()} ({conf}% confidence)
-
-RECENT FIGHT LOG:
-{ctx}
-
-Write a sharp 2-3 sentence analysis focusing on fighting style, opponent tendencies, and historical output. Be direct."""
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {"sharpSummary": text[:600], "tacticalBreakdown": text,
-                "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
-    except Exception as e:
-        log.warning(f"[MMA AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
 
 @router.get("/fighters/search")
@@ -131,23 +93,13 @@ async def mma_predict(req: MmaPredictRequest):
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
 
-    ai_task = asyncio.create_task(_get_ai_analysis(
-        fighter_name=req.playerName, opponent=req.opponentName or "",
-        prop_type=prop_type, line=req.line,
-        projection=result["projection"], p_over=p_over, p_under=p_under,
-        recommendation=result["recommendation"], fight_logs=fight_logs,
-    ))
-
     prop_field = mma_engine.MMA_PROPS.get(prop_type, prop_type)
     game_log_tiles = [{"date": g.get("date",""), "value": g.get(prop_field),
                        "opponent": g.get("opponent",""), "won": g.get("won"),
                        "method": g.get("method"), "round": g.get("round")}
                       for g in fight_logs[:10]]
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
     return {
         "sport": "mma", "playerName": req.playerName, "playerId": fighter_id,

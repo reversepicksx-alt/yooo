@@ -579,7 +579,7 @@ async def invalidate_position_cache(req: _PositionInvalidateRequest):
     """Force re-resolution of position cache for specific players (or all).
 
     Sets promptVersion=0 on targeted entries so the next predict call
-    re-resolves their position via Gemini.
+    re-resolves their position deterministically.
 
     - Pass a non-empty `playerIds` list to target specific players.
     - Pass an empty list (or omit the field) to reset ALL cached positions.
@@ -646,7 +646,7 @@ async def clear_player_position(req: _PositionClearRequest):
         "deleted": deleted,
         "playerName": req.playerName,
         "playerId": req.playerId,
-        "note": "Position will be re-resolved with stats-aware AI on next predict call.",
+        "note": "Position will be re-resolved with stats-aware logic on next predict call.",
     }
 
 
@@ -1167,12 +1167,12 @@ class _AiBudgetRequest(BaseModel):
 
 @router.post("/ai-budget")
 async def admin_ai_budget(req: _AiBudgetRequest):
-    """Owner only: return today's AI generation count vs the daily limit.
-
-    Shows the current /tmp budget counter so the owner can see how many
-    Gemini synthesis calls have been made today without digging into logs.
-    """
+    """Owner-only status for the permanently disabled external-generation path."""
     await verify_owner(req.email, req.token)
-    from ai_engine import get_prediction_budget_status
-    status = await get_prediction_budget_status()
-    return status
+    return {
+        "enabled": False,
+        "available": False,
+        "count": 0,
+        "limit": 0,
+        "message": "External generation is permanently disabled; deterministic model explanations are active.",
+    }

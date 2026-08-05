@@ -3,7 +3,7 @@ CalibrationEngine v2 — Granular feedback loop for AI predictions.
 Tracks accuracy by: sport, league, prop type, recommendation, venue,
 position, game context (blowout/close/normal), favorite/underdog,
 confidence band, and line range. Generates actionable "reasons why"
-for the AI prompt — not just numbers, but pattern explanations.
+for deterministic analysis — not just numbers, but pattern explanations.
 """
 from config import db
 from datetime import datetime, timezone, timedelta

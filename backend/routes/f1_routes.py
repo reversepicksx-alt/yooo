@@ -1,13 +1,11 @@
 """
 Formula 1 prediction routes — /api/f1/*
 """
-import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import XAI_API_KEY
 import f1_client
 import f1_engine
 
@@ -15,42 +13,6 @@ log = logging.getLogger("f1_routes")
 router = APIRouter(prefix="/api/f1", tags=["f1"])
 
 CURRENT_F1_SEASON = f1_client.CURRENT_F1_SEASON
-
-
-async def _get_ai_analysis(
-    driver_name: str, prop_type: str, line: float, race_name: str,
-    projection: float, p_over: float, p_under: float,
-    recommendation: str, race_logs: list,
-) -> dict:
-    try:
-        from ai_engine import _ai_call
-        prop_label = f1_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
-        conf = round(max(p_over, p_under))
-        ctx_lines = []
-        for i, r in enumerate(race_logs[:5]):
-            val = r.get(f1_engine.F1_PROPS.get(prop_type, prop_type), "?")
-            ctx_lines.append(
-                f"  R{i+1} ({r.get('date','?')}, {r.get('race','?')}): "
-                f"P{r.get('finish_pos','?')} from grid P{r.get('grid_pos','?')}, {r.get('points','?')} pts"
-            )
-        race_ctx = "\n".join(ctx_lines) or "  (no recent data)"
-        prompt = f"""You are a sharp Formula 1 prop betting analyst.
-
-DRIVER: {driver_name} | PROP: {prop_label} | LINE: {line}
-RACE/EVENT: {race_name or 'upcoming race'}
-PROJECTION: {projection} | P(OVER)={p_over}% | P(UNDER)={p_under}%
-RECOMMENDATION: {recommendation.upper()} ({conf}% confidence)
-
-RECENT RACE LOG:
-{race_ctx}
-
-Write a sharp 2-3 sentence analysis focusing on circuit characteristics, team pace, and driver form. Be direct."""
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {"sharpSummary": text[:600], "tacticalBreakdown": text,
-                "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
-    except Exception as e:
-        log.warning(f"[F1 AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
 
 @router.get("/drivers/search")
@@ -132,21 +94,11 @@ async def f1_predict(req: F1PredictRequest):
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
 
-    ai_task = asyncio.create_task(_get_ai_analysis(
-        driver_name=req.playerName, prop_type=prop_type, line=req.line,
-        race_name=req.raceName or "",
-        projection=result["projection"], p_over=p_over, p_under=p_under,
-        recommendation=result["recommendation"], race_logs=race_logs,
-    ))
-
     game_log_tiles = [{"date": g.get("date",""), "value": g.get(f1_engine.F1_PROPS.get(prop_type, prop_type)),
                        "race": g.get("race",""), "grid_pos": g.get("grid_pos"), "points": g.get("points")}
                       for g in race_logs[:10]]
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
     return {
         "sport": "f1", "playerName": req.playerName, "playerId": driver_id,

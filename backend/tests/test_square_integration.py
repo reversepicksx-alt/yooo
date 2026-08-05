@@ -1,7 +1,7 @@
 """
-Test Square Integration + Claude Removal (Iteration 35)
+Test Square Integration + deterministic policy assertions.
 Tests:
-1. AI Engine: verify only 3 AI models (no claude/haiku)
+1. AI Engine: verify deterministic policy fields
 2. AI Engine: MIN_RESULTS = 2
 3. Square plans API: GET /api/square/plans returns 3 plans
 4. Square subscribe API: POST /api/square/subscribe endpoint exists
@@ -30,52 +30,20 @@ class TestHealthCheck:
 
 
 class TestAIEngineClaudeRemoval:
-    """Verify Claude/Haiku removed from AI engine"""
+    """Verify deterministic model policy remains in place"""
     
-    def test_predict_py_has_only_3_models(self):
-        """predict.py ai_tasks should have exactly 3 models (no claude)"""
+    def test_predict_py_has_deterministic_policy(self):
+        """predict.py should retain deterministic model fields"""
         with open('/app/backend/routes/predict.py', 'r') as f:
             content = f.read()
-        
-        # Find ai_tasks block
-        ai_tasks_match = re.search(r'ai_tasks\s*=\s*\[(.*?)\]', content, re.DOTALL)
-        assert ai_tasks_match, "ai_tasks not found in predict.py"
-        ai_tasks_block = ai_tasks_match.group(1)
-        
-        # Count ensure_future calls (each model)
-        model_count = ai_tasks_block.count('ensure_future')
-        assert model_count == 3, f"Expected 3 models, found {model_count}"
-        
-        # Verify no claude/haiku
-        assert 'claude' not in ai_tasks_block.lower(), "Claude found in ai_tasks"
-        assert 'haiku' not in ai_tasks_block.lower(), "Haiku found in ai_tasks"
-        
-        # Verify expected models present
-        assert 'gemini-2.0-flash' in ai_tasks_block, "gemini-2.0-flash not found"
-        assert 'gpt-5.2' in ai_tasks_block, "gpt-5.2 not found"
-        assert 'grok' in ai_tasks_block, "grok not found"
-        
-        print("✅ predict.py has exactly 3 AI models (no claude/haiku)")
+        assert "aiSource" in content
+        assert "explanationSource" in content
+        assert "aiPending" in content
+        assert "deterministic_model" in content
+        assert "model" in content.lower()
     
-    def test_basketball_predict_py_has_only_3_models(self):
-        """basketball_predict.py ai_tasks should have exactly 3 models (no claude)"""
-        with open('/app/backend/routes/basketball_predict.py', 'r') as f:
-            content = f.read()
-        
-        # Find ai_tasks block
-        ai_tasks_match = re.search(r'ai_tasks\s*=\s*\[(.*?)\]', content, re.DOTALL)
-        assert ai_tasks_match, "ai_tasks not found in basketball_predict.py"
-        ai_tasks_block = ai_tasks_match.group(1)
-        
-        # Count ensure_future calls (each model)
-        model_count = ai_tasks_block.count('ensure_future')
-        assert model_count == 3, f"Expected 3 models, found {model_count}"
-        
-        # Verify no claude/haiku
-        assert 'claude' not in ai_tasks_block.lower(), "Claude found in ai_tasks"
-        assert 'haiku' not in ai_tasks_block.lower(), "Haiku found in ai_tasks"
-        
-        print("✅ basketball_predict.py has exactly 3 AI models (no claude/haiku)")
+    def test_basketball_predict_py_is_retired(self):
+        assert not os.path.exists('/app/backend/routes/basketball_predict.py')
     
     def test_predict_py_min_results_is_2(self):
         """predict.py MIN_RESULTS should be 2 (not 3)"""
@@ -90,16 +58,7 @@ class TestAIEngineClaudeRemoval:
         print("✅ predict.py MIN_RESULTS = 2")
     
     def test_basketball_predict_py_min_results_is_2(self):
-        """basketball_predict.py MIN_RESULTS should be 2 (not 3)"""
-        with open('/app/backend/routes/basketball_predict.py', 'r') as f:
-            content = f.read()
-        
-        min_results_match = re.search(r'MIN_RESULTS\s*=\s*(\d+)', content)
-        assert min_results_match, "MIN_RESULTS not found in basketball_predict.py"
-        min_results = int(min_results_match.group(1))
-        assert min_results == 2, f"Expected MIN_RESULTS=2, got {min_results}"
-        
-        print("✅ basketball_predict.py MIN_RESULTS = 2")
+        assert not os.path.exists('/app/backend/routes/basketball_predict.py')
 
 
 class TestSquarePlansAPI:

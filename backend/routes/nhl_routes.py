@@ -1,13 +1,12 @@
 """
 NHL prediction routes — /api/nhl/*
 """
-import asyncio
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, XAI_API_KEY
+from config import db
 import nhl_client
 import nhl_engine
 
@@ -15,74 +14,6 @@ log = logging.getLogger("nhl_routes")
 router = APIRouter(prefix="/api/nhl", tags=["nhl"])
 
 CURRENT_NHL_SEASON = nhl_client.CURRENT_NHL_SEASON
-
-
-# ── AI analysis ───────────────────────────────────────────────────────────────
-
-async def _get_nhl_ai_analysis(
-    player_name: str, position: str, prop_type: str, line: float,
-    venue: str, opponent: str, projection: float,
-    p_over: float, p_under: float, recommendation: str,
-    game_logs: list, prior_mean: float, streak_flag: str,
-    opp_goals_per_game: Optional[float] = None,
-) -> dict:
-    import json as _json
-    try:
-        from ai_engine import _ai_call
-
-        prop_label = prop_type.replace("_", " ").title()
-        rec_label  = recommendation.upper()
-        conf       = round(max(p_over, p_under))
-        field      = nhl_engine.NHL_PROPS.get(prop_type, prop_type)
-        ctx_lines  = []
-        for i, g in enumerate(game_logs[:7]):
-            val  = g.get(field, "?")
-            date = g.get("date", "")
-            opp  = g.get("opponent", "")
-            wl   = "W" if g.get("won") is True else "L" if g.get("won") is False else ""
-            ctx_lines.append(f"  G{i+1} ({date}{' ' + wl if wl else ''}): {val} {prop_label}" + (f" vs {opp}" if opp else ""))
-        game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
-
-        streak_text = ""
-        if streak_flag == "OVER_STREAK":
-            streak_text = " OVER streak across last 4+ games."
-        elif streak_flag == "UNDER_STREAK":
-            streak_text = " UNDER streak across last 4+ games."
-
-        prompt = f"""You are a sharp NHL prop betting analyst. Analyze this pick.
-
-PLAYER: {player_name} ({position or "Skater/Goalie"})
-PROP: {prop_label} | LINE: {line} | VENUE: {venue.upper()} vs {opponent or "opponent"}
-PROJECTION: {projection:.1f} | P(OVER): {p_over:.1f}% | P(UNDER): {p_under:.1f}%
-RECOMMENDATION: {rec_label} ({conf}% confidence)
-SEASON BASELINE: {prior_mean:.1f}{streak_text}
-{"OPP G/GAME: " + str(opp_goals_per_game) if opp_goals_per_game else ""}
-
-RECENT GAME LOG:
-{game_ctx}
-
-Return ONLY valid JSON (no markdown fences):
-{{
-  "sharpSummary": "<1 sharp decisive sentence under 22 words naming the single biggest factor>",
-  "keyFactors": ["<factor with specific number>", "<factor 2>", "<factor 3>"],
-  "reasoning": "<2-3 sharp sentences covering ice time trend, goalie matchup/shots, and recent form — cite exact numbers>",
-  "tacticalBreakdown": "<4-5 sentences: season baseline context, recent form vs line, home/away split, opponent goals conceded, and why the model picked {rec_label}>"
-}}"""
-
-        text = (await _ai_call(prompt, json_mode=True, temperature=0.6, max_tokens=800, timeout=30) or "").strip()
-        try:
-            data = _json.loads(text)
-            return {
-                "sharpSummary":      data.get("sharpSummary", ""),
-                "keyFactors":        data.get("keyFactors", []),
-                "reasoning":         data.get("reasoning", ""),
-                "tacticalBreakdown": data.get("tacticalBreakdown", ""),
-            }
-        except Exception:
-            return {"sharpSummary": text[:300] if text else "", "keyFactors": [], "tacticalBreakdown": text, "reasoning": ""}
-    except Exception as e:
-        log.warning(f"[NHL AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
 
 # ── Player search ─────────────────────────────────────────────────────────────
@@ -265,23 +196,6 @@ async def nhl_predict(req: NhlPredictRequest):
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
 
-    ai_task = asyncio.create_task(_get_nhl_ai_analysis(
-        player_name        = req.playerName,
-        position           = position,
-        prop_type          = prop_type,
-        line               = req.line,
-        venue              = venue,
-        opponent           = req.opponentName or "",
-        projection         = result["projection"],
-        p_over             = p_over,
-        p_under            = p_under,
-        recommendation     = result["recommendation"],
-        game_logs          = game_logs,
-        prior_mean         = result["priorMean"],
-        streak_flag        = result["streakFlag"],
-        opp_goals_per_game = req.oppGoalsPerGame,
-    ))
-
     field = nhl_engine.NHL_PROPS.get(prop_type, prop_type)
     game_log_tiles = []
     for g in game_logs[:10]:
@@ -298,10 +212,7 @@ async def nhl_predict(req: NhlPredictRequest):
             "saves":    g.get("saves"),
         })
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
     return {
         "sport":            "nhl",

@@ -46,7 +46,7 @@ export default function ChatScreen() {
         setMessages([{
           id: '0',
           role: 'assistant',
-          text: 'Tactical AI online. Ask me about player matchups, formations, prop analysis, or betting strategy.',
+        text: 'Deterministic analytics are currently unavailable. You can still review saved pick analysis and statistical breakdowns in the Picks tab.',
         }]);
       } finally {
         setInitializing(false);
@@ -97,7 +97,7 @@ export default function ChatScreen() {
     return (
       <View style={[styles.root, { paddingTop: topPad }]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Tactical AI</Text>
+          <Text style={styles.headerTitle}>Analytics Chat</Text>
         </View>
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} />
@@ -114,10 +114,10 @@ export default function ChatScreen() {
     >
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Tactical AI</Text>
-          <Text style={styles.headerSub}>Soccer analytics & prop strategy</Text>
+          <Text style={styles.headerTitle}>Analytics Chat</Text>
+          <Text style={styles.headerSub}>Deterministic model summaries</Text>
         </View>
-        <View style={styles.onlineDot} />
+        <View style={styles.offlineDot} />
       </View>
 
       <FlatList
@@ -153,7 +153,7 @@ export default function ChatScreen() {
       <View style={[styles.inputRow, { paddingBottom: bottomPad + 8 }]}>
         <TextInput
           style={styles.input}
-          placeholder="Ask about a player, prop, or matchup…"
+              placeholder="Ask about a player, prop, or matchup…"
           placeholderTextColor={Colors.textSecondary}
           value={input}
           onChangeText={setInput}
@@ -185,7 +185,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   headerSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
-  onlineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.success },
+  offlineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.textTertiary },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   messageList: { paddingHorizontal: 16, paddingBottom: 8 },
   bubble: {

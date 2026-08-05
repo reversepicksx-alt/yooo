@@ -138,7 +138,7 @@ async def _search_players_cache(
         return results
 
     if fast and len(parts) > 1:
-        # One targeted rescue for provider-style abbreviated names such as
+        # One targeted rescue for abbreviated names such as
         # "J. David" when the user typed "Jonathan David".
         first_initial = parts[0][0] if parts[0] else ""
         last_part = parts[-1]
@@ -181,7 +181,7 @@ async def _search_players_cache(
                     })
                 return results
 
-        # No direct cache hit; let the bounded provider lookup try the
+        # No direct cache hit; let the bounded lookup try the
         # canonical full name rather than entering the broad cache tree.
         return []
 
@@ -1311,7 +1311,7 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
 
     Called from mobile immediately after a player is selected (before prediction).
     Returns from the MongoDB cache when available and fresh; otherwise resolves
-    via Gemini knowledge + stat fingerprint and caches for 7 days.
+    via deterministic cache + stat fingerprint and caches for 7 days.
 
     Request body: { playerId?, playerName, teamName?, genericPosition?, stats? }
     Response:     { position, role, source, cached }

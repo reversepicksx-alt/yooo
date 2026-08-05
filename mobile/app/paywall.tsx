@@ -15,8 +15,8 @@ import { iapSignup } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
 const FEATURES = [
-  'Unlimited AI player prop predictions',
-  'Tactical breakdowns & sharp summaries',
+  'Unlimited deterministic player prop predictions',
+  'Deterministic breakdowns & statistical summaries',
   'Real-time injury & lineup intel',
   'All major leagues + tournaments',
   'All major soccer leagues + international tournaments',
@@ -287,7 +287,7 @@ export default function PaywallScreen() {
         <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
           <Text style={styles.headline}>Reverse Picks Pro</Text>
-          <Text style={styles.subhead}>Get unlimited AI predictions on iOS.</Text>
+          <Text style={styles.subhead}>Get unlimited deterministic predictions on iOS.</Text>
           {FEATURES.map((f, i) => (
             <View key={i} style={styles.bulletRow}>
               <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
@@ -323,7 +323,7 @@ export default function PaywallScreen() {
 
         {/* Headline */}
         <Text style={styles.headline}>Unlock Full Access</Text>
-        <Text style={styles.subhead}>AI-powered player prop predictions for every match</Text>
+        <Text style={styles.subhead}>Deterministic player prop predictions for every match</Text>
 
         {/* Feature bullets */}
         <View style={styles.bulletWrap}>

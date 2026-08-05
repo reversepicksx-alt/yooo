@@ -1,8 +1,6 @@
 """
 Iteration 53: Model Upgrades & Calibration Dashboard v2 Tests
-- Gemini 2.5 Pro upgrade (replaces gemini-2.0-flash)
-- Grok 4.1 Fast Reasoning upgrade (replaces grok-4-1-fast-non-reasoning)
-- GPT-5.2 model string verification
+- Deterministic prediction engine verification
 - Admin calibration endpoint new fields: byPosition, byGameContext, byPropPosition, byPropContext, blowoutDetails
 """
 import pytest
@@ -24,89 +22,23 @@ class TestHealthAndBasics:
         print(f"Health check passed: {data}")
 
 
-class TestModelStringsInCode:
-    """Verify model strings are correctly upgraded in all prediction files"""
-    
-    def test_predict_py_has_gemini_25_pro(self):
-        """predict.py should have gemini-2.5-pro"""
+class TestDeterministicModelStrings:
+    """Verify deterministic prediction code paths remain in place."""
+
+    def test_predict_py_uses_model_explanations(self):
         with open('/app/backend/routes/predict.py', 'r') as f:
             content = f.read()
-        assert 'gemini-2.5-pro' in content, "predict.py missing gemini-2.5-pro"
-        assert 'gemini-2.0-flash' not in content, "predict.py still has old gemini-2.0-flash"
-        count = content.count('gemini-2.5-pro')
-        print(f"predict.py: Found {count} occurrences of gemini-2.5-pro")
-    
-    def test_predict_py_has_grok_41_fast_reasoning(self):
-        """predict.py should have grok-4-1-fast-reasoning"""
-        with open('/app/backend/routes/predict.py', 'r') as f:
-            content = f.read()
-        assert 'grok-4-1-fast-reasoning' in content, "predict.py missing grok-4-1-fast-reasoning"
-        assert 'grok-4-1-fast-non-reasoning' not in content, "predict.py still has old grok-4-1-fast-non-reasoning"
-        count = content.count('grok-4-1-fast-reasoning')
-        print(f"predict.py: Found {count} occurrences of grok-4-1-fast-reasoning")
-    
-    def test_predict_py_has_gpt52(self):
-        """predict.py should have gpt-5.2"""
-        with open('/app/backend/routes/predict.py', 'r') as f:
-            content = f.read()
-        assert 'gpt-5.2' in content, "predict.py missing gpt-5.2"
-        assert 'gpt-4.1-mini' not in content, "predict.py still has old gpt-4.1-mini"
-        count = content.count('gpt-5.2')
-        print(f"predict.py: Found {count} occurrences of gpt-5.2")
-    
-    def test_basketball_predict_py_has_gemini_25_pro(self):
-        """basketball_predict.py should have gemini-2.5-pro"""
-        with open('/app/backend/routes/basketball_predict.py', 'r') as f:
-            content = f.read()
-        assert 'gemini-2.5-pro' in content, "basketball_predict.py missing gemini-2.5-pro"
-        assert 'gemini-2.0-flash' not in content, "basketball_predict.py still has old gemini-2.0-flash"
-        count = content.count('gemini-2.5-pro')
-        print(f"basketball_predict.py: Found {count} occurrences of gemini-2.5-pro")
-    
-    def test_basketball_predict_py_has_grok_41_fast_reasoning(self):
-        """basketball_predict.py should have grok-4-1-fast-reasoning"""
-        with open('/app/backend/routes/basketball_predict.py', 'r') as f:
-            content = f.read()
-        assert 'grok-4-1-fast-reasoning' in content, "basketball_predict.py missing grok-4-1-fast-reasoning"
-        assert 'grok-4-1-fast-non-reasoning' not in content, "basketball_predict.py still has old grok-4-1-fast-non-reasoning"
-        count = content.count('grok-4-1-fast-reasoning')
-        print(f"basketball_predict.py: Found {count} occurrences of grok-4-1-fast-reasoning")
-    
-    def test_basketball_predict_py_has_gpt52(self):
-        """basketball_predict.py should have gpt-5.2"""
-        with open('/app/backend/routes/basketball_predict.py', 'r') as f:
-            content = f.read()
-        assert 'gpt-5.2' in content, "basketball_predict.py missing gpt-5.2"
-        assert 'gpt-4.1-mini' not in content, "basketball_predict.py still has old gpt-4.1-mini"
-        count = content.count('gpt-5.2')
-        print(f"basketball_predict.py: Found {count} occurrences of gpt-5.2")
-    
-    def test_miss_analysis_py_has_gemini_25_pro(self):
-        """miss_analysis.py should have gemini-2.5-pro"""
+        assert 'aiSource' in content, "predict.py should preserve aiSource compatibility"
+        assert 'explanationSource' in content, "predict.py should preserve explanationSource compatibility"
+        assert 'aiPending' in content, "predict.py should preserve aiPending compatibility"
+
+    def test_basketball_predict_py_uses_model_explanations(self):
+        assert not os.path.exists('/app/backend/routes/basketball_predict.py')
+
+    def test_miss_analysis_py_uses_model_explanations(self):
         with open('/app/backend/routes/miss_analysis.py', 'r') as f:
             content = f.read()
-        assert 'gemini-2.5-pro' in content, "miss_analysis.py missing gemini-2.5-pro"
-        assert 'gemini-2.0-flash' not in content, "miss_analysis.py still has old gemini-2.0-flash"
-        count = content.count('gemini-2.5-pro')
-        print(f"miss_analysis.py: Found {count} occurrences of gemini-2.5-pro")
-    
-    def test_miss_analysis_py_has_grok_41_fast_reasoning(self):
-        """miss_analysis.py should have grok-4-1-fast-reasoning"""
-        with open('/app/backend/routes/miss_analysis.py', 'r') as f:
-            content = f.read()
-        assert 'grok-4-1-fast-reasoning' in content, "miss_analysis.py missing grok-4-1-fast-reasoning"
-        assert 'grok-4-1-fast-non-reasoning' not in content, "miss_analysis.py still has old grok-4-1-fast-non-reasoning"
-        count = content.count('grok-4-1-fast-reasoning')
-        print(f"miss_analysis.py: Found {count} occurrences of grok-4-1-fast-reasoning")
-    
-    def test_miss_analysis_py_has_gpt52(self):
-        """miss_analysis.py should have gpt-5.2"""
-        with open('/app/backend/routes/miss_analysis.py', 'r') as f:
-            content = f.read()
-        assert 'gpt-5.2' in content, "miss_analysis.py missing gpt-5.2"
-        assert 'gpt-4.1-mini' not in content, "miss_analysis.py still has old gpt-4.1-mini"
-        count = content.count('gpt-5.2')
-        print(f"miss_analysis.py: Found {count} occurrences of gpt-5.2")
+        assert 'deterministic' in content.lower()
 
 
 class TestAdminCalibrationEndpoint:

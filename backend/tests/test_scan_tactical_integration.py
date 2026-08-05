@@ -69,15 +69,15 @@ class TestTacticalEndpoints:
         assert "Reverse Tactical" in data["message"]
         print(f"✓ POST /api/tactical/start returns session_id={data['session_id'][:20]}... and welcome message")
     
-    def test_tactical_start_no_grok_gemini_branding(self):
-        """POST /api/tactical/start welcome message has no Grok/Gemini mentions"""
+    def test_tactical_start_uses_deterministic_policy(self):
+        """POST /api/tactical/start welcome message references deterministic/unavailable policy"""
         response = requests.post(f"{BASE_URL}/api/tactical/start", json={})
         assert response.status_code == 200
         data = response.json()
         message = data.get("message", "").lower()
-        assert "grok" not in message, f"Found 'grok' in welcome message: {data['message']}"
-        assert "gemini" not in message, f"Found 'gemini' in welcome message: {data['message']}"
-        print("✓ POST /api/tactical/start welcome message has no Grok/Gemini branding")
+        assert "deterministic" in message
+        assert "unavailable" in message
+        print("✓ POST /api/tactical/start welcome message follows deterministic policy")
     
     def test_tactical_message_returns_proper_structure(self):
         """POST /api/tactical/message returns response with proper structure"""
@@ -100,8 +100,8 @@ class TestTacticalEndpoints:
         assert "scanEntries" in data
         print(f"✓ POST /api/tactical/message returns proper structure: response={len(data['response'])} chars, session_id={data['session_id'][:15]}...")
     
-    def test_tactical_message_no_grok_gemini_in_response(self):
-        """POST /api/tactical/message response has no Grok/Gemini mentions"""
+    def test_tactical_message_returns_unavailable_response(self):
+        """POST /api/tactical/message returns explicit unavailable response"""
         start_resp = requests.post(f"{BASE_URL}/api/tactical/start", json={})
         session_id = start_resp.json().get("session_id")
         
@@ -113,9 +113,9 @@ class TestTacticalEndpoints:
         assert response.status_code == 200
         data = response.json()
         resp_text = data.get("response", "").lower()
-        assert "grok" not in resp_text, f"Found 'grok' in response"
-        assert "gemini" not in resp_text, f"Found 'gemini' in response"
-        print("✓ POST /api/tactical/message response has no Grok/Gemini branding")
+        assert resp_text.startswith("tactical generation is unavailable")
+        assert data.get("available") is False
+        print("✓ POST /api/tactical/message returns explicit unavailable response")
     
     def test_tactical_message_empty_returns_400(self):
         """POST /api/tactical/message with empty message returns 400"""
@@ -167,9 +167,8 @@ class TestInternationalContextDetection:
         data = response.json()
         resp_text = data.get("response", "")
         
-        # Response should be substantial
-        assert len(resp_text) > 200, "Response should be substantial for international analysis"
-        print(f"✓ POST /api/tactical/message returns substantial international analysis ({len(resp_text)} chars)")
+        assert "unavailable" in resp_text
+        print("✓ POST /api/tactical/message remains deterministic for international queries")
 
 
 if __name__ == "__main__":

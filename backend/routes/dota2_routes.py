@@ -1,55 +1,16 @@
 """
 Dota 2 prediction routes — /api/dota2/*
 """
-import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import XAI_API_KEY
 import dota2_client
 import dota2_engine
 
 log = logging.getLogger("dota2_routes")
 router = APIRouter(prefix="/api/dota2", tags=["dota2"])
-
-
-async def _get_ai_analysis(
-    player_name: str, opponent: str, prop_type: str, line: float,
-    projection: float, p_over: float, p_under: float,
-    recommendation: str, match_logs: list,
-) -> dict:
-    try:
-        from ai_engine import _ai_call
-        prop_label = dota2_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
-        conf = round(max(p_over, p_under))
-        ctx_lines = []
-        for i, m in enumerate(match_logs[:5]):
-            val = m.get(dota2_engine.DOTA2_PROPS.get(prop_type, prop_type), "?")
-            result = "W" if m.get("won") else "L"
-            ctx_lines.append(
-                f"  M{i+1} ({m.get('date','?')}, {result} vs {m.get('opponent','?')}, "
-                f"{m.get('hero','?')}): {m.get('kills','?')}/{m.get('deaths','?')}/{m.get('assists','?')} KDA, "
-                f"{val} {prop_label}"
-            )
-        ctx = "\n".join(ctx_lines) or "  (no recent data)"
-        prompt = f"""You are a sharp Dota 2 prop betting analyst.
-
-PLAYER: {player_name} vs {opponent or 'opponent'} | PROP: {prop_label} | LINE: {line}
-PROJECTION: {projection} | P(OVER)={p_over}% | P(UNDER)={p_under}%
-RECOMMENDATION: {recommendation.upper()} ({conf}% confidence)
-
-RECENT MATCH LOG:
-{ctx}
-
-Write a sharp 2-3 sentence analysis focusing on hero pool, matchup dynamics, and current form. Be direct."""
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {"sharpSummary": text[:600], "tacticalBreakdown": text,
-                "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
-    except Exception as e:
-        log.warning(f"[DOTA2 AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
 
 @router.get("/players/search")
@@ -131,23 +92,13 @@ async def dota2_predict(req: Dota2PredictRequest):
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
 
-    ai_task = asyncio.create_task(_get_ai_analysis(
-        player_name=req.playerName, opponent=req.opponentName or "",
-        prop_type=prop_type, line=req.line,
-        projection=result["projection"], p_over=p_over, p_under=p_under,
-        recommendation=result["recommendation"], match_logs=match_logs,
-    ))
-
     prop_field = dota2_engine.DOTA2_PROPS.get(prop_type, prop_type)
     game_log_tiles = [{"date": g.get("date",""), "value": g.get(prop_field),
                        "hero": g.get("hero",""), "won": g.get("won"),
                        "kills": g.get("kills"), "deaths": g.get("deaths"), "assists": g.get("assists")}
                       for g in match_logs[:10]]
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
     return {
         "sport": "dota2", "playerName": req.playerName, "playerId": player_id,

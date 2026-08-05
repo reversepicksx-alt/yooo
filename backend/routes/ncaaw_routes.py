@@ -1,13 +1,12 @@
 """
 NCAAW prediction routes — /api/ncaaw/*
 """
-import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import db, XAI_API_KEY
+from config import db
 import ncaaw_client
 import ncaaw_engine
 
@@ -15,38 +14,6 @@ log = logging.getLogger("ncaaw_routes")
 router = APIRouter(prefix="/api/ncaaw", tags=["ncaaw"])
 
 CURRENT_NCAAW_SEASON = ncaaw_client.CURRENT_NCAAW_SEASON
-
-
-async def _get_ai_analysis(
-    player_name: str, prop_type: str, line: float, venue: str,
-    opponent: str, projection: float, p_over: float, p_under: float,
-    recommendation: str, game_logs: list, prior_mean: float, streak_flag: str,
-) -> dict:
-    try:
-        from ai_engine import _ai_call
-        prop_label = prop_type.replace("_", " ").title()
-        conf = round(max(p_over, p_under))
-        ctx_lines = []
-        for i, g in enumerate(game_logs[:6]):
-            val = g.get(ncaaw_engine.NCAAW_PROPS.get(prop_type, prop_type), "?")
-            ctx_lines.append(f"  G{i+1} ({g.get('date','?')}): {val} {prop_label}")
-        game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
-        prompt = f"""You are a sharp college women's basketball (NCAAW) prop analyst.
-
-PLAYER: {player_name} | PROP: {prop_label} {line} | VENUE: {venue.upper()} vs {opponent or 'opponent'}
-PROJECTION: {projection} | P(OVER)={p_over}% | P(UNDER)={p_under}%
-RECOMMENDATION: {recommendation.upper()} ({conf}% confidence)
-
-RECENT GAME LOG:
-{game_ctx}
-
-Write a sharp 2-3 sentence analysis. Be direct and confident."""
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {"sharpSummary": text[:600], "tacticalBreakdown": text,
-                "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
-    except Exception as e:
-        log.warning(f"[NCAAW AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
 
 @router.get("/players/search")
@@ -157,23 +124,12 @@ async def ncaaw_predict(req: NcaawPredictRequest):
     elif result["recommendation"] == "over" and result["projection"] < req.line:
         result["projection"] = round(req.line + 0.5, 1)
 
-    ai_task = asyncio.create_task(_get_ai_analysis(
-        player_name=req.playerName, prop_type=prop_type, line=req.line,
-        venue=venue, opponent=req.opponentName or "",
-        projection=result["projection"], p_over=p_over, p_under=p_under,
-        recommendation=result["recommendation"], game_logs=game_logs,
-        prior_mean=result["priorMean"], streak_flag=result["streakFlag"],
-    ))
-
     prop_field = ncaaw_engine.NCAAW_PROPS.get(prop_type, prop_type)
     game_log_tiles = [{"date": g.get("date",""), "value": g.get(prop_field),
                        "pts": g.get("pts"), "reb": g.get("reb"), "ast": g.get("ast"),
                        "venue": g.get("venue","")} for g in game_logs[:10]]
 
-    try:
-        ai_result = await asyncio.wait_for(ai_task, timeout=25.0)
-    except Exception:
-        ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
     return {
         "sport": "ncaaw", "playerName": req.playerName, "playerId": player_id,

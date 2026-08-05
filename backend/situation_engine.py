@@ -13,7 +13,7 @@ Bayesian + AI models cannot derive from season averages alone:
 3. Situational Pressure Scoring  — converts aggregate deficit + knockout
    context into concrete multipliers that adjust possession and Bayesian output.
 
-4. (Web intel handled separately in grok_engine.py via Gemini web search)
+4. (Web intel handled separately in a separate module)
 """
 
 import asyncio
@@ -658,7 +658,7 @@ async def build_game_situation(
           "aggregate": dict,         (from _parse_aggregate)
           "multipliers": dict,       (from _compute_pressure_multipliers)
           "injuries": dict,          (from _parse_injuries)
-          "contextBlock": str,       ready-to-inject text for AI prompt
+          "contextBlock": str,       ready-to-use deterministic context text
         }
     """
     if season is None:
