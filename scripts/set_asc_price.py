@@ -11,7 +11,13 @@ APP_ID       = "6781092173"
 # three-day lead time so Apple can propagate the scheduled change.
 PLANS = [
     {"product_id": "reversepicks_weekly", "name": "Weekly", "duration": "ONE_WEEK", "price": "13.99"},
+    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "44.99"},
 ]
+
+# Use ASC_TARGET_PRODUCT for a one-plan change without rescheduling the other
+# products in this configuration.
+TARGET_PRODUCT = os.environ.get("ASC_TARGET_PRODUCT")
+ACTIVE_PLANS = [p for p in PLANS if not TARGET_PRODUCT or p["product_id"] == TARGET_PRODUCT]
 
 def make_token():
     now = int(time.time())
@@ -70,7 +76,7 @@ existing_subs = {s["attributes"]["productId"]: s["id"] for s in resp.get("data",
 print(f"Existing subs: {list(existing_subs.keys())}")
 
 sub_ids = {}
-for plan in PLANS:
+for plan in ACTIVE_PLANS:
     pid = plan["product_id"]
     if pid in existing_subs:
         sub_ids[pid] = existing_subs[pid]
@@ -105,7 +111,7 @@ DESCRIPTIONS = {
     "reversepicks_weekly":  "7-day Pro access. Soccer player props analytics.",
     "reversepicks_monthly": "Monthly Pro access. Soccer player props analytics.",
 }
-for plan in PLANS:
+for plan in ACTIVE_PLANS:
     pid = plan["product_id"]
     if pid not in sub_ids: continue
     sub_id = sub_ids[pid]
