@@ -5832,7 +5832,23 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "covariateWeight": real_bayes.get("covariateWeight"),
                 },
                 sample_size=real_bayes.get("priorSamples"),
-                reason="Initial posterior after prior, recent-form momentum, and capped match covariates.",
+                reason=(
+                    lambda _rb=real_bayes: (
+                        lambda _pm=_rb.get("priorMean"), _n=_rb.get("priorSamples", 0),
+                               _ml=str(_rb.get("momentumLabel") or "STABLE").upper(),
+                               _me=float(_rb.get("momentumEffect") or 0),
+                               _ca=float(_rb.get("covariateAdjustment") or 0): (
+                            f"Season prior: {round(_pm, 1)} across {_n} logs"
+                            if _pm else f"{_n} qualifying logs"
+                        ) + (
+                            f"; momentum {_ml.title()} ({_me:+.1f})"
+                            if _ml not in {"STABLE", ""} and abs(_me) >= 0.3 else ""
+                        ) + (
+                            f"; match-context covariate {_ca:+.1f}"
+                            if abs(_ca) >= 0.5 else ""
+                        ) + "."
+                    )()
+                )(),
             )
 
             # ─── OPPONENT H2H PRIOR ADJUSTMENT ────────────────────────────────────
