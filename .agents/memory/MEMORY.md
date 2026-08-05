@@ -97,6 +97,7 @@
 - [Legacy settlement repair routing](legacy-settlement-repair-routing.md) — explicit legacy repairs must bypass old BDL routes and use exact API-Football fixture/player validation; defer mismatches instead of guessing.
 - [Compact analysis UI](compact-analysis-ui.md) — prediction analysis should use dense text and compact tabs; H2H belongs beside AWAY, not in a large standalone card.
 - [SportsGameOdds market reference](sportsgameodds-market-reference.md) — use PrizePicks/Underdog lines as optional context only; API-Football remains authoritative for fixtures, math, and settlement.
+- [Player prop line history](player-prop-line-history.md) — current PrizePicks rows do not preserve 53.5→68.5 movement; never treat a late/live line as pre-match evidence without a timestamped snapshot.
 - [Community feed payloads](community-feed-payloads.md) — omit historical base64 pick-card images by default; oversized responses can time out and falsely show an empty chat.
 - [Pick deletion cache](pick-deletion-cache.md) — delete every matching canonical pick ID and invalidate the per-user list cache so removed history cannot reappear.
 - [Settlement production version](settlement-production-version.md) — terminal settlement fixes must be published; an older healthy VM build can recreate review states.
