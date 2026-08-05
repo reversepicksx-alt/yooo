@@ -25,6 +25,7 @@ _TARGET_FIELDS = {
     "passes": "passes_total",
     "shots": "shots_total",
     "shots_on_target": "shots_on",
+    "shots_assisted": "passes_key",
     "tackles": "tackles_total",
     "key_passes": "passes_key",
     "crosses": "passes_crosses",
@@ -37,6 +38,9 @@ _TARGET_FIELDS = {
     "duels_won": "duels_won",
     "goals": "goals_total",
     "assists": "goals_assists",
+    "fouls_drawn": "fouls_drawn",
+    "fouls_committed": "fouls_committed",
+    "yellow_cards": "cards_yellow",
 }
 
 
@@ -53,16 +57,33 @@ def _usable_player_logs(logs: list[dict[str, Any]], prop_type: str) -> list[dict
     Season-average fallback rows are deliberately not counted as independent
     match evidence.  They can still support the underlying prior, but they
     must not make the quality gate believe recent fixture history exists.
+
+    A log is counted as a real fixture game when ANY of the following hold:
+      1. The prop-specific stat field (or the generic "targetStat" key) has a
+         numeric value.
+      2. The log has minutes > 0.  When the fixture-player cache is the source
+         (quota-exhausted mode), API-Football returns ``null`` for stats where
+         the player recorded zero — not for stats that are genuinely absent.
+         A player who played 90 minutes with 0 shots is real game evidence; it
+         must not be silently excluded and make an established player look like
+         a no-data case.
     """
     field = _TARGET_FIELDS.get(prop_type, prop_type)
     usable = []
     for log in logs or []:
         if not isinstance(log, dict) or log.get("synthetic"):
             continue
+        # Prefer an explicit numeric stat value for the prop.
         value = log.get(field)
         if value is None:
             value = log.get("targetStat")
         if _num(value) is not None:
+            usable.append(log)
+            continue
+        # Fallback: the player played (minutes > 0) — null stat means 0, not
+        # absent.  This covers fixture-cache rows written during live API
+        # calls where the target stat came back null from the provider.
+        if _num(log.get("minutes")) is not None and (log.get("minutes") or 0) > 0:
             usable.append(log)
     return usable
 

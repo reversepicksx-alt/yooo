@@ -107,3 +107,117 @@ def test_quality_controls_never_boost_confidence():
     prediction = {"projectedValue": 50, "recommendation": "OVER", "confidenceScore": 45}
     apply_prediction_quality_controls(prediction, line=40, quality=quality)
     assert prediction["confidenceScore"] == 45
+
+
+# ── Cache-format log tests ────────────────────────────────────────────────────
+# When the API-Football quota is exhausted, Stage 0 (MongoDB fixture_player_cache)
+# serves logs where the target stat field may be None (API returned null = 0 stat,
+# not "data unavailable").  Established players must not get a confidence cap
+# just because some cached games recorded null shots/passes.
+
+
+def _cache_logs_shots(n=20, shots_none_count=15):
+    """Simulate Stage-0 cache logs: real fixtures, minutes>0, shots_total often null."""
+    logs = []
+    for i in range(n):
+        shots_val = None if i < shots_none_count else (i - shots_none_count + 1)
+        logs.append({
+            "minutes": 90,
+            "passes_total": 40 + i,
+            "shots_total": shots_val,
+            "shots_on": None if shots_val is None else max(0, shots_val - 1),
+            "venue": "home" if i % 2 == 0 else "away",
+            # No "synthetic" key — these are real fixture-cache entries
+        })
+    return logs
+
+
+def test_cache_logs_with_null_shots_are_counted_as_real():
+    """Stage-0 cache returns logs where shots_total=None (player had 0 shots).
+    These must be counted as real game logs — not excluded — so an established
+    player like Salah does not incorrectly get a realPlayerLogCount=1 confidence cap.
+    """
+    logs = _cache_logs_shots(n=20, shots_none_count=19)  # 19/20 have shots_total=None
+    quality = evaluate_prediction_quality(
+        prop_type="shots",
+        player_logs=logs,
+        fixture_id=999,
+    )
+    # All 20 logs have minutes=90 and no synthetic flag — all must be counted
+    assert quality["realPlayerLogCount"] == 20
+    assert quality["groups"]["player_history"]["status"] == "applied"
+    assert quality["confidenceCap"] is None
+
+
+def test_cache_logs_established_player_no_cap():
+    """An established player with 20 real cached game logs and a verified fixture
+    must not have their confidence capped even when all stat fields are null.
+    """
+    logs = _cache_logs_shots(n=20, shots_none_count=20)  # all null shots_total
+    quality = evaluate_prediction_quality(
+        prop_type="shots",
+        player_logs=logs,
+        fixture_id=123,
+    )
+    prediction = {
+        "projectedValue": 3.5,
+        "recommendation": "OVER",
+        "confidenceScore": 72,
+        "confidenceLevel": "High",
+    }
+    apply_prediction_quality_controls(prediction, line=2.5, quality=quality)
+    assert quality["realPlayerLogCount"] == 20
+    assert quality["confidenceCap"] is None
+    assert prediction["confidenceScore"] == 72, (
+        f"Confidence was incorrectly capped to {prediction['confidenceScore']}"
+    )
+
+
+def test_synthetic_logs_with_minutes_are_not_counted():
+    """synthetic=True rows must never count as real, even with minutes>0."""
+    logs = [
+        {"minutes": 90, "passes_total": 50, "synthetic": True}
+        for _ in range(10)
+    ]
+    quality = evaluate_prediction_quality(
+        prop_type="passes",
+        player_logs=logs,
+        fixture_id=123,
+    )
+    assert quality["realPlayerLogCount"] == 0
+    assert quality["groups"]["player_history"]["status"] == "unavailable"
+
+
+def test_cache_logs_zero_minutes_are_not_counted():
+    """Logs with minutes=0 (player DNP or not in squad) are not real evidence."""
+    logs = [
+        {"minutes": 0, "passes_total": None, "shots_total": None}
+        for _ in range(10)
+    ]
+    quality = evaluate_prediction_quality(
+        prop_type="shots",
+        player_logs=logs,
+        fixture_id=123,
+    )
+    assert quality["realPlayerLogCount"] == 0
+
+
+def test_target_fields_covers_new_prop_types():
+    """fouls_drawn, fouls_committed, yellow_cards, shots_assisted must map correctly."""
+    from prediction_quality import _TARGET_FIELDS
+    assert _TARGET_FIELDS.get("fouls_drawn") == "fouls_drawn"
+    assert _TARGET_FIELDS.get("fouls_committed") == "fouls_committed"
+    assert _TARGET_FIELDS.get("yellow_cards") == "cards_yellow"
+    assert _TARGET_FIELDS.get("shots_assisted") == "passes_key"
+
+    # These logs use the cache field name for yellow_cards
+    logs = [
+        {"minutes": 85, "cards_yellow": 1}
+        for _ in range(8)
+    ]
+    quality = evaluate_prediction_quality(
+        prop_type="yellow_cards",
+        player_logs=logs,
+        fixture_id=321,
+    )
+    assert quality["realPlayerLogCount"] == 8
