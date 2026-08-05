@@ -1177,6 +1177,10 @@ async def admin_ai_budget(req: _AiBudgetRequest):
         "message": "External generation is permanently disabled; deterministic model explanations are active.",
     }
 
+class _StorageHealthRequest(BaseModel):
+    email: str
+    token: str
+
 
 class _QuotaResetRequest(BaseModel):
     email: str
@@ -1211,3 +1215,161 @@ async def admin_quota_reset(req: _QuotaResetRequest):
         "message": "Quota circuit breaker reset — API-Football calls are unblocked." if existed
                    else "Breaker was not active (quota was not exhausted).",
     }
+
+@router.get("/storage-health")
+async def admin_storage_health(email: str, token: str):
+    """
+    Return Atlas storage usage stats so the owner can see when persistence
+    is degraded. Queries MongoDB dbStats and per-collection sizes (in MB).
+    Returns degraded=True when ≥90 % of the free-tier 512 MB limit is used.
+    """
+    await verify_owner(email, token)
+    try:
+        raw = await db.command("dbStats", scale=1)  # raw bytes
+        data_mb = round(raw.get("dataSize", 0) / (1024 * 1024), 1)
+        storage_mb = round(raw.get("storageSize", 0) / (1024 * 1024), 1)
+        index_mb = round(raw.get("indexSize", 0) / (1024 * 1024), 1)
+        # totalSize = storageSize + indexSize when present; fall back to storageSize
+        total_mb = round(
+            raw.get("totalSize", raw.get("storageSize", 0)) / (1024 * 1024), 1
+        )
+        used_pct = round(total_mb / _ATLAS_FREE_TIER_LIMIT_MB * 100, 1)
+        degraded = used_pct >= 90.0
+        warning = used_pct >= 75.0
+
+        # Per-collection breakdown for the largest / most cleanable collections
+        coll_sizes: dict = {}
+        for coll in _MONITORED_COLLECTIONS:
+            try:
+                cs = await db.command("collStats", coll, scale=1)
+                coll_sizes[coll] = {
+                    "dataMb": round(cs.get("size", 0) / (1024 * 1024), 2),
+                    "storageMb": round(cs.get("storageSize", 0) / (1024 * 1024), 2),
+                    "count": cs.get("count", 0),
+                }
+            except Exception:
+                coll_sizes[coll] = None
+
+        return {
+            "dataMb": data_mb,
+            "storageMb": storage_mb,
+            "indexMb": index_mb,
+            "totalMb": total_mb,
+            "limitMb": _ATLAS_FREE_TIER_LIMIT_MB,
+            "usedPct": used_pct,
+            "degraded": degraded,
+            "warning": warning,
+            "status": "DEGRADED" if degraded else ("WARNING" if warning else "OK"),
+            "collections": coll_sizes,
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "dataMb": None,
+            "storageMb": None,
+            "totalMb": None,
+            "limitMb": _ATLAS_FREE_TIER_LIMIT_MB,
+            "usedPct": None,
+            "degraded": None,
+            "warning": None,
+            "status": "UNKNOWN",
+            "collections": {},
+        }
+
+@router.post("/trigger-cleanup")
+async def admin_trigger_cleanup(req: _StorageHealthRequest):
+    """
+    Manually trigger an immediate Atlas storage cleanup pass (owner only).
+
+    Runs the same pruning logic as the background cleanup loop — plus
+    additional cache collections — so the owner can force a cleanup
+    immediately when writes are blocked by the free-tier storage ceiling.
+    """
+    await verify_owner(req.email, req.token)
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    import struct
+
+    results: dict = {}
+
+    # ── predictions: delete rows older than 7 days ──────────────────────────
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        r1 = await db.predictions.delete_many({"_ts": {"$lt": cutoff}})
+        _cutoff_ts = int(cutoff.timestamp())
+        _old_id = ObjectId(struct.pack(">I", _cutoff_ts) + b"\x00" * 8)
+        r2 = await db.predictions.delete_many(
+            {"_id": {"$lt": _old_id}, "_ts": {"$exists": False}}
+        )
+        results["predictions"] = r1.deleted_count + r2.deleted_count
+    except Exception as e:
+        results["predictions_error"] = str(e)
+
+    # ── fixture_player_cache: delete entries older than 21 days ─────────────
+    try:
+        fpc_cutoff = datetime.now(timezone.utc) - timedelta(days=21)
+        r = await db.fixture_player_cache.delete_many({"_ts": {"$lt": fpc_cutoff}})
+        results["fixture_player_cache"] = r.deleted_count
+    except Exception as e:
+        results["fixture_player_cache_error"] = str(e)
+
+    # ── team_fixture_history: cap at 2000 most-recent rows ──────────────────
+    try:
+        th_count = await db.team_fixture_history.count_documents({})
+        th_deleted = 0
+        if th_count > 2000:
+            cursor = (
+                db.team_fixture_history.find({}, {"_id": 1})
+                .sort("_id", -1)
+                .skip(2000)
+                .limit(1)
+            )
+            pivot = await cursor.to_list(1)
+            if pivot:
+                rd = await db.team_fixture_history.delete_many(
+                    {"_id": {"$lte": pivot[0]["_id"]}}
+                )
+                th_deleted = rd.deleted_count
+        results["team_fixture_history"] = th_deleted
+    except Exception as e:
+        results["team_fixture_history_error"] = str(e)
+
+    # ── mlb_cache: delete entries older than 7 days ─────────────────────────
+    try:
+        mlb_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        r = await db.mlb_cache.delete_many({"ts": {"$lt": mlb_cutoff}})
+        results["mlb_cache"] = r.deleted_count
+    except Exception as e:
+        results["mlb_cache_error"] = str(e)
+
+    # ── cs2_cache: delete entries older than 14 days ────────────────────────
+    try:
+        cs2_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        r = await db.cs2_cache.delete_many({"_ts": {"$lt": cs2_cutoff}})
+        results["cs2_cache"] = r.deleted_count
+    except Exception as e:
+        results["cs2_cache_error"] = str(e)
+
+    # ── first_goal_cache: delete entries older than 7 days ──────────────────
+    try:
+        fg_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        r = await db.first_goal_cache.delete_many({"ts": {"$lt": fg_cutoff}})
+        results["first_goal_cache"] = r.deleted_count
+    except Exception as e:
+        results["first_goal_cache_error"] = str(e)
+
+    # ── player_positions: delete entries older than 30 days ─────────────────
+    # Position is re-resolved on next predict; stale entries waste storage.
+    try:
+        pp_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        r = await db.player_positions.delete_many({"resolvedAt": {"$lt": pp_cutoff}})
+        results["player_positions"] = r.deleted_count
+    except Exception as e:
+        results["player_positions_error"] = str(e)
+
+    total = sum(
+        v for k, v in results.items()
+        if not k.endswith("_error") and isinstance(v, int)
+    )
+    print(f"[ATLAS MANUAL CLEANUP] {results} | total_deleted={total}")
+    return {"success": True, "deleted": results, "totalDeleted": total}

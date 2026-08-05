@@ -9371,8 +9371,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # Atlas can hard-block writes when the free-tier cluster reaches
             # its storage limit. Persistence is useful for analytics, but it
             # must not turn an already-computed prediction into a 500.
-            # Keep this fail-open temporarily until the cluster is cleaned up
-            # or upgraded; normal writes resume automatically afterward.
+            # The background cleanup loop prunes stale cache data every 6 hours;
+            # the owner can also trigger a manual cleanup via /api/admin/trigger-cleanup.
             print(
                 f"[PREDICTION PERSISTENCE] skipped; returning computed prediction: "
                 f"{type(_persist_err).__name__}: {_persist_err}"

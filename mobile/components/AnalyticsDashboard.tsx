@@ -1,14 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, Modal, ScrollView, TouchableOpacity, Dimensions, Platform,
+  View, Text, StyleSheet, Modal, ScrollView, TouchableOpacity, Dimensions, Platform, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, Pick, AnalyticsData } from '@/lib/api';
+import { getOwnerAnalytics, getStorageHealth, triggerStorageCleanup, Pick, AnalyticsData } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const LEAGUE_LABELS: Record<number, string> = {
   39: 'Premier League', 40: 'Championship', 140: 'La Liga', 141: 'La Liga 2',
@@ -176,6 +176,8 @@ export default function AnalyticsDashboard({
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const [period, setPeriod] = useState<Period>('all');
+  const [cleanupRunning, setCleanupRunning] = useState(false);
+  const queryClient = useQueryClient();
   const localStats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
   const { data: ownerData } = useQuery<AnalyticsData>({
     queryKey: ['ownerAnalytics', 'pick-insights', session?.email, period],
@@ -183,10 +185,98 @@ export default function AnalyticsDashboard({
     enabled: visible && !!session,
     staleTime: 60_000,
   });
+  const { data: storageHealth, refetch: refetchStorage } = useQuery({
+    queryKey: ['storageHealth', session?.email],
+    queryFn: () => getStorageHealth(session!.email, session!.token),
+    enabled: visible && !!session,
+    staleTime: 5 * 60_000,   // 5 minutes — lightweight call, no need to hammer
+  });
+
+  const handleTriggerCleanup = async () => {
+    if (!session || cleanupRunning) return;
+    setCleanupRunning(true);
+    try {
+      const result = await triggerStorageCleanup(session.email, session.token);
+      await refetchStorage();
+      queryClient.invalidateQueries({ queryKey: ['ownerAnalytics'] });
+      Alert.alert(
+        'Cleanup Complete',
+        `Removed ${result.totalDeleted.toLocaleString()} stale cache documents.\n\nBreakdown:\n` +
+          Object.entries(result.deleted)
+            .filter(([k]) => !k.endsWith('_error'))
+            .map(([k, v]) => `  ${k}: ${v}`)
+            .join('\n'),
+      );
+    } catch (err: any) {
+      Alert.alert('Cleanup Failed', err?.message ?? 'Unknown error');
+    } finally {
+      setCleanupRunning(false);
+    }
+  };
   // Insights is the ReversePicks system ledger. Personal picks remain the
   // source for Live/Settled Picks and are never used for this report when the
   // owner dataset is available.
   const stats = (ownerData?.insights ?? localStats) as ReturnType<typeof computeAnalytics>;
+
+  const renderStorageHealth = () => {
+    if (!storageHealth) return null;
+    const { usedPct, totalMb, limitMb, status, collections, degraded, warning } = storageHealth;
+    const pct = usedPct ?? 0;
+    const barColor = degraded ? Colors.error : warning ? '#f59e0b' : Colors.success;
+    const statusLabel = status === 'DEGRADED' ? '⚠ WRITES BLOCKED' : status === 'WARNING' ? '⚠ HIGH USAGE' : '✓ OK';
+    const statusColor = degraded ? Colors.error : warning ? '#f59e0b' : Colors.primary;
+
+    // Top collections by storage
+    const collEntries = Object.entries(collections ?? {})
+      .filter(([, v]) => v != null)
+      .sort((a, b) => ((b[1]?.storageMb ?? 0) - (a[1]?.storageMb ?? 0)))
+      .slice(0, 6);
+
+    return (
+      <View style={[s.storageCard, degraded && s.storageCardDegraded]}>
+        <View style={s.storageHeader}>
+          <Text style={s.chartTitle}>ATLAS STORAGE</Text>
+          <Text style={[s.storageStatus, { color: statusColor }]}>{statusLabel}</Text>
+        </View>
+
+        {/* Usage bar */}
+        <View style={s.storageBarRow}>
+          <View style={s.storageBarTrack}>
+            <View style={[s.storageBarFill, { width: `${Math.min(100, pct)}%`, backgroundColor: barColor }]} />
+          </View>
+          <Text style={[s.storageBarLabel, { color: barColor }]}>{pct.toFixed(1)}%</Text>
+        </View>
+        <Text style={s.storageBarMeta}>
+          {totalMb != null ? `${totalMb.toFixed(0)} MB used of ${limitMb} MB free-tier limit` : 'Storage size unavailable'}
+        </Text>
+
+        {/* Per-collection breakdown */}
+        {collEntries.length > 0 && (
+          <View style={s.storageCollList}>
+            {collEntries.map(([name, v]) => (
+              <View key={name} style={s.storageCollRow}>
+                <Text style={s.storageCollName} numberOfLines={1}>{name.replace(/_/g, ' ')}</Text>
+                <Text style={s.storageCollCount}>{v!.count.toLocaleString()}</Text>
+                <Text style={s.storageCollMb}>{v!.storageMb.toFixed(1)} MB</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Manual cleanup trigger */}
+        <TouchableOpacity
+          style={[s.cleanupBtn, cleanupRunning && s.cleanupBtnDisabled]}
+          onPress={handleTriggerCleanup}
+          disabled={cleanupRunning}
+        >
+          <Ionicons name="trash-outline" size={13} color={cleanupRunning ? Colors.textTertiary : Colors.text} />
+          <Text style={[s.cleanupBtnText, cleanupRunning && { color: Colors.textTertiary }]}>
+            {cleanupRunning ? 'Cleaning up…' : 'Run cleanup now'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   const renderTrendChart = () => {
     if (stats.trend.length < 2) return (
@@ -385,6 +475,7 @@ export default function AnalyticsDashboard({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+            {renderStorageHealth()}
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>
                 <View style={s.chartHeader}>
@@ -602,4 +693,57 @@ const s = StyleSheet.create({
   dimOuText: { fontSize: 9, fontWeight: '700' },
   dimRate: { width: 34, fontSize: 12, fontWeight: '700', color: Colors.text, textAlign: 'right' },
   dimN: { width: 34, fontSize: 10, color: Colors.textTertiary, textAlign: 'right', marginLeft: 2 },
+  // Storage health card
+  storageCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  storageCardDegraded: {
+    backgroundColor: 'rgba(239,68,68,0.07)',
+    borderColor: 'rgba(239,68,68,0.3)',
+  },
+  storageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  storageStatus: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
+  storageBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 5,
+  },
+  storageBarTrack: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.cardSecondary,
+    overflow: 'hidden',
+  },
+  storageBarFill: { height: 8, borderRadius: 4 },
+  storageBarLabel: { width: 44, fontSize: 12, fontWeight: '800', textAlign: 'right' },
+  storageBarMeta: { fontSize: 10, color: Colors.textTertiary, marginBottom: 10 },
+  storageCollList: { gap: 4, marginBottom: 10 },
+  storageCollRow: { flexDirection: 'row', alignItems: 'center' },
+  storageCollName: { flex: 1, fontSize: 10, color: Colors.textSecondary, textTransform: 'capitalize' },
+  storageCollCount: { width: 60, fontSize: 10, color: Colors.textTertiary, textAlign: 'right' },
+  storageCollMb: { width: 52, fontSize: 10, color: Colors.textSecondary, fontWeight: '700', textAlign: 'right' },
+  cleanupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: Colors.cardSecondary,
+    marginTop: 4,
+  },
+  cleanupBtnDisabled: { opacity: 0.5 },
+  cleanupBtnText: { fontSize: 12, fontWeight: '700', color: Colors.text },
 });

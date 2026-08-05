@@ -1653,6 +1653,45 @@ export async function getOwnerAnalytics(
   });
 }
 
+export interface StorageCollectionStat {
+  dataMb: number;
+  storageMb: number;
+  count: number;
+}
+
+export interface StorageHealth {
+  dataMb: number | null;
+  storageMb: number | null;
+  indexMb: number | null;
+  totalMb: number | null;
+  limitMb: number;
+  usedPct: number | null;
+  degraded: boolean | null;
+  warning: boolean | null;
+  status: 'OK' | 'WARNING' | 'DEGRADED' | 'UNKNOWN';
+  collections: Record<string, StorageCollectionStat | null>;
+  error?: string;
+}
+
+export async function getStorageHealth(
+  email: string,
+  token: string,
+): Promise<StorageHealth> {
+  return apiCall(`/api/admin/storage-health?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, {
+    method: 'GET',
+  });
+}
+
+export async function triggerStorageCleanup(
+  email: string,
+  token: string,
+): Promise<{ success: boolean; deleted: Record<string, number | string>; totalDeleted: number }> {
+  return apiCall('/api/admin/trigger-cleanup', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+}
+
 export interface PlayerPickRow {
   playerName: string;
   position: string;

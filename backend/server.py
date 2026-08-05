@@ -269,11 +269,13 @@ async def _run_startup_tasks():
 
 async def _atlas_storage_cleanup_loop():
     """Prevent Atlas free-tier 512 MB cap from being hit.
-    Runs every 6 hours. Deletes predictions older than 7 days (they are
-    regenerated on demand) and caps team_fixture_history to 2000 most-recent
-    rows (re-fetched live when needed). Logs how much was removed each pass."""
+    Runs every 6 hours. Prunes stale entries from every major cache
+    collection so the free-tier 512 MB ceiling is never reached.
+    All pruned data is re-fetched or recomputed on the next request."""
     import asyncio
     from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    import struct
 
     # Create a TTL index on predictions._ts on first run (idempotent)
     try:
@@ -287,32 +289,71 @@ async def _atlas_storage_cleanup_loop():
 
     while True:
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-            # Delete predictions older than 7 days
-            r1 = await db.predictions.delete_many({"_ts": {"$lt": cutoff}})
-            # Also delete predictions with no _ts field but older ObjectId (legacy rows)
-            # ObjectId embeds creation time — docs older than 7 days have generation
-            # time before cutoff.
-            from bson import ObjectId
-            import struct, time as _time
-            _cutoff_ts = int(cutoff.timestamp())
+            now = datetime.now(timezone.utc)
+
+            # ── predictions: delete rows older than 7 days ─────────────────
+            pred_cutoff = now - timedelta(days=7)
+            r1 = await db.predictions.delete_many({"_ts": {"$lt": pred_cutoff}})
+            _cutoff_ts = int(pred_cutoff.timestamp())
             _old_id = ObjectId(struct.pack(">I", _cutoff_ts) + b"\x00" * 8)
-            r2 = await db.predictions.delete_many({"_id": {"$lt": _old_id}, "_ts": {"$exists": False}})
+            r2 = await db.predictions.delete_many(
+                {"_id": {"$lt": _old_id}, "_ts": {"$exists": False}}
+            )
             total_pred = r1.deleted_count + r2.deleted_count
 
-            # Cap team_fixture_history — keep newest 2000 rows only
+            # ── team_fixture_history: cap at 2000 most-recent rows ─────────
             th_count = await db.team_fixture_history.count_documents({})
             th_deleted = 0
             if th_count > 2000:
-                # Find the _id of the 2000th newest doc and delete everything older
-                cursor = db.team_fixture_history.find({}, {"_id": 1}).sort("_id", -1).skip(2000).limit(1)
+                cursor = (
+                    db.team_fixture_history.find({}, {"_id": 1})
+                    .sort("_id", -1)
+                    .skip(2000)
+                    .limit(1)
+                )
                 pivot = await cursor.to_list(1)
                 if pivot:
-                    rd = await db.team_fixture_history.delete_many({"_id": {"$lte": pivot[0]["_id"]}})
+                    rd = await db.team_fixture_history.delete_many(
+                        {"_id": {"$lte": pivot[0]["_id"]}}
+                    )
                     th_deleted = rd.deleted_count
 
-            print(f"[ATLAS CLEANUP] predictions pruned={total_pred} | "
-                  f"team_fixture_history pruned={th_deleted} (was {th_count})")
+            # ── fixture_player_cache: delete entries older than 21 days ────
+            fpc_cutoff = now - timedelta(days=21)
+            fpc_r = await db.fixture_player_cache.delete_many(
+                {"_ts": {"$lt": fpc_cutoff}}
+            )
+
+            # ── mlb_cache: delete entries older than 7 days ────────────────
+            mlb_r = await db.mlb_cache.delete_many(
+                {"ts": {"$lt": now - timedelta(days=7)}}
+            )
+
+            # ── cs2_cache: delete entries older than 14 days ───────────────
+            cs2_r = await db.cs2_cache.delete_many(
+                {"_ts": {"$lt": now - timedelta(days=14)}}
+            )
+
+            # ── first_goal_cache: delete entries older than 7 days ─────────
+            fg_r = await db.first_goal_cache.delete_many(
+                {"ts": {"$lt": now - timedelta(days=7)}}
+            )
+
+            # ── player_positions: delete entries older than 30 days ─────────
+            # Re-resolved on next predict; stale entries waste storage.
+            pp_r = await db.player_positions.delete_many(
+                {"resolvedAt": {"$lt": now - timedelta(days=30)}}
+            )
+
+            print(
+                f"[ATLAS CLEANUP] predictions={total_pred} "
+                f"team_fixture_history={th_deleted}(was {th_count}) "
+                f"fixture_player_cache={fpc_r.deleted_count} "
+                f"mlb_cache={mlb_r.deleted_count} "
+                f"cs2_cache={cs2_r.deleted_count} "
+                f"first_goal_cache={fg_r.deleted_count} "
+                f"player_positions={pp_r.deleted_count}"
+            )
         except Exception as _e:
             print(f"[ATLAS CLEANUP] error: {_e}")
         await asyncio.sleep(6 * 3600)
