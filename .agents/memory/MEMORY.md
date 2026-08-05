@@ -103,3 +103,4 @@
 - [Settlement production version](settlement-production-version.md) — terminal settlement fixes must be published; an older healthy VM build can recreate review states.
 - [AI spend governance](ai-spend-governance.md) — user-facing explanations share a persistent atomic token budget; background enrichment is opt-in and must never silently bypass it.
 - [TheStatsAPI evidence contract](thestatsapi-evidence-contract.md) — optional soccer enrichment requires identity joins and explicit coverage states; empty data is unavailable, never a measured zero.
+- [API-Football response shape](api-football-response-shape.md) — api_football_request returns the provider response list directly; normalize legacy envelope-shaped test doubles before parsing lineups or fixtures.

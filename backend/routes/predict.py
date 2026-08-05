@@ -47,6 +47,47 @@ H2H_PLAYER_RESULT_LIMIT = 10
 _H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
+def _api_response_list(payload) -> list:
+    """Normalize list responses from the API-Football helper."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        response = payload.get("response", [])
+        return response if isinstance(response, list) else []
+    return []
+
+
+def _lineup_player_status(payload, player_id: int | str | None) -> str:
+    """Return starting/substitute/not_in_squad/unknown from lineup payload."""
+    if player_id is None:
+        return "unknown"
+    try:
+        target_id = int(player_id)
+    except (TypeError, ValueError):
+        return "unknown"
+    responses = _api_response_list(payload)
+    if not responses:
+        return "unknown"
+    for team in responses:
+        starters = team.get("startXI", []) if isinstance(team, dict) else []
+        substitutes = team.get("substitutes", []) if isinstance(team, dict) else []
+        starter_ids = {
+            item.get("player", {}).get("id")
+            for item in starters
+            if isinstance(item, dict) and item.get("player", {}).get("id") is not None
+        }
+        substitute_ids = {
+            item.get("player", {}).get("id")
+            for item in substitutes
+            if isinstance(item, dict) and item.get("player", {}).get("id") is not None
+        }
+        if target_id in starter_ids:
+            return "starting"
+        if target_id in substitute_ids:
+            return "substitute"
+    return "not_in_squad"
+
+
 def compute_team_quality_gap(
     *,
     match_odds: dict | None,
@@ -3292,6 +3333,8 @@ async def predict(req: PredictionRequest):
         _redist_multiplier: float = 1.0
         _lineup_alert: str | None = None
         _lineup_status: str = "unknown"
+        _lineup_confidence_floor: float | None = None
+        _lineup_raw_preflight = None
         _quality_prior_applied: bool = False
         _quality_prior_dropped: int = 0
         _opp_tier_filter_applied: bool = False
@@ -3391,6 +3434,38 @@ async def predict(req: PredictionRequest):
             else:
                 _exp_mins = 90.0
 
+            # Fetch confirmed lineup status before the minutes model. The
+            # API helper returns the response list directly; the old code
+            # expected the raw provider envelope and silently missed starters.
+            # A confirmed starter should not receive a rotation haircut merely
+            # because recent appearances included managed minutes.
+            if _sit_fixture_id and req.playerId:
+                try:
+                    _lineup_raw_preflight = await api_football_request(
+                        "fixtures/lineups", {"fixture": _sit_fixture_id}
+                    )
+                    _lineup_status = _lineup_player_status(
+                        _lineup_raw_preflight, req.playerId
+                    )
+                    if _lineup_status == "starting":
+                        _lineup_alert = "✓ Confirmed in starting XI"
+                        _exp_mins = max(_exp_mins, 90.0)
+                        print(
+                            f"[LINEUP PREFLIGHT] {req.playerName}: confirmed STARTING "
+                            f"→ expected minutes={_exp_mins:.1f}"
+                        )
+                    elif _lineup_status == "substitute":
+                        _lineup_alert = "⚠ Listed as substitute — reduced involvement expected"
+                        _lineup_confidence_floor = 0.45
+                    elif _lineup_status == "not_in_squad":
+                        _lineup_alert = "⚠ Player not found in confirmed lineup"
+                        _lineup_confidence_floor = 0.45
+                except Exception as _lineup_preflight_err:
+                    print(
+                        f"[LINEUP PREFLIGHT] fetch error for fixture {_sit_fixture_id}: "
+                        f"{_lineup_preflight_err}"
+                    )
+
             _sfm = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key",
@@ -3465,6 +3540,19 @@ async def predict(req: PredictionRequest):
                         )
             except Exception as _rot_err:
                 print(f"[ROTATION] detection error: {_rot_err}")
+
+            # A confirmed starter is expected to receive the full-match role
+            # the market priced. Do not apply a recent-minutes haircut merely
+            # because prior appearances included managed minutes. Keep the
+            # observed trend in the audit fields/logs, but let confirmed
+            # availability take precedence over that retrospective signal.
+            if _lineup_status == "starting" and _rotation_adj_pct < 0:
+                print(
+                    f"[ROTATION] {req.playerName}: confirmed starter overrides "
+                    f"negative minutes trend ({_rotation_adj_pct:+.1%})"
+                )
+                _rotation_adj_pct = 0.0
+                _rotation_risk = "starting_full_minutes"
 
             # Apply rotation multiplier to the median-based expected minutes
             if _rotation_adj_pct != 0.0:
@@ -4263,13 +4351,16 @@ async def predict(req: PredictionRequest):
             # Fetch the confirmed starting XI for the upcoming fixture.
             # If available and the subject player is NOT in the XI → confidence floor.
             # If confirmed starting → positive tactical signal.
-            _lineup_alert = None
-            _lineup_confidence_floor = None
-            _lineup_status = "unknown"  # "starting" | "substitute" | "not_in_squad" | "unknown"
             if _sit_fixture_id and req.playerId:
                 try:
-                    _lineup_raw = await api_football_request("fixtures/lineups", {"fixture": _sit_fixture_id})
-                    _lineup_responses = (_lineup_raw or {}).get("response", [])
+                    _lineup_raw = (
+                        _lineup_raw_preflight
+                        if _lineup_raw_preflight is not None
+                        else await api_football_request(
+                            "fixtures/lineups", {"fixture": _sit_fixture_id}
+                        )
+                    )
+                    _lineup_responses = _api_response_list(_lineup_raw)
                     _player_id_int = int(req.playerId) if str(req.playerId).isdigit() else None
 
                     if _lineup_responses:
@@ -4301,14 +4392,14 @@ async def predict(req: PredictionRequest):
                                 _lf = await api_football_request(
                                     "fixtures", {"team": team_id, "last": 1}
                                 )
-                                _fx = (_lf or {}).get("response", [])
+                                _fx = _api_response_list(_lf)
                                 if not _fx:
                                     return None
                                 _fid = (_fx[0].get("fixture") or {}).get("id")
                                 if not _fid:
                                     return None
                                 _lu = await api_football_request("fixtures/lineups", {"fixture": _fid})
-                                for _tl in (_lu or {}).get("response", []):
+                                for _tl in _api_response_list(_lu):
                                     if (_tl.get("team") or {}).get("id") == team_id:
                                         return _tl
                                 return None
@@ -4332,7 +4423,7 @@ async def predict(req: PredictionRequest):
                                 print(f"[PITCH] predicted XI built from last-match lineups for {req.playerName}'s fixture")
                         except Exception as _pred_pitch_err:
                             print(f"[PITCH] predicted build error: {_pred_pitch_err}")
-                    if _lineup_responses and _player_id_int:
+                    if _lineup_responses and _player_id_int and _lineup_status == "unknown":
                         # Determine which team the subject player belongs to by scanning both
                         for _team_lineup in _lineup_responses:
                             _starters = _team_lineup.get("startXI", [])
