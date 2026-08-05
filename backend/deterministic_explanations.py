@@ -205,11 +205,16 @@ def _tactical_mechanism_lines(context: dict[str, Any], prop_raw: str) -> list[st
     formation = context.get("lineupFormation")
     opponent_formation = context.get("opponentFormation")
     lineup_status = str(context.get("lineupStatus") or "")
-    if formation or opponent_formation:
+    if formation and opponent_formation:
         shape = f"{formation or 'unknown'} vs {opponent_formation or 'unknown'}"
         lines.append(
             f"Shape evidence: the available {'confirmed' if lineup_status == 'confirmed' else 'predicted'} "
             f"lineup data shows **{shape}**; no additional zone or matchup claim is made without event-level data."
+        )
+    elif formation or opponent_formation:
+        lines.append(
+            "Shape evidence unavailable: the provider supplied only one formation, "
+            "so no formation matchup is claimed."
         )
 
     tempo = str(context.get("tempo") or "")
@@ -342,9 +347,15 @@ def build_deterministic_explanation(
     if team or opponent or venue:
         location_phrase = f" from the **{venue}** side" if venue in {"home", "away"} else ""
         poss_phrase = ""
-        if expected_poss_player and expected_poss_opp:
+        if expected_poss_player is not None and expected_poss_opp is not None:
+            poss_source = str(tactical_context.get("possessionSource") or "")
+            poss_label = (
+                "Verified expected possession"
+                if poss_source in {"fixture_stats", "h2h_fixture_stats"}
+                else "Model fallback possession estimate"
+            )
             poss_phrase = (
-                f" Expected possession: **{expected_poss_player:.0f}%** "
+                f" {poss_label}: **{expected_poss_player:.0f}%** "
                 f"(vs {expected_poss_opp:.0f}% for {opponent or 'opponent'})."
             )
         matchup = (
@@ -373,7 +384,7 @@ def build_deterministic_explanation(
         ti_compare = tactical_intelligence.get("opponentRoleComparison") or {}
         ti_mechanism = tactical_intelligence.get("propMechanism") or {}
         ti_role = ti_player.get("role") or ti_player.get("position")
-        ti_shape = ti_lineup.get("formation") or ti_lineup.get("opponentFormation")
+        ti_shape = ti_lineup.get("formation") and ti_lineup.get("opponentFormation")
         if ti_role:
             tactical_lines.append(
                 f"Tactical intelligence identifies the player's nominal role as "
@@ -381,9 +392,13 @@ def build_deterministic_explanation(
             )
         if ti_shape:
             tactical_lines.append(
-                f"Shape comparison: **{ti_lineup.get('formation') or 'unknown'}** "
-                f"vs **{ti_lineup.get('opponentFormation') or 'unknown'}** "
+                f"Shape comparison: **{ti_lineup.get('formation')}** "
+                f"vs **{ti_lineup.get('opponentFormation')}** "
                 f"({str(ti_lineup.get('shapeStatus') or 'unavailable')} lineup data)."
+            )
+        elif ti_lineup.get("formation") or ti_lineup.get("opponentFormation"):
+            tactical_lines.append(
+                "Shape comparison unavailable: one or both provider formations are missing."
             )
         if ti_market.get("classification") and ti_market.get("status") == "verified_fixture_moneyline":
             _market_label = str(ti_market.get("classification")).replace("_", " ")
@@ -394,7 +409,8 @@ def build_deterministic_explanation(
         if ti_poss.get("classification") and ti_poss.get("status") == "verified":
             tactical_lines.append(
                 f"Possession game script: **{str(ti_poss.get('classification')).replace('_', ' ')}** "
-                f"at {_fmt(ti_poss.get('expectedPlayerTeamPossession'), 0)}% expected player-team possession."
+                f"at {_fmt(ti_poss.get('expectedPlayerTeamPossession'), 0)}% expected player-team possession "
+                f"from {ti_poss.get('source') or 'verified fixture statistics'}."
             )
         if ti_mechanism.get("opponentNote"):
             tactical_lines.append(str(ti_mechanism["opponentNote"]))

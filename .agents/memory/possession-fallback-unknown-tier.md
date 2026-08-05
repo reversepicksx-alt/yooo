@@ -20,11 +20,23 @@ computed and showed Cape Verde's defense leaking 34-40% more passes than
 baseline to opposing mids) from ever unlocking its full weight, because the
 weight-boost logic required possession data to "confirm" the signal.
 
-**Fix pattern applied:** added an explicit `match_dominance["hasRealPossData"]`
-flag, set only when a real source (stats/rank-gap/odds/H2H) populated the
-value (i.e. `bool(notes)`). Any downstream consumer of `expectedPoss` that
-needs to distinguish "confirmed even game" from "no data at all" must check
-this flag — checking `is not None` never works since the field is never None.
+**Fix pattern applied:** keep an explicit `hasRealPossData` flag for whether a
+numeric signal exists, but also carry `possessionSource`. `fixture_stats` and
+`h2h_fixture_stats` are verified evidence; `standings_fallback` and
+`odds_fallback` are usable estimates only. Downstream math may use all numeric
+signals, while tactical explanations and evidence-quality labels may call a
+possession value verified only for the fixture-stat sources. Checking
+`expectedPoss is not None` is never sufficient because the field starts at
+50.0.
+
+**Why:** An odds-derived 67%/33% estimate was initially labeled “verified
+match dominance,” contradicting the runtime log and overstating evidence
+quality. Numeric availability and evidence provenance are separate concepts.
+
+**How to apply:** preserve `possessionSource` through the prediction,
+tactical-intelligence, deterministic-explanation, and saved-pick paths. Use
+fallback wording for odds/rank estimates and verified wording only for actual
+fixture or H2H possession statistics.
 Also added a smaller independent-signal weight boost for strong (≥30%)
 opponent-allowed-avg signals even when possession data is absent, so a real,
 independently-measured signal isn't capped at a token weight just because an

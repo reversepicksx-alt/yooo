@@ -169,6 +169,7 @@ def build_tactical_intelligence(
     player_role: str | None = None,
     expected_possession: float | None = None,
     possession_is_real: bool = False,
+    possession_source: str | None = None,
     opponent_allowed_average: float | None = None,
     opponent_allowed_samples: int = 0,
     position_comparable_samples: int = 0,
@@ -321,7 +322,13 @@ def build_tactical_intelligence(
             "status": "verified" if possession_is_real else "fallback_or_unavailable",
             "expectedPlayerTeamPossession": expected_possession,
             "classification": poss_script,
-            "source": "verified match dominance" if possession_is_real else None,
+            "source": (
+                "verified fixture statistics"
+                if possession_is_real
+                else possession_source
+                if expected_possession is not None
+                else None
+            ),
         },
         "propMechanism": {
             "propType": prop_type,

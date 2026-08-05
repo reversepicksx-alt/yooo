@@ -499,7 +499,11 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
           <Text style={aStyles.proCardMetricLabel}>PLAYER ROLE</Text>
         </View>
         <View style={aStyles.tacticalCell}>
-          <Text style={aStyles.tacticalValue}>{lineup.formation || '—'} vs {lineup.opponentFormation || '—'}</Text>
+          <Text style={aStyles.tacticalValue}>
+            {lineup.formation && lineup.opponentFormation
+              ? `${lineup.formation} vs ${lineup.opponentFormation}`
+              : 'Formation unavailable'}
+          </Text>
           <Text style={aStyles.proCardMetricLabel}>{shapeLabel}</Text>
         </View>
       </View>

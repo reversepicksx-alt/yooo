@@ -357,6 +357,21 @@ export interface PredictionResult {
   lineDeviationHitRate?: number;
   sport?: string;
   tacticalAlerts?: string[];
+  tacticalContext?: {
+    available?: boolean;
+    position?: string | null;
+    role?: string | null;
+    propType?: string;
+    playerTeam?: string | null;
+    opponent?: string | null;
+    venue?: string;
+    expectedPossession?: number | null;
+    opponentExpectedPossession?: number | null;
+    possessionSource?: string | null;
+    lineupStatus?: string;
+    lineupFormation?: string | null;
+    opponentFormation?: string | null;
+  };
   tacticalIntelligence?: TacticalIntelligence;
   gameScript?: {
     p_team_trails?: number;
@@ -987,6 +1002,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     riskSignals: (raw as any).riskSignals ?? undefined,
     congestion: (raw as any).congestion ?? undefined,
     lineup: (raw as any).lineup ?? undefined,
+    tacticalContext: (raw as any).tacticalContext ?? undefined,
+    tacticalIntelligence: (raw as any).tacticalIntelligence ?? undefined,
     sharpSummary: raw.sharpSummary || undefined,
     keyEvidence: raw.keyEvidence || undefined,
     gameFlowDynamics: raw.gameFlowDynamics || undefined,

@@ -1933,9 +1933,20 @@ async def predict(req: PredictionRequest):
         # just like we do for possession/moneyline/team labels. This ensures the situation
         # engine (knockout aggregate, home/away multipliers) also sees correct orientation.
         _sit_pih = (match_odds or {}).get("playerIsHome")
+        _canonical_team_id = (match_odds or {}).get("fixtureTeamId") or actual_team_id
+        _canonical_opponent_id = (match_odds or {}).get("fixtureOpponentId") or req.opponentId
+        _canonical_team_name = (
+            (match_odds or {}).get("fixtureTeamName")
+            or corrected_team_name
+            or req.teamName
+        )
+        _canonical_opponent_name = (
+            (match_odds or {}).get("fixtureOpponentName")
+            or req.opponentName
+        )
         _sit_is_home = bool(_sit_pih) if _sit_pih is not None else (player_venue == "home")
-        _sit_home_id = actual_team_id if _sit_is_home else req.opponentId
-        _sit_away_id = req.opponentId if _sit_is_home else actual_team_id
+        _sit_home_id = _canonical_team_id if _sit_is_home else _canonical_opponent_id
+        _sit_away_id = _canonical_opponent_id if _sit_is_home else _canonical_team_id
         _sit_match_round = (match_odds or {}).get("matchRound", "")
         _sit_match_league = (match_odds or {}).get("matchLeague", "")
         _sit_match_date = (match_odds or {}).get("matchDate", "")
@@ -1952,12 +1963,12 @@ async def predict(req: PredictionRequest):
             league_id=_sit_fixture_league_id,
             match_round=_sit_match_round,
             fixture_id=_sit_fixture_id,
-            player_team_name=corrected_team_name or req.teamName or "",
-            opponent_name=req.opponentName or "",
+            player_team_name=_canonical_team_name or "",
+            opponent_name=_canonical_opponent_name or "",
             prop_type=req.propType,
             standings=standings,
-            player_team_id=actual_team_id or req.teamId,
-            opponent_id=req.opponentId,
+            player_team_id=_canonical_team_id or req.teamId,
+            opponent_id=_canonical_opponent_id,
         )
 
         all_wave2 = aio.gather(
@@ -2337,6 +2348,7 @@ async def predict(req: PredictionRequest):
                 "notes": [],
                 "seasonAvgIsReal": False,
                 "hasRealPossData": False,
+                "possessionSource": "unavailable",
             }
 
             def avg_poss(sl, venue_filter=None):
@@ -2421,6 +2433,7 @@ async def predict(req: PredictionRequest):
                 dom["homePoss"] = home_poss_fallback
                 dom["awayPoss"] = away_poss_fallback
                 dom["notes"].append(f"Rank-gap fallback (no poss data): #{home_rank} vs #{away_rank} → {home_poss_fallback:.0f}% home / {away_poss_fallback:.0f}% away")
+                dom["possessionSource"] = "standings_fallback"
                 player_team_poss = dom["expectedPoss"]
                 poss_ratio = player_team_poss / 50.0
                 PASS_PROPS = {"pass_attempts", "key_passes", "crosses", "passes"}
@@ -2489,6 +2502,7 @@ async def predict(req: PredictionRequest):
                                 f"Odds-only possession (no stats/standings): "
                                 f"{_fx_home_poss:.0f}%/{_fx_away_poss:.0f}%"
                             )
+                            dom["possessionSource"] = "odds_fallback"
                             _otp = dom["expectedPoss"]
                             _otr = _otp / 50.0
                             _PASS_P = {"pass_attempts", "key_passes", "crosses", "passes"}
@@ -2697,6 +2711,8 @@ async def predict(req: PredictionRequest):
                 # baselines must not activate possession-dependent layers.
                 dom["hasRealPossData"] = bool(team_avg is not None and opp_avg is not None)
                 dom["seasonAvgIsReal"] = dom["hasRealPossData"]
+                if dom["hasRealPossData"]:
+                    dom["possessionSource"] = "fixture_stats"
 
                 player_team_poss = dom["expectedPoss"]
                 poss_ratio = player_team_poss / team_avg if team_avg > 0 else 1.0
@@ -2761,8 +2777,8 @@ async def predict(req: PredictionRequest):
             _is_home = (actual_team_id or 0) < (req.opponentId or 0)
         else:
             _is_home = player_venue == "home"
-        _home_id = actual_team_id if _is_home else req.opponentId
-        _away_id = req.opponentId if _is_home else actual_team_id
+        _home_id = _canonical_team_id if _is_home else _canonical_opponent_id
+        _away_id = _canonical_opponent_id if _is_home else _canonical_team_id
         _dom_cache_key = (_home_id, _away_id) if (_home_id and _away_id) else None
 
         # Check cache first — same game always returns same possession
@@ -2838,15 +2854,18 @@ async def predict(req: PredictionRequest):
                     _cache_entry["awaySeasonAvg"] = match_dominance.get("teamSeasonAvg")
                 _match_dom_cache[_dom_cache_key] = {"ts": _time.time(), "dom": _cache_entry}
 
-        # hasRealPossData: True only when SOME real signal (possession stats,
-        # standings rank-gap, or odds-implied) actually populated expectedPoss —
-        # i.e. compute_match_dominance appended a note. When notes is empty the
+        # hasRealPossData means a numeric possession signal is available for
+        # math. possessionSource separately records whether that signal came
+        # from fixture statistics or a fallback. When notes is empty the
         # 50.0/50.0 values are a pure hardcoded default with zero information
         # behind them (common for international friendlies vs minnows with no
         # cached possession/standings/odds data at all) and must NOT be treated
         # downstream as a genuine "close matchup" signal (see
         # possession-fallback-unknown-tier.md).
-        match_dominance["hasRealPossData"] = bool(match_dominance.get("notes"))
+        match_dominance["hasRealPossData"] = (
+            match_dominance.get("possessionSource") != "unavailable"
+            and match_dominance.get("expectedPoss") is not None
+        )
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
         else:
@@ -2946,6 +2965,7 @@ async def predict(req: PredictionRequest):
             match_dominance["oppExpectedPoss"] = _blended_opp
             match_dominance["h2hPossAvg"]      = _h2h_poss_avg
             match_dominance["hasRealPossData"] = True
+            match_dominance["possessionSource"] = "h2h_fixture_stats"
             match_dominance["h2hPossCount"]    = _h2h_n
             # Recompute multiplier from blended possession
             _PASS_H = {"pass_attempts", "key_passes", "crosses", "passes"}
@@ -4284,11 +4304,11 @@ async def predict(req: PredictionRequest):
                                 _tl_id = (_tl.get("team") or {}).get("id")
                                 _is_home_tl = (_tl_id == _sit_home_id)
                                 _team_pitch = _build_pitch_team(_tl, _is_home_tl, _player_id_int)
-                                if _tl_id == actual_team_id or (actual_team_id is None and _tl_id != req.opponentId):
+                                if _tl_id == _canonical_team_id:
                                     _pitch_lineup["formation"] = _team_pitch["formation"]
                                     _pitch_lineup["players"] = _team_pitch["players"]
                                     _pitch_lineup["coach"] = _team_pitch["coach"]
-                                else:
+                                elif _tl_id == _canonical_opponent_id:
                                     _pitch_lineup["opponentFormation"] = _team_pitch["formation"]
                                     _pitch_lineup["opponentPlayers"] = _team_pitch["players"]
                                     _pitch_lineup["opponentCoach"] = _team_pitch["coach"]
@@ -4304,22 +4324,25 @@ async def predict(req: PredictionRequest):
                                 if not team_id:
                                     return None
                                 _lf = await api_football_request(
-                                    "fixtures", {"team": team_id, "last": 1}
+                                    "fixtures", {"team": team_id, "last": 5}
                                 )
                                 _fx = _api_response_list(_lf)
-                                if not _fx:
-                                    return None
-                                _fid = (_fx[0].get("fixture") or {}).get("id")
-                                if not _fid:
-                                    return None
-                                _lu = await api_football_request("fixtures/lineups", {"fixture": _fid})
-                                for _tl in _api_response_list(_lu):
-                                    if (_tl.get("team") or {}).get("id") == team_id:
-                                        return _tl
+                                for _fixture in _fx:
+                                    _fid = (_fixture.get("fixture") or {}).get("id")
+                                    if not _fid:
+                                        continue
+                                    _lu = await api_football_request("fixtures/lineups", {"fixture": _fid})
+                                    for _tl in _api_response_list(_lu):
+                                        if (
+                                            (_tl.get("team") or {}).get("id") == team_id
+                                            and _tl.get("formation")
+                                            and len(_tl.get("startXI") or []) >= 8
+                                        ):
+                                            return _tl
                                 return None
 
                             _own_last, _opp_last = await aio.gather(
-                                _last_lineup(actual_team_id), _last_lineup(req.opponentId),
+                                _last_lineup(_canonical_team_id), _last_lineup(_canonical_opponent_id),
                                 return_exceptions=True
                             )
                             if _own_last and not isinstance(_own_last, Exception):
@@ -6566,20 +6589,28 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # ── Lineup pitch data (predicted or confirmed XI + formation) ──
         # NOTE: mobile/components/PitchDiagram.tsx expects {status, home:{teamName,formation,coach,players[]}, away:{...}}
         _raw_lineup = locals().get("_pitch_lineup") or {}
-        _is_player_home = (locals().get("player_venue") == "home")
+        _is_player_home = bool(_is_home)
         _team_side = {
-            "teamName": req.teamName or None,
+            "teamName": _canonical_team_name or None,
             "formation": _raw_lineup.get("formation"),
             "coach": _raw_lineup.get("coach"),
             "players": _raw_lineup.get("players") or [],
         }
         _opp_side = {
-            "teamName": req.opponentName or None,
+            "teamName": _canonical_opponent_name or None,
             "formation": _raw_lineup.get("opponentFormation"),
             "coach": _raw_lineup.get("opponentCoach"),
             "players": _raw_lineup.get("opponentPlayers") or [],
         }
-        _has_lineup_data = bool(_team_side["players"] or _opp_side["players"])
+        # A pitch is only useful when both sides are present and both nominal
+        # shapes are known. Do not render one team's lineup as a complete
+        # matchup or let a missing provider formation become tactical evidence.
+        _has_lineup_data = bool(
+            _team_side["players"]
+            and _opp_side["players"]
+            and _team_side["formation"]
+            and _opp_side["formation"]
+        )
         prediction["lineup"] = {
             "status": _raw_lineup.get("status") or "unavailable",
             "home": _team_side if _is_player_home else _opp_side,
@@ -7865,51 +7896,28 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             elif fb_away_avg is not None:
                 fb_away_poss = round(min(75, max(30, fb_away_avg - 2.5)))
                 real_matchup["expectedPossession"] = {"home": 100 - fb_away_poss, "away": fb_away_poss}
-        # 2. Moneyline + favorite from real odds data
-        # IMPORTANT: API-Football's americanOdds.home/away keys refer to whoever
-        # API-Football designates as "home" in the fixture — which may NOT match
-        # the player_venue sent by the frontend (especially for neutral-venue
-        # competitions like the World Cup where "home" is arbitrary).
-        # We normalise here so moneyline.home ALWAYS = the team in
-        # real_matchup["homeTeam"] and moneyline.away ALWAYS = awayTeam.
+        # 2. Moneyline + favorite from real odds data.
+        # API-Football's home/away odds and the verified matchup team labels
+        # are both fixture-oriented. Never swap these based on the player's
+        # venue; doing so reverses a player's favorite/underdog context when
+        # the player is the fixture away team.
         if match_odds:
-            # _is_home is the canonical truth: it tells us whether the player's team
-            # is the fixture's home team (from playerIsHome in match_odds). When
-            # _is_home is True, real_matchup.homeTeam == player's team == fixture home,
-            # so moneyline.home should use the fixture's home odds directly.
-            # When _is_home is False, real_matchup.homeTeam == opponent == fixture away,
-            # so moneyline.home must use the fixture's away odds (swap required).
-            _pred_home_is_fixture_home = _is_home
-
             if match_odds.get("americanOdds"):
                 ao = match_odds["americanOdds"]
                 if ao.get("home") and ao.get("away") and ao.get("draw"):
-                    if _pred_home_is_fixture_home:
-                        home_ml, away_ml = str(ao["home"]), str(ao["away"])
-                    else:
-                        # Prediction home is the fixture away team — swap odds.
-                        home_ml, away_ml = str(ao["away"]), str(ao["home"])
                     real_matchup["moneyline"] = {
-                        "home": home_ml,
+                        "home": str(ao["home"]),
                         "draw": str(ao["draw"]),
-                        "away": away_ml,
+                        "away": str(ao["away"]),
                     }
             elif match_odds.get("bookmakerOdds"):
                 bo = match_odds["bookmakerOdds"]
                 h, d, a = bo.get("homeWin", ""), bo.get("draw", ""), bo.get("awayWin", "")
                 if h and d and a and h != "N/A" and d != "N/A" and a != "N/A":
-                    if _pred_home_is_fixture_home:
-                        real_matchup["moneyline"] = {"home": h, "draw": d, "away": a}
-                    else:
-                        real_matchup["moneyline"] = {"home": a, "draw": d, "away": h}
-            # Normalize favorite to prediction's perspective (not fixture's)
+                    real_matchup["moneyline"] = {"home": h, "draw": d, "away": a}
+            # Favorite uses the same fixture orientation as moneyline.home/away.
             if match_odds.get("favorite"):
-                raw_fav = match_odds["favorite"]  # "home" or "away" in fixture terms
-                if _pred_home_is_fixture_home:
-                    real_matchup["favorite"] = raw_fav
-                else:
-                    # Flip: fixture "home" maps to prediction "away" and vice versa
-                    real_matchup["favorite"] = "away" if raw_fav == "home" else "home"
+                real_matchup["favorite"] = match_odds["favorite"]
         # 3. Game type from real stats — deterministic classification
         # ALWAYS override AI's expectedGameType. AI invents values like
         # "KNOCKOUT (HIGH-PRESSURE, END-TO-END)" for group stage matches.
@@ -7947,8 +7955,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # 4. Always set team names from request data (deterministic)
         # Use _is_home (which is now based on playerIsHome from the fixture) to
         # determine which team is the home team, NOT the user's venue input.
-        real_matchup["homeTeam"] = player_team_display if _is_home else req.opponentName
-        real_matchup["awayTeam"] = req.opponentName if _is_home else player_team_display
+        real_matchup["homeTeam"] = (
+            _canonical_team_name if _is_home else _canonical_opponent_name
+        )
+        real_matchup["awayTeam"] = (
+            _canonical_opponent_name if _is_home else _canonical_team_name
+        )
         # Keep one canonical odds contract for every consumer.  The mobile
         # prediction card reads the top-level field, while saved-pick analysis
         # may read matchupOverview.  Both must use the same fixture-oriented
@@ -7961,8 +7973,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # The frontend checks prediction.opponentName, prediction.teamName,
         # prediction.homeTeam, and prediction.awayTeam — these were missing,
         # causing "HOME" / "AWAY" fallback labels in the possession bar.
-        prediction["opponentName"] = req.opponentName or ""
-        prediction["teamName"]     = corrected_team_name or req.teamName or ""
+        prediction["opponentName"] = _canonical_opponent_name or ""
+        prediction["teamName"]     = _canonical_team_name or ""
         prediction["homeTeam"]     = real_matchup["homeTeam"]
         prediction["awayTeam"]     = real_matchup["awayTeam"]
         prediction["isHome"]       = _is_home
@@ -8205,9 +8217,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "expectedPossession": _tc_poss_player,
             "opponentExpectedPossession": _tc_poss_opp,
             "possessionSource": (
-                "verified match dominance"
-                if match_dominance.get("hasRealPossData")
-                else ("odds/standings fallback" if _tc_poss_player is not None else None)
+                match_dominance.get("possessionSource")
+                if _tc_poss_player is not None
+                else None
             ),
             "teamSeasonPossession": _tc_team_form,
             "opponentAllowedAverage": opp_allowed_avg,
@@ -8246,7 +8258,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 player_position=specific_position or player_position,
                 player_role=display_role or player_role,
                 expected_possession=match_dominance.get("expectedPoss"),
-                possession_is_real=bool(match_dominance.get("hasRealPossData")),
+                possession_is_real=match_dominance.get("possessionSource")
+                in {"fixture_stats", "h2h_fixture_stats"},
+                possession_source=match_dominance.get("possessionSource"),
                 opponent_allowed_average=opp_allowed_avg,
                 opponent_allowed_samples=int(
                     (position_comp_data or {}).get("sampleSize")

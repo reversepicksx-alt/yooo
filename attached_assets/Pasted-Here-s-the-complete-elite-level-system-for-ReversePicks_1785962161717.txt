@@ -1,0 +1,80 @@
+Here’s the complete elite-level system for ReversePicks — designed to be the strongest soccer prop prediction engine possible without needing Opta-level money (though it can absorb Opta data later).
+This goes far beyond a basic 3-layer model. It turns your bot into a true tactical + probabilistic machine.
+
+ReversePicks Ultimate Prediction System
+Codename: “Russian Doll + Positional Reality Engine”
+Core Philosophy
+1.  Never trust raw averages.
+2.  Always start from match script (moneyline + expected possession).
+3.  Convert formation → real pitch positions → expected involvement.
+4.  Discount outliers aggressively.
+5.  Output both a projection and a confidence band.
+
+Full System Architecture (7 Layers)
+Layer 0 – Data Foundation
+•  Confirmed or projected XI
+•  Formation (both teams)
+•  Moneyline / implied win probability
+•  Home/Away
+•  Recent 8–12 games (with opponent strength context)
+•  Basic event data (passes, touches, progressive passes, pressures if available)
+Layer 1 – Match Script Engine (Most Important)
+•  Classify the game into one of these scripts using moneyline + historical possession:
+	•  Heavy Favorite Dominance (possession 62%+)
+	•  Strong Favorite Control (55–61%)
+	•  Competitive / Slight Favorite (50–55%)
+	•  Underdog Low Block
+	•  High-Press Chaos
+	•  End-to-End Open Game
+•  This single classification drives almost everything else.
+Layer 2 – Positional Reality Engine (The Missing Piece You Just Discovered) This is what makes the formation look “messy” in a good way.
+Instead of treating “3-1-4-2” as three neat rows, the system does this:
+•  Convert formation → expected average positions on the pitch
+•  Assign each player a zone of influence:
+	•  Deep build-up zone
+	•  Progression zone
+	•  Final third / chance creation zone
+	•  Wide high zone (wing-backs)
+•  Estimate touch and pass volume multipliers based on zone + match script
+Example for a 3-1-4-2 underdog away:
+•  Wing-backs get high progressive + cross volume
+•  Single pivot gets high recycle/pass volume under pressure
+•  Center-backs get elevated clearances + short passes
+•  Forwards get lower pass volume but higher shot involvement
+This layer is what separates average bots from elite ones.
+Layer 3 – Player Role + Style Adjustment
+•  Is the player a pure distributor, progressive carrier, or final-third creator?
+•  Does he drop deep or stay high?
+•  Historical pass volume when his team has <45% vs >55% possession
+Layer 4 – Opponent Style Modifier
+•  Opponent high press → reduce short-pass volume, increase long balls/clearances
+•  Opponent low block → increase short-pass and recycle volume for the dominant team
+•  Opponent man-oriented vs zonal
+Layer 5 – Outlier & Sample Cleaning
+•  Remove or heavily discount any game >25–30% away from the player’s median
+•  Weight more recent games higher
+•  Weight games against similar opponent styles higher
+Layer 6 – Game-State Simulation (Advanced)
+•  Probability of early goal
+•  How the script changes if the favorite scores first vs if the underdog scores first
+•  Impact on pass volume, saves, clearances, etc.
+Layer 7 – Final Projection & Edge Calculation
+•  Output:
+	•  Projected number
+	•  60% confidence range
+	•  Edge vs the PrizePicks line
+	•  Recommended side + confidence tier (Strong / Medium / Speculative)
+
+Implementation Priority (What to Build First)
+1.  Match Script Classifier (Layer 1) — highest ROI
+2.  Positional Reality Engine (Layer 2) — this is currently your biggest missing piece
+3.  Aggressive outlier discounting
+4.  Possession-based multipliers
+5.  Game-state branching (early goal scenarios)
+
+What This System Will Do Better Than Almost Anyone
+•  Correctly lower midfielder pass projections when the team is a heavy underdog
+•  Raise GK and CB involvement correctly in the same scenario
+•  Understand that a “4-3-3” on paper can behave like a 2-3-5 in possession
+•  Stop getting fooled by one 80-pass outlier game
+•  Produce cleaner Over/Under separation (you’re already strong on Unders — this will make Overs more selective and higher quality)
