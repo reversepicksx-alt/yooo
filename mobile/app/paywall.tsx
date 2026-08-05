@@ -75,7 +75,6 @@ export default function PaywallScreen() {
   const {
     packages, isLoading, purchase, restore,
     isPurchasing, isRestoring, refetchOfferings,
-    hasThreeDayFreeTrial,
   } = useSubscription();
 
   const [selectedPkg, setSelectedPkg] = useState<PurchasesPackage | null>(null);
@@ -379,9 +378,6 @@ export default function PaywallScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.planTitle}>{title}</Text>
                     {period ? <Text style={styles.planPeriod}>{period}</Text> : null}
-                    {hasThreeDayFreeTrial(pkg) ? (
-                      <Text style={styles.trialLabel}>3-day free trial</Text>
-                    ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={styles.planPrice}>{price}</Text>
@@ -456,9 +452,7 @@ export default function PaywallScreen() {
 
         {/* Apple disclosure */}
         <Text style={styles.disclosure}>
-          {selectedPkg && hasThreeDayFreeTrial(selectedPkg)
-            ? `3-day free trial, then ${selectedPkg.product?.priceString ?? 'the displayed weekly price'} per week. Your Apple ID is charged after the trial unless cancelled at least 24 hours before it ends. Subscriptions automatically renew weekly. Manage or cancel anytime in Apple Settings.`
-            : 'Subscription automatically renews at the displayed price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.'}
+          Subscription automatically renews at the displayed price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.
         </Text>
       </ScrollView>
     </View>
@@ -513,7 +507,6 @@ const styles = StyleSheet.create({
   planTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
   planDesc: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
   planPeriod: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
-  trialLabel: { color: Colors.primary, fontSize: 11, fontWeight: '800', marginTop: 4 },
   planPrice: { color: Colors.text, fontSize: 16, fontWeight: '800' },
   checkDot: {
     width: 20, height: 20, borderRadius: 10,

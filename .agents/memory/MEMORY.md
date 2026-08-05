@@ -104,3 +104,4 @@
 - [AI spend governance](ai-spend-governance.md) — user-facing explanations share a persistent atomic token budget; background enrichment is opt-in and must never silently bypass it.
 - [TheStatsAPI evidence contract](thestatsapi-evidence-contract.md) — optional soccer enrichment requires identity joins and explicit coverage states; empty data is unavailable, never a measured zero.
 - [API-Football response shape](api-football-response-shape.md) — api_football_request returns the provider response list directly; normalize legacy envelope-shaped test doubles before parsing lineups or fixtures.
+- [Apple introductory-offer lifecycle](apple-intro-offer-lifecycle.md) — deleting an App Store introductory offer blocks new trials but does not cancel trials already granted to existing Apple customers.

@@ -168,7 +168,7 @@ function formatExpiryDate(ms?: number): string {
 // ── Apple IAP Paywall (iOS native only) ────────────────────────────────────
 
 function IAPPaywall() {
-  const { packages, isLoading, purchase, restore, isPurchasing, isRestoring, hasThreeDayFreeTrial } = useSubscription();
+  const { packages, isLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
   const { email, session } = useAuth();
   const [buyingId, setBuyingId] = useState<string | null>(null);
   const [confirmPkg, setConfirmPkg] = useState<PurchasesPackage | null>(null);
@@ -289,7 +289,6 @@ function IAPPaywall() {
                 <View style={styles.planInfo}>
                   <Text style={styles.planName}>{title}</Text>
                   {desc ? <Text style={styles.planDesc}>{desc}</Text> : null}
-                    {hasThreeDayFreeTrial(pkg) && <Text style={styles.trialLabel}>3-day free trial</Text>}
                 </View>
                 <View style={styles.planRight}>
                   <Text style={styles.planPrice}>{priceStr}</Text>
@@ -319,9 +318,7 @@ function IAPPaywall() {
       </TouchableOpacity>
 
       <Text style={styles.paywallDisclosure}>
-        {packages.some(pkg => hasThreeDayFreeTrial(pkg))
-          ? 'Eligible new subscribers get a 3-day free trial on the weekly plan, then the displayed weekly price. Your Apple ID is charged after the trial unless cancelled at least 24 hours before it ends. Subscriptions automatically renew. Manage or cancel at any time in '
-          : 'Subscriptions automatically renew unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel at any time in '}
+        Subscriptions automatically renew unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel at any time in
         <Text style={{ color: Colors.primary }} onPress={() => Linking.openURL('https://apps.apple.com/account/subscriptions')}>
           Apple Settings
         </Text>
@@ -1221,7 +1218,6 @@ const styles = StyleSheet.create({
   planOptionCurrent: { backgroundColor: Colors.primaryDim },
   planInfo: { flex: 1 },
   planDesc: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  trialLabel: { fontSize: 11, color: Colors.primary, fontWeight: '800', marginTop: 4 },
   planName: { fontSize: 16, fontWeight: '700', color: Colors.text },
   planNameCurrent: { color: Colors.primary },
   planRight: { alignItems: 'flex-end', gap: 2 },
