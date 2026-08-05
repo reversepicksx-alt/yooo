@@ -41,6 +41,10 @@ args = "Start application"
 task = "workflow.run"
 args = "Start Backend"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Close Apple Intro Trial"
+
   [[workflows.workflow]]
   name = "Start application"
   author = "agent"
@@ -64,6 +68,17 @@ outputType = "console"
 task = "shell.exec"
 args = "mkdir -p /home/runner/.reversepicks_db && (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || true) && sleep 5 && cd backend && PYTHONUNBUFFERED=1 /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000"
 waitForPort = 8000
+
+[[workflows.workflow]]
+name = "Close Apple Intro Trial"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "TARGET_UTC='2026-08-05T05:00:00.000Z' node scripts/close_asc_intro_offer.mjs"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [[ports]]
 localPort = 5000
