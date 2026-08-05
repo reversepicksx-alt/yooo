@@ -73,11 +73,18 @@ async def _search_players_cache(
     # Top-5 European leagues — used to validate single-word cache hits
     TOP_LEAGUES = {39, 140, 135, 78, 61}
 
-    # Build filter: every word in the query must appear in nameClean
+    # Build filter: every word in the query must appear in nameClean.
+    # For words ≥ 6 chars we also accept the word without its final character
+    # so that a query like "aguilar" still finds nameClean entries that store
+    # "aguila" (Eduardo Águila vs Paolo García Aguilar).  Using the N-1 prefix
+    # catches both forms without opening up false positives for short words.
+    def _flex_regex(w: str) -> str:
+        return re.escape(w[:-1]) if len(w) >= 6 else re.escape(w)
+
     if len(parts) == 1:
-        name_filt: dict = {"nameClean": {"$regex": re.escape(parts[0])}}
+        name_filt: dict = {"nameClean": {"$regex": _flex_regex(parts[0])}}
     else:
-        name_filt = {"$and": [{"nameClean": {"$regex": re.escape(w)}} for w in parts]}
+        name_filt = {"$and": [{"nameClean": {"$regex": _flex_regex(w)}} for w in parts]}
 
     # Don't filter cache by tournament/cup league IDs — players are stored
     # under their club leagues, not the competition they appeared in.
@@ -448,9 +455,23 @@ async def search_players(req: PlayerSearchRequest):
         if len(query_parts) < 2:
             return False
         first_aliases = _NICKNAME_ALIASES.get(query_parts[0], set())
-        return bool(first_aliases) and any(alias in name_words for alias in first_aliases) and all(
+        if bool(first_aliases) and any(alias in name_words for alias in first_aliases) and all(
             word in name_words for word in query_parts[1:]
-        )
+        ):
+            return True
+        # Prefix rescue: "aguilar" should match a player whose nameClean stores
+        # "aguila" (Eduardo Águila Castro).  When the query word starts with a
+        # name word of ≥ 4 chars the two are treated as equivalent, so a 1-char
+        # trailing suffix difference (common in Spanish name variants) does not
+        # cause the correct player to be dropped in favour of a stranger whose
+        # full surname happens to match exactly.
+        def _prefix_ok(qw: str) -> bool:
+            if qw in name_words:
+                return True
+            return len(qw) >= 5 and any(
+                qw.startswith(nw) for nw in name_words if len(nw) >= 4
+            )
+        return all(_prefix_ok(qw) for qw in query_parts)
 
     def sort_key(p):
         has_team    = 0 if p.get("teamName") else 1
@@ -462,6 +483,21 @@ async def search_players(req: PlayerSearchRequest):
             and _name_matches_query(name_norm)
         )
         all_match   = 0 if _name_matches_query(name_norm) else 1
+
+        # Prefix-rescue flag: query word starts with a stored name word (≥4 chars).
+        # Used so "aguilar" → "aguila" is treated as a valid match in exact_word
+        # (Eduardo Águila Castro should not be penalised relative to a player whose
+        # surname literally is "Aguilar").
+        prefix_rescued = (
+            all_match == 0
+            and not all(w in name_words for w in query_parts)
+            and all(
+                w in name_words or (
+                    len(w) >= 5 and any(w.startswith(nw) for nw in name_words if len(nw) >= 4)
+                )
+                for w in query_parts
+            )
+        )
 
         # Abbreviated-name rescue: "J. David" must match query "Jonathan David".
         # API-Football stores many players with abbreviated first names (e.g.
@@ -507,6 +543,7 @@ async def search_players(req: PlayerSearchRequest):
             nickname_rescued
             or abbrev_rescued
             or middle_rescued
+            or prefix_rescued
             or all(w in name_words for w in query_parts)
         ) else 1
 
