@@ -95,6 +95,140 @@ def _possession_narrative(
     return None
 
 
+def _role_mechanism(position: str, role: str, prop_raw: str) -> str | None:
+    """Describe only the role-to-stat mechanism supported by the role resolver.
+
+    This is intentionally a bounded vocabulary.  It does not claim a player
+    occupies a zone, presses a trigger, or receives between lines unless that
+    information is actually present in the resolver's position/role output.
+    """
+    pos = str(position or "").upper().replace(" ", "")
+    role_norm = str(role or "").lower()
+    prop = prop_raw.lower()
+
+    if prop in {"pass_attempts", "passes", "key_passes", "crosses"}:
+        if pos in {"GK", "GOALKEEPER"}:
+            return "As the goalkeeper, the pass volume is primarily a build-up and restart signal: it rises when the team recycles possession through the back line and falls when the team plays longer or spends more time defending."
+        if pos in {"CB", "SW", "DEF"} or "ball-playing defender" in role_norm or "stopper" in role_norm:
+            return "As a central defender, the pass volume is primarily circulation behind the attack: it depends on how often the team can retain possession and reset through the first line rather than on final-third touches."
+        if pos in {"LB", "RB", "LWB", "RWB", "FB"} or "fullback" in role_norm or "wingback" in role_norm:
+            return "As a fullback/wingback, the pass volume is tied to the team's outlet work and width in possession; the role can accumulate passes when the team controls territory, but is less stable when the player is pinned into defensive actions."
+        if pos in {"DM", "CDM"} or "deep" in role_norm or "regista" in role_norm or "ball winner" in role_norm:
+            return "As a deeper midfielder, the pass volume is tied to first- and second-phase circulation: possession control creates repeated outlet and recycle actions before the ball reaches the attacking line."
+        if pos in {"CM", "MID"} or "box-to-box" in role_norm or "playmaker" in role_norm or "mezzala" in role_norm:
+            return "As a central midfielder, the pass volume is tied to linking phases of play; a possession edge gives the player more chances to connect buildup to the attacking unit."
+        if pos in {"AM", "CAM"} or "creator" in role_norm or "advanced playmaker" in role_norm:
+            return "As an advanced creator, the pass volume depends on how much settled possession reaches the attacking third; the role is more about connecting and progressing attacks than raw defensive circulation."
+        if pos in {"LW", "RW", "LM", "RM", "WING"} or "winger" in role_norm or "wide" in role_norm:
+            return "As a wide attacker, the pass volume depends on whether the team can establish possession on that side; the role is more variable than a central midfielder because touches are affected by width and direct play."
+        if pos in {"ST", "CF", "SS", "FWD", "FW"} or "forward" in role_norm or "striker" in role_norm:
+            return "As a forward, the pass volume is naturally more volatile: it depends on link play and how often the team reaches the final third, rather than the deeper circulation that drives defender and midfielder pass counts."
+
+    if prop in {"shots", "shots_on_target", "goals"}:
+        if pos in {"ST", "CF", "SS", "FWD", "FW"} or "forward" in role_norm or "striker" in role_norm:
+            return "The role is attack-ending rather than possession-recycling, so the relevant tactical path is whether the team can sustain final-third entries and create attempts for the forward."
+        if pos in {"LW", "RW", "LM", "RM", "WING", "AM", "CAM"} or "winger" in role_norm or "creator" in role_norm:
+            return "The role can generate attempts when the team establishes attacking possession, but shot volume remains sensitive to whether the player is used as a creator or a final action."
+        if pos in {"CM", "MID", "DM", "CDM"}:
+            return "The role is not primarily attack-ending, so attempts depend on late arrivals and the team's ability to sustain pressure rather than on possession alone."
+
+    if prop in {"tackles", "interceptions", "clearances", "blocks", "fouls_committed"}:
+        if pos in {"GK", "GOALKEEPER"}:
+            return "For a goalkeeper, defensive volume is driven by opposition entries and shots rather than possession control by the player's own team."
+        if pos in {"CB", "SW", "DEF", "LB", "RB", "LWB", "RWB", "FB", "DM", "CDM"} or "def" in role_norm or "ball winner" in role_norm:
+            return "The role is defensive, so the prop is driven by time spent without the ball and the number of opposition attacks reaching the player's zone."
+        return "The role is not primarily defensive, so this prop depends more on match state and defensive workload than on the player's normal attacking responsibilities."
+
+    if prop in {"dribbles", "dribbles_attempts"}:
+        if pos in {"LW", "RW", "LM", "RM", "WING", "AM", "CAM", "ST", "CF", "SS"} or "wide" in role_norm or "creator" in role_norm or "forward" in role_norm:
+            return "The role has an attacking ball-carrying pathway, but dribble volume still depends on whether the team reaches the player with space and permission to attack a defender."
+        return "The resolved role is not primarily a ball-carrying attacking role, so dribble volume is less directly supported by role identity."
+
+    if prop in {"saves", "goalie_saves"} and pos in {"GK", "GOALKEEPER"}:
+        return "For a goalkeeper, save volume is an opponent-activity stat: it rises with shots on target faced and can remain high even when the goalkeeper's team has little possession."
+    return None
+
+
+def _tactical_mechanism_lines(context: dict[str, Any], prop_raw: str) -> list[str]:
+    """Build evidence-gated, player-specific tactical sentences."""
+    if not isinstance(context, dict):
+        return []
+    lines: list[str] = []
+    position = str(context.get("position") or "")
+    role = str(context.get("role") or "")
+    prop = _prop_label(prop_raw)
+
+    mechanism = _role_mechanism(position, role, prop_raw)
+    if mechanism and (position or role):
+        role_display = " · ".join(part for part in (position, role) if part)
+        lines.append(f"Role anchor: **{role_display}** — {mechanism}")
+
+    player_poss = _num(context.get("expectedPossession"))
+    opp_poss = _num(context.get("opponentExpectedPossession"))
+    poss_source = str(context.get("possessionSource") or "")
+    if player_poss is not None and opp_poss is not None and poss_source == "verified match dominance":
+        if prop_raw in _POSSESSION_BOOSTED_PROPS and player_poss >= 55:
+            lines.append(
+                f"Match mechanism: verified {player_poss:.0f}% expected possession should increase "
+                f"the team's settled sequences, which supports {prop} through the {position or 'player'} role."
+            )
+        elif prop_raw in _POSSESSION_SUPPRESSED_PROPS and player_poss <= 45:
+            lines.append(
+                f"Match mechanism: verified {player_poss:.0f}% expected possession leaves the team defending more often, "
+                f"which supports defensive {prop} workload."
+            )
+        elif prop_raw in _POSSESSION_BOOSTED_PROPS and player_poss <= 45:
+            lines.append(
+                f"Match mechanism: verified {player_poss:.0f}% expected possession limits settled attacking sequences, "
+                f"which is a constraint on {prop} volume."
+            )
+
+    tier = str(context.get("opponentProfileTier") or "")
+    diff = _num(context.get("opponentProfileDiffPct"))
+    allowed = _num(context.get("opponentAllowedAverage"))
+    n_allowed = int(_num(context.get("opponentAllowedSamples")) or 0)
+    if allowed is not None and n_allowed >= 3:
+        if diff is not None:
+            comparison = "above" if diff > 0 else "below" if diff < 0 else "near"
+            lines.append(
+                f"Opponent mechanism: {context.get('opponent') or 'Opponent'} allows "
+                f"{allowed:.1f} {prop} to this position over {n_allowed} comparable games, "
+                f"{comparison} the player's baseline by {abs(diff):.0f}%"
+                f"{f' ({tier})' if tier else ''}."
+            )
+        else:
+            lines.append(
+                f"Opponent mechanism: {context.get('opponent') or 'Opponent'} allows "
+                f"{allowed:.1f} {prop} to this position across {n_allowed} comparable games."
+            )
+
+    formation = context.get("lineupFormation")
+    opponent_formation = context.get("opponentFormation")
+    lineup_status = str(context.get("lineupStatus") or "")
+    if formation or opponent_formation:
+        shape = f"{formation or 'unknown'} vs {opponent_formation or 'unknown'}"
+        lines.append(
+            f"Shape evidence: the available {'confirmed' if lineup_status == 'confirmed' else 'predicted'} "
+            f"lineup data shows **{shape}**; no additional zone or matchup claim is made without event-level data."
+        )
+
+    tempo = str(context.get("tempo") or "")
+    total_goals = _num(context.get("expectedTotalGoals"))
+    if tempo and total_goals is not None:
+        lines.append(
+            f"Game-state context: the team model classifies the match as **{tempo} tempo** "
+            f"({total_goals:.1f} expected total goals), which affects the number of available sequences but "
+            f"does not replace the player's role evidence."
+        )
+
+    if context.get("favoriteDampeningApplied"):
+        note = context.get("favoriteDampeningNote")
+        if note:
+            lines.append(f"Game-management risk: {note}.")
+
+    return lines
+
+
 def build_deterministic_explanation(
     prediction: dict[str, Any],
     ledger: dict[str, Any] | None = None,
@@ -137,6 +271,7 @@ def build_deterministic_explanation(
     match_dominance = result.get("matchDominance") or {}
     match_factors = result.get("matchFactors") or {}
     analysis_summary = result.get("analysisSummary") or {}
+    tactical_context = result.get("tacticalContext") or {}
 
     prior_mean = bm.get("priorMean")
     momentum_label = str(bm.get("momentumLabel") or "").upper()
@@ -147,7 +282,18 @@ def build_deterministic_explanation(
     venue_avg = _num(analysis_summary.get("venueAverage"))
     opp_allowed_avg = _num(analysis_summary.get("opponentAllowedAverage"))
 
-    # Expected possession — resolve from multiple possible locations
+    # Expected possession — prefer the canonical tactical context packet.
+    # Legacy locations remain supported for older cached predictions.
+    context_poss_player = _num(tactical_context.get("expectedPossession"))
+    context_poss_opp = _num(tactical_context.get("opponentExpectedPossession"))
+    if context_poss_player is not None and context_poss_opp is not None:
+        expected_poss_player = context_poss_player
+        expected_poss_opp = context_poss_opp
+    else:
+        expected_poss_player = None
+        expected_poss_opp = None
+
+    # Expected possession — resolve from legacy locations when necessary.
     home_poss = _num(
         match_dominance.get("homeExpectedPoss")
         or match_dominance.get("home_expected_poss")
@@ -156,14 +302,12 @@ def build_deterministic_explanation(
         match_dominance.get("awayExpectedPoss")
         or match_dominance.get("away_expected_poss")
     )
-    expected_poss_player: float | None = None
-    expected_poss_opp: float | None = None
-    if home_poss and away_poss:
+    if expected_poss_player is None and home_poss and away_poss:
         if venue == "home":
             expected_poss_player, expected_poss_opp = home_poss, away_poss
         elif venue == "away":
             expected_poss_player, expected_poss_opp = away_poss, home_poss
-    elif match_factors.get("expectedPossession"):
+    elif expected_poss_player is None and match_factors.get("expectedPossession"):
         expected_poss_player = _num(match_factors["expectedPossession"])
         if expected_poss_player:
             expected_poss_opp = round(100 - expected_poss_player, 1)
@@ -212,10 +356,10 @@ def build_deterministic_explanation(
     # ── Tactical context ──────────────────────────────────────────────────────
     tactical_lines: list[str] = []
 
-    # Possession narrative
-    poss_note = _possession_narrative(prop_raw, expected_poss_player, expected_poss_opp, venue)
-    if poss_note:
-        tactical_lines.append(poss_note)
+    # Player-specific tactical mechanism. This is evidence-gated: if the role
+    # resolver or matchup packet is missing, no invented tactical claim is
+    # displayed.
+    tactical_lines.extend(_tactical_mechanism_lines(tactical_context, prop_raw))
 
     # Venue average
     if venue_avg is not None and prior_mean is not None:
@@ -223,15 +367,16 @@ def build_deterministic_explanation(
         _diff = venue_avg - prior_mean
         _diff_str = f"{_diff:+.1f} vs season average" if abs(_diff) >= 0.5 else "in line with season average"
         tactical_lines.append(
-            f"{_venue_label} average: {_fmt(venue_avg)} pass attempts "
+            f"{_venue_label} average: {_fmt(venue_avg)} {prop} "
             f"({_diff_str} of {_fmt(prior_mean)})."
         )
     elif venue_avg is not None:
         _venue_label = venue.capitalize() if venue in {"home", "away"} else "Venue"
         tactical_lines.append(f"{_venue_label} average: {_fmt(venue_avg)} {prop}.")
 
-    # Opponent allowed average
-    if opp_allowed_avg is not None:
+    # Legacy opponent average fallback for cached predictions that predate the
+    # tactical context packet.
+    if opp_allowed_avg is not None and not any("Opponent mechanism:" in line_ for line_ in tactical_lines):
         tactical_lines.append(
             f"{opponent or 'Opponent'} allows an average of {_fmt(opp_allowed_avg)} {prop} "
             f"to players at this position — used as a defensive-context anchor."

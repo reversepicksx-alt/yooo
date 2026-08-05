@@ -7949,6 +7949,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # determine which team is the home team, NOT the user's venue input.
         real_matchup["homeTeam"] = player_team_display if _is_home else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if _is_home else player_team_display
+        # Keep one canonical odds contract for every consumer.  The mobile
+        # prediction card reads the top-level field, while saved-pick analysis
+        # may read matchupOverview.  Both must use the same fixture-oriented
+        # homeTeam/awayTeam pairing.
+        if real_matchup.get("moneyline"):
+            prediction["moneyline"] = dict(real_matchup["moneyline"])
 
         # Expose team/opponent names at the TOP LEVEL of the response so the
         # frontend can use them directly without digging into matchupOverview.
@@ -8169,6 +8175,62 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "goalkeeperSaveRate": gk_formula_data.get("gkSaveRate") if gk_formula_data else None,
             "goalkeeperSaveSample": gk_formula_data.get("gkSampleSize") if gk_formula_data else None,
             "opponentShotsOnTarget": gk_formula_data.get("opponentAvgSOT") if gk_formula_data else None,
+        }
+
+        # Grounded tactical context.  This is deliberately a structured
+        # evidence packet, not an LLM-generated claim set.  The explanation
+        # renderer uses only these values to describe the player's likely
+        # role-to-prop mechanism and explicitly omits unsupported mechanisms.
+        _tc_bm = real_bayes or {}
+        _tc_poss_player = match_dominance.get("expectedPoss")
+        _tc_poss_opp = match_dominance.get("oppExpectedPoss")
+        _tc_role = display_role or player_role or ""
+        _tc_position = specific_position or player_position or ""
+        _tc_opp_profile = prediction.get("opponentProfile") or {}
+        _tc_team_form = match_dominance.get("teamSeasonAvg") if match_dominance.get("seasonAvgIsReal") else None
+        _tc_lineup = locals().get("_pitch_lineup") or {}
+        _tc_target_lineup = [
+            item for item in (_tc_lineup.get("players") or [])
+            if item.get("isTarget")
+        ]
+        prediction["tacticalContext"] = {
+            "available": bool(_tc_position or _tc_role or _tc_poss_player is not None),
+            "position": _tc_position or None,
+            "role": _tc_role or None,
+            "roleSource": "position-and-role-resolver" if (_tc_position or _tc_role) else None,
+            "propType": req.propType,
+            "playerTeam": player_team_display,
+            "opponent": req.opponentName,
+            "venue": player_venue,
+            "expectedPossession": _tc_poss_player,
+            "opponentExpectedPossession": _tc_poss_opp,
+            "possessionSource": (
+                "verified match dominance"
+                if match_dominance.get("hasRealPossData")
+                else ("odds/standings fallback" if _tc_poss_player is not None else None)
+            ),
+            "teamSeasonPossession": _tc_team_form,
+            "opponentAllowedAverage": opp_allowed_avg,
+            "opponentAllowedSamples": (
+                _tc_opp_profile.get("sampleSize")
+                or _tc_bm.get("opponentAllowedSamples")
+                or 0
+            ),
+            "opponentProfileTier": _tc_opp_profile.get("tier"),
+            "opponentProfileDiffPct": _tc_opp_profile.get("diffPct"),
+            "venueAverage": venue_avg,
+            "venueSampleSize": len(venue_samples),
+            "seasonAverage": _tc_bm.get("priorMean"),
+            "recentMomentum": _tc_bm.get("momentumLabel"),
+            "recentMomentumEffect": _tc_bm.get("momentumEffect"),
+            "tempo": game_tempo.get("expectedTempo"),
+            "expectedTotalGoals": game_tempo.get("expectedTotalGoals"),
+            "favoriteDampeningApplied": bool(favorite_dampening.get("applied")),
+            "favoriteDampeningNote": favorite_dampening.get("note"),
+            "lineupStatus": _lineup_status,
+            "lineupFormation": _tc_lineup.get("formation"),
+            "opponentFormation": _tc_lineup.get("opponentFormation"),
+            "targetLineupPosition": (_tc_target_lineup[0] or {}).get("pos") if _tc_target_lineup else None,
         }
 
         # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────

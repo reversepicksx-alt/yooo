@@ -337,7 +337,6 @@ export default function ScanScreen() {
     setScannedImageUri(null);
     setPrediction(null);
     setPredictionRequest(null);
-    setAiNarrativeLoading(false);
     setTacticalAnalysis(null);
     setAnalyzeError(null);
     setManualError(null);
@@ -1037,6 +1036,8 @@ export default function ScanScreen() {
         analysisFactors: prediction.analysisFactors || undefined,
         modelInputSnapshot: prediction.modelInputSnapshot || undefined,
         moneyline: prediction.moneyline || undefined,
+         homeTeam: (prediction as any).homeTeam || (prediction as any).matchupOverview?.homeTeam || undefined,
+         awayTeam: (prediction as any).awayTeam || (prediction as any).matchupOverview?.awayTeam || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
         // Permanent fix: store the exact fixtureId so settlement never does
@@ -1061,6 +1062,9 @@ export default function ScanScreen() {
            playerGameLogs:    prediction.playerGameLogs || undefined,
           tacticalAlerts:    prediction.tacticalAlerts || undefined,
           bayesianMetrics:   (prediction as any).bayesianMetrics || undefined,
+           tacticalContext:   (prediction as any).tacticalContext || undefined,
+           homeTeam:          (prediction as any).homeTeam || (prediction as any).matchupOverview?.homeTeam || undefined,
+           awayTeam:          (prediction as any).awayTeam || (prediction as any).matchupOverview?.awayTeam || undefined,
         } : {}),
         // WTA: persist tennis-specific fields and structured analysis
         ...(sport === 'wta' ? {
@@ -3216,11 +3220,13 @@ export default function ScanScreen() {
                       const d = formatOdds(prediction.moneyline.draw);
                       const a = formatOdds(prediction.moneyline.away);
                       if (h || d || a) {
-                        const playerTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
-                        const oppTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
-                        const isPlayerHome = venueOverride === 'home';
-                        const team1 = isPlayerHome ? playerTeamShort : oppTeamShort;
-                        const team2 = isPlayerHome ? oppTeamShort : playerTeamShort;
+                        // The odds object is fixture-oriented: moneyline.home belongs
+                        // to homeTeam and moneyline.away belongs to awayTeam. Do not
+                        // relabel the odds from the user's original venue selection;
+                        // the backend may have corrected that selection to the
+                        // verified fixture assignment.
+                        const homeTeamShort = (prediction.homeTeam || prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
+                        const awayTeamShort = (prediction.awayTeam || prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
                         return (
                           <View style={styles.moneylineWrap}>
                             <View style={styles.moneylineHeader}>
@@ -3229,7 +3235,7 @@ export default function ScanScreen() {
                             </View>
                             <View style={styles.moneylinePills}>
                               <View style={styles.mlPill}>
-                                <Text style={styles.mlPillTeam}>{team1}</Text>
+                                <Text style={styles.mlPillTeam}>{homeTeamShort}</Text>
                                 <Text style={styles.mlPillOdds}>{h}</Text>
                               </View>
                               {d ? (
@@ -3239,7 +3245,7 @@ export default function ScanScreen() {
                                 </View>
                               ) : null}
                               <View style={styles.mlPill}>
-                                <Text style={styles.mlPillTeam}>{team2}</Text>
+                                <Text style={styles.mlPillTeam}>{awayTeamShort}</Text>
                                 <Text style={styles.mlPillOdds}>{a}</Text>
                               </View>
                             </View>

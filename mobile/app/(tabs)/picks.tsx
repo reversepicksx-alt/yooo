@@ -1348,11 +1348,13 @@ export default function PicksScreen() {
               const d = formatOdds(ml.draw);
               const a = formatOdds(ml.away);
               if (h || d || a) {
-                const teamShort = (analysisModal?.pick?.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
-                const oppShort  = (analysisModal?.pick?.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
-                const isHome = analysisModal?.pick?.venue !== 'away';
-                const t1 = isHome ? teamShort : oppShort;
-                const t2 = isHome ? oppShort  : teamShort;
+                // Saved odds remain fixture-oriented: home odds belong to the
+                // verified homeTeam and away odds to the verified awayTeam.
+                // Never infer this pairing from the original player venue.
+                const homeTeamName = String(analysisModal?.data?.homeTeam || analysisModal?.pick?.homeTeam || analysisModal?.pick?.teamName || 'HOME');
+                const awayTeamName = String(analysisModal?.data?.awayTeam || analysisModal?.pick?.awayTeam || analysisModal?.pick?.opponentName || 'AWAY');
+                const homeTeamShort = homeTeamName.split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
+                const awayTeamShort = awayTeamName.split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
                 return (
                   <View style={mStyles.oddsRow}>
                     <View style={mStyles.oddsHeader}>
@@ -1361,7 +1363,7 @@ export default function PicksScreen() {
                     </View>
                     <View style={mStyles.oddsPills}>
                       <View style={mStyles.oddsPill}>
-                        <Text style={mStyles.oddsPillTeam}>{t1}</Text>
+                        <Text style={mStyles.oddsPillTeam}>{homeTeamShort}</Text>
                         <Text style={mStyles.oddsPillVal}>{h}</Text>
                       </View>
                       {d ? (
@@ -1371,7 +1373,7 @@ export default function PicksScreen() {
                         </View>
                       ) : null}
                       <View style={mStyles.oddsPill}>
-                        <Text style={mStyles.oddsPillTeam}>{t2}</Text>
+                        <Text style={mStyles.oddsPillTeam}>{awayTeamShort}</Text>
                         <Text style={mStyles.oddsPillVal}>{a}</Text>
                       </View>
                     </View>

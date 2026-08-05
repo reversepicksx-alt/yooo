@@ -424,6 +424,11 @@ async def save_pick(req: SavePickRequest):
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
         "playerIsHome": pick.get("playerIsHome") if pick.get("playerIsHome") is not None else (pick.get("venue") == "home"),
+        # Moneyline odds are always fixture-oriented. Preserve the exact team
+        # labels that were paired with moneyline.home/moneyline.away so the
+        # analysis modal never has to infer them from a stale player venue.
+        "homeTeam": pick.get("homeTeam") or (pick.get("matchupOverview") or {}).get("homeTeam") or None,
+        "awayTeam": pick.get("awayTeam") or (pick.get("matchupOverview") or {}).get("awayTeam") or None,
         "projectedValue": pick.get("projectedValue") or pick.get("projection") or 0,
         "projection":     pick.get("projection") or pick.get("projectedValue") or 0,
         "confidenceScore": pick.get("confidenceScore") or pick.get("confidence") or 50,
@@ -502,6 +507,7 @@ async def save_pick(req: SavePickRequest):
         # Store tactical metrics so the analysis modal can show them
         for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
                       "analysisFactors", "modelInputSnapshot", "factorLedger",
+                       "tacticalContext",
                       "factorLedgerVersion", "factorLedgerFingerprint"):
             val = pick.get(field)
             if val is not None:
@@ -1925,10 +1931,12 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "projectedValue": 1, "recommendation": 1, "confidenceScore": 1,
         "confidenceLevel": 1, "confidenceInterval": 1,
         "player": 1, "opponent": 1, "propType": 1, "line": 1,
+         "moneyline": 1, "homeTeam": 1, "awayTeam": 1,
         "recentSamples": 1, "bayesianMetrics": 1,
         "playerGameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
+         "tacticalContext": 1,
         "analysisFactors": 1, "modelInputSnapshot": 1,
         "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
         "_created": 1,
@@ -1971,10 +1979,11 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     if not prediction and pick_sport in ("cs2", "soccer", "wta"):
         inline_analysis = {}
         for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs",
+                      "homeTeam", "awayTeam",
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
                       "streakFlag", "propType", "line", "playerName", "opponentName",
-                      "tacticalMetrics", "gameScript", "moneyline"):
+                      "tacticalMetrics", "tacticalContext", "gameScript", "moneyline", "homeTeam", "awayTeam"):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val
