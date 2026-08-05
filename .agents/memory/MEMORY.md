@@ -112,3 +112,4 @@
 - [API-Football response shape](api-football-response-shape.md) — api_football_request returns the provider response list directly; normalize legacy envelope-shaped test doubles before parsing lineups or fixtures.
 - [Apple introductory-offer lifecycle](apple-intro-offer-lifecycle.md) — deleting an App Store introductory offer blocks new trials but does not cancel trials already granted to existing Apple customers.
 - [Fixture odds and tactical contract](fixture-odds-tactical-contract.md) — moneyline home/away labels follow verified fixture teams; tactical prose is role/prop-specific and omits unsupported claims.
+- [Tactical shadow model](tactical-shadow-model.md) — lineup, role, opponent-shape, odds, and possession signals explain picks first; projection changes require settled-pick validation.

@@ -357,6 +357,7 @@ export interface PredictionResult {
   lineDeviationHitRate?: number;
   sport?: string;
   tacticalAlerts?: string[];
+  tacticalIntelligence?: TacticalIntelligence;
   gameScript?: {
     p_team_trails?: number;
     p_opponent_scores_first?: number;
@@ -742,6 +743,74 @@ interface RawPrediction {
   lineDeviationHitRate?: number;
   gameScript?: Record<string, unknown>;
   error?: string;
+}
+
+export interface TacticalIntelligence {
+  version?: string;
+  mode?: 'shadow' | string;
+  status?: 'strong' | 'limited' | 'unavailable' | string;
+  sourcePolicy?: string;
+  player?: {
+    position?: string | null;
+    role?: string | null;
+    roleGroup?: string;
+    providerGridPosition?: { x?: number | null; y?: number | null };
+    positionSource?: string;
+    roleSource?: string;
+  };
+  lineup?: {
+    status?: string;
+    shapeStatus?: string;
+    formation?: string | null;
+    opponentFormation?: string | null;
+    playerTeam?: string | null;
+    opponent?: string | null;
+    playerCount?: number;
+    opponentPlayerCount?: number;
+  };
+  marketGameScript?: {
+    status?: string;
+    playerTeamImpliedProbability?: number | null;
+    opponentImpliedProbability?: number | null;
+    classification?: string;
+    direction?: string;
+    source?: string | null;
+  };
+  possessionGameScript?: {
+    status?: string;
+    expectedPlayerTeamPossession?: number | null;
+    classification?: string;
+    source?: string | null;
+  };
+  propMechanism?: {
+    propType?: string;
+    roleGroup?: string;
+    marketSupport?: string[];
+    gameScriptEvidence?: string[];
+    opponentEvidence?: string;
+    opponentNote?: string | null;
+    projectionAdjustment?: number;
+    projectionAdjustmentStatus?: string;
+  };
+  opponentRoleComparison?: {
+    targetPosition?: string | null;
+    targetRoleGroup?: string;
+    opponentRoleCounts?: Record<string, number>;
+    opponentDefensiveCount?: number;
+    relevantMechanism?: string;
+    comparison?: string;
+    directMarkingVerified?: boolean;
+    sampleStatus?: string;
+  };
+  evidence?: {
+    opponentAllowedAverage?: number | null;
+    opponentAllowedSamples?: number;
+    positionComparableSamples?: number;
+    formationData?: string;
+    marketData?: string;
+    possessionData?: string;
+  };
+  limitations?: string[];
 }
 
 export interface AnalysisFactor {

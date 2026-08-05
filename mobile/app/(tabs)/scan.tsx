@@ -10,6 +10,7 @@ import {
   renderOpponentDefProfile,
   renderMatchupPossession,
   renderManagerContext,
+  renderTacticalIntelligence,
 } from '@/components/AnalysisCards';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -1063,6 +1064,7 @@ export default function ScanScreen() {
           tacticalAlerts:    prediction.tacticalAlerts || undefined,
           bayesianMetrics:   (prediction as any).bayesianMetrics || undefined,
            tacticalContext:   (prediction as any).tacticalContext || undefined,
+           tacticalIntelligence: (prediction as any).tacticalIntelligence || undefined,
            homeTeam:          (prediction as any).homeTeam || (prediction as any).matchupOverview?.homeTeam || undefined,
            awayTeam:          (prediction as any).awayTeam || (prediction as any).matchupOverview?.awayTeam || undefined,
         } : {}),
@@ -4665,13 +4667,15 @@ export default function ScanScreen() {
               const oppDefEl    = renderOpponentDefProfile(pred, pickCtx);
               const matchupEl   = renderMatchupPossession(pred, pickCtx);
               const mgrEl       = renderManagerContext(pred);
-                if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl) return null;
+              const tacticalEl = renderTacticalIntelligence(pred);
+                if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl && !tacticalEl) return null;
               return (
                 <View style={{ gap: 0, marginTop: 6 }}>
                   {evidenceEl}
                   {mgrEl}
                   {oppDefEl}
                   {matchupEl}
+                  {tacticalEl}
                 </View>
               );
             })()}

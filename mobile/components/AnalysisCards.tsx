@@ -8,7 +8,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { AnalysisFactor } from '@/lib/api';
+import { AnalysisFactor, TacticalIntelligence } from '@/lib/api';
 
 export const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -457,6 +457,101 @@ export function renderManagerContext(data: Record<string, unknown> | null) {
   );
 }
 
+/** Tactical Intelligence card — role, opponent shape, market script, and limits. */
+export function renderTacticalIntelligence(data: Record<string, unknown> | null) {
+  if (!data) return null;
+  const ti = (data as any)?.tacticalIntelligence as TacticalIntelligence | undefined;
+  if (!ti) return null;
+
+  const player = ti.player ?? {};
+  const lineup = ti.lineup ?? {};
+  const market = ti.marketGameScript ?? {};
+  const possession = ti.possessionGameScript ?? {};
+  const mechanism = ti.propMechanism ?? {};
+  const comparison = ti.opponentRoleComparison ?? {};
+  const evidence = ti.evidence ?? {};
+  const roleLabel = [player.position, player.role].filter(Boolean).join(' · ');
+  const marketLabel = String(market.classification ?? '').replace(/_/g, ' ');
+  const possessionLabel = String(possession.classification ?? '').replace(/_/g, ' ');
+  const opponentCounts = comparison.opponentRoleCounts ?? {};
+  const opponentShape = Object.entries(opponentCounts)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([key, count]) => `${key.replace(/_/g, ' ')} ${count}`)
+    .join(' · ');
+  const limitations = (ti.limitations ?? []).filter(Boolean);
+  const accent = ti.status === 'strong' ? Colors.success : '#F59E0B';
+  const shapeLabel = lineup.shapeStatus === 'confirmed' ? 'CONFIRMED SHAPE' : lineup.shapeStatus === 'projected' ? 'PROJECTED SHAPE' : 'SHAPE LIMITED';
+
+  return (
+    <View style={[aStyles.proCard, { borderColor: accent + '55' }]}>
+      <View style={aStyles.proCardHeader}>
+        <View style={[aStyles.proCardPill, { backgroundColor: accent + '20' }]}>
+          <Text style={[aStyles.proCardPillText, { color: accent }]}>TACTICAL INTELLIGENCE</Text>
+        </View>
+        <Text style={aStyles.proCardTitle} numberOfLines={1}>
+          {ti.mode === 'shadow' ? 'SHADOW MODEL' : 'MODEL CONTEXT'}
+        </Text>
+      </View>
+
+      <View style={aStyles.tacticalGrid}>
+        <View style={aStyles.tacticalCell}>
+          <Text style={aStyles.tacticalValue}>{roleLabel || 'Role unavailable'}</Text>
+          <Text style={aStyles.proCardMetricLabel}>PLAYER ROLE</Text>
+        </View>
+        <View style={aStyles.tacticalCell}>
+          <Text style={aStyles.tacticalValue}>{lineup.formation || '—'} vs {lineup.opponentFormation || '—'}</Text>
+          <Text style={aStyles.proCardMetricLabel}>{shapeLabel}</Text>
+        </View>
+      </View>
+
+      {market.classification && (
+        <Text style={aStyles.proCardNote}>
+          Market script: <Text style={{ color: accent, fontWeight: '800' }}>{marketLabel}</Text>
+          {market.playerTeamImpliedProbability != null
+            ? ` · ${(market.playerTeamImpliedProbability * 100).toFixed(0)}% player-team implied win probability`
+            : ''}
+          {market.source ? ' · verified fixture odds' : ''}
+        </Text>
+      )}
+      {possession.expectedPlayerTeamPossession != null && (
+        <Text style={aStyles.proCardNote}>
+          Possession script: <Text style={{ fontWeight: '800' }}>{possession.expectedPlayerTeamPossession.toFixed(0)}%</Text>
+          {possessionLabel !== 'unavailable' ? ` · ${possessionLabel}` : ''}
+          {possession.status === 'verified' ? ' · verified data' : ' · fallback estimate'}
+        </Text>
+      )}
+      {mechanism.marketSupport?.length ? (
+        <Text style={aStyles.proCardNote}>
+          Prop mechanism: {mechanism.marketSupport.join('; ')}.
+        </Text>
+      ) : null}
+      {mechanism.opponentNote ? (
+        <Text style={aStyles.proCardNote}>{mechanism.opponentNote}</Text>
+      ) : null}
+      {opponentShape ? (
+        <Text style={aStyles.proCardNote}>
+          Opponent role mix: {opponentShape}. {comparison.comparison}
+        </Text>
+      ) : null}
+      <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
+        {comparison.directMarkingVerified
+          ? 'Direct marking assignment verified.'
+          : 'No direct one-to-one marking assignment is claimed.'}
+      </Text>
+      {limitations.length > 0 && (
+        <Text style={[aStyles.proCardNote, { color: '#F59E0B' }]}>
+          Limits: {limitations.slice(0, 3).join(' · ')}.
+        </Text>
+      )}
+      {evidence.positionComparableSamples != null && evidence.positionComparableSamples > 0 && (
+        <Text style={aStyles.proCardNote}>
+          Comparable role sample: {evidence.positionComparableSamples} observation{evidence.positionComparableSamples === 1 ? '' : 's'}.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 export const aStyles = StyleSheet.create({
   // Evidence ribbon
   evidenceRow: {
@@ -538,4 +633,14 @@ export const aStyles = StyleSheet.create({
   mgr_driftBars: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   mgr_driftVal: { fontSize: 16, fontWeight: '800' },
   mgr_driftSub: { fontSize: 7, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.7 },
+  tacticalGrid: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  tacticalCell: {
+    flex: 1, minWidth: 0, backgroundColor: Colors.cardSecondary,
+    borderRadius: 8, paddingHorizontal: 8, paddingVertical: 7,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  tacticalValue: {
+    color: Colors.text, fontSize: 11, fontWeight: '800',
+    textTransform: 'capitalize',
+  },
 });

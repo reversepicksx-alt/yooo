@@ -8234,6 +8234,38 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         }
 
         # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────
+        # Tactical intelligence is assembled from the same verified fixture,
+        # lineup, odds, role, and opponent evidence as the projection. It is
+        # shadow-only for numeric changes until settled-pick calibration proves
+        # a signal is safe to activate.
+        try:
+            from tactical_intelligence import build_tactical_intelligence
+            prediction["tacticalIntelligence"] = build_tactical_intelligence(
+                prediction=prediction,
+                prop_type=req.propType,
+                player_position=specific_position or player_position,
+                player_role=display_role or player_role,
+                expected_possession=match_dominance.get("expectedPoss"),
+                possession_is_real=bool(match_dominance.get("hasRealPossData")),
+                opponent_allowed_average=opp_allowed_avg,
+                opponent_allowed_samples=int(
+                    (position_comp_data or {}).get("sampleSize")
+                    or (real_bayes or {}).get("opponentAllowedSamples")
+                    or 0
+                ),
+                position_comparable_samples=int((position_comp_data or {}).get("sampleSize") or 0),
+                game_script=prediction.get("gameScript"),
+                lineup=prediction.get("lineup"),
+            )
+        except Exception as _tactical_intel_err:
+            print(f"[TACTICAL INTELLIGENCE] failed: {_tactical_intel_err}")
+            prediction["tacticalIntelligence"] = {
+                "version": "tactical-shadow-v1",
+                "mode": "shadow",
+                "status": "unavailable",
+                "limitations": ["tactical intelligence assembly failed"],
+            }
+
         _m_rec    = prediction.get("recommendation", "over").upper()
         _m_proj   = prediction.get("projectedValue", req.line)
         _m_conf   = prediction.get("confidenceScore", 50)
@@ -9069,6 +9101,27 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     _af_applied_count, "confidence", "down" if _af_conf_cap else "neutral", _af_evidence_detail
                 ),
             ]
+            # Keep the tactical packet in the auditable snapshot. It is
+            # intentionally descriptive until its settled-pick performance is
+            # validated out of sample.
+            if prediction.get("tacticalIntelligence"):
+                prediction["analysisFactors"].append(
+                    _af_factor(
+                        "tactical_intelligence",
+                        "Tactical role, formation, and market context",
+                        "applied" if prediction["tacticalIntelligence"].get("status") == "strong" else "warning",
+                        (
+                            f"{prediction['tacticalIntelligence'].get('player', {}).get('roleGroup') or 'role unknown'} · "
+                            f"{prediction['tacticalIntelligence'].get('lineup', {}).get('formation') or 'formation unavailable'} "
+                            f"vs {prediction['tacticalIntelligence'].get('lineup', {}).get('opponentFormation') or 'formation unavailable'}"
+                        ),
+                        prediction["tacticalIntelligence"],
+                        prediction["tacticalIntelligence"].get("evidence", {}).get("positionComparableSamples"),
+                        "context",
+                        "neutral",
+                        "Shadow tactical signals are visible for audit and explanation but do not move the projection until calibrated.",
+                    )
+                )
             prediction["modelInputSnapshot"] = {
                 "capturedAt": datetime.now(timezone.utc).isoformat(),
                 "fixture": {
@@ -9096,6 +9149,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "lineupStatus": _af_lineup_status,
                     "gameScript": _af_game_script or None,
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
+                    "tacticalIntelligence": prediction.get("tacticalIntelligence"),
                 },
             }
 

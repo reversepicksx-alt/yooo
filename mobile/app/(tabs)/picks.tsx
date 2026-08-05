@@ -31,6 +31,7 @@ import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { renderTacticalIntelligence } from '@/components/AnalysisCards';
 
 type Tab = 'live' | 'history';
 
@@ -1460,6 +1461,11 @@ export default function PicksScreen() {
             {!analysisModal?.loading && renderMatchupPossession(
               analysisModal?.data as Record<string, unknown> | null,
               analysisModal?.pick as any,
+            )}
+
+            {/* ── TACTICAL INTELLIGENCE ── */}
+            {!analysisModal?.loading && renderTacticalIntelligence(
+              analysisModal?.data as Record<string, unknown> | null,
             )}
 
             {/* ── MANAGER / TACTICAL SHIFT CONTEXT ── */}

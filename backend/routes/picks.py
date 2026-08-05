@@ -507,7 +507,7 @@ async def save_pick(req: SavePickRequest):
         # Store tactical metrics so the analysis modal can show them
         for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
                       "analysisFactors", "modelInputSnapshot", "factorLedger",
-                       "tacticalContext",
+                       "tacticalContext", "tacticalIntelligence",
                       "factorLedgerVersion", "factorLedgerFingerprint"):
             val = pick.get(field)
             if val is not None:
@@ -1936,7 +1936,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "playerGameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
-         "tacticalContext": 1,
+         "tacticalContext": 1, "tacticalIntelligence": 1,
         "analysisFactors": 1, "modelInputSnapshot": 1,
         "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
         "_created": 1,
@@ -1983,7 +1983,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
                       "streakFlag", "propType", "line", "playerName", "opponentName",
-                      "tacticalMetrics", "tacticalContext", "gameScript", "moneyline", "homeTeam", "awayTeam"):
+                      "tacticalMetrics", "tacticalContext", "tacticalIntelligence", "gameScript", "moneyline", "homeTeam", "awayTeam"):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val

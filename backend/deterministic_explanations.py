@@ -272,6 +272,7 @@ def build_deterministic_explanation(
     match_factors = result.get("matchFactors") or {}
     analysis_summary = result.get("analysisSummary") or {}
     tactical_context = result.get("tacticalContext") or {}
+    tactical_intelligence = result.get("tacticalIntelligence") or {}
 
     prior_mean = bm.get("priorMean")
     momentum_label = str(bm.get("momentumLabel") or "").upper()
@@ -360,6 +361,50 @@ def build_deterministic_explanation(
     # resolver or matchup packet is missing, no invented tactical claim is
     # displayed.
     tactical_lines.extend(_tactical_mechanism_lines(tactical_context, prop_raw))
+
+    # Tactical intelligence packet — cite the same shadow-model evidence that
+    # the UI displays. It is explanatory context only until settled-pick
+    # calibration proves that a tactical signal should move the projection.
+    if isinstance(tactical_intelligence, dict) and tactical_intelligence:
+        ti_player = tactical_intelligence.get("player") or {}
+        ti_lineup = tactical_intelligence.get("lineup") or {}
+        ti_market = tactical_intelligence.get("marketGameScript") or {}
+        ti_poss = tactical_intelligence.get("possessionGameScript") or {}
+        ti_compare = tactical_intelligence.get("opponentRoleComparison") or {}
+        ti_mechanism = tactical_intelligence.get("propMechanism") or {}
+        ti_role = ti_player.get("role") or ti_player.get("position")
+        ti_shape = ti_lineup.get("formation") or ti_lineup.get("opponentFormation")
+        if ti_role:
+            tactical_lines.append(
+                f"Tactical intelligence identifies the player's nominal role as "
+                f"**{ti_role}**; this is role context, not a verified average-position map."
+            )
+        if ti_shape:
+            tactical_lines.append(
+                f"Shape comparison: **{ti_lineup.get('formation') or 'unknown'}** "
+                f"vs **{ti_lineup.get('opponentFormation') or 'unknown'}** "
+                f"({str(ti_lineup.get('shapeStatus') or 'unavailable')} lineup data)."
+            )
+        if ti_market.get("classification") and ti_market.get("status") == "verified_fixture_moneyline":
+            _market_label = str(ti_market.get("classification")).replace("_", " ")
+            tactical_lines.append(
+                f"Market game script: **{_market_label}** from the verified fixture moneyline. "
+                f"This is combined with possession and role evidence rather than counted as a second independent adjustment."
+            )
+        if ti_poss.get("classification") and ti_poss.get("status") == "verified":
+            tactical_lines.append(
+                f"Possession game script: **{str(ti_poss.get('classification')).replace('_', ' ')}** "
+                f"at {_fmt(ti_poss.get('expectedPlayerTeamPossession'), 0)}% expected player-team possession."
+            )
+        if ti_mechanism.get("opponentNote"):
+            tactical_lines.append(str(ti_mechanism["opponentNote"]))
+        if ti_compare.get("comparison"):
+            tactical_lines.append(str(ti_compare["comparison"]))
+        if ti_compare and not ti_compare.get("directMarkingVerified", False):
+            tactical_lines.append(
+                "Direct marking, exact operating zones, and average positions are not verified; "
+                "the tactical comparison remains nominal."
+            )
 
     # Venue average
     if venue_avg is not None and prior_mean is not None:
