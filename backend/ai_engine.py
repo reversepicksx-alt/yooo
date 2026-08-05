@@ -815,6 +815,12 @@ async def _run_auto_settlement():
     if soccer_picks:
         team_ids = list(set(p.get("teamId", 0) for p in soccer_picks if p.get("teamId")))
         for tid in team_ids:
+            # Stop mid-run if we've hit the provider daily cap — otherwise a
+            # single settlement pass can burn every remaining request against
+            # 20+ teams and leave zero headroom for user predictions.
+            if is_quota_exhausted():
+                print(f"[AUTO-SETTLE] Quota exhausted mid-run — stopping after processing some teams")
+                break
             try:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -861,7 +867,10 @@ async def _run_auto_settlement():
                             )
                         )
 
-                _fx_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+                # 6-day window covers the stale-void cutoff (4d) with a 2-day buffer.
+                # Picks older than 4 days are already voided — a 90-day window
+                # was burning ~15× more fixture calls than needed every run.
+                _fx_from = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
                 _fx_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 settle_batches = await asyncio.gather(
                     *[
@@ -964,7 +973,7 @@ async def _run_auto_settlement():
                     )
                     _orphan_seasons = [NWSL_SEASON] if _orphan_is_nwsl else [CURRENT_SEASON, CURRENT_SEASON + 1]
                     _orphan_league = NWSL_LEAGUE_ID if _orphan_is_nwsl else None
-                    _ofx_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+                    _ofx_from = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
                     _ofx_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     orphan_batches = await asyncio.gather(
                         *[

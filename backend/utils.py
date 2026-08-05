@@ -35,12 +35,17 @@ _CACHE_TTLS = {
     "teams": 21600,
     "players": 21600,
     "players/squads": 21600,
-    "fixtures": 120,
+    # Settlement runs every 15 min; a 10-min cache means the same team's
+    # fixture list is served from memory if settlement fires twice in close
+    # succession (e.g. two overlapping picks from the same club).
+    "fixtures": 600,
     "fixtures/statistics": 45,
     "fixtures/events": 45,
-    "fixtures/players": 45,
-    "fixtures/lineups": 120,
-    "odds": 120,
+    # Player/lineup data at 5 min — fresh enough for live tracking, slow
+    # enough to stop repeat settlement calls burning quota.
+    "fixtures/players": 300,
+    "fixtures/lineups": 300,
+    "odds": 180,
 }
 
 
