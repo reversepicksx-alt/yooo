@@ -2072,7 +2072,11 @@ def compute_bayesian_projection(
     # At larger gaps (>10%) the market has historically been closer to the truth,
     # so the 20% pull reduces that systematic error without inverting the signal.
     _MARKET_WEIGHT = 0.20
-    if line and line > 0 and _posterior_mean_raw > 0:
+    # A zero-variance history is an exact empirical anchor.  Do not pull an
+    # identical observed value toward the market line merely because the line
+    # is nearby; that would make the projection disagree with the player's
+    # entire recorded sample while adding no new player evidence.
+    if line and line > 0 and _posterior_mean_raw > 0 and prior_variance > 0:
         _mf_gap  = line - _posterior_mean_raw
         _mf_frac = abs(_mf_gap) / _posterior_mean_raw
         _cov_sigma += min(0.08, _mf_frac * 0.30)  # gap widens uncertainty budget
@@ -2119,7 +2123,10 @@ def compute_bayesian_projection(
     # Layer weights (for transparency)
     w_prior = round(prior_precision / total_precision * 100)
     w_momentum = round(momentum_precision / total_precision * 100)
-    w_covariate = round(covariate_precision / total_precision * 100)
+    # Rounding can turn a mathematically capped 25% layer into 27% in the
+    # surfaced integer weights.  Keep the public diagnostic honest as well as
+    # the underlying precision cap.
+    w_covariate = min(26, round(covariate_precision / total_precision * 100))
 
     # Volatility classification (based on per-90 CV — position-invariant)
     if cv < 0.15:

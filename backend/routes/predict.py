@@ -9020,6 +9020,102 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                 },
             }
+
+            # ── DETERMINISTIC EVIDENCE-QUALITY GATE ─────────────────────────
+            # The projection has already been calculated.  This final control
+            # stream checks whether the confidence attached to it is supported
+            # by independent, fixture-specific evidence.  It can only cap
+            # confidence or suppress a thin unsupported edge; it never boosts
+            # the projection and never treats missing data as zero evidence.
+            try:
+                from prediction_quality import (
+                    evaluate_prediction_quality,
+                    apply_prediction_quality_controls,
+                )
+
+                _quality = evaluate_prediction_quality(
+                    prop_type=req.propType,
+                    player_logs=player_game_logs,
+                    h2h_logs=h2h_player_stats,
+                    comparable_sample=int((position_comp_data or {}).get("sampleSize") or 0),
+                    team_fixture_stats=team_fixture_stats,
+                    opponent_fixture_stats=opponent_fixture_stats,
+                    match_dominance=match_dominance,
+                    lineup_status=_af_lineup_status,
+                    fixture_id=prediction.get("fixtureId") or (match_odds or {}).get("fixtureId"),
+                    match_odds=match_odds,
+                    position=_af_position,
+                    role=_af_role,
+                )
+                _quality_before_conf = prediction.get("confidenceScore")
+                _quality_before_rec = prediction.get("recommendation")
+                apply_prediction_quality_controls(
+                    prediction,
+                    line=req.line,
+                    quality=_quality,
+                )
+                _quality_after_conf = prediction.get("confidenceScore")
+                _quality_after_rec = prediction.get("recommendation")
+                if _quality_before_conf != _quality_after_conf:
+                    _record_confidence_control(
+                        "evidence_quality_gate",
+                        "Evidence-quality confidence control",
+                        _quality_before_conf,
+                        _quality_after_conf,
+                        "; ".join(_quality.get("capReasons") or [])
+                        or "Confidence was limited by evidence quality.",
+                    )
+                if _quality_before_rec != _quality_after_rec:
+                    _factor_ledger.append({
+                        "id": "evidence_quality_decision",
+                        "title": "Evidence-quality decision control",
+                        "status": "applied",
+                        "before": _quality_before_conf,
+                        "after": _quality_after_conf,
+                        "delta": None,
+                        "direction": "neutral",
+                        "multiplier": None,
+                        "sampleSize": _quality.get("realPlayerLogCount"),
+                        "inputs": {
+                            "qualityScore": _quality.get("score"),
+                            "edgePercent": _quality.get("edgePercent"),
+                        },
+                        "reason": prediction.get("passReason")
+                        or "Thin edge suppressed because independent evidence was limited.",
+                        "kind": "decision",
+                    })
+                _analysis_quality = next(
+                    (item for item in prediction.get("analysisFactors", [])
+                     if item.get("id") == "evidence_quality"),
+                    None,
+                )
+                if _analysis_quality is not None:
+                    _analysis_quality["status"] = (
+                        "applied" if _quality.get("level") != "low" else "warning"
+                    )
+                    _analysis_quality["summary"] = (
+                        f"{_quality.get('level', 'low').title()} evidence quality · "
+                        f"{_quality.get('score', 0)}/100 · "
+                        f"{_quality.get('realPlayerLogCount', 0)} real player logs"
+                    )
+                    _analysis_quality["value"] = _quality
+                    _analysis_quality["sampleSize"] = _quality.get("realPlayerLogCount")
+                    _analysis_quality["detail"] = (
+                        "; ".join(_quality.get("capReasons") or [])
+                        or "Evidence quality did not require a confidence cap."
+                    )
+                _snapshot_final = prediction.get("modelInputSnapshot", {}).get("final")
+                if isinstance(_snapshot_final, dict):
+                    _snapshot_final.update({
+                        "recommendation": prediction.get("recommendation"),
+                        "confidenceScore": prediction.get("confidenceScore"),
+                        "confidenceLevel": prediction.get("confidenceLevel"),
+                        "evidenceQuality": _quality,
+                    })
+            except Exception as _quality_err:
+                # Quality controls are protective metadata and must never turn
+                # a valid deterministic projection into a failed request.
+                print(f"[EVIDENCE QUALITY] failed: {_quality_err}")
         except Exception as _af_err:
             # A diagnostic explanation must never make a valid prediction fail.
             print(f"[MODEL FACTORS] snapshot failed: {_af_err}")
