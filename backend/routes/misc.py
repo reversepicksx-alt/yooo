@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 from fastapi import APIRouter, Query
@@ -9,6 +10,7 @@ from utils import (
     _LIVE_FIXTURE_STATUSES,
     _FINISHED_FIXTURE_STATUSES,
 )
+from config import INTERNATIONAL_LEAGUES
 from cache import COL_PLAYERS, COL_NATIONAL
 
 router = APIRouter(prefix="/api", tags=["misc"])
@@ -178,8 +180,12 @@ async def team_next_match(team_id: int):
             age_h = (now - cached["cachedAt"].replace(tzinfo=timezone.utc)
                      if cached["cachedAt"].tzinfo is None
                      else now - cached["cachedAt"]).total_seconds() / 3600
-            if age_h < _NEXT_MATCH_TTL_H:
-                cached_result = cached["result"]
+            cached_result = cached["result"]
+            # "found: false" results are cached only for 2 min so a transient
+            # empty API response (e.g. right after a server restart) doesn't
+            # block auto-fill for the full 15-minute window.
+            _effective_ttl = _NEXT_MATCH_TTL_H if cached_result.get("found") else (2 / 60)
+            if age_h < _effective_ttl:
                 # A cached active matchup is safe only while its fixture is
                 # still future/live.  Old cache records without a status are
                 # intentionally rejected once their kickoff has passed.
@@ -188,8 +194,11 @@ async def team_next_match(team_id: int):
     except Exception:
         pass
 
-    # Leagues to skip — pre-season club friendlies / test events
-    _SKIP_LEAGUES = {667, 666}
+    # Leagues to skip — pre-season club friendlies / test events only.
+    # 666 = Club Friendlies (International). Do NOT add competitive tournaments
+    # like Leagues Cup (667) here — MLS/Liga MX teams play it Aug–Oct and
+    # blocking it leaves the next-match auto-fill blank for the whole tournament.
+    _SKIP_LEAGUES = {666}
 
     # ── 0. TODAY'S fixtures (critical for live-match tracking) ────────────────
     # A match that is currently live (1H, 2H, LIVE, ET) does NOT appear in the

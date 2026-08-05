@@ -905,7 +905,7 @@ async def search_players(req: PlayerSearchRequest):
     # club identity.
     try:
         live_data = await aio.wait_for(
-            search_api_request(fast_endpoint, fast_params),
+            search_api_request("players/profiles", fast_params),
             timeout=1.75,
         )
     except (aio.TimeoutError, TimeoutError):
