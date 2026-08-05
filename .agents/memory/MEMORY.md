@@ -113,3 +113,4 @@
 - [Apple introductory-offer lifecycle](apple-intro-offer-lifecycle.md) — deleting an App Store introductory offer blocks new trials but does not cancel trials already granted to existing Apple customers.
 - [Fixture odds and tactical contract](fixture-odds-tactical-contract.md) — moneyline home/away labels follow verified fixture teams; tactical prose is role/prop-specific and omits unsupported claims.
 - [Tactical shadow model](tactical-shadow-model.md) — lineup, role, opponent-shape, odds, and possession signals explain picks first; projection changes require settled-pick validation.
+- [Positional reality shadow packet](positional-reality-shadow.md) — match script, attacking-direction zones, prop signals, and robust outlier weighting are visible but remain non-live until replay validation.

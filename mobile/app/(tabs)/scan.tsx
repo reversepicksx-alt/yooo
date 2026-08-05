@@ -1065,6 +1065,8 @@ export default function ScanScreen() {
           bayesianMetrics:   (prediction as any).bayesianMetrics || undefined,
            tacticalContext:   (prediction as any).tacticalContext || undefined,
            tacticalIntelligence: (prediction as any).tacticalIntelligence || undefined,
+           matchScript:      (prediction as any).matchScript || (prediction as any).tacticalIntelligence?.matchScript || undefined,
+           positionalReality: (prediction as any).positionalReality || (prediction as any).tacticalIntelligence?.positionalReality || undefined,
            homeTeam:          (prediction as any).homeTeam || (prediction as any).matchupOverview?.homeTeam || undefined,
            awayTeam:          (prediction as any).awayTeam || (prediction as any).matchupOverview?.awayTeam || undefined,
         } : {}),

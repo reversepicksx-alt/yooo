@@ -373,6 +373,8 @@ export interface PredictionResult {
     opponentFormation?: string | null;
   };
   tacticalIntelligence?: TacticalIntelligence;
+  matchScript?: MatchScript;
+  positionalReality?: PositionalReality;
   gameScript?: {
     p_team_trails?: number;
     p_opponent_scores_first?: number;
@@ -797,6 +799,8 @@ export interface TacticalIntelligence {
     classification?: string;
     source?: string | null;
   };
+  matchScript?: MatchScript;
+  positionalReality?: PositionalReality;
   propMechanism?: {
     propType?: string;
     roleGroup?: string;
@@ -826,6 +830,61 @@ export interface TacticalIntelligence {
     possessionData?: string;
   };
   limitations?: string[];
+}
+
+export interface MatchScript {
+  classification?: string;
+  label?: string;
+  confidence?: number;
+  confidenceLabel?: string;
+  status?: string;
+  sources?: string[];
+  subjectTeamImpliedProbability?: number | null;
+  expectedPossession?: number | null;
+  scenarioDominant?: string | null;
+  limitations?: string[];
+}
+
+export interface PositionalReality {
+  version?: string;
+  zone?: string;
+  zoneSource?: string;
+  zoneConfidence?: number;
+  coordinates?: {
+    x?: number | null;
+    y?: number | null;
+    attackingDirectionY?: number | null;
+  };
+  roleGroup?: string;
+  role?: string | null;
+  scriptBucket?: string;
+  roleMechanism?: string;
+  propSignal?: {
+    propType?: string;
+    shadowDirection?: string;
+    shadowStrength?: number;
+    shadowMultiplier?: number;
+    rationale?: string;
+    activationStatus?: string;
+  };
+  playerStyle?: {
+    profile?: string;
+    evidence?: string;
+    sampleSize?: number;
+  };
+  robustEvidence?: {
+    status?: string;
+    sampleSize?: number;
+    median?: number | null;
+    weightedMean?: number | null;
+    outlierCount?: number;
+    outlierRate?: number;
+    method?: string;
+    policy?: string;
+  };
+  limitations?: string[];
+  mode?: string;
+  activationStatus?: string;
 }
 
 export interface AnalysisFactor {
@@ -1004,6 +1063,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     lineup: (raw as any).lineup ?? undefined,
     tacticalContext: (raw as any).tacticalContext ?? undefined,
     tacticalIntelligence: (raw as any).tacticalIntelligence ?? undefined,
+    matchScript: (raw as any).matchScript ?? (raw as any).tacticalIntelligence?.matchScript ?? undefined,
+    positionalReality: (raw as any).positionalReality ?? (raw as any).tacticalIntelligence?.positionalReality ?? undefined,
     sharpSummary: raw.sharpSummary || undefined,
     keyEvidence: raw.keyEvidence || undefined,
     gameFlowDynamics: raw.gameFlowDynamics || undefined,
@@ -1134,6 +1195,8 @@ export interface Pick {
   aiSource?: 'model' | 'deterministic_model' | string;
   tacticalAlerts?: string[];
   gameScript?: Record<string, unknown>;
+  matchScript?: MatchScript;
+  positionalReality?: PositionalReality;
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
   bayesianMetrics?: Record<string, unknown>;
@@ -1223,6 +1286,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     aiSource: (p.aiSource as string) || undefined,
     tacticalAlerts: (p.tacticalAlerts as string[]) || undefined,
     gameScript: (p.gameScript as Record<string, unknown>) || undefined,
+    matchScript: (p.matchScript as MatchScript) || undefined,
+    positionalReality: (p.positionalReality as PositionalReality) || undefined,
     analysisFactors: (p.analysisFactors as AnalysisFactor[]) || undefined,
     modelInputSnapshot: (p.modelInputSnapshot as Record<string, unknown>) || undefined,
     bayesianMetrics: (p.bayesianMetrics as Record<string, unknown>) || undefined,

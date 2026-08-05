@@ -8,7 +8,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { AnalysisFactor, TacticalIntelligence } from '@/lib/api';
+import { AnalysisFactor, MatchScript, PositionalReality, TacticalIntelligence } from '@/lib/api';
 
 export const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -461,15 +461,19 @@ export function renderManagerContext(data: Record<string, unknown> | null) {
 export function renderTacticalIntelligence(data: Record<string, unknown> | null) {
   if (!data) return null;
   const ti = (data as any)?.tacticalIntelligence as TacticalIntelligence | undefined;
-  if (!ti) return null;
+  const topMatchScript = (data as any)?.matchScript as MatchScript | undefined;
+  const topPositionalReality = (data as any)?.positionalReality as PositionalReality | undefined;
+  if (!ti && !topMatchScript && !topPositionalReality) return null;
 
-  const player = ti.player ?? {};
-  const lineup = ti.lineup ?? {};
-  const market = ti.marketGameScript ?? {};
-  const possession = ti.possessionGameScript ?? {};
-  const mechanism = ti.propMechanism ?? {};
-  const comparison = ti.opponentRoleComparison ?? {};
-  const evidence = ti.evidence ?? {};
+  const player = ti?.player ?? {};
+  const lineup = ti?.lineup ?? {};
+  const market = ti?.marketGameScript ?? {};
+  const possession = ti?.possessionGameScript ?? {};
+  const mechanism = ti?.propMechanism ?? {};
+  const comparison = ti?.opponentRoleComparison ?? {};
+  const evidence = ti?.evidence ?? {};
+  const matchScript = (ti?.matchScript ?? topMatchScript ?? {}) as MatchScript;
+  const positional = (ti?.positionalReality ?? topPositionalReality ?? {}) as PositionalReality;
   const roleLabel = [player.position, player.role].filter(Boolean).join(' · ');
   const marketLabel = String(market.classification ?? '').replace(/_/g, ' ');
   const possessionLabel = String(possession.classification ?? '').replace(/_/g, ' ');
@@ -478,9 +482,22 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
     .filter(([, count]) => Number(count) > 0)
     .map(([key, count]) => `${key.replace(/_/g, ' ')} ${count}`)
     .join(' · ');
-  const limitations = (ti.limitations ?? []).filter(Boolean);
-  const accent = ti.status === 'strong' ? Colors.success : '#F59E0B';
+  const limitations = [
+    ...(ti?.limitations ?? []),
+    ...(matchScript.limitations ?? []),
+    ...(positional.limitations ?? []),
+  ].filter(Boolean);
+  const accent = ti?.status === 'strong' ? Colors.success : '#F59E0B';
   const shapeLabel = lineup.shapeStatus === 'confirmed' ? 'CONFIRMED SHAPE' : lineup.shapeStatus === 'projected' ? 'PROJECTED SHAPE' : 'SHAPE LIMITED';
+  const signal = positional.propSignal ?? {};
+  const robust = positional.robustEvidence ?? {};
+  const signalColor = signal.shadowDirection === 'higher_volume'
+    ? Colors.success
+    : signal.shadowDirection === 'lower_volume'
+    ? Colors.error
+    : Colors.textSecondary;
+  const signalLabel = String(signal.shadowDirection ?? 'neutral').replace(/_/g, ' ');
+  const confidencePct = matchScript.confidence != null ? `${Math.round(Number(matchScript.confidence) * 100)}%` : '—';
 
   return (
     <View style={[aStyles.proCard, { borderColor: accent + '55' }]}>
@@ -489,7 +506,7 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
           <Text style={[aStyles.proCardPillText, { color: accent }]}>TACTICAL INTELLIGENCE</Text>
         </View>
         <Text style={aStyles.proCardTitle} numberOfLines={1}>
-          {ti.mode === 'shadow' ? 'SHADOW MODEL' : 'MODEL CONTEXT'}
+          {ti?.mode === 'shadow' || positional.mode === 'shadow' ? 'SHADOW · NOT LIVE' : 'MODEL CONTEXT'}
         </Text>
       </View>
 
@@ -507,6 +524,59 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
           <Text style={aStyles.proCardMetricLabel}>{shapeLabel}</Text>
         </View>
       </View>
+
+      {(matchScript.label || matchScript.classification) && (
+        <View style={aStyles.intelSection}>
+          <View style={aStyles.intelSectionHeader}>
+            <Text style={aStyles.intelSectionTitle}>MATCH SCRIPT</Text>
+            <Text style={[aStyles.intelBadge, { color: accent }]}>
+              {confidencePct} {String(matchScript.confidenceLabel ?? '').toUpperCase()}
+            </Text>
+          </View>
+          <Text style={[aStyles.tacticalValue, { color: accent }]}>
+            {matchScript.label ?? String(matchScript.classification).replace(/_/g, ' ')}
+          </Text>
+          <Text style={aStyles.proCardNote}>
+            Classified from {(matchScript.sources ?? []).join(' + ') || 'available fixture evidence'}.
+            {' '}This is a pre-match scenario, not a guaranteed game state.
+          </Text>
+        </View>
+      )}
+
+      {(positional.zone || positional.roleMechanism || signal.shadowDirection) && (
+        <View style={aStyles.intelSection}>
+          <View style={aStyles.intelSectionHeader}>
+            <Text style={aStyles.intelSectionTitle}>POSITIONAL REALITY</Text>
+            <Text style={aStyles.intelBadge}>
+              {positional.zoneConfidence != null ? `${Math.round(Number(positional.zoneConfidence) * 100)}% ZONE` : 'ROLE ZONE'}
+            </Text>
+          </View>
+          <View style={aStyles.tacticalGrid}>
+            <View style={aStyles.tacticalCell}>
+              <Text style={aStyles.tacticalValue}>{String(positional.zone ?? 'Zone unavailable').replace(/_/g, ' ')}</Text>
+              <Text style={aStyles.proCardMetricLabel}>{positional.zoneSource === 'lineup_provider_coordinates' ? 'PROVIDER COORDINATES' : 'ROLE INFERENCE'}</Text>
+            </View>
+            <View style={aStyles.tacticalCell}>
+              <Text style={[aStyles.tacticalValue, { color: signalColor }]}>{signalLabel}</Text>
+              <Text style={aStyles.proCardMetricLabel}>PROP SHADOW SIGNAL</Text>
+            </View>
+          </View>
+          {positional.roleMechanism ? <Text style={aStyles.proCardNote}>{positional.roleMechanism}</Text> : null}
+          {signal.shadowMultiplier != null && signal.shadowDirection !== 'neutral' ? (
+            <Text style={[aStyles.proCardNote, { color: signalColor }]}>
+              Shadow read: {signalLabel} · ×{Number(signal.shadowMultiplier).toFixed(3)} potential movement.
+              {' '}Not applied to the displayed projection.
+            </Text>
+          ) : null}
+          {robust.sampleSize != null && robust.sampleSize > 0 ? (
+            <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
+              Robust history: n={robust.sampleSize}
+              {robust.weightedMean != null ? ` · weighted avg ${Number(robust.weightedMean).toFixed(1)}` : ''}
+              {robust.outlierCount ? ` · ${robust.outlierCount} outlier${robust.outlierCount === 1 ? '' : 's'} down-weighted` : ''}
+            </Text>
+          ) : null}
+        </View>
+      )}
 
       {market.classification && (
         <Text style={aStyles.proCardNote}>
@@ -544,7 +614,7 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
       </Text>
       {limitations.length > 0 && (
         <Text style={[aStyles.proCardNote, { color: '#F59E0B' }]}>
-          Limits: {limitations.slice(0, 3).join(' · ')}.
+          Limits: {Array.from(new Set(limitations)).slice(0, 4).join(' · ')}.
         </Text>
       )}
       {evidence.positionComparableSamples != null && evidence.positionComparableSamples > 0 && (
@@ -647,4 +717,15 @@ export const aStyles = StyleSheet.create({
     color: Colors.text, fontSize: 11, fontWeight: '800',
     textTransform: 'capitalize',
   },
+  intelSection: {
+    backgroundColor: Colors.card,
+    borderRadius: 8,
+    padding: 8,
+    gap: 5,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  intelSectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  intelSectionTitle: { fontSize: 8, fontWeight: '900', color: Colors.textTertiary, letterSpacing: 1.1 },
+  intelBadge: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 0.4 },
 });

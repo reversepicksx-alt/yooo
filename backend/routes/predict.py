@@ -8250,6 +8250,23 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # lineup, odds, role, and opponent evidence as the projection. It is
         # shadow-only for numeric changes until settled-pick calibration proves
         # a signal is safe to activate.
+        _tactical_stat_fields = {
+            "pass_attempts": "passes_total", "passes": "passes_total",
+            "shots": "shots_total", "shots_on_target": "shots_on",
+            "goals": "goals_total", "assists": "goals_assists",
+            "key_passes": "passes_key", "shots_assisted": "passes_key",
+            "tackles": "tackles_total", "saves": "goals_saves",
+            "goalie_saves": "goals_saves", "interceptions": "tackles_interceptions",
+            "blocks": "tackles_blocks", "dribbles": "dribbles_attempts",
+            "crosses": "passes_crosses", "clearances": "tackles_clearances",
+            "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+            "duels_won": "duels_won",
+        }
+        _tactical_history_values = [
+            (game or {}).get(_tactical_stat_fields.get(req.propType, "passes_total"))
+            for game in (player_game_logs or [])
+            if isinstance(game, dict)
+        ]
         try:
             from tactical_intelligence import build_tactical_intelligence
             prediction["tacticalIntelligence"] = build_tactical_intelligence(
@@ -8270,15 +8287,24 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 position_comparable_samples=int((position_comp_data or {}).get("sampleSize") or 0),
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
+                history_values=_tactical_history_values,
             )
         except Exception as _tactical_intel_err:
             print(f"[TACTICAL INTELLIGENCE] failed: {_tactical_intel_err}")
             prediction["tacticalIntelligence"] = {
-                "version": "tactical-shadow-v1",
+                "version": "tactical-shadow-v2",
                 "mode": "shadow",
                 "status": "unavailable",
                 "limitations": ["tactical intelligence assembly failed"],
             }
+        # Stable top-level aliases make the structured signals easy to consume
+        # in replay/backtest jobs without requiring consumers to understand the
+        # entire tactical packet shape. The nested packet remains canonical for
+        # the UI and saved-pick audit trail.
+        _ti_packet = prediction.get("tacticalIntelligence") or {}
+        if isinstance(_ti_packet, dict):
+            prediction["matchScript"] = _ti_packet.get("matchScript") or None
+            prediction["positionalReality"] = _ti_packet.get("positionalReality") or None
 
         _m_rec    = prediction.get("recommendation", "over").upper()
         _m_proj   = prediction.get("projectedValue", req.line)
@@ -8499,6 +8525,36 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             }
         else:
             prediction["gameScript"] = {"key_finding": "Game script unavailable", "scenarios": []}
+
+        # The scenario model is assembled after the first tactical packet. Rebuild
+        # the pure packet once so the formal match-script classifier can use the
+        # final dominant scenario as well as the verified market/possession inputs.
+        try:
+            from tactical_intelligence import build_tactical_intelligence
+            prediction["tacticalIntelligence"] = build_tactical_intelligence(
+                prediction=prediction,
+                prop_type=req.propType,
+                player_position=specific_position or player_position,
+                player_role=display_role or player_role,
+                expected_possession=match_dominance.get("expectedPoss"),
+                possession_is_real=match_dominance.get("possessionSource")
+                in {"fixture_stats", "h2h_fixture_stats"},
+                possession_source=match_dominance.get("possessionSource"),
+                opponent_allowed_average=opp_allowed_avg,
+                opponent_allowed_samples=int(
+                    (position_comp_data or {}).get("sampleSize")
+                    or (real_bayes or {}).get("opponentAllowedSamples")
+                    or 0
+                ),
+                position_comparable_samples=int((position_comp_data or {}).get("sampleSize") or 0),
+                game_script=prediction.get("gameScript"),
+                lineup=prediction.get("lineup"),
+                history_values=_tactical_history_values,
+            )
+            prediction["matchScript"] = prediction["tacticalIntelligence"].get("matchScript")
+            prediction["positionalReality"] = prediction["tacticalIntelligence"].get("positionalReality")
+        except Exception as _tactical_refresh_err:
+            print(f"[TACTICAL INTELLIGENCE] scenario refresh failed: {_tactical_refresh_err}")
 
         # Attach player disambiguation candidates when the name was ambiguous
         if _player_candidates:

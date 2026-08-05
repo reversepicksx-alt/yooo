@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from positional_reality import build_positional_reality
+
 
 PASS_PROPS = {"pass_attempts", "passes", "key_passes", "crosses"}
 ATTACK_PROPS = {"shots", "shots_on_target", "goals", "assists", "shots_assisted"}
@@ -161,6 +163,92 @@ def _opponent_role_matchup(
     }
 
 
+def _formal_match_script(
+    *,
+    market_status: str,
+    market_script: str,
+    subject_prob: float | None,
+    expected_possession: float | None,
+    possession_is_real: bool,
+    game_script: dict[str, Any] | None,
+    is_player_home: bool,
+) -> dict[str, Any]:
+    """Classify the pre-match environment once, with explicit provenance.
+
+    The moneyline and possession are correlated views of the same fixture
+    script. This packet names the combined read so downstream UI/replay code
+    cannot accidentally count them as independent adjustments.
+    """
+    scenario = game_script if isinstance(game_script, dict) else {}
+    dominant = _clean(scenario.get("dominant") or scenario.get("key_finding")).lower()
+    dominant_side = "home" if "home_dominant" in dominant else "away" if "away_dominant" in dominant else None
+    if "low" in dominant:
+        classification = "low_event"
+        label = "Low-event / compressed"
+    elif "high" in dominant or "open" in dominant:
+        classification = "open_event"
+        label = "Open / high-event"
+    elif dominant_side and ((dominant_side == "home") == is_player_home):
+        classification = "controlled_dominance"
+        label = "Controlled dominance"
+    elif dominant_side:
+        classification = "opponent_dominance"
+        label = "Opponent control / reactive"
+    elif market_script == "player_team_favorite":
+        classification = "settled_control"
+        label = "Settled control"
+    elif market_script == "player_team_underdog":
+        classification = "counter_defensive"
+        label = "Reactive / counter-defensive"
+    elif market_script == "balanced_market":
+        classification = "balanced"
+        label = "Balanced"
+    else:
+        classification = "unknown"
+        label = "Unavailable"
+
+    sources: list[str] = []
+    if market_status == "verified_fixture_moneyline":
+        sources.append("verified fixture moneyline")
+    if expected_possession is not None:
+        sources.append("verified possession" if possession_is_real else "fallback possession estimate")
+    if scenario.get("available") or scenario.get("dominant"):
+        sources.append("score-scenario model")
+
+    # Confidence is intentionally a data-completeness score, not a claim that
+    # the match will follow the script.
+    confidence = 0.35
+    if market_status == "verified_fixture_moneyline":
+        confidence += 0.35
+    if possession_is_real:
+        confidence += 0.15
+    if scenario.get("available") or scenario.get("dominant"):
+        confidence += 0.10
+    if classification == "unknown":
+        confidence = min(confidence, 0.35)
+
+    limitations = [
+        "pre-match classification; an early goal, red card, or substitution can change the script",
+    ]
+    if not sources:
+        limitations.append("no verified fixture market or possession source")
+    if expected_possession is not None and not possession_is_real:
+        limitations.append("possession is derived/fallback evidence, not measured fixture possession")
+
+    return {
+        "classification": classification,
+        "label": label,
+        "confidence": round(min(1.0, confidence), 2),
+        "confidenceLabel": "high" if confidence >= 0.75 else "medium" if confidence >= 0.55 else "low",
+        "sources": sources,
+        "subjectTeamImpliedProbability": round(subject_prob, 4) if subject_prob is not None else None,
+        "expectedPossession": expected_possession,
+        "scenarioDominant": scenario.get("dominant") or None,
+        "limitations": limitations,
+        "status": "classified" if classification != "unknown" else "unavailable",
+    }
+
+
 def build_tactical_intelligence(
     *,
     prediction: dict[str, Any],
@@ -175,6 +263,7 @@ def build_tactical_intelligence(
     position_comparable_samples: int = 0,
     game_script: dict[str, Any] | None = None,
     lineup: dict[str, Any] | None = None,
+    history_values: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Build a complete, provenance-tagged tactical evidence packet."""
     lineup = lineup if isinstance(lineup, dict) else {}
@@ -245,6 +334,25 @@ def build_tactical_intelligence(
     else:
         poss_script = "unavailable"
 
+    match_script_packet = _formal_match_script(
+        market_status=market_status,
+        market_script=market_script,
+        subject_prob=subject_prob,
+        expected_possession=expected_possession,
+        possession_is_real=possession_is_real,
+        game_script=game_script,
+        is_player_home=is_player_home,
+    )
+    positional_reality = build_positional_reality(
+        player=target,
+        position=target_pos,
+        role=target_role,
+        prop_type=prop_type,
+        is_home=is_player_home,
+        match_script=match_script_packet,
+        history_values=history_values,
+    )
+
     if opponent_allowed_average is not None and opponent_allowed_samples >= 3:
         opponent_evidence = "comparable_opponent_sample"
         opponent_note = (
@@ -274,7 +382,9 @@ def build_tactical_intelligence(
         limitations.append("verified fixture moneyline unavailable")
     if not possession_is_real:
         limitations.append("possession is fallback or unavailable")
-    limitations.append("direct marking and average-position data unavailable")
+    limitations.extend(match_script_packet.get("limitations") or [])
+    limitations.extend(positional_reality.get("limitations") or [])
+    limitations.append("direct marking is not verified")
 
     tactical_status = "strong" if (
         target_group != "unknown"
@@ -283,7 +393,7 @@ def build_tactical_intelligence(
     ) else "limited"
 
     return {
-        "version": "tactical-shadow-v1",
+        "version": "tactical-shadow-v2",
         "mode": "shadow",
         "status": tactical_status,
         "sourcePolicy": "verified inputs only; inferred mechanisms are labeled",
@@ -330,6 +440,8 @@ def build_tactical_intelligence(
                 else None
             ),
         },
+        "matchScript": match_script_packet,
+        "positionalReality": positional_reality,
         "propMechanism": {
             "propType": prop_type,
             "roleGroup": target_group,
@@ -340,6 +452,7 @@ def build_tactical_intelligence(
             "gameScript": game_script or None,
             "projectionAdjustment": 0.0,
             "projectionAdjustmentStatus": "shadow_only_until_calibrated",
+            "shadowSignal": positional_reality.get("propSignal"),
         },
         "opponentRoleComparison": opponent_matchup,
         "evidence": {
@@ -349,6 +462,9 @@ def build_tactical_intelligence(
             "formationData": shape_status,
             "marketData": market_status,
             "possessionData": "verified" if possession_is_real else "fallback_or_unavailable",
+            "matchScript": match_script_packet.get("status"),
+            "matchScriptConfidence": match_script_packet.get("confidence"),
+            "positionalReality": positional_reality.get("zoneSource"),
         },
-        "limitations": limitations,
+        "limitations": list(dict.fromkeys(limitations)),
     }
