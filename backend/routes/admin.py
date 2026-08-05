@@ -1176,3 +1176,38 @@ async def admin_ai_budget(req: _AiBudgetRequest):
         "limit": 0,
         "message": "External generation is permanently disabled; deterministic model explanations are active.",
     }
+
+
+class _QuotaResetRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/quota-reset")
+async def admin_quota_reset(req: _QuotaResetRequest):
+    """Owner-only: clear the API-Football daily quota circuit breaker.
+
+    Use this after upgrading to a higher plan tier so predictions resume
+    immediately without waiting for midnight UTC.
+    """
+    await verify_owner(req.email, req.token)
+    import os as _os
+    _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+    existed = _os.path.exists(_BREAKER_FILE)
+    if existed:
+        try:
+            _os.remove(_BREAKER_FILE)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Could not remove breaker file: {e}")
+    # Also clear the in-memory flag in utils
+    try:
+        import utils as _utils
+        _utils._quota_exhausted_date = None
+        _utils._daily_call_count = 0
+    except Exception:
+        pass
+    return {
+        "cleared": existed,
+        "message": "Quota circuit breaker reset — API-Football calls are unblocked." if existed
+                   else "Breaker was not active (quota was not exhausted).",
+    }
