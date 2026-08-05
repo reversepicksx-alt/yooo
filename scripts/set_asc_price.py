@@ -7,8 +7,10 @@ PRIVATE_KEY  = os.environ["ASC_PRIVATE_KEY"]
 BUNDLE_ID    = "com.reversepicks.app"
 APP_ID       = "6781092173"
 
+# Current Apple pricing configuration. The price change was applied with a
+# three-day lead time so Apple can propagate the scheduled change.
 PLANS = [
-    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "36.99"},
+    {"product_id": "reversepicks_weekly", "name": "Weekly", "duration": "ONE_WEEK", "price": "13.99"},
 ]
 
 def make_token():
