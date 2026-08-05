@@ -3736,16 +3736,14 @@ export default function ScanScreen() {
                           </TouchableOpacity>
                         );
                       })()}
-                      {hasH2H && (
-                        <TouchableOpacity
-                          style={[styles.glTab, gameLogFilter === 'h2h' && styles.glTabActive]}
-                          onPress={() => { setGameLogFilter('h2h'); Haptics.selectionAsync(); }}
-                        >
-                          <Text style={[styles.glTabText, gameLogFilter === 'h2h' && styles.glTabTextActive]}>
-                            H2H
-                          </Text>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity
+                        style={[styles.glTab, gameLogFilter === 'h2h' && styles.glTabActive]}
+                        onPress={() => { setGameLogFilter('h2h'); Haptics.selectionAsync(); }}
+                      >
+                        <Text style={[styles.glTabText, gameLogFilter === 'h2h' && styles.glTabTextActive]}>
+                          H2H
+                        </Text>
+                      </TouchableOpacity>
                       {hasLowMinGames && (
                         <TouchableOpacity
                           style={styles.glTabQuality}
@@ -4010,6 +4008,14 @@ export default function ScanScreen() {
                   })()}
 
                   {/* ── H2H — compact text view, not a data block ── */}
+                  {isH2H && !hasH2H && (
+                    <View style={styles.h2hEmptyState}>
+                      <Ionicons name="swap-horizontal-outline" size={13} color={Colors.textTertiary} />
+                      <Text style={styles.h2hEmptyText}>
+                        No H2H history available for this opponent
+                      </Text>
+                    </View>
+                  )}
                   {isH2H && hasH2H && (() => {
                     const matches = h2hMatches.slice(0, 8);
                     const values = matches.map((m: any) => m.targetStat).filter((v: any) => v != null);
@@ -6258,6 +6264,13 @@ const styles = StyleSheet.create({
     fontFamily: 'JetBrainsMono_400Regular',
   },
   h2hTextMore: { fontSize: 8, color: Colors.textTertiary, marginTop: 1 },
+  h2hEmptyState: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingTop: 7, paddingBottom: 3,
+  },
+  h2hEmptyText: {
+    fontSize: 10, color: Colors.textTertiary, fontWeight: '600',
+  },
 
   /* Sharp verdict card */
   sharpVerdictCard: {
