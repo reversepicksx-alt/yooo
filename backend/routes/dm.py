@@ -9,9 +9,11 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone
 import uuid
+import logging
 from config import db, OWNER_EMAILS
 
 router = APIRouter(prefix="/api/dm", tags=["dm"])
+_log = logging.getLogger("uvicorn.error")
 
 
 class SendDmRequest(BaseModel):
@@ -41,6 +43,12 @@ def _serialize_dm(m: dict) -> dict:
     }
 
 
+def _is_storage_quota_error(exc: Exception) -> bool:
+    """Detect Atlas write blocks without coupling the route to one driver class."""
+    text = str(exc).lower()
+    return "space quota" in text or "writes are blocked" in text or "code 8000" in text
+
+
 @router.post("/send")
 async def send_dm(req: SendDmRequest):
     sender = req.senderEmail.lower().strip()
@@ -64,7 +72,19 @@ async def send_dm(req: SendDmRequest):
         "read": False,
         "createdAt": datetime.now(timezone.utc),
     }
-    await db.direct_messages.insert_one(msg)
+    try:
+        await db.direct_messages.insert_one(msg)
+    except Exception as exc:
+        if _is_storage_quota_error(exc):
+            _log.error("[DM] send blocked because database storage quota is full")
+            raise HTTPException(
+                status_code=507,
+                detail=(
+                    "Message not sent: customer messaging storage is full. "
+                    "Please try again after storage is freed."
+                ),
+            )
+        raise
     return {"ok": True, "message": _serialize_dm(msg)}
 
 
@@ -165,8 +185,16 @@ async def delete_conversation(email: str = Query(...), other: str = Query(...)):
 async def mark_read(req: MarkReadRequest):
     email_lower = req.email.lower().strip()
     other_lower = req.otherEmail.lower().strip()
-    await db.direct_messages.update_many(
-        {"senderEmail": other_lower, "recipientEmail": email_lower, "read": False},
-        {"$set": {"read": True}}
-    )
+    try:
+        await db.direct_messages.update_many(
+            {"senderEmail": other_lower, "recipientEmail": email_lower, "read": False},
+            {"$set": {"read": True}}
+        )
+    except Exception as exc:
+        # A read receipt is non-critical. Atlas can temporarily block writes
+        # while reads still work; do not turn opening a thread into a 500.
+        if _is_storage_quota_error(exc):
+            _log.error("[DM] read receipt skipped because database storage quota is full")
+            return {"ok": True, "persisted": False}
+        raise
     return {"ok": True}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -20,6 +20,7 @@ export default function DmThreadScreen() {
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
 
   const myEmail = session?.email || '';
   const otherEmail = otherId || '';
@@ -54,12 +55,19 @@ export default function DmThreadScreen() {
     const text = input.trim();
     if (!text || !myEmail || !otherEmail || sending) return;
     setSending(true);
+    setSendError('');
     try {
       await sendDm(myEmail, otherEmail, text);
       setInput('');
       await load();
     } catch (e: any) {
-      console.warn('[DM send]', e?.message);
+      const message = e?.message || 'Message could not be sent. Please try again.';
+      setSendError(message);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(message);
+      } else {
+        Alert.alert('Message not sent', message);
+      }
     } finally {
       setSending(false);
     }
@@ -116,7 +124,7 @@ export default function DmThreadScreen() {
           <TextInput
             style={styles.input}
             value={input}
-            onChangeText={setInput}
+            onChangeText={value => { setInput(value); if (sendError) setSendError(''); }}
             placeholder="Message..."
             placeholderTextColor={Colors.textTertiary}
             multiline
@@ -132,6 +140,9 @@ export default function DmThreadScreen() {
             <Ionicons name="send" size={18} color={Colors.background} />
           </TouchableOpacity>
         </View>
+        {sendError ? (
+          <Text style={styles.sendError}>{sendError}</Text>
+        ) : null}
       </KeyboardAvoidingView>
     </View>
   );
@@ -173,4 +184,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
   },
   sendBtnDisabled: { opacity: 0.5 },
+  sendError: {
+    color: '#FF6B6B', fontSize: 11, lineHeight: 16,
+    paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4,
+  },
 });

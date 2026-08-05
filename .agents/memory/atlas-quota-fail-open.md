@@ -8,3 +8,9 @@ The final prediction persistence write is non-critical to serving a computed pre
 **Why:** Atlas can hard-block all writes at the free-tier storage ceiling, turning successful prediction calculations into user-visible HTTP 500 errors.
 
 **How to apply:** Keep the fail-open guard narrowly scoped around prediction analytics persistence. Do not delete production data automatically, and separately clean up or upgrade the Atlas cluster before relying on stored analytics again.
+
+The same Atlas write block affects support-critical features such as direct-message sends and read receipts. Those routes must return an explicit storage-full response for sends and treat read receipts as non-critical, while the database is repaired.
+
+**Why:** A successful read from `direct_messages` can create the misleading impression that customer replies are working even though the subsequent insert/update is rejected at the storage ceiling.
+
+**How to apply:** Never substitute ephemeral local files for production customer messages; make the failure visible and free space or increase the cluster tier before relying on messaging persistence.
