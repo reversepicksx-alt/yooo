@@ -25,8 +25,6 @@ API_FOOTBALL_DOCS = "https://www.api-football.com/documentation-v3"
 API_FOOTBALL_PLAYER_IDS = "https://dashboard.api-football.com/soccer/ids/players"
 API_FOOTBALL_TEAM_IDS = "https://dashboard.api-football.com/soccer/ids/teams"
 API_FOOTBALL_LEAGUE_IDS = "https://dashboard.api-football.com/soccer/ids"
-THESTATSAPI_API_KEY = os.environ.get("THESTATSAPI_API_KEY")
-THESTATSAPI_BASE = "https://api.thestatsapi.com/api"
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
 # All emails that should receive owner-level access (only the product owner)
 OWNER_EMAILS = {OWNER_EMAIL}

@@ -463,9 +463,6 @@ async def save_pick(req: SavePickRequest):
         "factorLedger": pick.get("factorLedger") or {},
         "factorLedgerVersion": pick.get("factorLedgerVersion") or None,
         "factorLedgerFingerprint": pick.get("factorLedgerFingerprint") or None,
-        # Evidence-only spatial/context enrichment. It is persisted with the
-        # original prediction so history never reconstructs a different match.
-        "thestatsapiEnrichment": pick.get("thestatsapiEnrichment") or {},
     }
 
     # Persist the model's projected ball-possession split so we can compare
@@ -498,8 +495,7 @@ async def save_pick(req: SavePickRequest):
     # Store AI analysis fields directly on sport picks (no separate predictions collection)
     # Soccer, CS2, and WTA all persist AI analysis on the pick for offline analysis modal access.
     if sport in ("cs2", "soccer", "wta"):
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs",
-                      "thestatsapiEnrichment"):
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs"):
             val = pick.get(field)
             if val:
                 doc[field] = val
@@ -1934,8 +1930,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
         "analysisFactors": 1, "modelInputSnapshot": 1,
-         "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
-        "thestatsapiEnrichment": 1,
+        "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
         "_created": 1,
     }
 
@@ -1962,8 +1957,8 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                 _merged = {**_ai_v}
                 for _mf in ("projectedValue", "bayesianMetrics", "gameScript", "moneyline",
                             "tacticalAlerts", "pOver", "pUnder", "confidenceScore", "confidenceLevel",
-                    "analysisFactors", "modelInputSnapshot", "factorLedger",
-                    "factorLedgerVersion", "factorLedgerFingerprint", "thestatsapiEnrichment"):
+                            "analysisFactors", "modelInputSnapshot", "factorLedger",
+                            "factorLedgerVersion", "factorLedgerFingerprint"):
                     _mv = pick.get(_mf)
                     if _mv is not None and not _merged.get(_mf):
                         _merged[_mf] = _mv
@@ -2023,7 +2018,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         inline_analysis["factorLedgerFingerprint"] = pick.get("factorLedgerFingerprint")
         # Factor snapshots are deterministic model output, not AI prose.
         # Include them even when a legacy pick has no narrative fields.
-        for field in ("analysisFactors", "modelInputSnapshot", "thestatsapiEnrichment"):
+        for field in ("analysisFactors", "modelInputSnapshot"):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val

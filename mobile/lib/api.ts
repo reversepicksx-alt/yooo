@@ -309,79 +309,6 @@ export interface H2HMatch {
   opponentPossession?: number | null;
 }
 
-export interface TheStatsApiEnrichment {
-  provider?: string;
-  status?: string;
-  reason?: string;
-  analysisOnly?: boolean;
-  settlementAuthority?: string;
-  fixtureVerification?: {
-    status?: string;
-    apiFootballTeam?: string;
-    apiFootballOpponent?: string;
-    dateDeltaDays?: number | null;
-  };
-  match?: {
-    matchId?: string;
-    competitionId?: string;
-    seasonId?: string;
-    utcDate?: string;
-    home?: { id?: string; name?: string };
-    away?: { id?: string; name?: string };
-  };
-  player?: {
-    status?: string;
-    id?: string;
-    name?: string;
-    side?: string;
-    position?: string;
-    jerseyNumber?: number;
-  };
-  heatmap?: {
-    status?: string;
-    source?: string | null;
-    points?: Array<{ x: number; y: number; count?: number | null }>;
-    sampleSize?: number;
-    observedTouchLocations?: boolean;
-  };
-  shotmap?: {
-    status?: string;
-    shots?: Array<{
-      x?: number;
-      y?: number;
-      minute?: number;
-      result?: string;
-      xg?: number;
-      onTarget?: boolean;
-      isGoal?: boolean;
-      situation?: string;
-    }>;
-    sampleSize?: number;
-    npXgSummary?: Record<string, unknown> | null;
-  };
-  matchStats?: { status?: string; data?: Record<string, unknown> | null };
-  opponentTactics?: {
-    status?: string;
-    formation?: string | null;
-    confirmed?: boolean;
-    starterCount?: number;
-    observedAt?: string;
-  };
-  currentMatch?: {
-    status?: string;
-    liveStats?: Record<string, unknown> | null;
-    timeline?: Array<{
-      minute?: number;
-      period?: string;
-      type?: string;
-      team?: string;
-      player?: string;
-    }>;
-    timelineCoverage?: string;
-  };
-  coverage?: Record<string, string>;
-}
-
 export interface PredictionResult {
   playerName?: string;
   teamName?: string;
@@ -590,7 +517,6 @@ export interface PredictionResult {
   };
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
-  thestatsapiEnrichment?: TheStatsApiEnrichment;
   factorLedger?: {
     version: string;
     factors: Array<{
@@ -689,7 +615,6 @@ interface RawPrediction {
   tacticalAlerts?: string[];
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
-  thestatsapiEnrichment?: TheStatsApiEnrichment;
   factorLedger?: PredictionResult['factorLedger'];
   factorLedgerVersion?: string;
   factorLedgerFingerprint?: string;
@@ -1008,7 +933,6 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     analysisSummary: raw.analysisSummary ?? undefined,
     analysisFactors: raw.analysisFactors ?? undefined,
     modelInputSnapshot: raw.modelInputSnapshot ?? undefined,
-    thestatsapiEnrichment: raw.thestatsapiEnrichment ?? undefined,
     factorLedger: raw.factorLedger ?? undefined,
     factorLedgerVersion: raw.factorLedgerVersion ?? undefined,
     factorLedgerFingerprint: raw.factorLedgerFingerprint ?? undefined,
@@ -1147,7 +1071,6 @@ export interface Pick {
   gameScript?: Record<string, unknown>;
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
-  thestatsapiEnrichment?: TheStatsApiEnrichment;
   bayesianMetrics?: Record<string, unknown>;
   // Manager / coaching change context (persisted so badge shows without re-predicting)
   managerContext?: {
@@ -1237,7 +1160,6 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     gameScript: (p.gameScript as Record<string, unknown>) || undefined,
     analysisFactors: (p.analysisFactors as AnalysisFactor[]) || undefined,
     modelInputSnapshot: (p.modelInputSnapshot as Record<string, unknown>) || undefined,
-    thestatsapiEnrichment: (p.thestatsapiEnrichment as TheStatsApiEnrichment) || undefined,
     bayesianMetrics: (p.bayesianMetrics as Record<string, unknown>) || undefined,
     // Owner-only media fields pass-through
     ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || undefined,
