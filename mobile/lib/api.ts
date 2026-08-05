@@ -763,6 +763,18 @@ interface RawPrediction {
     teamSeasonAvg?: number;
     oppSeasonAvg?: number;
     notes?: string[];
+    qualityGap?: {
+      eligible?: boolean;
+      applied?: boolean;
+      multiplier?: number;
+      deltaPct?: number;
+      score?: number;
+      direction?: string;
+      competition?: Record<string, unknown>;
+      signals?: Array<Record<string, unknown>>;
+      possessionCorroborates?: boolean;
+      reason?: string;
+    };
   };
   matchupOverview?: {
     expectedPossession?: { home: number; away: number };

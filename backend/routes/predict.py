@@ -47,6 +47,160 @@ H2H_PLAYER_RESULT_LIMIT = 10
 _H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
+def compute_team_quality_gap(
+    *,
+    match_odds: dict | None,
+    standing_data: dict | None,
+    match_dominance: dict | None,
+    requested_league_id: int | None = None,
+    prop_type: str = "",
+    position: str = "",
+) -> dict:
+    """Return one bounded, auditable team-quality adjustment for pass volume.
+
+    The possession engine already owns possession multipliers and the Bayesian
+    engine already owns its possession squeeze.  This helper therefore uses
+    possession only as corroborating evidence; it never adds a second
+    possession-derived multiplier.  Numeric quality strength comes from the
+    verified fixture context, standings gap, and fixture market probability.
+    """
+    result = {
+        "eligible": prop_type in {"pass_attempts", "passes", "key_passes", "crosses"},
+        "applied": False,
+        "multiplier": 1.0,
+        "deltaPct": 0.0,
+        "score": 0.0,
+        "direction": "neutral",
+        "competition": {
+            "verified": bool((match_odds or {}).get("matchLeagueId") or (match_odds or {}).get("matchLeague")),
+            "leagueId": (match_odds or {}).get("matchLeagueId"),
+            "league": (match_odds or {}).get("matchLeague"),
+            "requestedLeagueId": requested_league_id,
+            "crossCompetition": bool(
+                requested_league_id
+                and (match_odds or {}).get("matchLeagueId")
+                and int(requested_league_id) != int((match_odds or {}).get("matchLeagueId"))
+            ),
+        },
+        "signals": [],
+        "possessionCorroborates": False,
+        "reason": "Not eligible for the bounded outfield passing quality signal.",
+    }
+    if not result["eligible"] or (position or "").upper() in {"GK", "GOALKEEPER"}:
+        return result
+
+    odds = match_odds or {}
+    player_is_home = odds.get("playerIsHome")
+    if player_is_home is None:
+        player_is_home = True
+
+    # API-Football odds are fixture-home/fixture-away. Normalize to the
+    # player's team before using them as a quality signal.
+    player_prob = None
+    try:
+        bookmaker = odds.get("bookmakerOdds") or {}
+        if bookmaker.get("homeWin") and bookmaker.get("awayWin"):
+            home_p = 1.0 / max(float(bookmaker["homeWin"]), 1.01)
+            away_p = 1.0 / max(float(bookmaker["awayWin"]), 1.01)
+            total = home_p + away_p
+            if total > 0:
+                player_prob = (home_p if player_is_home else away_p) / total
+        elif (odds.get("americanOdds") or {}).get("home") is not None:
+            def _american_prob(value):
+                value = float(value)
+                return (-value) / (-value + 100.0) if value < 0 else 100.0 / (value + 100.0)
+            home_p = _american_prob(odds["americanOdds"]["home"])
+            away_p = _american_prob(odds["americanOdds"]["away"])
+            total = home_p + away_p
+            if total > 0:
+                player_prob = (home_p if player_is_home else away_p) / total
+    except (TypeError, ValueError, ZeroDivisionError):
+        player_prob = None
+    if player_prob is not None:
+        # ±1 means the market sees a roughly 90%/10% team.  The market is
+        # deliberately capped and weighted below so it cannot dominate history.
+        odds_score = max(-1.0, min(1.0, (player_prob - 0.5) / 0.40))
+        result["signals"].append({
+            "source": "market_implied_probability",
+            "playerTeamProbability": round(player_prob, 3),
+            "signedScore": round(odds_score, 3),
+        })
+    else:
+        odds_score = None
+
+    team_rank = (standing_data or {}).get("teamRank")
+    opp_rank = (standing_data or {}).get("oppRank")
+    rank_score = None
+    try:
+        if team_rank and opp_rank:
+            # Positive means the player's team has the better rank (smaller number).
+            rank_score = max(-1.0, min(1.0, (float(opp_rank) - float(team_rank)) / 20.0))
+            result["signals"].append({
+                "source": "verified_standings_gap",
+                "teamRank": int(team_rank),
+                "opponentRank": int(opp_rank),
+                "signedScore": round(rank_score, 3),
+            })
+    except (TypeError, ValueError):
+        rank_score = None
+
+    expected_poss = (match_dominance or {}).get("expectedPoss")
+    if (match_dominance or {}).get("hasRealPossData") and expected_poss is not None:
+        try:
+            poss_score = max(-1.0, min(1.0, (float(expected_poss) - 50.0) / 18.0))
+            result["possessionCorroborates"] = (
+                (odds_score is not None and poss_score * odds_score > 0.10)
+                or (rank_score is not None and poss_score * rank_score > 0.10)
+            )
+            result["signals"].append({
+                "source": "verified_possession",
+                "expectedPossession": round(float(expected_poss), 1),
+                "corroborates": result["possessionCorroborates"],
+                "usedForNumericAdjustment": False,
+            })
+        except (TypeError, ValueError):
+            pass
+
+    # Require two independent quality sources, or a very strong market signal
+    # corroborated by verified possession. This avoids turning a generic home
+    # advantage into a quality-gap boost.
+    sources = [s for s in (odds_score, rank_score) if s is not None]
+    if len(sources) < 2 and not (
+        odds_score is not None
+        and abs(odds_score) >= 0.72
+        and result["possessionCorroborates"]
+    ):
+        result["reason"] = "Insufficient independent quality evidence; possession was not double-counted."
+        return result
+
+    signed_score = (
+        (odds_score * 0.60 if odds_score is not None else 0.0)
+        + (rank_score * 0.40 if rank_score is not None else 0.0)
+    )
+    # If only the exceptional odds+possession path qualified, use the market
+    # alone but keep the same cap.
+    if odds_score is not None and rank_score is None:
+        signed_score = odds_score
+    signed_score = max(-1.0, min(1.0, signed_score))
+    # At full strength this is ±12%, bounded independently of possession.
+    delta_pct = round(signed_score * 12.0, 2)
+    result.update({
+        "applied": abs(delta_pct) >= 1.0,
+        "multiplier": round(1.0 + delta_pct / 100.0, 4),
+        "deltaPct": delta_pct,
+        "score": round(signed_score, 3),
+        "direction": "up" if delta_pct > 0 else "down" if delta_pct < 0 else "neutral",
+        "reason": (
+            "Independent team-quality evidence supports higher pass volume."
+            if delta_pct > 0 else
+            "Independent team-quality evidence supports lower pass volume."
+            if delta_pct < 0 else
+            "Independent team-quality evidence is neutral."
+        ),
+    })
+    return result
+
+
 def _merge_h2h_fixtures(*responses: list, limit: int = H2H_FIXTURE_LIMIT) -> list:
     """Merge real API-Football H2H responses into newest-first finished games."""
     by_id = {}
@@ -629,7 +783,10 @@ async def predict(req: PredictionRequest):
         # actual fixture was Corinthians vs Athletico.
         match_odds_prefetched = None
         sgo_market_task = None
-        _thestats_task = noop_none()
+        # Keep the optional enrichment absent until a verified soccer fixture
+        # actually schedules it. Creating a no-op coroutine here and replacing
+        # it below leaves an un-awaited coroutine warning on live predictions.
+        _thestats_task = None
         if not ai_only_mode and actual_team_id and not _is_bdl_league:
             match_odds_prefetched = await get_match_odds()
             if not match_odds_prefetched:
@@ -746,6 +903,12 @@ async def predict(req: PredictionRequest):
         import time as _t
         _t0 = _t.time()
         async def _safe_thestats_enrichment():
+            if _thestats_task is None:
+                return {
+                    "provider": "TheStatsAPI", "status": "unavailable",
+                    "reason": "not_scheduled", "analysisOnly": True,
+                    "settlementAuthority": "API-Football",
+                }
             try:
                 value = await _thestats_task
                 return value if isinstance(value, dict) else {
@@ -6413,6 +6576,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             "oppSeasonAvg": match_dominance.get("oppSeasonAvg") if _dom_avg_is_real else None,
             "seasonAvgIsReal": _dom_avg_is_real,
             "notes": match_dominance["notes"],
+            "qualityGap": match_dominance.get("qualityGap"),
         }
 
         # =============================================
@@ -6473,6 +6637,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "rotationRisk":  locals().get("_rotation_risk", "stable"),
                 "rotationAdjPct": round(locals().get("_rotation_adj_pct", 0.0) * 100, 1),
                 "expectedMinutes": round(locals().get("_exp_mins", 90.0), 1),
+                "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
+                "line": req.line,
             },
         }
 
@@ -6913,6 +7079,60 @@ Analyze ALL data thoroughly. Return JSON only."""
                     f"(P(ET)={_KO_ET_PROB:.0%})"
                 )
             # ─────────────────────────────────────────────────────────────────────
+
+            # ── TEAM QUALITY / GAME-CONTROL GAP ─────────────────────────────────
+            # Possession already has a Bayesian squeeze and a match-dominance
+            # multiplier. This independent factor uses standings and normalized
+            # fixture odds for its numeric signal; verified possession can only
+            # corroborate it, never add another possession multiplier.
+            _quality_gap = compute_team_quality_gap(
+                match_odds=match_odds,
+                standing_data=standing_data,
+                match_dominance=match_dominance,
+                requested_league_id=req.leagueId,
+                prop_type=req.propType,
+                position=(
+                    specific_position
+                    or locals().get("_bayes_position")
+                    or player_position
+                    or ""
+                ),
+            )
+            match_dominance["qualityGap"] = _quality_gap
+            if _quality_gap.get("applied") and abs(_quality_gap.get("multiplier", 1.0) - 1.0) > 0.0001:
+                _quality_old_bp = bayesian_posterior
+                bayesian_posterior = round(
+                    bayesian_posterior * _quality_gap["multiplier"], 1
+                )
+                _record_projection_factor(
+                    "team_quality_gap",
+                    "Team quality and game-control gap",
+                    _quality_old_bp,
+                    bayesian_posterior,
+                    inputs={
+                        "score": _quality_gap.get("score"),
+                        "deltaPct": _quality_gap.get("deltaPct"),
+                        "direction": _quality_gap.get("direction"),
+                        "competition": _quality_gap.get("competition"),
+                        "signals": _quality_gap.get("signals"),
+                        "possessionCorroborates": _quality_gap.get("possessionCorroborates"),
+                        "possessionUsedForNumericAdjustment": False,
+                    },
+                    multiplier=_quality_gap.get("multiplier"),
+                    reason=_quality_gap.get("reason", ""),
+                )
+                real_bayes["posteriorMean"] = bayesian_posterior
+                print(
+                    f"[QUALITY GAP] {req.playerName}/{req.propType}: "
+                    f"{_quality_old_bp:.1f} × {_quality_gap['multiplier']:.4f} "
+                    f"→ {bayesian_posterior:.1f}"
+                )
+            if real_bayes is not None:
+                real_bayes["teamQualityGap"] = _quality_gap
+            if isinstance(prediction.get("matchDominance"), dict):
+                prediction["matchDominance"]["qualityGap"] = _quality_gap
+            if isinstance(prediction.get("matchFactors"), dict):
+                prediction["matchFactors"]["teamQualityGap"] = _quality_gap
 
             # ── RECOMPUTE P(over)/P(under) AFTER OPP-PROFILE + SITUATION MULT ──
             # The opponent profile (and situational multiplier) can shift bayesian_posterior
@@ -9504,6 +9724,19 @@ Analyze ALL data thoroughly. Return JSON only."""
             _af_tactical_status = "applied" if _af_comparable_n >= 3 else (
                 "warning" if _af_comparable_n else "unavailable"
             )
+            _af_quality_gap = (match_dominance or {}).get("qualityGap") or {}
+            _af_quality_status = (
+                "applied" if _af_quality_gap.get("applied")
+                else "warning" if _af_quality_gap.get("eligible")
+                else "unavailable"
+            )
+            _af_quality_direction = _af_quality_gap.get("direction") or "neutral"
+            _af_quality_delta = _af_quality_gap.get("deltaPct")
+            _af_quality_summary = (
+                f"{_af_quality_direction.title()} {_af_quality_delta:+.1f}% team-quality adjustment"
+                if isinstance(_af_quality_delta, (int, float))
+                else "Team-quality gap not applied"
+            )
 
             # Evidence-quality is intentionally descriptive.  It never boosts
             # the model; it explains why confidence was capped or left alone.
@@ -9600,6 +9833,17 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "Fixture identity, venue, odds, and opponent tier are kept together to avoid mixing matches."
                 ),
                 _af_factor(
+                    "team_quality_gap", "Team quality and game-control gap", _af_quality_status,
+                    _af_quality_summary,
+                    _af_quality_gap,
+                    len(_af_quality_gap.get("signals") or []),
+                    "projection",
+                    _af_quality_direction,
+                    _af_quality_gap.get("reason") or (
+                        "Verified possession is corroboration only; it is not applied as a second multiplier."
+                    ),
+                ),
+                _af_factor(
                     "tactical_similarity", "Tactical and role similarity", _af_tactical_status,
                     f"{_af_comparable_n} same-position opponent matchups" if _af_comparable_n else "No comparable tactical sample",
                     {"sampleSize": _af_comparable_n, "position": _af_position,
@@ -9673,12 +9917,14 @@ Analyze ALL data thoroughly. Return JSON only."""
                 },
                 "final": {
                     "projectedValue": prediction.get("projectedValue"),
+                    "line": req.line,
                     "recommendation": prediction.get("recommendation"),
                     "confidenceScore": prediction.get("confidenceScore"),
                     "confidenceLevel": prediction.get("confidenceLevel"),
                     "expectedPossession": _af_expected_poss,
                     "lineupStatus": _af_lineup_status,
                     "gameScript": _af_game_script or None,
+                    "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                 },
                 "thestatsapi": _tsa_for_factor,
             }

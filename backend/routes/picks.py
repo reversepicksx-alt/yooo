@@ -460,6 +460,9 @@ async def save_pick(req: SavePickRequest):
         # so Analysis remains auditable after prediction-cache rotation.
         "analysisFactors": pick.get("analysisFactors") or [],
         "modelInputSnapshot": pick.get("modelInputSnapshot") or {},
+        "factorLedger": pick.get("factorLedger") or {},
+        "factorLedgerVersion": pick.get("factorLedgerVersion") or None,
+        "factorLedgerFingerprint": pick.get("factorLedgerFingerprint") or None,
         # Evidence-only spatial/context enrichment. It is persisted with the
         # original prediction so history never reconstructs a different match.
         "thestatsapiEnrichment": pick.get("thestatsapiEnrichment") or {},
@@ -502,7 +505,8 @@ async def save_pick(req: SavePickRequest):
                 doc[field] = val
         # Store tactical metrics so the analysis modal can show them
         for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
-                      "analysisFactors", "modelInputSnapshot"):
+                      "analysisFactors", "modelInputSnapshot", "factorLedger",
+                      "factorLedgerVersion", "factorLedgerFingerprint"):
             val = pick.get(field)
             if val is not None:
                 doc[field] = val
@@ -1930,6 +1934,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
         "analysisFactors": 1, "modelInputSnapshot": 1,
+         "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
         "thestatsapiEnrichment": 1,
         "_created": 1,
     }
@@ -1957,18 +1962,32 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                 _merged = {**_ai_v}
                 for _mf in ("projectedValue", "bayesianMetrics", "gameScript", "moneyline",
                             "tacticalAlerts", "pOver", "pUnder", "confidenceScore", "confidenceLevel",
-                    "analysisFactors", "modelInputSnapshot", "thestatsapiEnrichment"):
+                    "analysisFactors", "modelInputSnapshot", "factorLedger",
+                    "factorLedgerVersion", "factorLedgerFingerprint", "thestatsapiEnrichment"):
                     _mv = pick.get(_mf)
                     if _mv is not None and not _merged.get(_mf):
                         _merged[_mf] = _mv
+                # The pending AI payload can predate the saved pick or belong
+                # to another line. The saved market line is authoritative.
+                _merged["line"] = pick.get("line")
                 return {"found": True, "analysis": _merged}
     except Exception:
         pass
 
-    # Strategy 1: Match by player ID + prop type (most recent)
+    # Strategy 1: Match by player ID + prop type + canonical line.
+    # A player can have multiple predictions for the same prop at different
+    # lines. Matching only player/prop returned stale Line Intel (for example
+    # 53.5) for a saved pick whose actual line was 68.5.
+    _prediction_line = pick.get("line")
+    _prediction_fixture = pick.get("fixtureId")
+    _exact_prediction_filter = {"propType": prop_type}
+    if _prediction_line is not None:
+        _exact_prediction_filter["line"] = _prediction_line
+    if _prediction_fixture:
+        _exact_prediction_filter["fixtureId"] = _prediction_fixture
     if player_id and player_id != 0:
         prediction = await collection.find_one(
-            {"player.id": player_id, "propType": prop_type},
+            {"player.id": player_id, **_exact_prediction_filter},
             proj_fields,
             sort=[("_created", -1)]
         )
@@ -1978,7 +1997,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         player_name = pick.get("playerName", "")
         if player_name:
             prediction = await collection.find_one(
-                {"player.name": player_name, "propType": prop_type},
+                {"player.name": player_name, **_exact_prediction_filter},
                 proj_fields,
                 sort=[("_created", -1)]
             )
@@ -1996,6 +2015,12 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val
+        # Never allow a legacy cached narrative to override the saved pick's
+        # canonical market line. The modal header and Line Intel must agree.
+        inline_analysis["line"] = pick.get("line")
+        inline_analysis["factorLedger"] = pick.get("factorLedger") or {}
+        inline_analysis["factorLedgerVersion"] = pick.get("factorLedgerVersion")
+        inline_analysis["factorLedgerFingerprint"] = pick.get("factorLedgerFingerprint")
         # Factor snapshots are deterministic model output, not AI prose.
         # Include them even when a legacy pick has no narrative fields.
         for field in ("analysisFactors", "modelInputSnapshot", "thestatsapiEnrichment"):
