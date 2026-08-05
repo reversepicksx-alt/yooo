@@ -100,3 +100,4 @@
 - [Pick deletion cache](pick-deletion-cache.md) — delete every matching canonical pick ID and invalidate the per-user list cache so removed history cannot reappear.
 - [Settlement production version](settlement-production-version.md) — terminal settlement fixes must be published; an older healthy VM build can recreate review states.
 - [AI spend governance](ai-spend-governance.md) — user-facing explanations share a persistent atomic token budget; background enrichment is opt-in and must never silently bypass it.
+- [TheStatsAPI evidence contract](thestatsapi-evidence-contract.md) — optional soccer enrichment requires identity joins and explicit coverage states; empty data is unavailable, never a measured zero.

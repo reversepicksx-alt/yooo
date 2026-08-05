@@ -26,6 +26,7 @@ from utils import (
 )
 from ai_engine import fetch_web_intel, fetch_ai_press_intensity
 from sportsgameodds_client import lookup_soccer_market_context
+from thestatsapi_client import get_soccer_enrichment
 from prop_safety_cache import (
     get_prop_safety as _get_prop_safety,
     get_recent_prop_safety as _get_recent_prop_safety,
@@ -562,6 +563,7 @@ async def predict(req: PredictionRequest):
                 match_league = fixture_match.get("league", {}).get("name", "")
                 match_league_id = fixture_match.get("league", {}).get("id")
                 match_date = fixture_match.get("fixture", {}).get("date", "")
+                match_status = fixture_match.get("fixture", {}).get("status", {}).get("short", "")
                 if match_round:
                     result["matchRound"] = match_round
                 if match_league:
@@ -570,6 +572,8 @@ async def predict(req: PredictionRequest):
                     result["matchLeagueId"] = match_league_id  # actual competition (e.g. Europa League = 3)
                 if match_date:
                     result["matchDate"] = match_date
+                if match_status:
+                    result["matchStatus"] = match_status
                 try:
                     odds = await api_football_request("odds", {"fixture": fid})
                     if odds:
@@ -625,6 +629,7 @@ async def predict(req: PredictionRequest):
         # actual fixture was Corinthians vs Athletico.
         match_odds_prefetched = None
         sgo_market_task = None
+        _thestats_task = noop_none()
         if not ai_only_mode and actual_team_id and not _is_bdl_league:
             match_odds_prefetched = await get_match_odds()
             if not match_odds_prefetched:
@@ -656,6 +661,14 @@ async def predict(req: PredictionRequest):
                 })
                 actual_team_id = (match_odds_prefetched or {}).get("fixtureTeamId") or actual_team_id
             if req.sport == "soccer":
+                # Optional evidence source. API-Football remains the authority;
+                # this task is safe to omit when provider coverage is absent.
+                _thestats_task = get_soccer_enrichment(
+                    fixture=match_odds_prefetched,
+                    player_name=req.playerName,
+                    team_name=(match_odds_prefetched or {}).get("fixtureTeamName") or req.teamName,
+                    opponent_name=(match_odds_prefetched or {}).get("fixtureOpponentName") or req.opponentName,
+                )
                 _sgo_fixture = {
                     **match_odds_prefetched,
                     "fixtureHomeName": (
@@ -732,8 +745,25 @@ async def predict(req: PredictionRequest):
 
         import time as _t
         _t0 = _t.time()
-        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, match_odds = await aio.gather(
-            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, odds_task
+        async def _safe_thestats_enrichment():
+            try:
+                value = await _thestats_task
+                return value if isinstance(value, dict) else {
+                    "provider": "TheStatsAPI", "status": "unavailable",
+                    "reason": "invalid_response", "analysisOnly": True,
+                    "settlementAuthority": "API-Football",
+                }
+            except Exception as _tsa_err:
+                print(f"[THESTATSAPI] enrichment skipped: {type(_tsa_err).__name__}: {_tsa_err}")
+                return {
+                    "provider": "TheStatsAPI", "status": "unavailable",
+                    "reason": "integration_error", "analysisOnly": True,
+                    "settlementAuthority": "API-Football",
+                }
+
+        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, match_odds, _thestats_enrichment = await aio.gather(
+            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, odds_task,
+            _safe_thestats_enrichment(),
         )
         sgo_market_context = None
         if sgo_market_task is not None:
@@ -6022,6 +6052,62 @@ Amplification factors to explore: opponent defensive passivity, possession domin
         except Exception:
             pass
 
+        # ── TheStatsAPI evidence block ─────────────────────────────────────
+        # This source is analysis-only. The prompt receives only observations
+        # that survived the verified fixture/player identity join; it must not
+        # turn a touch sample into continuous tracking or invent coverage.
+        _thestats_prompt_block = ""
+        try:
+            _tsa = _thestats_enrichment if isinstance(_thestats_enrichment, dict) else {}
+            _tsa_player = _tsa.get("player") or {}
+            _tsa_heatmap = _tsa.get("heatmap") or {}
+            _tsa_shotmap = _tsa.get("shotmap") or {}
+            _tsa_match_stats = _tsa.get("matchStats") or {}
+            _tsa_tactics = _tsa.get("opponentTactics") or {}
+            if _tsa.get("fixtureVerification", {}).get("status") == "verified":
+                _tsa_lines = [
+                    "\n[THESTATSAPI — VERIFIED ENRICHMENT, ANALYSIS ONLY]",
+                    "API-Football remains authoritative for fixture identity, prediction math, live status, and settlement.",
+                    "Use only the observations below. Do not call a finite touch sample continuous tracking, ball tracking, or a live heatmap.",
+                    f"Verified provider player: {_tsa_player.get('name') or req.playerName} ({_tsa_player.get('id') or 'id unavailable'}).",
+                ]
+                if _tsa_heatmap.get("status") == "measured":
+                    _points = _tsa_heatmap.get("points") or []
+                    _avg_x = sum(float(p["x"]) for p in _points) / len(_points) if _points else None
+                    _avg_y = sum(float(p["y"]) for p in _points) / len(_points) if _points else None
+                    _tsa_lines.append(
+                        f"Observed touch-location sample: {len(_points)} points, source={_tsa_heatmap.get('source')}, "
+                        f"mean location x={_avg_x:.1f}, y={_avg_y:.1f} on a 0–100 pitch grid."
+                        if _avg_x is not None and _avg_y is not None
+                        else "Observed touch-location sample exists but has no usable coordinates."
+                    )
+                else:
+                    _tsa_lines.append(f"Touch heatmap: unavailable ({_tsa_heatmap.get('status') or 'coverage_missing'}).")
+                if _tsa_shotmap.get("status") == "measured":
+                    _shots = _tsa_shotmap.get("shots") or []
+                    _shot_xg = [float(s["xg"]) for s in _shots if s.get("xg") is not None]
+                    _tsa_lines.append(
+                        f"Observed shotmap: {len(_shots)} player shots"
+                        + (f", summed xG={sum(_shot_xg):.2f}." if _shot_xg else ".")
+                    )
+                else:
+                    _tsa_lines.append(f"Player shotmap: unavailable ({_tsa_shotmap.get('status') or 'coverage_missing'}).")
+                if _tsa_match_stats.get("status") == "measured":
+                    _tsa_lines.append("Verified per-player match statistics are available; cite only fields present in the data object.")
+                else:
+                    _tsa_lines.append("Verified per-player match statistics: unavailable.")
+                if _tsa_tactics.get("formation"):
+                    _tsa_lines.append(
+                        f"Opponent lineup observation: formation {_tsa_tactics['formation']} "
+                        f"({'confirmed' if _tsa_tactics.get('confirmed') else 'provider lineup'})."
+                    )
+                else:
+                    _tsa_lines.append("Opponent formation: unavailable.")
+                _tsa_lines.append("If a field is unavailable, say it is unavailable and fall back to API-Football evidence already provided.")
+                _thestats_prompt_block = "\n".join(_tsa_lines)
+        except Exception as _tsa_prompt_err:
+            print(f"[THESTATSAPI PROMPT] skipped: {_tsa_prompt_err}")
+
         # ── MANAGER CHANGE PROMPT BLOCK ──────────────────────────────────────────
         _manager_change_block = ""
         try:
@@ -6090,7 +6176,7 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 {_suppression_context}
 {dom_context}
 {position_context}
-{_h2h_prompt_block}{_opp_def_prompt_block}{_manager_change_block}{final_data[:3500]}
+{_h2h_prompt_block}{_opp_def_prompt_block}{_manager_change_block}{_thestats_prompt_block}{final_data[:3500]}
 
 Analyze ALL data thoroughly. Return JSON only."""
 
@@ -8508,6 +8594,8 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["fixtureDate"] = match_odds.get("matchDate", "")
             prediction["fixtureTeamId"] = match_odds.get("fixtureTeamId")
             prediction["fixtureOpponentId"] = match_odds.get("fixtureOpponentId")
+        if isinstance(_thestats_enrichment, dict):
+            prediction["thestatsapiEnrichment"] = _thestats_enrichment
 
         # 5. Deterministic keyMatchupFactor — MUST align with computed possession numbers.
         # Overrides AI-generated text to prevent contradictions like "Liverpool dominates
@@ -9528,6 +9616,44 @@ Analyze ALL data thoroughly. Return JSON only."""
                     _af_applied_count, "confidence", "down" if _af_conf_cap else "neutral", _af_evidence_detail
                 ),
             ]
+            _tsa_for_factor = _thestats_enrichment if isinstance(_thestats_enrichment, dict) else {}
+            _tsa_verified = (_tsa_for_factor.get("fixtureVerification") or {}).get("status") == "verified"
+            _tsa_heat = _tsa_for_factor.get("heatmap") or {}
+            _tsa_shots = _tsa_for_factor.get("shotmap") or {}
+            _tsa_player_stats = _tsa_for_factor.get("matchStats") or {}
+            _tsa_coverage_status = "applied" if (
+                _tsa_verified and any(
+                    x.get("status") == "measured"
+                    for x in (_tsa_heat, _tsa_shots, _tsa_player_stats)
+                )
+            ) else ("warning" if _tsa_verified else "unavailable")
+            prediction["analysisFactors"].append(
+                _af_factor(
+                    "thestatsapi_enrichment",
+                    "Verified spatial and opponent context",
+                    _tsa_coverage_status,
+                    (
+                        f"TheStatsAPI match sample: {len(_tsa_heat.get('points') or [])} touch points · "
+                        f"{len(_tsa_shots.get('shots') or [])} shots"
+                    ) if _tsa_verified else "TheStatsAPI enrichment unavailable for this verified fixture",
+                    {
+                        "provider": "TheStatsAPI",
+                        "fixtureVerified": _tsa_verified,
+                        "heatmapStatus": _tsa_heat.get("status"),
+                        "heatmapSource": _tsa_heat.get("source"),
+                        "heatmapPoints": len(_tsa_heat.get("points") or []),
+                        "shotmapStatus": _tsa_shots.get("status"),
+                        "shots": len(_tsa_shots.get("shots") or []),
+                        "playerStatsStatus": _tsa_player_stats.get("status"),
+                        "opponentFormation": (_tsa_for_factor.get("opponentTactics") or {}).get("formation"),
+                        "analysisOnly": True,
+                    },
+                    None,
+                    "context",
+                    "neutral",
+                    "Finite provider observations are shown separately from model projection math; missing coverage never becomes zero evidence.",
+                )
+            )
             prediction["modelInputSnapshot"] = {
                 "capturedAt": datetime.now(timezone.utc).isoformat(),
                 "fixture": {
@@ -9554,6 +9680,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "lineupStatus": _af_lineup_status,
                     "gameScript": _af_game_script or None,
                 },
+                "thestatsapi": _tsa_for_factor,
             }
         except Exception as _af_err:
             # A diagnostic explanation must never make a valid prediction fail.

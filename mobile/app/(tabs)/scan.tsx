@@ -10,6 +10,7 @@ import {
   renderOpponentDefProfile,
   renderMatchupPossession,
   renderManagerContext,
+  renderTheStatsApiEnrichment,
 } from '@/components/AnalysisCards';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -1106,6 +1107,7 @@ export default function ScanScreen() {
         gameScript: prediction.gameScript || undefined,
         analysisFactors: prediction.analysisFactors || undefined,
         modelInputSnapshot: prediction.modelInputSnapshot || undefined,
+         thestatsapiEnrichment: (prediction as any).thestatsapiEnrichment || undefined,
         moneyline: prediction.moneyline || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
@@ -1131,6 +1133,7 @@ export default function ScanScreen() {
            playerGameLogs:    prediction.playerGameLogs || undefined,
           tacticalAlerts:    prediction.tacticalAlerts || undefined,
           bayesianMetrics:   (prediction as any).bayesianMetrics || undefined,
+           thestatsapiEnrichment: (prediction as any).thestatsapiEnrichment || undefined,
         } : {}),
         // WTA: persist tennis-specific fields and AI analysis
         ...(sport === 'wta' ? {
@@ -4729,13 +4732,15 @@ export default function ScanScreen() {
               const oppDefEl    = renderOpponentDefProfile(pred, pickCtx);
               const matchupEl   = renderMatchupPossession(pred, pickCtx);
               const mgrEl       = renderManagerContext(pred);
-               if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl) return null;
+               const tsaEl       = renderTheStatsApiEnrichment(pred);
+                if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl && !tsaEl) return null;
               return (
                 <View style={{ gap: 0, marginTop: 6 }}>
                   {evidenceEl}
                   {mgrEl}
                   {oppDefEl}
                   {matchupEl}
+                  {tsaEl}
                 </View>
               );
             })()}

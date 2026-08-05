@@ -7,8 +7,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle, Line, Rect } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { AnalysisFactor } from '@/lib/api';
+import { AnalysisFactor, TheStatsApiEnrichment } from '@/lib/api';
 
 export const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -18,6 +19,143 @@ export const PROP_LABELS: Record<string, string> = {
   fouls_committed: 'Fouls', clearances: 'Clearances', duels_won: 'Duels Won',
   yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
 };
+
+/** Evidence-only TheStatsAPI spatial/tactical context. */
+export function renderTheStatsApiEnrichment(
+  data: Record<string, unknown> | null,
+  options?: { legacy?: boolean },
+) {
+  if (!data) return null;
+  const enrichment = (
+    (data as any)?.thestatsapiEnrichment
+    ?? (data as any)?.modelInputSnapshot?.thestatsapi
+  ) as TheStatsApiEnrichment | undefined;
+  // Older saved picks predate this integration. Keep that state explicit
+  // instead of implying that a missing payload means zero provider evidence.
+  if (!enrichment && !options?.legacy) return null;
+
+  const heatmap = enrichment?.heatmap;
+  const shotmap = enrichment?.shotmap;
+  const tactics = enrichment?.opponentTactics;
+  const verified = enrichment?.fixtureVerification?.status === 'verified';
+  const currentMatch = enrichment?.currentMatch;
+  const liveEvent = currentMatch?.timeline?.[currentMatch.timeline.length - 1];
+  const points = heatmap?.points ?? [];
+  const shots = shotmap?.shots ?? [];
+  const measured = heatmap?.status === 'measured' || shotmap?.status === 'measured';
+  const dotColor = '#67E8F9';
+  const shotColor = '#FBBF24';
+  const pitchW = 320;
+  const pitchH = 178;
+
+  return (
+    <View style={[aStyles.proCard, { borderColor: '#67E8F944' }]}>
+      <View style={aStyles.proCardHeader}>
+        <View style={[aStyles.proCardPill, { backgroundColor: '#67E8F918' }]}>
+          <Text style={[aStyles.proCardPillText, { color: dotColor }]}>SPATIAL INTEL</Text>
+        </View>
+        <Text style={aStyles.proCardTitle} numberOfLines={1}>
+          TheStatsAPI · analysis only
+        </Text>
+        <Ionicons name={verified ? 'shield-checkmark-outline' : 'information-circle-outline'} size={13} color={verified ? Colors.success : Colors.textTertiary} />
+      </View>
+
+      {!verified ? (
+        <Text style={aStyles.proCardNote}>
+          {options?.legacy
+            ? 'TheStatsAPI data was unavailable when this pick was created. Predictions and settlement use API-Football.'
+            : 'Unavailable for this verified fixture. Predictions and settlement use API-Football.'}
+        </Text>
+      ) : (
+        <>
+          <View style={aStyles.tsaMetaRow}>
+            <Text style={aStyles.tsaMetaText}>
+              {heatmap?.status === 'measured'
+                ? `${heatmap.sampleSize ?? points.length} observed touch locations`
+                : `Touch heatmap unavailable${heatmap?.status ? ` · ${heatmap.status}` : ''}`}
+            </Text>
+            {shotmap?.status === 'measured' ? (
+              <Text style={aStyles.tsaMetaText}>{shotmap.sampleSize ?? shots.length} shots</Text>
+            ) : (
+              <Text style={aStyles.tsaMetaText}>Shotmap unavailable</Text>
+            )}
+          </View>
+          {measured ? (
+            <View style={aStyles.tsaPitchWrap}>
+              <Svg width={pitchW} height={pitchH} viewBox={`0 0 ${pitchW} ${pitchH}`}>
+                <Rect x={0} y={0} width={pitchW} height={pitchH} rx={8} fill="#071A18" stroke="#1F4A45" strokeWidth={1} />
+                <Line x1={pitchW / 2} y1={0} x2={pitchW / 2} y2={pitchH} stroke="#1F4A45" strokeWidth={1} />
+                <Circle cx={pitchW / 2} cy={pitchH / 2} r={22} fill="none" stroke="#1F4A45" strokeWidth={1} />
+                <Rect x={0} y={pitchH / 2 - 34} width={45} height={68} fill="none" stroke="#1F4A45" strokeWidth={1} />
+                <Rect x={pitchW - 45} y={pitchH / 2 - 34} width={45} height={68} fill="none" stroke="#1F4A45" strokeWidth={1} />
+                {points.map((point, index) => (
+                  <Circle
+                    key={`tsa-touch-${index}`}
+                    cx={(Number(point.x) / 100) * pitchW}
+                    cy={(Number(point.y) / 100) * pitchH}
+                    r={Math.max(2, Math.min(6, 2 + Number(point.count ?? 0) * 0.15))}
+                    fill={dotColor}
+                    opacity={0.18 + Math.min(0.62, (Number(point.count ?? 1) / 10))}
+                  />
+                ))}
+                {shots.map((shot, index) => (
+                  shot.x != null && shot.y != null ? (
+                    <Circle
+                      key={`tsa-shot-${index}`}
+                      cx={(Number(shot.x) / 100) * pitchW}
+                      cy={(Number(shot.y) / 100) * pitchH}
+                      r={shot.isGoal ? 4.5 : 3}
+                      fill={shot.isGoal ? Colors.success : shotColor}
+                      stroke="#071A18"
+                      strokeWidth={1}
+                    />
+                  ) : null
+                ))}
+              </Svg>
+            </View>
+          ) : null}
+          <Text style={aStyles.proCardNote}>
+            {heatmap?.status === 'measured'
+              ? 'Finite touch locations observed in the provider sample — not continuous player tracking.'
+              : 'No usable spatial sample was returned for this player.'}
+          </Text>
+          {tactics?.formation ? (
+            <View style={aStyles.tsaFormationRow}>
+              <Ionicons name="git-network-outline" size={12} color={Colors.textTertiary} />
+              <Text style={aStyles.proCardNote}>
+                Opponent shape: {tactics.formation}{tactics.confirmed ? ' · confirmed XI' : ''}
+              </Text>
+            </View>
+          ) : (
+            <Text style={aStyles.proCardNote}>Opponent formation unavailable.</Text>
+          )}
+          {currentMatch?.status === 'measured' || (currentMatch?.timeline?.length ?? 0) > 0 ? (
+            <View style={aStyles.tsaLiveBox}>
+              <View style={aStyles.tsaFormationRow}>
+                <Ionicons name="radio-outline" size={12} color="#FB7185" />
+                <Text style={[aStyles.proCardNote, { color: '#FB7185', fontWeight: '800' }]}>
+                  CURRENT MATCH · LIVE PROVIDER CONTEXT
+                </Text>
+              </View>
+              {liveEvent ? (
+                <Text style={aStyles.proCardNote}>
+                  Latest event{liveEvent.minute != null ? ` · ${liveEvent.minute}'` : ''}
+                  {liveEvent.type ? ` · ${String(liveEvent.type).replace(/_/g, ' ')}` : ''}
+                  {liveEvent.player ? ` · ${liveEvent.player}` : ''}
+                  {liveEvent.team ? ` (${liveEvent.team})` : ''}
+                </Text>
+              ) : (
+                <Text style={aStyles.proCardNote}>Live aggregate match statistics measured; no timeline event returned.</Text>
+              )}
+            </View>
+          ) : currentMatch?.status === 'not_live' ? null : (
+            <Text style={aStyles.proCardNote}>Current-match live context unavailable.</Text>
+          )}
+        </>
+      )}
+    </View>
+  );
+}
 
 /** Evidence Summary ribbon — compact data-quality scorecard. */
 export function renderEvidenceSummary(data: Record<string, unknown> | null) {
@@ -498,6 +636,17 @@ export const aStyles = StyleSheet.create({
     letterSpacing: 0.7, textAlign: 'center',
   },
   proCardNote: { fontSize: 10.5, color: Colors.textSecondary, lineHeight: 14 },
+  tsaMetaRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  tsaMetaText: { flex: 1, fontSize: 8.5, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.3 },
+  tsaPitchWrap: {
+    alignItems: 'center', backgroundColor: Colors.card, borderRadius: 8,
+    paddingVertical: 5, overflow: 'hidden',
+  },
+  tsaFormationRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  tsaLiveBox: {
+    marginTop: 5, paddingTop: 7, borderTopWidth: 1,
+    borderTopColor: '#FB718533', gap: 3,
+  },
   // Possession bar
   possRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   possTeam: { alignItems: 'center', width: 42 },
