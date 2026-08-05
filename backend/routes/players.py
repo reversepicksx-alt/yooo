@@ -39,7 +39,12 @@ _INTL_LEAGUES = {
 }
 
 
-async def _search_players_cache(query: str, league_id: int = None, relaxed: bool = False) -> list:
+async def _search_players_cache(
+    query: str,
+    league_id: int = None,
+    relaxed: bool = False,
+    fast: bool = False,
+) -> list:
     """Fast MongoDB cache lookup for player search. Returns list of player dicts.
 
     For multi-word queries we require ALL words to appear in nameClean so that
@@ -78,6 +83,20 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     # under their club leagues, not the competition they appeared in.
     effective_league_id = None if (league_id in _TOURNAMENT_LEAGUES) else league_id
 
+    # Use the same context preference in the fast path as the full cache
+    # search: a real club row should beat an international/friendly row for
+    # the same player (for example Inter Miami should beat Argentina for Messi).
+    _LEAGUE_RANK = {39: 0, 140: 1, 135: 2, 78: 3, 61: 4}
+    def _doc_rank(d: dict) -> int:
+        lg = d.get("leagueId", 0)
+        if lg in _LEAGUE_RANK:
+            return _LEAGUE_RANK[lg]
+        if lg in _INTL_LEAGUES:
+            return 98
+        if lg == 667 or lg == 0:
+            return 99
+        return 50
+
     filt = dict(name_filt)
     if effective_league_id:
         filt["leagueId"] = effective_league_id
@@ -87,6 +106,84 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     # If league-constrained search returned nothing, retry without the league filter
     if not docs and effective_league_id:
         docs = await db[COL_PLAYERS].find(name_filt, {"_id": 0}).limit(20).to_list(20)
+
+    if fast and docs:
+        # Interactive typing only needs a direct name match. The full fallback
+        # tree below is valuable for maintenance/search repair, but it is too
+        # expensive to put on the keystroke path.
+        best_docs = {}
+        for d in docs:
+            pid = d.get("playerId", 0)
+            if not pid:
+                continue
+            current = best_docs.get(pid)
+            if current is None or _doc_rank(d) < _doc_rank(current):
+                best_docs[pid] = d
+        results = []
+        for d in best_docs.values():
+            name = d.get("name", "")
+            results.append({
+                "id": d.get("playerId", 0),
+                "name": name,
+                "firstname": name.split()[0] if name.split() else "",
+                "lastname": name.split()[-1] if name.split() else "",
+                "age": d.get("age", 0) or 0,
+                "nationality": d.get("nationality", "") or "",
+                "photo": d.get("photo", ""),
+                "teamId": d.get("teamId", 0),
+                "teamName": d.get("teamName", ""),
+                "leagueId": d.get("leagueId", 0),
+                "position": d.get("position", ""),
+            })
+        return results
+
+    if fast and len(parts) > 1:
+        # One targeted rescue for provider-style abbreviated names such as
+        # "J. David" when the user typed "Jonathan David".
+        first_initial = parts[0][0] if parts[0] else ""
+        last_part = parts[-1]
+        if first_initial:
+            abbrev_pattern = rf"^{re.escape(first_initial)}\..*{re.escape(last_part)}(?:\s|$)"
+            abbrev_filt: dict = {"nameClean": {"$regex": abbrev_pattern}}
+            if effective_league_id:
+                abbrev_filt["leagueId"] = effective_league_id
+            docs = await db[COL_PLAYERS].find(
+                abbrev_filt, {"_id": 0}
+            ).limit(20).to_list(20)
+            if not docs and effective_league_id:
+                docs = await db[COL_PLAYERS].find(
+                    {"nameClean": {"$regex": abbrev_pattern}}, {"_id": 0}
+                ).limit(20).to_list(20)
+            if docs:
+                best_docs = {}
+                for d in docs:
+                    pid = d.get("playerId", 0)
+                    if not pid:
+                        continue
+                    current = best_docs.get(pid)
+                    if current is None or _doc_rank(d) < _doc_rank(current):
+                        best_docs[pid] = d
+                results = []
+                for d in best_docs.values():
+                    name = d.get("name", "")
+                    results.append({
+                        "id": d.get("playerId", 0),
+                        "name": name,
+                        "firstname": name.split()[0] if name.split() else "",
+                        "lastname": name.split()[-1] if name.split() else "",
+                        "age": d.get("age", 0) or 0,
+                        "nationality": d.get("nationality", "") or "",
+                        "photo": d.get("photo", ""),
+                        "teamId": d.get("teamId", 0),
+                        "teamName": d.get("teamName", ""),
+                        "leagueId": d.get("leagueId", 0),
+                        "position": d.get("position", ""),
+                    })
+                return results
+
+        # No direct cache hit; let the bounded provider lookup try the
+        # canonical full name rather than entering the broad cache tree.
+        return []
 
     # Pass A2 — sequence regex for exactly-2-word queries.
     # Catches compound-name players where the query words are non-adjacent.
@@ -224,17 +321,6 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     # friendly because the fixture is filed under Juventus's fixture).
     # By ranking 667 lowest we keep the entry that reflects the player's
     # actual team (national team, lower league, etc.) over the opponent.
-    _LEAGUE_RANK = {39: 0, 140: 1, 135: 2, 78: 3, 61: 4}  # EPL→Ligue1
-    def _doc_rank(d: dict) -> int:
-        lg = d.get("leagueId", 0)
-        if lg in _LEAGUE_RANK:
-            return _LEAGUE_RANK[lg]       # top-5 clubs: 0–4
-        if lg in _INTL_LEAGUES:
-            return 98                      # national/intl leagues: near-last (club must win)
-        if lg == 667 or lg == 0:
-            return 99                      # friendlies / unknown: last
-        return 50                          # any other real club league
-
     deduped: dict[int, dict] = {}
     for d in docs:
         pid = d.get("playerId", 0)
@@ -671,12 +757,22 @@ async def search_players(req: PlayerSearchRequest):
     # When quota is exhausted use relaxed mode — accept any name-matched player
     # (e.g. Messi cached under Inter Miami, not World Cup league_id=1).
     try:
-        cache_results = await _search_players_cache(req.query, req.league_id, relaxed=quota_gone)
+        # Searching while the user is typing must never wait for every cache
+        # fallback or a slow Atlas query. A timed-out cache lookup falls
+        # through to one bounded provider lookup below.
+        cache_results = await aio.wait_for(
+            _search_players_cache(
+                req.query,
+                req.league_id,
+                relaxed=quota_gone,
+                fast=True,
+            ),
+            timeout=0.85,
+        )
         if cache_results:
             # Cache-first results can be abbreviated squad records. Resolve a
-            # small bounded set before sorting so a current player such as
-            # "N. Fernández Mercau" is not hidden behind unrelated
-            # "N. Fernández" entries.
+            # small bounded set after the response so profile enrichment never
+            # makes the name dropdown wait on several API calls.
             if not quota_gone:
                 original_cache_results = list(cache_results)
                 abbreviated = [
@@ -693,16 +789,63 @@ async def search_players(req: PlayerSearchRequest):
                     )
                 ][:20]
                 if abbreviated:
-                    cache_results = await aio.gather(
-                        *[_enrich_abbreviated_player(p) for p in abbreviated]
-                    )
-                    by_id = {p.get("id"): p for p in cache_results if p.get("id")}
-                    # Keep any non-abbreviated cache hits that were not sent
-                    # through the profile lookup.
-                    for p in original_cache_results:
-                        by_id.setdefault(p.get("id"), p)
-                    cache_results = list(by_id.values())
+                    async def _background_abbrev_enrichment(items):
+                        try:
+                            await aio.gather(
+                                *[_enrich_abbreviated_player(p) for p in items],
+                                return_exceptions=True,
+                            )
+                        except Exception:
+                            pass
+                    aio.ensure_future(_background_abbrev_enrichment(abbreviated))
             sorted_results = _apply_sort_and_quality(cache_results)
+            # Older squad-cache rows may have the right club/photo but no
+            # nationality. Fill that metadata with one bounded profiles
+            # request, then persist it so this is not repeated on every
+            # keystroke. The lookup is optional and never blocks the search
+            # longer than the interactive budget.
+            missing_nationality = [
+                p for p in sorted_results[:15] if not p.get("nationality")
+            ]
+            if missing_nationality and not quota_gone:
+                try:
+                    profile_data = await aio.wait_for(
+                        search_api_request("players/profiles", {"search": req.query}),
+                        timeout=0.65,
+                    )
+                    profile_by_id = {}
+                    for item in profile_data or []:
+                        profile = extract_player(item)
+                        if profile.get("id"):
+                            profile_by_id[profile["id"]] = profile
+                    metadata_updates = []
+                    for player in missing_nationality:
+                        profile = profile_by_id.get(player.get("id"))
+                        if not profile:
+                            continue
+                        player["nationality"] = profile.get("nationality") or ""
+                        player["photo"] = player.get("photo") or profile.get("photo") or ""
+                        if player["nationality"]:
+                            metadata_updates.append((player["id"], player["nationality"], player["photo"]))
+                    if metadata_updates:
+                        async def _persist_search_metadata(updates):
+                            try:
+                                from cache import COL_PLAYERS
+                                for pid, nationality, photo in updates:
+                                    fields = {"nationality": nationality}
+                                    if photo:
+                                        fields["photo"] = photo
+                                    await db[COL_PLAYERS].update_many(
+                                        {"playerId": pid},
+                                        {"$set": fields},
+                                    )
+                            except Exception as exc:
+                                print(f"[PLAYER SEARCH] metadata cache write skipped: {exc}")
+                        aio.ensure_future(_persist_search_metadata(metadata_updates))
+                except (aio.TimeoutError, TimeoutError):
+                    print(f"[PLAYER SEARCH] metadata lookup exceeded 650ms for {req.query!r}")
+                except Exception as exc:
+                    print(f"[PLAYER SEARCH] metadata lookup failed for {req.query!r}: {exc}")
             # Background enrichment: if any top result still shows a national/intl
             # league entry (meaning no club entry won the dedup), fire club resolution
             # off the hot path — this request still returns quickly, but the NEXT
@@ -718,8 +861,10 @@ async def search_players(req: PlayerSearchRequest):
                                 print(f"[BG-ENRICH] pid={p.get('id')} err={_e}")
                     aio.ensure_future(_bg_enrich(intl_hits))
             return {"players": sorted_results}
-    except Exception:
-        pass
+    except (aio.TimeoutError, TimeoutError):
+        print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")
+    except Exception as exc:
+        print(f"[PLAYER SEARCH] cache lookup failed for {req.query!r}: {exc}")
 
     # If quota is gone, try last-name cache fallback then BDL search before giving up.
     # Handles abbreviated cached names like "R. Jiménez" when user types "Raul Jimenez".
@@ -734,15 +879,105 @@ async def search_players(req: PlayerSearchRequest):
                 except Exception:
                     pass
         # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
-        # UCL, MLS, World Cup without any API-Football dependency.
+        # UCL, MLS, World Cup without any API-Football dependency. Keep this
+        # bounded because it is still on the typing path.
         try:
             from soccer_bdl_client import search_bdl_players
-            bdl_hits = await search_bdl_players(req.query)
+            bdl_hits = await aio.wait_for(search_bdl_players(req.query), timeout=1.25)
             if bdl_hits:
                 return {"players": _apply_sort_and_quality(bdl_hits)}
+        except (aio.TimeoutError, TimeoutError):
+            print(f"[PLAYER SEARCH] BDL lookup exceeded 1250ms for {req.query!r}")
         except Exception:
             pass
         return {"players": []}
+
+    # Fast interactive provider path. The previous implementation could issue
+    # dozens of sequential league/season/profile fallbacks after a cache miss,
+    # leaving users staring at a spinner for 7–40 seconds. One targeted lookup
+    # is enough for the dropdown; full club/context enrichment happens after
+    # the user selects the player.
+    fast_params = {"search": req.query}
+    # Profile search is the provider's fastest identity lookup and works for
+    # both global and league-scoped typing. The old league/season request
+    # could silently query a future season and return nothing (for example
+    # Salah in EPL), while the exact cached context lookup below supplies the
+    # club identity.
+    try:
+        live_data = await aio.wait_for(
+            search_api_request(fast_endpoint, fast_params),
+            timeout=1.75,
+        )
+    except (aio.TimeoutError, TimeoutError):
+        print(f"[PLAYER SEARCH] provider lookup exceeded 1750ms for {req.query!r}")
+        return {"players": []}
+    except Exception as exc:
+        print(f"[PLAYER SEARCH] provider lookup failed for {req.query!r}: {exc}")
+        return {"players": []}
+
+    live_players = [extract_player(item) for item in (live_data or [])]
+    seen_live_ids = set()
+    live_players = [
+        p for p in live_players
+        if p.get("id") and not (p["id"] in seen_live_ids or seen_live_ids.add(p["id"]))
+    ]
+
+    # The profiles endpoint intentionally returns identity data without
+    # statistics. Recover the current/best cached club context with one
+    # indexed playerId query, rather than making several provider calls or
+    # re-entering the old league/season fallback chain.
+    missing_context = [p for p in live_players if not p.get("teamName")]
+    if missing_context:
+        try:
+            from cache import COL_PLAYERS
+            context_ids = [p["id"] for p in missing_context[:15]]
+            context_docs = await aio.wait_for(
+                db[COL_PLAYERS].find(
+                    {"playerId": {"$in": context_ids}},
+                    {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1,
+                     "leagueId": 1, "position": 1, "photo": 1,
+                     "nationality": 1, "_cachedAt": 1},
+                ).to_list(150),
+                timeout=0.9,
+            )
+            _context_rank = {39: 0, 140: 1, 135: 2, 78: 3, 61: 4}
+
+            def _context_key(d):
+                league = d.get("leagueId", 0)
+                if league in _context_rank:
+                    rank = _context_rank[league]
+                elif league in _INTL_LEAGUES or league in {667, 0}:
+                    rank = 98
+                else:
+                    rank = 50
+                return (rank, -(d.get("_cachedAt") or 0))
+
+            best_context = {}
+            for doc in context_docs or []:
+                if not doc.get("teamName"):
+                    continue
+                pid = doc.get("playerId")
+                current = best_context.get(pid)
+                if current is None or _context_key(doc) < _context_key(current):
+                    best_context[pid] = doc
+            for player in live_players:
+                context = best_context.get(player.get("id"))
+                if not context:
+                    continue
+                player.update({
+                    "teamId": context.get("teamId") or 0,
+                    "teamName": context.get("teamName") or "",
+                    "leagueId": context.get("leagueId") or 0,
+                    "position": player.get("position") or context.get("position") or "",
+                    "photo": player.get("photo") or context.get("photo") or "",
+                    "nationality": player.get("nationality") or context.get("nationality") or "",
+                })
+        except (aio.TimeoutError, TimeoutError):
+            print(f"[PLAYER SEARCH] exact context lookup exceeded 900ms for {req.query!r}")
+        except Exception as exc:
+            print(f"[PLAYER SEARCH] exact context lookup failed for {req.query!r}: {exc}")
+
+    return {"players": _apply_sort_and_quality(live_players)}
 
     all_players = []
 
@@ -973,6 +1208,8 @@ async def search_players(req: PlayerSearchRequest):
                         "playerId": pid,
                         "name": name,
                         "nameClean": name_clean,
+                        "nationality": pl.get("nationality") or "",
+                        "photo": pl.get("photo") or "",
                         "teamId": pl.get("teamId") or 0,
                         "teamName": team_name,
                         "leagueId": league_id_val,
@@ -982,12 +1219,16 @@ async def search_players(req: PlayerSearchRequest):
                 else:
                     # Update teamName/teamId in existing entry if they differ
                     if (existing.get("teamName") != team_name or
-                            existing.get("teamId") != pl.get("teamId")):
+                            existing.get("teamId") != pl.get("teamId") or
+                            existing.get("nationality") != pl.get("nationality") or
+                            existing.get("photo") != pl.get("photo")):
                         await db[COL_PLAYERS].update_one(
                             {"playerId": pid, "leagueId": league_id_val},
                             {"$set": {
                                 "teamName": team_name,
                                 "teamId": pl.get("teamId") or 0,
+                                "nationality": pl.get("nationality") or "",
+                                "photo": pl.get("photo") or "",
                                 "_cachedAt": time.time(),
                             }}
                         )

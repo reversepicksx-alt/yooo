@@ -15,10 +15,12 @@ const getApiBase = (): string => {
 
 // Endpoints that involve AI synthesis — give them a generous timeout
 const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message'];
-const MEDIUM_TIMEOUT_PATHS = ['/api/players/search', '/api/players/', '/api/match-script', '/api/community/messages'];  // search can hit API-Football strategy fallbacks; match-script hits an AI press-intensity call
+const PLAYER_SEARCH_PATH   = '/api/players/search';
+const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits an AI press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
+const PLAYER_SEARCH_TIMEOUT_MS = 3_000;
 const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
-const MEDIUM_TIMEOUT_MS    = 40_000;   // 40 s — player search (may fall through to API-Football strategies)
+const MEDIUM_TIMEOUT_MS    = 15_000;
 const CS2_TIMEOUT_MS       = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
 const SHORT_TIMEOUT_MS     = 15_000;   // 15 s — all other API calls
 
@@ -26,9 +28,10 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const base = getApiBase();
   const url = `${base}${endpoint}`;
   const isCs2Predict = endpoint.startsWith(CS2_PREDICT_PATH);
+  const isPlayerSearch = endpoint.startsWith(PLAYER_SEARCH_PATH);
   const isLong   = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const isMedium = MEDIUM_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
-  const timeoutMs = isCs2Predict ? CS2_TIMEOUT_MS : isLong ? LONG_TIMEOUT_MS : isMedium ? MEDIUM_TIMEOUT_MS : SHORT_TIMEOUT_MS;
+  const timeoutMs = isPlayerSearch ? PLAYER_SEARCH_TIMEOUT_MS : isCs2Predict ? CS2_TIMEOUT_MS : isLong ? LONG_TIMEOUT_MS : isMedium ? MEDIUM_TIMEOUT_MS : SHORT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // Wire caller-supplied external signal into the internal controller so a user cancel also aborts the fetch

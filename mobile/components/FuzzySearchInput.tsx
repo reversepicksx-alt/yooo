@@ -167,7 +167,7 @@ export default function FuzzySearchInput({
       setShowDropdown(true);
       setHasSearched(true);
       setSearchError(true);
-    }, 12000);
+    }, 2900);
     try {
       let r: any[] = [];
       if (searchType === 'teams') {
