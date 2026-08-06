@@ -1491,7 +1491,7 @@ export default function ScanScreen() {
             )}
 
 
-        {mode === 'manual' && phase !== 'result' && phase !== 'saved' && (
+        {phase !== 'result' && phase !== 'saved' && (
           <View style={styles.universalPlayerSection}>
             <Text style={styles.fieldLabel}>PLAYER</Text>
             <FuzzySearchInput
