@@ -2272,6 +2272,15 @@ export default function ScanScreen() {
                   }}
                 />
                 {nflResolvedPlayer && (
+                  <View style={styles.sportTeamContext}>
+                    <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                    <Text style={styles.sportTeamContextText} numberOfLines={1}>
+                      {nflResolvedPlayer.team?.full_name || 'Team not listed'}
+                      {nflResolvedPlayer.position ? ` · ${nflResolvedPlayer.position}` : ''}
+                    </Text>
+                  </View>
+                )}
+                {nflResolvedPlayer && (
                   <TouchableOpacity onPress={() => { setNflPlayerQuery(''); setNflResolvedPlayer(null); setNflNextMatch(null); setNflOpponentQuery(''); setNflVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
                     <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
                     <Text style={styles.changePlayerBtnText}>Change player</Text>
@@ -2381,6 +2390,15 @@ export default function ScanScreen() {
                     }
                   }}
                 />
+                {mlbResolvedPlayer && (
+                  <View style={styles.sportTeamContext}>
+                    <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                    <Text style={styles.sportTeamContextText} numberOfLines={1}>
+                      {mlbResolvedPlayer.team?.full_name || 'Team not listed'}
+                      {mlbResolvedPlayer.position ? ` · ${mlbResolvedPlayer.position}` : ''}
+                    </Text>
+                  </View>
+                )}
                 {mlbResolvedPlayer && (
                   <TouchableOpacity onPress={() => { setMlbPlayerQuery(''); setMlbResolvedPlayer(null); setMlbNextMatch(null); setMlbOpponentQuery(''); setMlbVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
                     <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
@@ -5672,6 +5690,19 @@ const styles = StyleSheet.create({
   },
   changePlayerBtnText: {
     color: Colors.primary, fontSize: 11, fontFamily: 'Inter_500Medium', letterSpacing: 0.3,
+  },
+  sportTeamContext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+    marginBottom: 5,
+    marginLeft: 2,
+  },
+  sportTeamContextText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '600',
   },
   fieldLabel: {
     fontSize: 10, color: Colors.primary, fontWeight: '800',

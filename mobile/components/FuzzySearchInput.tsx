@@ -128,6 +128,7 @@ export default function FuzzySearchInput({
   onSelectNbaPlayer,
   onSelectNhlPlayer,
   onSelectMlbPlayer,
+  onSelectNflPlayer,
   onSelectStaticItem,
 }: FuzzySearchInputProps) {
   const [results, setResults] = useState<any[]>([]);
@@ -296,7 +297,7 @@ export default function FuzzySearchInput({
   };
   const handleSelectNflPlayer = (p: NflPlayer) => {
     onChangeText(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()); dismiss(); setResults([]);
-    onSelectNhlPlayer?.(p);
+    onSelectNflPlayer?.(p);
   };
   const handleSelectStatic = (item: StaticItem) => {
     onChangeText(item.primary); dismiss(); setResults([]);
