@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "Reverse Picks",
     slug: "reversepicks",
-    version: "1.16",
+    version: "1.17",
     orientation: "portrait",
     icon: "./assets/rp-icon.png",
     userInterfaceStyle: "dark",
@@ -27,8 +27,18 @@ export default {
     android: {
       adaptiveIcon: { foregroundImage: "./assets/rp-icon.png", backgroundColor: "#050505" },
       package: "com.reversepicks.app",
+      edgeToEdgeEnabled: true,
+      permissions: [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+      ],
     },
-    web: { bundler: "metro" },
+    web: {
+      bundler: "metro",
+      htmlTemplate: "./web/index.html",
+    },
     plugins: [
       "expo-router",
       "expo-secure-store",

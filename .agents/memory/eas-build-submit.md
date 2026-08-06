@@ -22,7 +22,7 @@ EXPO_TOKEN=$EXPO_TOKEN eas build:list --platform ios --limit 1 --non-interactive
 
 Command (from mobile/ dir):
 ```
-EXPO_TOKEN=$EXPO_TOKEN EXPO_APPLE_ID=$APPLE_ID EXPO_APPLE_APP_SPECIFIC_PASSWORD=<app-specific-pwd> eas submit --platform ios --latest --non-interactive
+EXPO_TOKEN=$EXPO_TOKEN ./scripts/submit_ios.sh <finished-build-id>
 ```
 
 - `APPLE_PASSWORD` secret must be an App-Specific Password (format: xxxx-xxxx-xxxx-xxxx), NOT the regular Apple ID password
@@ -69,7 +69,7 @@ npx expo config --json | python3 -c "import json,sys; d=json.load(sys.stdin); pr
 And confirm on the actual queued build with `eas build:list --platform ios --limit 1 --non-interactive` before letting it fully compile (cancel early with `eas build:cancel <id>` if wrong, to avoid wasting paid build credits).
 
 ## Checking submission status without re-running eas submit
-`eas submit` with default `--wait` can run past the tool's 120s timeout while Apple processes the binary; killing the CLI does NOT cancel the already-scheduled submission (it runs server-side). Re-running `eas submit` creates a brand-new duplicate submission — avoid it. Instead poll status via Expo's GraphQL API using `EXPO_TOKEN`:
+Submit with an explicit finished build ID and `--no-wait`; a timed-out CLI does NOT cancel the already-scheduled submission (it runs server-side). Re-running `eas submit` creates a brand-new duplicate submission — avoid it. Instead poll the original status via Expo's GraphQL API using `EXPO_TOKEN`:
 ```bash
 curl -s -X POST https://api.expo.dev/graphql \
   -H "Authorization: Bearer $EXPO_TOKEN" -H "Content-Type: application/json" \
