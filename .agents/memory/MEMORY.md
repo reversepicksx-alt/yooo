@@ -93,6 +93,7 @@
 - [Owner scorecard and PASS calibration](owner-scorecard-pass-calibration.md) — owner soccer analytics must show the complete authenticated ledger; PASS is stored for avoidance calibration, not normal wager ROI.
 - [Deep player H2H history](deep-player-h2h-history.md) — H2H must search multiple seasons and count only fixtures where the player logged minutes; team meetings alone are not player history.
 - [Atlas quota fail-open](atlas-quota-fail-open.md) — prediction computation must not fail solely because the analytics persistence write is blocked by Atlas storage quota.
+- [Website Stripe under Atlas quota](website-stripe-atlas-quota.md) — Stripe is the payment source of truth for web checkout; local checkout/webhook sync writes must fail open while Atlas writes are blocked.
 - [Thin opponent sample confidence](thin-opponent-sample-confidence.md) — one or two opponent meetings cannot justify very-high confidence; disclose thin evidence and cap conservatively.
 - [Auditable model factors](auditable-model-factors.md) — prediction explanations must snapshot final inputs at the pipeline boundary, persist with saved picks, and show unavailable data explicitly.
 - [Evidence-quality controls](evidence-quality-controls.md) — missing optional feeds stay neutral; only sparse support plus a thin edge can cap confidence or produce PASS.

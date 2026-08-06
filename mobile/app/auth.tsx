@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import {
-  verifyAccess, setPassword as apiSetPassword, authLogin, linkPayment, contactSupport,
+  verifyAccess, setPassword as apiSetPassword, authLogin, linkPayment, contactSupport, createCheckout,
 } from '@/lib/api';
 
 type Step = 'email' | 'pin' | 'pricing';
@@ -23,9 +23,8 @@ const NO_CODE_EMAILS = new Set([
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 const PLANS = [
-  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
-  { key: 'monthly',   label: 'Monthly',  sub: 'Save 8%',        price: '$49.99', unit: '/month', popular: true  },
-  { key: 'quarterly', label: '3 Months', sub: 'Save 24%',       price: '$99.99', unit: '/3mo',   popular: false },
+  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$13.99', unit: '/week',  popular: false },
+  { key: 'monthly',   label: 'Monthly',  sub: 'Save 8%',        price: '$46.99', unit: '/month', popular: true  },
 ];
 
 export default function AuthScreen() {
@@ -260,6 +259,32 @@ export default function AuthScreen() {
 
   const handleShowPricing = () => setStep('pricing');
 
+  const handleStripeCheckout = async (planKey: string) => {
+    const checkoutEmail = email.trim().toLowerCase();
+    if (!checkoutEmail) {
+      setStep('email');
+      setError('Enter your email address before choosing a plan.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await createCheckout(checkoutEmail, planKey);
+      const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
+      if (!url) throw new Error(result.error || 'Could not start checkout. Please try again.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try { window.sessionStorage.setItem('rp_checkout_email', checkoutEmail); } catch {}
+        window.location.href = url;
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not start checkout. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleConfirmPin = async () => {
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPin = ownerPin.trim();
@@ -338,7 +363,7 @@ export default function AuthScreen() {
             )}
           </TouchableOpacity>
           <TouchableOpacity onPress={handleShowPricing} style={styles.webLoginSecondary}>
-            <Text style={styles.alreadyPaid}>Subscribe through the App Store</Text>
+            <Text style={styles.alreadyPaid}>Subscribe on the website</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleAlreadyPaid} disabled={loading} style={styles.webLoginSecondary}>
             <Text style={styles.webLoginMuted}>Already paid? Verify your payment</Text>
@@ -420,25 +445,52 @@ export default function AuthScreen() {
         <View style={styles.pricingContainer}>
           <View style={styles.pricingHero}>
             <Image source={require('../assets/logo.png')} style={styles.pricingLogo as any} resizeMode="contain" />
-            <Text style={styles.pricingTitle}>SUBSCRIBE IN THE APP</Text>
-          </View>
-          <View style={styles.appOnlyNotice}>
-            <Ionicons name="logo-apple" size={32} color={Colors.primary} />
-            <Text style={styles.appOnlyTitle}>All new memberships are through Apple</Text>
-            <Text style={styles.appOnlyText}>
-              Download Reverse Picks from the App Store, sign in with this email, and choose your Apple subscription plan there.
+            <Text style={styles.pricingTitle}>
+              {Platform.OS === 'web' ? 'SUBSCRIBE ON THE WEBSITE' : 'SUBSCRIBE IN THE APP'}
             </Text>
-            <TouchableOpacity
-              style={styles.btn}
-              onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}
-              activeOpacity={0.85}
-            >
-              <View style={styles.btnInner}>
-                <Ionicons name="download-outline" size={16} color="#000" />
-                <Text style={styles.btnText}>DOWNLOAD THE APP</Text>
-              </View>
-            </TouchableOpacity>
           </View>
+          {Platform.OS === 'web' ? (
+            <View style={styles.appOnlyNotice}>
+              <Ionicons name="card-outline" size={32} color={Colors.primary} />
+              <Text style={styles.appOnlyTitle}>Choose your website plan</Text>
+              <Text style={styles.appOnlyText}>
+                Secure checkout powered by Stripe. Your subscription will work on the Reverse Picks website.
+              </Text>
+              {PLANS.map(plan => (
+                <TouchableOpacity
+                  key={plan.key}
+                  style={[styles.btn, plan.popular && styles.btnSubscribe, loading && styles.btnDisabled]}
+                  onPress={() => handleStripeCheckout(plan.key)}
+                  disabled={loading}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.btnInner}>
+                    <Ionicons name="card-outline" size={16} color="#000" />
+                    <Text style={styles.btnText}>{plan.label.toUpperCase()} · {plan.price}{plan.unit}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {!!error && <ErrorBox message={error} />}
+            </View>
+          ) : (
+            <View style={styles.appOnlyNotice}>
+              <Ionicons name="logo-apple" size={32} color={Colors.primary} />
+              <Text style={styles.appOnlyTitle}>All new memberships are through Apple</Text>
+              <Text style={styles.appOnlyText}>
+                Download Reverse Picks from the App Store, sign in with this email, and choose your Apple subscription plan there.
+              </Text>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}
+                activeOpacity={0.85}
+              >
+                <View style={styles.btnInner}>
+                  <Ionicons name="download-outline" size={16} color="#000" />
+                  <Text style={styles.btnText}>DOWNLOAD THE APP</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.backBtn} onPress={goBack} activeOpacity={0.8}>
             <Ionicons name="arrow-back" size={15} color={Colors.text} />

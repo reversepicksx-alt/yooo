@@ -90,9 +90,9 @@ function WebAppDownloadBanner() {
   return (
     <View style={bannerStyles.wrap}>
       <View style={bannerStyles.copy}>
-        <Text style={bannerStyles.title}>Reverse Picks is now on the App Store</Text>
+        <Text style={bannerStyles.title}>Reverse Picks subscriptions are available online</Text>
         <Text style={bannerStyles.subtitle}>
-          Download the app to subscribe securely through Apple and get the full experience.
+          Subscribe securely on the website with Stripe, or download the app for the full iPhone experience.
         </Text>
       </View>
       <TouchableOpacity

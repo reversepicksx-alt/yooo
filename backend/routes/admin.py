@@ -157,8 +157,8 @@ async def get_calibration(email: str, token: str):
 # ─── ADMIN: Generate a direct Stripe checkout link for any client ───────────
 
 STRIPE_PLANS = {
-    "weekly":    {"name": "Weekly",    "amount": 1100,  "interval": "week",  "interval_count": 1},
-    "monthly":   {"name": "Monthly",   "amount": 3999,  "interval": "month", "interval_count": 1},
+    "weekly":    {"name": "Weekly",    "amount": 1399,  "interval": "week",  "interval_count": 1, "price_id": "price_1U1TeZE5jSGb860H5gPUjrZv"},
+    "monthly":   {"name": "Monthly",   "amount": 4699,  "interval": "month", "interval_count": 1, "price_id": "price_1U1TeZE5jSGb860HV1CU07LT"},
     "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3},
 }
 
@@ -174,13 +174,9 @@ class CheckoutLinkRequest(BaseModel):
 async def generate_checkout_link(req: CheckoutLinkRequest):
     """Generate a direct Stripe checkout URL for any client email. Owner-only."""
     await verify_owner(req.adminEmail, req.sessionToken)
-    raise HTTPException(
-        status_code=410,
-        detail="Stripe is retired. New subscriptions must use Apple through the Reverse Picks app.",
-    )
 
     plan_key = req.planKey.lower()
-    if plan_key not in STRIPE_PLANS:
+    if plan_key not in ("weekly", "monthly"):
         raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
 
     stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -192,21 +188,7 @@ async def generate_checkout_link(req: CheckoutLinkRequest):
     client_email = req.clientEmail.lower().strip()
 
     try:
-        prices = stripe.Price.list(
-            lookup_keys=[f"reversepicks_{plan_key}"],
-            expand=["data.product"],
-        )
-        if prices.data:
-            price_id = prices.data[0].id
-        else:
-            price = stripe.Price.create(
-                unit_amount=plan["amount"],
-                currency="usd",
-                recurring={"interval": plan["interval"], "interval_count": plan["interval_count"]},
-                product_data={"name": f"Reverse Picks {plan['name']}"},
-                lookup_key=f"reversepicks_{plan_key}",
-            )
-            price_id = price.id
+        price_id = plan["price_id"]
 
         session = stripe.checkout.Session.create(
             mode="subscription",

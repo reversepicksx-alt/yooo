@@ -8,13 +8,16 @@ from config import db
 
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
-# Stripe is retired.  Keep the read-only status endpoint and webhook alive long
-# enough to let already-paid periods expire, but never create another checkout.
-STRIPE_RETIRED = True
+# Stripe checkout is active for website subscriptions only. Native iOS
+# subscriptions continue to use RevenueCat/App Store billing.
+STRIPE_RETIRED = False
+STRIPE_CHECKOUT_PLAN_KEYS = {"weekly", "monthly"}
 
 STRIPE_PLANS = {
-    "weekly":    {"name": "Weekly",    "amount": 1500,  "interval": "week",  "interval_count": 1, "label": "$15/week",        "price_id": "price_1TTPgOE5jSGb860HYBTZ6emm"},
-    "monthly":   {"name": "Monthly",   "amount": 4999,  "interval": "month", "interval_count": 1, "label": "$49.99/month",    "price_id": "price_1TTPgOE5jSGb860Hco39c7bc"},
+    "weekly":    {"name": "Weekly",    "amount": 1399,  "interval": "week",  "interval_count": 1, "label": "$13.99/week",      "price_id": "price_1U1TeZE5jSGb860H5gPUjrZv"},
+    "monthly":   {"name": "Monthly",   "amount": 4699,  "interval": "month", "interval_count": 1, "label": "$46.99/month",     "price_id": "price_1U1TeZE5jSGb860HV1CU07LT"},
+    # Retained for legacy subscription records; not offered for website
+    # checkouts or plan changes.
     "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3, "label": "$99.99/3 months", "price_id": None},
 }
 
@@ -124,10 +127,10 @@ async def create_checkout(req: CheckoutRequest):
     if STRIPE_RETIRED:
         raise HTTPException(
             status_code=410,
-            detail="Stripe subscriptions are no longer available. Download the Reverse Picks app and subscribe through Apple.",
+            detail="Website Stripe subscriptions are temporarily unavailable.",
         )
     plan_key = req.planKey.lower()
-    if plan_key not in STRIPE_PLANS:
+    if plan_key not in STRIPE_CHECKOUT_PLAN_KEYS:
         raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
 
     get_stripe()
@@ -205,18 +208,24 @@ async def create_checkout(req: CheckoutRequest):
             session = _build_session(["card"])
 
         now = datetime.now(timezone.utc).isoformat()
-        await db.stripe_subscriptions.update_one(
-            {"email": email_lower},
-            {"$set": {
-                "email": email_lower,
-                "lastCheckoutAction": "create",
-                "lastCheckoutPlan": plan_key,
-                "lastCheckoutAt": now,
-                "checkoutUrl": session.url,
-                "updatedAt": now,
-            }},
-            upsert=True,
-        )
+        try:
+            await db.stripe_subscriptions.update_one(
+                {"email": email_lower},
+                {"$set": {
+                    "email": email_lower,
+                    "lastCheckoutAction": "create",
+                    "lastCheckoutPlan": plan_key,
+                    "lastCheckoutAt": now,
+                    "checkoutUrl": session.url,
+                    "updatedAt": now,
+                }},
+                upsert=True,
+            )
+        except Exception as _db_err:
+            # Checkout is already created in Stripe. Atlas persistence is an
+            # audit/duplicate-prevention optimization and must not turn a
+            # successful checkout creation into a user-visible 500.
+            print(f"[STRIPE] Checkout audit write skipped: {_db_err}")
         return {"checkoutUrl": session.url}
     except stripe.StripeError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -227,7 +236,7 @@ async def resubscribe_checkout(req: CheckoutRequest):
     if STRIPE_RETIRED:
         raise HTTPException(
             status_code=410,
-            detail="Stripe subscriptions are no longer available. Download the Reverse Picks app and subscribe through Apple.",
+            detail="Website Stripe subscriptions are temporarily unavailable.",
         )
     return await create_checkout(req)
 
@@ -295,10 +304,10 @@ async def change_plan(req: ChangePlanRequest):
     if STRIPE_RETIRED:
         raise HTTPException(
             status_code=410,
-            detail="Stripe plan changes are no longer available. Stripe subscriptions are being retired; use Apple through the Reverse Picks app.",
+            detail="Website Stripe plan changes are temporarily unavailable.",
         )
     plan_key = req.new_plan_key.lower()
-    if plan_key not in STRIPE_PLANS:
+    if plan_key not in STRIPE_CHECKOUT_PLAN_KEYS:
         raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
 
     email_lower = req.email.lower().strip()
@@ -394,11 +403,9 @@ async def stripe_webhook(request: Request):
         event = _json.loads(payload)
 
     etype = event.get("type", "")
-    retirement = await db.settings.find_one(
-        {"key": "stripe_retirement_complete", "value": "true"},
-        {"_id": 0},
-    )
-    stripe_retired = bool(retirement)
+    # This marker belongs to the historical Stripe shutdown. Website billing
+    # is active again, so it must not suppress new checkout webhooks.
+    stripe_retired = STRIPE_RETIRED
 
     if etype == "checkout.session.completed":
         if stripe_retired:
@@ -413,7 +420,13 @@ async def stripe_webhook(request: Request):
         plan_key = meta.get("plan_key", "monthly")
         stripe_sub_id = session.get("subscription", "")
         if email and stripe_sub_id:
-            await _upsert_stripe_sub(email, stripe_sub_id, plan_key, "active")
+            try:
+                await _upsert_stripe_sub(email, stripe_sub_id, plan_key, "active")
+            except Exception as _db_err:
+                # Stripe remains the source of truth; retrying webhooks/live
+                # access lookup can restore the local record once Atlas writes
+                # are available again.
+                print(f"[STRIPE WEBHOOK] local subscription sync skipped: {_db_err}")
 
     elif etype in ("customer.subscription.updated", "customer.subscription.created"):
         if stripe_retired:
@@ -455,7 +468,10 @@ async def stripe_webhook(request: Request):
                 # live Stripe check sort it out when a valid end date is present.
                 print(f"[STRIPE WEBHOOK] cancel_at_period_end=True for {email} but no period end found — keeping status={status}")
         if email and sub_id:
-            await _upsert_stripe_sub(email, sub_id, plan_key, status, end_iso)
+            try:
+                await _upsert_stripe_sub(email, sub_id, plan_key, status, end_iso)
+            except Exception as _db_err:
+                print(f"[STRIPE WEBHOOK] local subscription sync skipped: {_db_err}")
 
     elif etype == "customer.subscription.deleted":
         sub_obj = event.get("data", {}).get("object", {})
@@ -538,6 +554,9 @@ async def _upsert_stripe_sub(email: str, stripe_sub_id: str, plan_key: str, stat
     # so the auth hard-gate doesn't block users who have since resubscribed.
     if status in ("active", "trialing"):
         update_op["$unset"] = {"canceledAt": ""}
+        # A customer may have an old record from the previous Stripe
+        # retirement. A newly completed website checkout must restore it.
+        update_op["$unset"]["retiredByMigration"] = ""
 
     await db.stripe_subscriptions.update_one(
         {"email": email},

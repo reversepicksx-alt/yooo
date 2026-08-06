@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -12,7 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { verifyAccess } from '@/lib/api';
+import { createCheckout, verifyAccess } from '@/lib/api';
 
 type Step = 'email' | 'pin' | 'pricing';
 
@@ -24,6 +23,27 @@ export default function WebAuthScreen() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const checkout = async (planKey: string) => {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) {
+      setStep('email');
+      setError('Enter your email address before choosing a plan.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await createCheckout(normalized, planKey);
+      const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
+      if (!url) throw new Error(result.error || 'Could not start checkout. Please try again.');
+      try { window.sessionStorage.setItem('rp_checkout_email', normalized); } catch {}
+      window.location.href = url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start checkout. Please try again.');
+      setLoading(false);
+    }
+  };
 
   const verify = async (accessPin?: string) => {
     const normalized = email.trim().toLowerCase();
@@ -60,12 +80,16 @@ export default function WebAuthScreen() {
       <View style={styles.page}>
         <View style={styles.card}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.title}>SUBSCRIBE IN THE APP</Text>
+          <Text style={styles.title}>SUBSCRIBE ON THE WEBSITE</Text>
           <Text style={styles.copy}>
-            New memberships are available through Apple. Download Reverse Picks from the App Store, sign in with this email, and choose your plan there.
+            Choose a website plan below. Secure checkout is powered by Stripe.
           </Text>
-          <Pressable style={styles.primaryButton} onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}>
-            <Text style={styles.primaryText}>DOWNLOAD THE APP</Text>
+          {!!error && <Text style={styles.error}>{error}</Text>}
+          <Pressable style={[styles.primaryButton, loading && styles.disabled]} disabled={loading} onPress={() => checkout('weekly')}>
+            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>WEEKLY · $13.99/WEEK</Text>}
+          </Pressable>
+          <Pressable style={[styles.primaryButton, styles.secondaryPlan, loading && styles.disabled]} disabled={loading} onPress={() => checkout('monthly')}>
+            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>MONTHLY · $46.99/MONTH</Text>}
           </Pressable>
           <Pressable style={styles.linkButton} onPress={() => setStep('email')}>
             <Text style={styles.linkText}>Back to Login</Text>
@@ -114,7 +138,7 @@ export default function WebAuthScreen() {
         ) : (
           <>
             <Pressable style={styles.linkButton} onPress={() => setStep('pricing')}>
-              <Text style={styles.linkText}>Subscribe through the App Store</Text>
+              <Text style={styles.linkText}>Subscribe on the website</Text>
             </Pressable>
             <Pressable style={styles.linkButton} onPress={() => verify()}>
               <Text style={styles.mutedLink}>Already paid? Verify your payment</Text>
@@ -162,6 +186,7 @@ const styles = StyleSheet.create({
   },
   primaryText: { color: '#000', fontSize: 14, fontWeight: '900', letterSpacing: 0.6 },
   disabled: { opacity: 0.6 },
+  secondaryPlan: { marginTop: 10 },
   error: { color: Colors.error, fontSize: 13, textAlign: 'center' },
   copy: { color: Colors.textSecondary, fontSize: 14, lineHeight: 21, textAlign: 'center', marginBottom: 22 },
   linkButton: { alignItems: 'center', paddingVertical: 10 },

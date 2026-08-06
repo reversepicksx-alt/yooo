@@ -915,7 +915,7 @@ export default function AccountScreen() {
           </>
         )}
 
-        {/* ── Web / Android: retired Stripe migration notice ── */}
+        {/* ── Web / Android: Stripe subscription management ── */}
         {showStripeManagement && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
@@ -940,17 +940,27 @@ export default function AccountScreen() {
                 )}
                 <View style={{ padding: 14, gap: 6 }}>
                   <Text style={{ color: Colors.primary, fontWeight: '800', fontSize: 13 }}>
-                    Stripe billing has ended
+                    Website billing is active
                   </Text>
                   <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 18 }}>
-                    Your current access remains available until the date above. Download the iOS app and subscribe through Apple to continue.
+                    Manage your website subscription or choose a different billing cycle below.
                   </Text>
                   <TouchableOpacity
                     style={{ marginTop: 6, backgroundColor: Colors.primary, borderRadius: 7, paddingVertical: 10, alignItems: 'center' }}
-                    onPress={() => Linking.openURL('https://apps.apple.com/app/id6781092173')}
+                    onPress={() => setPlanPickerVisible(true)}
                   >
-                    <Text style={{ color: '#000', fontSize: 11, fontWeight: '900' }}>DOWNLOAD THE APP</Text>
+                    <Text style={{ color: '#000', fontSize: 11, fontWeight: '900' }}>
+                      {isCanceled ? 'RESUBSCRIBE' : 'CHANGE PLAN'}
+                    </Text>
                   </TouchableOpacity>
+                  {!isCanceled && (
+                    <TouchableOpacity
+                      style={{ marginTop: 4, borderColor: Colors.borderSubtle, borderWidth: 1, borderRadius: 7, paddingVertical: 9, alignItems: 'center' }}
+                      onPress={handleCancel}
+                    >
+                      <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '800' }}>CANCEL AT PERIOD END</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             ) : (

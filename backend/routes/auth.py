@@ -436,6 +436,18 @@ async def create_session(email: str, access_type: str) -> str:
 
 # ── Web access check (Stripe / manual grants) ────────────────────────
 async def _check_access_local(email_lower: str):
+    # A new active website subscription must take precedence over the
+    # historical migration screenshot cutoff for returning customers.
+    active_stripe = await db.stripe_subscriptions.find_one(
+        {
+            "email": email_lower,
+            "status": {"$in": ["active", "trialing"]},
+            "retiredByMigration": {"$ne": True},
+        },
+        {"_id": 0},
+    )
+    if active_stripe:
+        return "Premium (Stripe)"
     if _screenshot_stripe_access_expired(email_lower):
         return None
     # The retirement marker only prevents renewal/restoration. It must not
@@ -483,16 +495,6 @@ async def _check_access_local(email_lower: str):
                     if _blocked:
                         return None
         return access_type
-    stripe_sub = await db.stripe_subscriptions.find_one(
-        {
-            "email": email_lower,
-            "status": {"$in": ["active", "trialing"]},
-            "retiredByMigration": {"$ne": True},
-        },
-        {"_id": 0},
-    )
-    if stripe_sub:
-        return "Premium (Stripe)"
     stripe_canceled = await db.stripe_subscriptions.find_one({"email": email_lower, "status": "canceled"}, {"_id": 0})
     if stripe_canceled:
         if stripe_canceled.get("canceledReason") == "payment_failed":
@@ -525,13 +527,7 @@ def _sub_period_end_ts(sub_data: dict):
         return None
 
 async def _check_stripe_live(email_lower: str):
-    # Stripe has been retired as a billing source.  Do not resurrect a
-    # subscription that was not already recorded locally before the cutoff.
-    return None
-
-    # Kept below for historical reference during the transition; unreachable
-    # by design.  Existing local records are still honored by
-    # _check_access_local until their paid-through date expires.
+    """Confirm an active website Stripe subscription when the webhook is late."""
     try:
         key = os.environ.get("STRIPE_SECRET_KEY", "")
         if not key:
@@ -560,13 +556,16 @@ async def _check_stripe_live(email_lower: str):
             if cpe and cpe > now_ts:
                 end_iso = datetime.fromtimestamp(int(cpe), tz=timezone.utc).isoformat()
                 now_str = datetime.now(timezone.utc).isoformat()
-                await db.stripe_subscriptions.update_one(
-                    {"email": email_lower},
-                    {"$set": {"email": email_lower, "stripeSubscriptionId": sub_id, "status": "canceled",
-                              "canceledAt": now_str, "currentPeriodEnd": end_iso, "updatedAt": now_str,
-                              "source": "stripe", "autoRestored": True}},
-                    upsert=True,
-                )
+                try:
+                    await db.stripe_subscriptions.update_one(
+                        {"email": email_lower},
+                        {"$set": {"email": email_lower, "stripeSubscriptionId": sub_id, "status": "canceled",
+                                  "canceledAt": now_str, "currentPeriodEnd": end_iso, "updatedAt": now_str,
+                                  "source": "stripe", "autoRestored": True}},
+                        upsert=True,
+                    )
+                except Exception as _db_err:
+                    print(f"[STRIPE LIVE FALLBACK] canceled-state sync skipped: {_db_err}")
                 return "Premium (Stripe)"
             return None
         plan_key = "monthly"
@@ -593,14 +592,17 @@ async def _check_stripe_live(email_lower: str):
         except Exception:
             pass
         now = datetime.now(timezone.utc).isoformat()
-        await db.stripe_subscriptions.update_one(
-            {"email": email_lower},
-            {"$set": {"email": email_lower, "stripeSubscriptionId": sub_id, "planKey": plan_key,
-                      "status": st, "currentPeriodEnd": end_iso, "subscribedAt": now,
-                      "updatedAt": now, "source": "stripe", "autoRestored": True},
-             "$unset": {"canceledAt": ""}},
-            upsert=True,
-        )
+        try:
+            await db.stripe_subscriptions.update_one(
+                {"email": email_lower},
+                {"$set": {"email": email_lower, "stripeSubscriptionId": sub_id, "planKey": plan_key,
+                          "status": st, "currentPeriodEnd": end_iso, "subscribedAt": now,
+                          "updatedAt": now, "source": "stripe", "autoRestored": True},
+                 "$unset": {"canceledAt": "", "retiredByMigration": ""}},
+                upsert=True,
+            )
+        except Exception as _db_err:
+            print(f"[STRIPE LIVE FALLBACK] active-state sync skipped: {_db_err}")
         return "Premium (Stripe)"
     except Exception as e:
         print(f"[STRIPE LIVE FALLBACK] Error for {email_lower}: {e}")
