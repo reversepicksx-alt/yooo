@@ -108,12 +108,25 @@ def _stat_fingerprint_role(generic_position: str, stats: dict | None) -> str | N
         return None
 
     if gpos in ("Attacker", "Forward"):
-        if dribbles_pg >= 3.0 and shots_pg >= 2.5:
-            return "Inverted Winger or Inside Forward"
-        if goals_pg >= 0.4 and shots_pg >= 2.5:
-            return "Poacher or Complete Forward"
-        if key_passes_pg >= 2.0 and shots_pg < 1.5:
+        # Creative hub / False 9: drops deep, threads passes, dribbles to create space.
+        # Messi-style: high key passes + dribbles AND shots below 2.5 (feeds > shoots).
+        if key_passes_pg >= 2.0 and dribbles_pg >= 2.0 and shots_pg < 2.5:
             return "False 9"
+        # Inside Forward: cuts in from a wide channel, high dribbles AND high shots
+        if dribbles_pg >= 2.5 and shots_pg >= 2.0:
+            return "Inside Forward"
+        # Inverted Winger: extreme dribble volume from a wide position
+        if dribbles_pg >= 3.5 and shots_pg >= 1.5:
+            return "Inverted Winger"
+        # Poacher: pure finisher — high goals and shots, low dribbles/key passes
+        if goals_pg >= 0.45 and shots_pg >= 2.5 and dribbles_pg < 2.0:
+            return "Poacher"
+        # Complete Forward: well-rounded scorer with some creativity
+        if goals_pg >= 0.3 and shots_pg >= 2.0:
+            return "Complete Forward"
+        # Target Man: high shot volume from static central role, low dribbles
+        if shots_pg >= 2.5 and dribbles_pg < 1.5:
+            return "Target Man"
         return None
 
     return None
@@ -167,13 +180,32 @@ async def resolve_player_role(
 
     # ── Stat fingerprint fallback ─────────────────────────────────────────────
     if fingerprint_hint and generic_position:
-        suggested = sorted(_GENERIC_TO_SPECIFIC.get(generic_position, set()))
-        fallback_pos = suggested[0] if suggested else ""
-        if fallback_pos:
-            valid_roles = _POSITION_ROLE_MAP.get(fallback_pos, set())
+        possible_positions = sorted(_GENERIC_TO_SPECIFIC.get(generic_position, set()))
+        # Find the first specific position whose valid-role set actually includes
+        # the fingerprint hint, so "False 9" resolves to CF not CAM.
+        matched_pos = next(
+            (pos for pos in possible_positions
+             if fingerprint_hint in _POSITION_ROLE_MAP.get(pos, set())),
+            possible_positions[0] if possible_positions else ""
+        )
+        if matched_pos:
+            valid_roles = _POSITION_ROLE_MAP.get(matched_pos, set())
             fallback_role = fingerprint_hint if fingerprint_hint in valid_roles else (sorted(valid_roles)[0] if valid_roles else "")
-            print(f"[ROLE RESOLVE] {player_name} → {fallback_pos} | {fallback_role} (stat_fingerprint)")
-            return fallback_pos, fallback_role, "stat_fingerprint"
+            print(f"[ROLE RESOLVE] {player_name} → {matched_pos} | {fallback_role} (stat_fingerprint)")
+            return matched_pos, fallback_role, "stat_fingerprint"
+
+    # Generic-position fallback: return a canonical specific position without
+    # a role when stats aren't available, so callers know at least the broad
+    # position rather than getting nothing at all.
+    _GENERIC_DEFAULT_POS = {
+        "Goalkeeper": "GK", "Defender": "CB",
+        "Midfielder": "CM", "Attacker": "CF", "Forward": "CF",
+    }
+    gp = (generic_position or "").strip().title()
+    if gp in _GENERIC_DEFAULT_POS:
+        default_pos = _GENERIC_DEFAULT_POS[gp]
+        print(f"[ROLE RESOLVE] {player_name} → {default_pos} (generic fallback, no stats)")
+        return default_pos, "", "generic_fallback"
 
     print(f"[ROLE RESOLVE] {player_name} → no resolution possible")
     return "", "", "fallback"

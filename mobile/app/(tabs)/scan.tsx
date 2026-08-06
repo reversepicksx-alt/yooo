@@ -1710,57 +1710,21 @@ export default function ScanScreen() {
             )}
 
             {resolvedPlayer && (<>
-            <Text style={styles.fieldLabel}>BET</Text>
-            {/* ── Compact BET card: Prop / Line / Venue in one block ── */}
-            <View style={{ borderRadius: 14, borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)', overflow: 'hidden', marginTop: 4 }}>
-              {/* Row 1 — Prop Type */}
-              <TouchableOpacity
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, height: 52, borderBottomWidth: 1, borderBottomColor: 'rgba(57,255,20,0.08)' }}
-                onPress={() => setShowPropPicker(true)}
-              >
-                <Text style={{ color: Colors.textSecondary, fontSize: 10, fontWeight: '800', letterSpacing: 1.2 }}>PROP TYPE</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600' }}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
-                  <Ionicons name="chevron-down" size={14} color={Colors.primary} />
-                </View>
-              </TouchableOpacity>
+            <Text style={styles.fieldLabel}>PROP TYPE</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
 
-              {/* Row 2 — Line (left) + Venue (right) */}
-              <View style={{ flexDirection: 'row', height: 52 }}>
-                {/* Line input */}
-                <View style={{ flex: 1, paddingHorizontal: 14, justifyContent: 'center', borderRightWidth: 1, borderRightColor: 'rgba(57,255,20,0.08)' }}>
-                  <Text style={{ color: Colors.textSecondary, fontSize: 10, fontWeight: '800', letterSpacing: 1.2, marginBottom: 2 }}>LINE</Text>
-                  <TextInput
-                    style={{ color: Colors.text, fontSize: 16, fontWeight: '700', padding: 0 }}
-                    placeholder="e.g. 50.5"
-                    placeholderTextColor="rgba(255,255,255,0.18)"
-                    value={line}
-                    onChangeText={setLine}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-
-                {/* Soccer venue is fixture-owned. Never ask the user to pick
-                    Home/Away; the verified next-match lookup supplies it. */}
-                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, backgroundColor: 'rgba(57,255,20,0.1)' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Ionicons
-                      name={autoMatch?.found && autoMatch.isHome === false ? 'airplane-outline' : 'home-outline'}
-                      size={14}
-                      color={Colors.primary}
-                    />
-                    <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 }}>
-                      {autoMatch?.found && typeof autoMatch.isHome === 'boolean'
-                        ? (autoMatch.isHome ? 'HOME' : 'AWAY')
-                        : 'AUTO VENUE'}
-                    </Text>
-                  </View>
-                  <Text style={{ color: Colors.textTertiary, fontSize: 8, fontWeight: '700', letterSpacing: 0.5 }}>
-                    {autoMatch?.found ? 'AUTO-FILLED' : 'FROM NEXT MATCH'}
-                  </Text>
-                </View>
-              </View>
-            </View>
+            <Text style={styles.fieldLabel}>LINE VALUE</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. 50.5"
+              placeholderTextColor={Colors.textTertiary}
+              value={line}
+              onChangeText={setLine}
+              keyboardType="decimal-pad"
+            />
 
             {manualError && (
               <View style={styles.inlineError}>

@@ -122,5 +122,7 @@
 - [NFL preseason schedule fallback](nfl-preseason-schedule.md) — BallDontLie may omit preseason games; use a clearly marked schedule-only fallback and choose the earliest verified fixture.
 - [Half-line settlement](half-line-settlement.md) — `.5` player-prop lines can only be HIT/MISS; DNP/void outcomes must never be stored or rendered as PUSH.
 - [Universal player search](universal-player-search.md) — one search covers soccer, MLB, and NFL; verified result selection auto-detects the read-only sport badge and form.
+- [MLB field name mapping](mlb-field-name-mapping.md) — backend MLB search returns camelCase; api.ts was mapping snake_case, silently producing empty playerName and filtering every MLB result.
+- [Role fingerprint accuracy](role-fingerprint-accuracy.md) — stat fingerprint for Attackers: False 9 requires key_passes≥2.0 + dribbles≥2.0 + shots<2.5; DEFAULT_POSITION_ROLE["Attacker"] must not be "Pressing Forward"; fallback_pos must search _POSITION_ROLE_MAP for the role, not pick alphabetically.
 - [Backend Atlas DNS fallback](backend-atlas-dns-fallback.md) — Atlas SRV/DNS import failures can make every provider search look empty; verify backend health before changing search UI.
 - [Universal selection flow](universal-selection-flow.md) — tapping a verified result must commit identity and start sport-specific matchup lookup, not only fill the text field.

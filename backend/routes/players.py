@@ -1370,7 +1370,7 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
             "Goalkeeper": ("GK", "Shot-Stopper"),
             "Defender": ("CB", "Stopper"),
             "Midfielder": ("CM", "Box-to-Box"),
-            "Attacker": ("ST", "Pressing Forward"),
+            "Attacker": ("CF", "Complete Forward"),
         }
 
         # The search cache is the source for the API's generic category.  Do

@@ -2648,12 +2648,12 @@ export async function searchMlbPlayers(query: string): Promise<MlbPlayer[]> {
   const raw = await apiCall<any>(`/api/mlb/players/search?q=${encodeURIComponent(query)}`);
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
   const mapped = rows.map((p: any) => ({
-    id:        p.id         ?? p.player_id ?? 0,
-    firstName: p.first_name ?? '',
-    lastName:  p.last_name  ?? '',
-    fullName:  p.full_name  ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
-    position:  p.position   ?? '',
-    team:      p.team       ?? null,
+    id:        p.id          ?? p.player_id  ?? 0,
+    firstName: p.firstName   ?? p.first_name ?? '',
+    lastName:  p.lastName    ?? p.last_name  ?? '',
+    fullName:  p.fullName    ?? p.full_name  ?? `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim(),
+    position:  p.position    ?? '',
+    team:      p.team        ?? null,
   }));
   rememberPlayerSearch('mlb', query, mapped);
   return mapped;
