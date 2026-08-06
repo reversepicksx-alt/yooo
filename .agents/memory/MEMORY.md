@@ -121,3 +121,4 @@
 - [MLB/NFL identity and history](mlb-nfl-confirmation-and-history.md) — invalidate stale search responses; default multi-context soccer players to club fixtures and keep MLB/NFL evidence history visible.
 - [NFL preseason schedule fallback](nfl-preseason-schedule.md) — BallDontLie may omit preseason games; use a clearly marked schedule-only fallback and choose the earliest verified fixture.
 - [Half-line settlement](half-line-settlement.md) — `.5` player-prop lines can only be HIT/MISS; DNP/void outcomes must never be stored or rendered as PUSH.
+- [Universal player search](universal-player-search.md) — one search covers soccer, MLB, and NFL; verified result selection auto-detects the read-only sport badge and form.

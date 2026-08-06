@@ -15,6 +15,7 @@ import {
 
 export type SearchType =
   | 'teams' | 'players' | 'leagues'
+  | 'all_players'
   | 'cs2_players' | 'cs2_teams' | 'wta_players'
   | 'nba_players' | 'nhl_players' | 'mlb_players' | 'nfl_players';
 
@@ -31,6 +32,11 @@ export interface FuzzyPlayerResult {
   teamName: string;
   leagueId: number;
   position?: string;
+}
+
+export interface UniversalPlayerResult extends FuzzyPlayerResult {
+  sport: 'soccer' | 'mlb' | 'nfl';
+  raw?: any;
 }
 
 export interface FuzzyLeagueResult {
@@ -63,6 +69,7 @@ interface FuzzySearchInputProps {
 
   onSelectTeam?: (result: FuzzyTeamResult) => void;
   onSelectPlayer?: (result: FuzzyPlayerResult) => void;
+  onSelectAllPlayer?: (result: UniversalPlayerResult) => void;
   onSelectLeague?: (result: FuzzyLeagueResult) => void;
   onSelectCs2Player?: (p: Cs2Player) => void;
   onSelectCs2Team?: (t: Cs2Team) => void;
@@ -121,6 +128,7 @@ export default function FuzzySearchInput({
   staticItems,
   onSelectTeam,
   onSelectPlayer,
+  onSelectAllPlayer,
   onSelectLeague,
   onSelectCs2Player,
   onSelectCs2Team,
@@ -200,6 +208,52 @@ export default function FuzzySearchInput({
           leagueId: (p.leagueId as number) || 0,
           position: (p.position as string) || '',
         }));
+      } else if (searchType === 'all_players') {
+        // Search the three supported player providers in parallel. A single
+        // provider being unavailable must not hide valid results from the
+        // other sports.
+        const [soccerResult, mlbResult, nflResult] = await Promise.allSettled([
+          searchPlayersQuick(q, leagueId),
+          searchMlbPlayers(q),
+          searchNflPlayers(q),
+        ]);
+        const soccerRows = soccerResult.status === 'fulfilled'
+          ? soccerResult.value.players || []
+          : [];
+        const mlbRows = mlbResult.status === 'fulfilled' ? mlbResult.value : [];
+        const nflRows = nflResult.status === 'fulfilled' ? nflResult.value : [];
+        r = [
+          ...soccerRows.map((p: any) => ({
+            sport: 'soccer',
+            playerId: p.id || p.playerId || 0,
+            playerName: p.name || p.playerName || '',
+            teamId: p.teamId || 0,
+            teamName: p.teamName || p.team || '',
+            leagueId: p.leagueId || 0,
+            position: p.position || '',
+            raw: p,
+          })),
+          ...mlbRows.map((p: MlbPlayer) => ({
+            sport: 'mlb',
+            playerId: p.id || 0,
+            playerName: p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim(),
+            teamId: p.team?.id || 0,
+            teamName: p.team?.full_name || '',
+            leagueId: 0,
+            position: p.position || '',
+            raw: p,
+          })),
+          ...nflRows.map((p: NflPlayer) => ({
+            sport: 'nfl',
+            playerId: p.id || 0,
+            playerName: p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim(),
+            teamId: p.team?.id || 0,
+            teamName: p.team?.full_name || '',
+            leagueId: 0,
+            position: p.position || '',
+            raw: p,
+          })),
+        ].filter(p => p.playerName);
       } else if (searchType === 'cs2_players') {
         r = (await searchCs2Players(q)).filter((p: Cs2Player) => p.isActive !== false);
       } else if (searchType === 'cs2_teams') {
@@ -285,6 +339,10 @@ export default function FuzzySearchInput({
   const handleSelectPlayer = (item: FuzzyPlayerResult) => {
     onChangeText(item.playerName); dismiss(); setResults([]);
     onSelectPlayer?.(item);
+  };
+  const handleSelectAllPlayer = (item: UniversalPlayerResult) => {
+    onChangeText(item.playerName); dismiss(); setResults([]);
+    onSelectAllPlayer?.(item);
   };
   const handleSelectLeague = (item: any) => {
     onChangeText(item.name); dismiss(); setResults([]);
@@ -375,6 +433,24 @@ export default function FuzzySearchInput({
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectPlayer(item)} activeOpacity={0.7}>
           <Ionicons name="person-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.playerName}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'all_players') {
+      const sportLabel = item.sport === 'mlb' ? 'MLB' : item.sport === 'nfl' ? 'NFL' : 'Soccer';
+      const icon = item.sport === 'mlb'
+        ? 'baseball-outline'
+        : item.sport === 'nfl'
+          ? 'american-football-outline'
+          : 'football-outline';
+      const sub = [sportLabel, item.teamName, item.position].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectAllPlayer(item)} activeOpacity={0.7}>
+          <Ionicons name={icon as any} size={13} color={Colors.primary} style={styles.dropdownIcon} />
           <View style={styles.dropdownTextWrap}>
             <Text style={styles.dropdownMain} numberOfLines={1}>{item.playerName}</Text>
             {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}

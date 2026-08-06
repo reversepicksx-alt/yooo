@@ -19,8 +19,8 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
-import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage } from '@/lib/api';
+import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
@@ -253,21 +253,6 @@ export default function ScanScreen() {
   const [mlbNextMatch, setMlbNextMatch] = useState<MlbNextMatch | null>(null);
   const [mlbNextMatchLoading, setMlbNextMatchLoading] = useState(false);
 
-  // Sport picker modal + server-side sport config
-  const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
-    { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null,         available: true  },
-    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',          label: null,         available: true  },
-    { sport: 'nfl',    displayName: 'NFL',         icon: 'american-football', label: null,         available: true  },
-  ]);
-
-
-  // Fetch sport labels from server on mount so admin can update without an App Store release
-  useEffect(() => {
-    getSportsConfig().then(cfg => {
-      if (cfg?.length) setSportsConfig(cfg.filter(s => s.sport !== 'wta' && s.sport !== 'cs2'));
-    }).catch(() => {});
-  }, []);
-
   const selectSport = (next: Sport) => {
     cancelAbortRef.current?.abort();
     setSport(next);
@@ -281,6 +266,92 @@ export default function ScanScreen() {
     setManualError(null);
     setScanFillHint(null);
     setPickSaved(false);
+  };
+
+  const handleSoccerPlayerSelect = async (p: FuzzyPlayerResult | UniversalPlayerResult) => {
+    setPlayerQuery(p.playerName);
+    setResolvedPlayer({
+      playerId: p.playerId,
+      playerName: p.playerName,
+      teamId: p.teamId,
+      teamName: p.teamName,
+      leagueId: p.leagueId,
+      position: p.position,
+    });
+    setResolvedRole(null);
+    setSelectedContext(null);
+    setAutoMatch(null);
+    setPlayerContexts([]);
+    setLeagueId(0);
+    setLeagueQuery('');
+    Haptics.selectionAsync();
+    setRoleLoading(true);
+    resolvePlayerRole(
+      p.playerId || null,
+      p.playerName,
+      p.teamName,
+      p.position || '',
+    ).then((result) => {
+      if (result.position || result.role) setResolvedRole(result);
+    }).catch(() => {}).finally(() => setRoleLoading(false));
+    if (p.playerId) {
+      setContextsLoading(true);
+      try {
+        const res = await getPlayerContexts(p.playerId);
+        const ctxs = res?.contexts || [];
+        setPlayerContexts(ctxs);
+        if (ctxs.length > 0) {
+          const preferredContext = ctxs.find(c => !c.isNational) || ctxs[0];
+          setSelectedContext(preferredContext);
+          setNextMatchLoading(true);
+          try {
+            const nm = await getTeamNextMatch(preferredContext.teamId);
+            if (nm?.found) {
+              setAutoMatch(nm);
+              setVenueOverride(nm.isHome ? 'home' : 'away');
+            }
+            if (nm?.leagueId) {
+              setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
+            } else {
+              const fallbackId = preferredContext.leagueId || 0;
+              if (fallbackId && fallbackId !== 667) {
+                const lgInfo = await getLeagueById(fallbackId);
+                setLeagueId(fallbackId);
+                setLeagueQuery(lgInfo?.name || '');
+              }
+            }
+          } catch {}
+          setNextMatchLoading(false);
+        }
+      } catch {}
+      setContextsLoading(false);
+    }
+  };
+
+  const handleUniversalPlayerSelect = async (p: UniversalPlayerResult) => {
+    setManualError(null);
+    selectSport(p.sport);
+    if (p.sport === 'soccer') {
+      await handleSoccerPlayerSelect(p);
+      return;
+    }
+    if (p.sport === 'mlb') {
+      const player = p.raw as MlbPlayer;
+      setMlbPlayerQuery(p.playerName);
+      setMlbPendingPlayer(player);
+      setMlbResolvedPlayer(null);
+      setMlbNextMatch(null);
+      setMlbOpponentQuery('');
+      Haptics.selectionAsync();
+      return;
+    }
+    const player = p.raw as NflPlayer;
+    setNflPlayerQuery(p.playerName);
+    setNflPendingPlayer(player);
+    setNflResolvedPlayer(null);
+    setNflNextMatch(null);
+    setNflOpponentQuery('');
+    Haptics.selectionAsync();
   };
 
   // Auto-quality-filter whenever a new prediction loads:
@@ -1299,31 +1370,16 @@ export default function ScanScreen() {
         </View>
         <NotificationBell />
       </View>
-
-      <View style={styles.sportSelector}>
-        {sportsConfig
-          .filter(s => ['soccer', 'mlb', 'nfl'].includes(s.sport))
-          .map(item => {
-            const active = sport === item.sport;
-            const icon = item.sport === 'mlb'
-              ? 'baseball-outline'
-              : item.sport === 'nfl'
-                ? 'american-football-outline'
-                : 'football-outline';
-            return (
-              <TouchableOpacity
-                key={item.sport}
-                style={[styles.sportSelectorItem, active && styles.sportSelectorItemActive]}
-                onPress={() => selectSport(item.sport as Sport)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name={icon as any} size={15} color={active ? Colors.primary : Colors.textSecondary} />
-                <Text style={[styles.sportSelectorText, active && styles.sportSelectorTextActive]}>
-                  {item.displayName}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+      <View style={styles.detectedSportBanner}>
+        <Ionicons
+          name={sport === 'mlb' ? 'baseball-outline' : sport === 'nfl' ? 'american-football-outline' : 'football-outline'}
+          size={15}
+          color={Colors.primary}
+        />
+        <Text style={styles.detectedSportBannerText}>
+          {sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'}
+        </Text>
+        <Text style={styles.detectedSportBannerHint}>AUTO-DETECTED</Text>
       </View>
 
       <ScrollView
@@ -1435,6 +1491,46 @@ export default function ScanScreen() {
             )}
 
 
+        {mode === 'manual' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.universalPlayerSection}>
+            <Text style={styles.fieldLabel}>PLAYER</Text>
+            <FuzzySearchInput
+              value={
+                sport === 'mlb' ? mlbPlayerQuery
+                  : sport === 'nfl' ? nflPlayerQuery
+                    : playerQuery
+              }
+              onChangeText={(text) => {
+                if (sport === 'mlb') {
+                  setMlbPlayerQuery(text);
+                  if (!text) {
+                    setMlbPendingPlayer(null); setMlbResolvedPlayer(null);
+                    setMlbNextMatch(null); setMlbOpponentQuery('');
+                  }
+                } else if (sport === 'nfl') {
+                  setNflPlayerQuery(text);
+                  if (!text) {
+                    setNflPendingPlayer(null); setNflResolvedPlayer(null);
+                    setNflNextMatch(null); setNflOpponentQuery('');
+                  }
+                } else {
+                  setPlayerQuery(text);
+                  if (!text) {
+                    setResolvedPlayer(null); setAutoMatch(null);
+                    setSelectedContext(null); setPlayerContexts([]);
+                    setNextMatchLoading(false);
+                  }
+                }
+              }}
+              searchType="all_players"
+              placeholder="Search any player — soccer, MLB, or NFL"
+              confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : !!resolvedPlayer}
+              style={{ marginBottom: 2 }}
+              onSelectAllPlayer={handleUniversalPlayerSelect}
+            />
+          </View>
+        )}
+
         {/* ─── MANUAL FORM — Soccer ─── */}
         {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
@@ -1444,90 +1540,6 @@ export default function ScanScreen() {
                 <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
               </View>
             )}
-            <Text style={styles.fieldLabel}>PLAYER</Text>
-            <FuzzySearchInput
-              value={playerQuery}
-              onChangeText={(t) => {
-                setPlayerQuery(t);
-                                if (!t) {
-                  setResolvedPlayer(null);
-                  setAutoMatch(null);
-                  setSelectedContext(null);
-                  setPlayerContexts([]);
-                  setNextMatchLoading(false);
-                }
-              }}
-              searchType="players"
-              placeholder="e.g. Kevin De Bruyne"
-              style={{ marginBottom: 2 }}
-              confirmed={!!resolvedPlayer}
-              onSelectPlayer={async (p) => {
-                setPlayerQuery(p.playerName);
-                setResolvedPlayer(p);
-                setResolvedRole(null);
-                setSelectedContext(null);
-                setAutoMatch(null);
-                setPlayerContexts([]);
-                // Reset league — next-match fetch below will set it correctly.
-                // Don't carry over the search result's leagueId; it's often 667
-                // (friendlies cache entry) which is not a real competition, and
-                // the LEAGUES shortlist only has 8 entries so the name would be blank.
-                setLeagueId(0);
-                setLeagueQuery('');
-                Haptics.selectionAsync();
-                // Fire role resolution in background — non-blocking, does not
-                // gate any other UI. Shows "Detecting role..." spinner then
-                // replaces with specific position + role once resolved.
-                setRoleLoading(true);
-                resolvePlayerRole(
-                  p.playerId || null,
-                  p.playerName,
-                  p.teamName,
-                  p.position || '',
-                ).then((result) => {
-                  if (result.position || result.role) setResolvedRole(result);
-                }).catch(() => {}).finally(() => setRoleLoading(false));
-                // Fetch all team contexts for this player (club + national team)
-                if (p.playerId) {
-                  setContextsLoading(true);
-                  try {
-                    const res = await getPlayerContexts(p.playerId);
-                    const ctxs = res?.contexts || [];
-                    setPlayerContexts(ctxs);
-                    if (ctxs.length > 0) {
-                      // Prefer the player's current club when the provider
-                      // also returns a national-team context. The context
-                      // picker remains available so the user can switch to
-                      // Portugal/another national side explicitly.
-                      const preferredContext =
-                        ctxs.find(c => !c.isNational) || ctxs[0];
-                      setSelectedContext(preferredContext);
-                      setNextMatchLoading(true);
-                      try {
-                        const nm = await getTeamNextMatch(preferredContext.teamId);
-                        if (nm?.found) {
-                          setAutoMatch(nm);
-                          setVenueOverride(nm.isHome ? 'home' : 'away');
-                        }
-                        if (nm?.leagueId) {
-                          setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
-                        } else {
-                          // next-match failed — look up league name by ID from MongoDB
-                          const fallbackId = preferredContext.leagueId || 0;
-                          if (fallbackId && fallbackId !== 667) {
-                            const lgInfo = await getLeagueById(fallbackId);
-                            setLeagueId(fallbackId);
-                            setLeagueQuery(lgInfo?.name || '');
-                          }
-                        }
-                      } catch {}
-                      setNextMatchLoading(false);
-                    }
-                  } catch {}
-                  setContextsLoading(false);
-                }
-              }}
-            />
             {resolvedPlayer && (
               <View style={{ marginBottom: 4, marginLeft: 2 }}>
                 <Text style={{ color: Colors.primary, fontSize: 11 }}>
@@ -2302,33 +2314,6 @@ export default function ScanScreen() {
         {sport === 'nfl' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <>
-                <Text style={styles.fieldLabel}>Player</Text>
-                <FuzzySearchInput
-                  searchType="nfl_players"
-                  value={nflPlayerQuery}
-                  onChangeText={(t) => {
-                    setNflPlayerQuery(t);
-                    const confirmedName = nflResolvedPlayer?.fullName || (nflResolvedPlayer ? `${nflResolvedPlayer.firstName} ${nflResolvedPlayer.lastName}`.trim() : '');
-                    if (!t || (nflResolvedPlayer && t !== confirmedName)) {
-                      setNflPendingPlayer(null);
-                      setNflResolvedPlayer(null);
-                      setNflNextMatch(null);
-                      setNflOpponentQuery('');
-                      setNflVenue('home');
-                    }
-                  }}
-                  placeholder="e.g. Patrick Mahomes, Justin Jefferson"
-                  confirmed={!!nflResolvedPlayer}
-                  autoCapitalize="words"
-                  onSelectNflPlayer={(p) => {
-                    setNflPendingPlayer(p);
-                    setNflResolvedPlayer(null);
-                    setNflPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
-                    setNflNextMatch(null);
-                    setNflOpponentQuery('');
-                    Haptics.selectionAsync();
-                  }}
-                />
                 {nflPendingPlayer && !nflResolvedPlayer && (
                   <View style={styles.playerConfirmCard}>
                     <View style={{ flex: 1 }}>
@@ -2439,34 +2424,6 @@ export default function ScanScreen() {
         {sport === 'mlb' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <>
-                <Text style={styles.fieldLabel}>Player</Text>
-                <FuzzySearchInput
-                  searchType="mlb_players"
-                  value={mlbPlayerQuery}
-                  onChangeText={(t) => {
-                    setMlbPlayerQuery(t);
-                    const confirmedName = mlbResolvedPlayer?.fullName || (mlbResolvedPlayer ? `${mlbResolvedPlayer.firstName} ${mlbResolvedPlayer.lastName}`.trim() : '');
-                    if (!t || (mlbResolvedPlayer && t !== confirmedName)) {
-                      setMlbPendingPlayer(null);
-                      setMlbResolvedPlayer(null);
-                      setMlbNextMatch(null);
-                      setMlbOpponentQuery('');
-                      setMlbVenue('home');
-                    }
-                  }}
-                  placeholder="e.g. Shohei Ohtani, Juan Soto"
-                  confirmed={!!mlbResolvedPlayer}
-                  autoCapitalize="words"
-                  onSelectMlbPlayer={(p) => {
-                    setMlbPendingPlayer(p);
-                    setMlbResolvedPlayer(null);
-                    const _mlbName = p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
-                    if (_mlbName) setMlbPlayerQuery(_mlbName);
-                    setMlbNextMatch(null);
-                    setMlbOpponentQuery('');
-                    Haptics.selectionAsync();
-                  }}
-                />
                 {mlbPendingPlayer && !mlbResolvedPlayer && (
                   <View style={styles.playerConfirmCard}>
                     <View style={{ flex: 1 }}>
@@ -6628,33 +6585,33 @@ const styles = StyleSheet.create({
   modalItemActive: { backgroundColor: Colors.primaryDim, borderRadius: 8, paddingHorizontal: 10 },
   modalItemText: { fontSize: 15, color: Colors.text },
   modalItemTextActive: { color: Colors.primary, fontWeight: '600' },
-  sportSelector: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: Colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(57,255,20,0.10)',
-  },
-  sportSelectorItem: {
-    flex: 1,
-    minHeight: 38,
+  detectedSportBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#252525',
-    backgroundColor: '#151515',
+    gap: 7,
+    minHeight: 38,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(57,255,20,0.10)',
+    backgroundColor: 'rgba(57,255,20,0.045)',
   },
-  sportSelectorItemActive: {
-    borderColor: 'rgba(57,255,20,0.55)',
-    backgroundColor: 'rgba(57,255,20,0.10)',
+  detectedSportBannerText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
-  sportSelectorText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
-  sportSelectorTextActive: { color: Colors.primary },
+  detectedSportBannerHint: {
+    color: Colors.textTertiary,
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginLeft: 3,
+  },
+  universalPlayerSection: {
+    marginBottom: 4,
+  },
 
   summarySection: { padding: 16, gap: 10 },
   summaryHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
