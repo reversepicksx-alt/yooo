@@ -372,6 +372,66 @@ async def sync_national_teams():
 #  5. TRANSFER DETECTION
 # ══════════════════════════════════════════════
 
+async def _resolve_transferred_player(pid: int, player_name: str, old_team_id: int):
+    """Fetch a departed player's new club and update db.players immediately.
+
+    Called in the background for every detected departure so the player cache
+    self-heals without waiting for the next squad sync.
+    """
+    from config import CURRENT_SEASON
+    # International / national-team league IDs — same set as players.py _INTL_LEAGUES
+    _INTL = {1, 9, 10, 11, 15, 16, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35}
+    try:
+        for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+            data = await api_football_request("players", {"id": pid, "season": s})
+            if not data:
+                continue
+            stats = data[0].get("statistics") or []
+            # Walk stats newest-first; find the first real club that is NOT the old team
+            for st in reversed(stats):
+                lid  = (st.get("league") or {}).get("id", 0)
+                new_team = (st.get("team") or {})
+                new_tid  = new_team.get("id", 0)
+                if lid and lid not in _INTL and lid != 667 and new_tid and new_tid != old_team_id:
+                    new_name = new_team.get("name", "")
+                    # Update all cache entries that still point to the old team
+                    await db[COL_PLAYERS].update_many(
+                        {"playerId": pid, "teamId": old_team_id},
+                        {"$set": {
+                            "teamId":    new_tid,
+                            "teamName":  new_name,
+                            "leagueId":  lid,
+                            "_dt":       datetime.now(timezone.utc).isoformat(),
+                            "_cachedAt": time.time(),
+                        }},
+                    )
+                    # Upsert a fresh entry under the new club so search finds it
+                    await db[COL_PLAYERS].update_one(
+                        {"playerId": pid, "teamId": new_tid},
+                        {"$setOnInsert": {
+                            "playerId":  pid,
+                            "name":      player_name,
+                            "teamId":    new_tid,
+                            "teamName":  new_name,
+                            "leagueId":  lid,
+                            "_cachedAt": time.time(),
+                        }},
+                        upsert=True,
+                    )
+                    # Invalidate next-match cache for both old and new team
+                    await db["next_match_cache"].delete_many(
+                        {"teamId": {"$in": [old_team_id, new_tid]}}
+                    )
+                    print(
+                        f"[TRANSFER UPDATE] {player_name} (pid={pid}): "
+                        f"teamId {old_team_id} → {new_tid} ({new_name})"
+                    )
+                    return
+            break  # season had data but no different club found — stop
+    except Exception as e:
+        print(f"[TRANSFER RESOLVE] pid={pid} err={e}")
+
+
 async def detect_transfers():
     """Compare current squads with cached data to detect transfers."""
     transfers_found = []
@@ -404,24 +464,30 @@ async def detect_transfers():
             # Players who LEFT this team
             for pid, old_info in old_players.items():
                 if pid not in new_squad:
+                    pname = old_info.get("name", "")
                     transfers_found.append({
-                        "playerId": pid,
-                        "playerName": old_info.get("name", ""),
+                        "playerId":   pid,
+                        "playerName": pname,
                         "fromTeamId": tid,
-                        "fromTeam": team_name,
-                        "type": "departure",
+                        "fromTeam":   team_name,
+                        "type":       "departure",
                         "detectedAt": datetime.now(timezone.utc).isoformat(),
                     })
+                    # Immediately look up and write the new club so the
+                    # player cache is self-healing — don't just log it.
+                    aio.ensure_future(
+                        _resolve_transferred_player(pid, pname, tid)
+                    )
 
             # Players who JOINED this team
             for pid, new_info in new_squad.items():
                 if pid not in old_players:
                     transfers_found.append({
-                        "playerId": pid,
+                        "playerId":   pid,
                         "playerName": new_info.get("name", ""),
-                        "toTeamId": tid,
-                        "toTeam": team_name,
-                        "type": "arrival",
+                        "toTeamId":   tid,
+                        "toTeam":     team_name,
+                        "type":       "arrival",
                         "detectedAt": datetime.now(timezone.utc).isoformat(),
                     })
 

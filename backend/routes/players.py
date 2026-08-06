@@ -897,6 +897,26 @@ async def search_players(req: PlayerSearchRequest):
                             except Exception as _e:
                                 print(f"[BG-ENRICH] pid={p.get('id')} err={_e}")
                     aio.ensure_future(_bg_enrich(intl_hits))
+
+                # Also refresh stale club entries — catches transferred players
+                # whose cache still shows the old team (e.g. Salah at Liverpool
+                # after moving to Trabzonspor).  Only fire for entries older
+                # than 30 days to avoid quota burn on recent/accurate results.
+                _now_ts = time.time()
+                stale_club_hits = [
+                    p for p in sorted_results[:5]
+                    if p.get("leagueId") not in _INTL_LEAGUES
+                    and (_now_ts - (p.get("_cachedAt") or 0)) > 30 * 86400
+                ]
+                if stale_club_hits:
+                    async def _bg_refresh_stale(players: list):
+                        for p in players:
+                            try:
+                                await _resolve_club_for_intl_player(p)
+                            except Exception as _e:
+                                print(f"[BG-CLUB-STALE] pid={p.get('id')} err={_e}")
+                    aio.ensure_future(_bg_refresh_stale(stale_club_hits))
+
             return {"players": sorted_results}
     except (aio.TimeoutError, TimeoutError):
         print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")

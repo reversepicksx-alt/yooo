@@ -44,6 +44,74 @@ def _cached_match_is_active(result: dict, now: datetime) -> bool:
         return False
 
 
+async def _verify_player_club_bg(player_id: int, cached_contexts: list):
+    """Background club-verification for a player whose contexts were served
+    from cache.  If the API shows a different current club, update db.players,
+    invalidate the context cache and the next-match cache so the very next
+    interaction (seconds later) returns the correct team.
+    """
+    _INTL = {1, 9, 10, 11, 15, 16, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35}
+    try:
+        for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+            data = await api_football_request("players", {"id": player_id, "season": s})
+            if not data:
+                continue
+            stats = data[0].get("statistics") or []
+            # Find the most recent club stat (non-international, non-qualifier)
+            api_tid, api_tname, api_lid = 0, "", 0
+            for st in reversed(stats):
+                lid = (st.get("league") or {}).get("id", 0)
+                tm  = st.get("team") or {}
+                tid = tm.get("id", 0)
+                if lid and lid not in _INTL and lid != 667 and tid:
+                    api_tid, api_tname, api_lid = tid, tm.get("name", ""), lid
+                    break
+            if not api_tid:
+                break  # season had data but no club stat — stop
+
+            # Compare against all cached club contexts
+            cached_club_ids = {
+                c["teamId"] for c in cached_contexts if not c.get("isNational")
+            }
+            if api_tid not in cached_club_ids:
+                now = datetime.now(timezone.utc)
+                print(
+                    f"[CLUB CHANGE BG] pid={player_id}: "
+                    f"cached={cached_club_ids} → new={api_tid} ({api_tname})"
+                )
+                # Update every old entry for this player to the new club
+                await db[COL_PLAYERS].update_many(
+                    {"playerId": player_id},
+                    {"$set": {
+                        "teamId":    api_tid,
+                        "teamName":  api_tname,
+                        "leagueId":  api_lid,
+                        "_cachedAt": now.timestamp(),
+                    }},
+                )
+                # Upsert fresh entry under the new club
+                await db[COL_PLAYERS].update_one(
+                    {"playerId": player_id, "teamId": api_tid},
+                    {"$setOnInsert": {
+                        "playerId":  player_id,
+                        "teamId":    api_tid,
+                        "teamName":  api_tname,
+                        "leagueId":  api_lid,
+                        "_cachedAt": now.timestamp(),
+                    }},
+                    upsert=True,
+                )
+                # Invalidate context cache — next call rebuilds with correct team
+                await db[COL_PLAYER_CTX_CACHE].delete_one({"playerId": player_id})
+                # Invalidate next-match cache for old teams so the new team's
+                # fixture is fetched on the next interaction
+                for old_tid in cached_club_ids:
+                    await db["next_match_cache"].delete_one({"teamId": old_tid})
+            return  # done after first season with club data
+    except Exception as e:
+        print(f"[CLUB VERIFY BG] pid={player_id} err={e}")
+
+
 @router.get("/players/{player_id}/contexts")
 async def player_contexts(player_id: int):
     """Return all team contexts (club + national) for a given player ID.
@@ -69,6 +137,14 @@ async def player_contexts(player_id: int):
             if cached_at.tzinfo is None:
                 cached_at = cached_at.replace(tzinfo=timezone.utc)
             if (now - cached_at).total_seconds() < ttl_h * 3600:
+                # Cache is fresh — but if it's older than 12 h, fire a background
+                # club-verification so any transfer is caught before the next
+                # interaction rather than waiting for the full TTL to expire.
+                age_h = (now - cached_at).total_seconds() / 3600
+                if age_h > 12:
+                    asyncio.ensure_future(
+                        _verify_player_club_bg(player_id, cached["contexts"])
+                    )
                 return {"contexts": cached["contexts"]}
 
     # ── Live build ────────────────────────────────────────────────────────────
