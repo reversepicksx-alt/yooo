@@ -23,7 +23,7 @@ const NO_CODE_EMAILS = new Set([
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 const PLANS = [
-  { key: 'monthly',   label: 'Monthly',  sub: 'Billed monthly', price: '$46.99', unit: '/month', popular: true },
+  { key: 'monthly',   label: 'Monthly',  sub: 'Billed monthly', price: '$39.99', unit: '/month', popular: true },
 ];
 
 export default function AuthScreen() {

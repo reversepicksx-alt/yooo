@@ -86,7 +86,7 @@ export default function WebAuthScreen() {
           </Text>
           {!!error && <Text style={styles.error}>{error}</Text>}
           <Pressable style={[styles.primaryButton, loading && styles.disabled]} disabled={loading} onPress={() => checkout('monthly')}>
-            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>MONTHLY · $46.99/MONTH</Text>}
+            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>MONTHLY · $39.99/MONTH</Text>}
           </Pressable>
           <Pressable style={styles.linkButton} onPress={() => setStep('email')}>
             <Text style={styles.linkText}>Back to Login</Text>

@@ -18,7 +18,7 @@ STRIPE_CHECKOUT_PLAN_KEYS = {"monthly"}
 
 STRIPE_PLANS = {
     "weekly":    {"name": "Weekly",    "amount": 1399,  "interval": "week",  "interval_count": 1, "label": "$13.99/week",      "price_id": "price_1U1TeZE5jSGb860H5gPUjrZv"},
-    "monthly":   {"name": "Monthly",   "amount": 4699,  "interval": "month", "interval_count": 1, "label": "$46.99/month",     "price_id": "price_1U1TeZE5jSGb860HV1CU07LT"},
+    "monthly":   {"name": "Monthly",   "amount": 3999,  "interval": "month", "interval_count": 1, "label": "$39.99/month",     "price_id": "price_1U1UsHE5jSGb860HzSkJ0JK1"},
     # Retained for legacy subscription records; not offered for website
     # checkouts or plan changes.
     "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3, "label": "$99.99/3 months", "price_id": None},
