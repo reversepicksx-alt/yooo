@@ -28,6 +28,30 @@ _CLUB_LEAGUE_EXCLUDES = {
 }
 
 
+def _dedupe_contexts(contexts: list) -> list:
+    """Keep one context per team, preferring verified/current evidence."""
+    selected = {}
+    for context in contexts or []:
+        key = (context.get("teamId"), bool(context.get("isNational")))
+        previous = selected.get(key)
+        if previous is None:
+            selected[key] = context
+            continue
+        previous_rank = (
+            bool(previous.get("verified")),
+            not bool(previous.get("lastKnown")),
+            bool(previous.get("teamName")),
+        )
+        current_rank = (
+            bool(context.get("verified")),
+            not bool(context.get("lastKnown")),
+            bool(context.get("teamName")),
+        )
+        if current_rank > previous_rank:
+            selected[key] = context
+    return list(selected.values())
+
+
 def _cached_match_is_active(result: dict, now: datetime) -> bool:
     """Only reuse cached match identity while its fixture is live/upcoming."""
     if not result or not result.get("found"):
@@ -124,13 +148,41 @@ async def _resolve_verified_club(player_id: int):
     unavailable or has no current club row.  Callers must not substitute an old
     cache row in that case.
     """
-    # Historical seasons are deliberately not a fallback. During a transfer
-    # window the newest provider row may still be the old club; using an older
-    # season as "current" makes that failure invisible to the user. The
-    # current operational season is the only season allowed to establish a
-    # current club.
+    evidence = await _resolve_club_evidence(player_id)
+    if evidence.get("status") == "verified":
+        return evidence.get("club")
+    return None
+
+
+async def _is_player_on_current_squad(player_id: int, team_id: int) -> bool:
+    """Confirm a last-known club using the provider's current squad feed."""
+    try:
+        data = await priority_api_football_request(
+            "players/squads",
+            {"team": team_id},
+            force_refresh=True,
+        )
+        for squad in data or []:
+            for player in squad.get("players") or []:
+                if int(player.get("id") or 0) == int(player_id):
+                    return True
+    except Exception as exc:
+        print(f"[CLUB SQUAD VERIFY] pid={player_id} team={team_id} err={exc}")
+    return False
+
+
+async def _resolve_club_evidence(player_id: int):
+    """Return current-club evidence without confusing it with no data.
+
+    API-Football uses competition-season labels: European 2025-26 leagues are
+    represented by season 2025, while calendar-year competitions use 2026.
+    A player can therefore have national-team data in 2026 and their latest
+    club row in 2025. That is ``last_known``, not ``no club``.
+    """
     verification_season = max(CURRENT_SEASON + 1, datetime.now(timezone.utc).year)
-    for season in [verification_season]:
+    seasons = list(dict.fromkeys([verification_season, CURRENT_SEASON]))
+    last_known = None
+    for season in seasons:
         try:
             data = await priority_api_football_request(
                 "players", {"id": player_id, "season": season},
@@ -162,13 +214,26 @@ async def _resolve_verified_club(player_id: int):
                 and league_id
                 and league_id not in _CLUB_LEAGUE_EXCLUDES
             ):
-                return {
+                club = {
                     "teamId": int(team_id),
                     "teamName": team_name,
                     "leagueId": int(league_id),
                     "verifiedSeason": season,
                 }
-    return None
+                if season == verification_season:
+                    return {"status": "verified", "club": club}
+                if last_known is None:
+                    last_known = club
+                break
+    if last_known and await _is_player_on_current_squad(player_id, last_known["teamId"]):
+        # The current squad feed is stronger evidence than the season label.
+        # This matters during offseason: a player may have current squad status
+        # while their latest competition statistics are stored under 2025.
+        last_known["verificationSource"] = "current_squad"
+        return {"status": "verified", "club": last_known}
+    if last_known:
+        return {"status": "last_known", "club": last_known}
+    return {"status": "unavailable", "club": None}
 
 
 @router.get("/players/{player_id}/contexts")
@@ -206,7 +271,7 @@ async def player_contexts(player_id: int):
                 and (now - club_verified_at).total_seconds() < _CLUB_VERIFY_CACHE_TTL_H * 3600
             ):
                 return {
-                    "contexts": cached["contexts"],
+                    "contexts": _dedupe_contexts(cached["contexts"]),
                     "teamVerified": True,
                     "verificationStatus": "verified",
                 }
@@ -214,7 +279,9 @@ async def player_contexts(player_id: int):
     # Never serve a stale club row while the provider is unavailable.  This is
     # intentionally synchronous on selection: displaying the old club creates a
     # false next-match identity and can produce a completely wrong prediction.
-    verified_club = await _resolve_verified_club(player_id)
+    club_evidence = await _resolve_club_evidence(player_id)
+    verified_club = club_evidence.get("club") if club_evidence.get("status") == "verified" else None
+    last_known_club = club_evidence.get("club") if club_evidence.get("status") == "last_known" else None
 
     # ── Live build ────────────────────────────────────────────────────────────
     # Load national team IDs from cache
@@ -283,7 +350,8 @@ async def player_contexts(player_id: int):
         if found_national:
             break
 
-    # The live club is the only authoritative current-team context.
+    # The live club is the only authoritative current-team context. A prior
+    # season club can be shown as last-known context, but never auto-filled.
     if verified_club:
         old_club_ids = {
             d.get("teamId")
@@ -295,6 +363,13 @@ async def player_contexts(player_id: int):
             "isNational": False,
             "verified": True,
         }
+        # A player can have several competition rows for the same club
+        # (domestic league, cup, continental, friendlies). Keep one canonical
+        # current-club context instead of exposing duplicate team buttons.
+        contexts = [
+            c for c in contexts
+            if c.get("isNational") or c.get("teamId") != verified_club["teamId"]
+        ]
         contexts.insert(0, club_context)
         if old_club_ids and verified_club["teamId"] not in old_club_ids:
             print(
@@ -332,6 +407,19 @@ async def player_contexts(player_id: int):
             }},
             upsert=True,
         )
+    elif last_known_club:
+        # Remove an old cached copy of the same club before adding the
+        # explicitly-labelled last-known row.
+        contexts = [
+            c for c in contexts
+            if c.get("teamId") != last_known_club["teamId"]
+        ]
+        contexts.insert(0, {
+            **last_known_club,
+            "isNational": False,
+            "verified": False,
+            "lastKnown": True,
+        })
 
     # ── Cache write ───────────────────────────────────────────────────────────
     # An unavailable provider must not refresh the timestamp on stale club
@@ -356,12 +444,13 @@ async def player_contexts(player_id: int):
         # Keep national-only options if they were discovered, but explicitly
         # tell the client that no current club is verified.
         return {
-            "contexts": [c for c in contexts if c.get("isNational")],
+            "contexts": _dedupe_contexts(contexts),
             "teamVerified": False,
-            "verificationStatus": "unavailable",
+            "verificationStatus": club_evidence.get("status", "unavailable"),
+            "lastKnownClub": last_known_club,
         }
     return {
-        "contexts": contexts,
+        "contexts": _dedupe_contexts(contexts),
         "teamVerified": True,
         "verificationStatus": "verified",
     }

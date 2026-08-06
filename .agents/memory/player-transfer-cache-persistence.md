@@ -34,10 +34,16 @@ has not published the transfer, return an explicit unavailable state rather than
 showing the old club. Explicit national-team contexts remain separate and may be
 selected intentionally.
 
+During offseason, a prior competition-season club row can still be valid: API-
+Football may place club statistics under 2025 while national-team data appears
+under 2026. Confirm that prior-season club through the provider's current
+`players/squads` feed before promoting it to current-club status.
+
 **Why:** A background refresh or cached profile can lag a transfer by days. The
 old behavior turned that lag into a false Liverpool/old-club matchup and made the
 wrong team look authoritative.
 
 **How to apply:** Treat `teamVerified` as required for club predictions, keep
-search team fields blank until verification, and re-check the player/team pair at
+search team fields blank until verification, use current-squad confirmation when
+season labels span calendar years, and re-check the player/team pair at
 prediction time so stale clients cannot bypass the guard.

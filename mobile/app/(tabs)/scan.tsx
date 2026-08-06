@@ -174,7 +174,7 @@ export default function ScanScreen() {
   const [playerContexts, setPlayerContexts] = useState<PlayerContext[]>([]);
   const [selectedContext, setSelectedContext] = useState<PlayerContext | null>(null);
   const [contextsLoading, setContextsLoading] = useState(false);
-  const [clubVerificationStatus, setClubVerificationStatus] = useState<'idle' | 'loading' | 'verified' | 'unavailable'>('idle');
+  const [clubVerificationStatus, setClubVerificationStatus] = useState<'idle' | 'loading' | 'verified' | 'last_known' | 'unavailable'>('idle');
   const [nextMatchLoading, setNextMatchLoading] = useState(false);
   const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
@@ -335,9 +335,10 @@ export default function ScanScreen() {
           } catch {}
           setNextMatchLoading(false);
         } else {
-          // A provider outage/quota response is not permission to reuse the
-          // cached club from the search result.
-          setClubVerificationStatus('unavailable');
+          // A previous-season club is useful context, but it is not current
+          // club evidence and must never drive an automatic matchup.
+          const status = res?.verificationStatus === 'last_known' ? 'last_known' : 'unavailable';
+          setClubVerificationStatus(status);
           setResolvedPlayer(current => current ? {
             ...current,
             teamId: 0,
@@ -346,7 +347,11 @@ export default function ScanScreen() {
           } : current);
           setSelectedContext(null);
           setAutoMatch(null);
-          setManualError('Current club could not be verified right now. No old-team matchup was filled.');
+          setManualError(
+            status === 'last_known'
+              ? `Last known club: ${res?.lastKnownClub?.teamName || 'previous club'}. Current club is not confirmed, so no old-team matchup was filled.`
+              : 'Current club could not be verified right now. No old-team matchup was filled.',
+          );
         }
       } catch {
         setClubVerificationStatus('unavailable');
@@ -898,7 +903,9 @@ export default function ScanScreen() {
       setManualError(
         clubVerificationStatus === 'loading'
           ? 'Still verifying the player’s current club. Try again in a moment.'
-          : 'The player’s current club could not be verified. Select an explicit national-team context or retry; no old-team prediction was created.',
+          : clubVerificationStatus === 'last_known'
+            ? 'Only a previous-season club is known. Select an explicit national-team context or retry; no old-team prediction was created.'
+            : 'The player’s current club could not be verified. Select an explicit national-team context or retry; no old-team prediction was created.',
       );
       return;
     }
@@ -1576,7 +1583,7 @@ export default function ScanScreen() {
               }}
               searchType="all_players"
               placeholder="Search any player — soccer, MLB, or NFL"
-               confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && clubVerificationStatus === 'verified')}
+               confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
               style={{ marginBottom: 2 }}
               onSelectAllPlayer={handleUniversalPlayerSelect}
             />
@@ -1599,7 +1606,9 @@ export default function ScanScreen() {
                     ? '⟳ Verifying current club…'
                     : clubVerificationStatus === 'verified'
                       ? `✓ ${resolvedPlayer.teamName}`
-                      : '⚠ Current club unavailable — retry player selection'}
+                      : clubVerificationStatus === 'last_known'
+                        ? `⚠ Last known club: ${playerContexts.find(c => c.lastKnown)?.teamName || 'previous club'} — current club not confirmed`
+                        : '⚠ Current club unavailable — retry player selection'}
                   {resolvedRole?.position
                     ? ` · ${resolvedRole.position}`
                     : resolvedPlayer.position
@@ -1621,9 +1630,13 @@ export default function ScanScreen() {
               // The search result can identify the national side (e.g.
               // Cristiano → Portugal) even when the club is the useful
               // default for next-match lookup.
-              const currentClub = playerContexts.find(c => !c.isNational);
+              const currentClub = playerContexts.find(c => !c.isNational && c.verified === true);
               const displayCtxs = playerContexts.filter(
-                c => c.isNational || c.teamId === currentClub?.teamId
+                c => c.isNational || (
+                  currentClub
+                  && c.teamId === currentClub.teamId
+                  && c.verified === true
+                )
               );
               // Show the national context even when the current club could not
               // be verified. Never hide the only safe, explicit alternative.
@@ -1645,7 +1658,11 @@ export default function ScanScreen() {
                             alignItems: 'center',
                           }]}
                           onPress={async () => {
-                            if (selectedContext?.teamId === ctx.teamId) return;
+                             if (selectedContext?.teamId === ctx.teamId) return;
+                             // Last-known clubs are display-only context. Only
+                             // a verified club or explicit national team can
+                             // trigger a matchup lookup.
+                             if (!ctx.isNational && ctx.verified !== true) return;
                             setSelectedContext(ctx);
                             setAutoMatch(null);
                             setManualOpponentQuery('');
