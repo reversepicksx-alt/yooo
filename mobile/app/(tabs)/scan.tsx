@@ -722,6 +722,11 @@ export default function ScanScreen() {
     cancelAbortRef.current = new AbortController();
     const sig = cancelAbortRef.current.signal;
     try {
+      const autoVenue = sport === 'soccer'
+        && autoMatch?.found
+        && typeof autoMatch.isHome === 'boolean'
+        ? (autoMatch.isHome ? 'home' : 'away')
+        : null;
       const req = {
         email: session.email,
         token: session.token,
@@ -731,7 +736,9 @@ export default function ScanScreen() {
         teamName: data.teamName || data.playerTeam || '',
         opponentId: data.opponentId || 0,
         opponentName: data.opponentName || '',
-        venue: venueOverride,
+        // A verified next fixture is the single source of truth for soccer
+        // venue. Do not let a stale/manual toggle override it.
+        venue: autoVenue || venueOverride,
         leagueId: data.leagueId || leagueId,
         propType: data.propType || propType,
         line: data.line || 0,
@@ -1632,8 +1639,8 @@ export default function ScanScreen() {
                 <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>
                   vs {autoMatch.opponent?.name}
                 </Text>
-                <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
-                  {autoMatch.leagueName}{autoMatch.date ? ` · ${new Date(autoMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                 <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                   {(autoMatch.isHome ? 'HOME' : 'AWAY')}{autoMatch.leagueName ? ` · ${autoMatch.leagueName}` : ''}{autoMatch.date ? ` · ${new Date(autoMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
                   {autoMatch.fixtureId ? ` · Match ${autoMatch.fixtureId}` : ''}
                 </Text>
                 <TouchableOpacity onPress={() => { setAutoMatch(null); setSelectedContext(null); }} style={{ marginTop: 6 }}>
@@ -1723,21 +1730,25 @@ export default function ScanScreen() {
                   />
                 </View>
 
-                {/* Venue toggle */}
-                <TouchableOpacity
-                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRightWidth: 1, borderRightColor: 'rgba(57,255,20,0.08)', backgroundColor: venueOverride === 'home' ? 'rgba(57,255,20,0.1)' : 'transparent' }}
-                  onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
-                >
-                  <Ionicons name="home-outline" size={14} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
-                  <Text style={{ color: venueOverride === 'home' ? Colors.primary : Colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 }}>HOME</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: venueOverride === 'away' ? 'rgba(57,255,20,0.1)' : 'transparent' }}
-                  onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
-                >
-                  <Ionicons name="airplane-outline" size={14} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
-                  <Text style={{ color: venueOverride === 'away' ? Colors.primary : Colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 }}>AWAY</Text>
-                </TouchableOpacity>
+                {/* Soccer venue is fixture-owned. Never ask the user to pick
+                    Home/Away; the verified next-match lookup supplies it. */}
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, backgroundColor: 'rgba(57,255,20,0.1)' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Ionicons
+                      name={autoMatch?.found && autoMatch.isHome === false ? 'airplane-outline' : 'home-outline'}
+                      size={14}
+                      color={Colors.primary}
+                    />
+                    <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 }}>
+                      {autoMatch?.found && typeof autoMatch.isHome === 'boolean'
+                        ? (autoMatch.isHome ? 'HOME' : 'AWAY')
+                        : 'AUTO VENUE'}
+                    </Text>
+                  </View>
+                  <Text style={{ color: Colors.textTertiary, fontSize: 8, fontWeight: '700', letterSpacing: 0.5 }}>
+                    {autoMatch?.found ? 'AUTO-FILLED' : 'FROM NEXT MATCH'}
+                  </Text>
+                </View>
               </View>
             </View>
 
