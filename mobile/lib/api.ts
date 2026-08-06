@@ -24,6 +24,44 @@ const MEDIUM_TIMEOUT_MS    = 15_000;
 const CS2_TIMEOUT_MS       = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
 const SHORT_TIMEOUT_MS     = 15_000;   // 15 s — all other API calls
 
+// Keep recent MLB/NFL identities in the current session. Once a provider
+// returns a result, extending the query filters it locally instead of making
+// another provider request for every keystroke.
+const PLAYER_SEARCH_CACHE: Record<'mlb' | 'nfl', Map<string, any[]>> = {
+  mlb: new Map(),
+  nfl: new Map(),
+};
+const normalizeSearchQuery = (query: string) =>
+  query.trim().toLowerCase().replace(/\s+/g, ' ');
+
+function cachedPlayerSearch(sport: 'mlb' | 'nfl', query: string): any[] {
+  const tokens = normalizeSearchQuery(query).split(' ').filter(Boolean);
+  if (!tokens.length) return [];
+  const matches = new Map<string | number, any>();
+  for (const rows of PLAYER_SEARCH_CACHE[sport].values()) {
+    for (const player of rows) {
+      const name = normalizeSearchQuery(
+        player.fullName ||
+        `${player.firstName || player.first_name || ''} ${player.lastName || player.last_name || ''}`,
+      );
+      if (tokens.every(token => name.includes(token))) {
+        matches.set(player.id ?? name, player);
+      }
+    }
+  }
+  return Array.from(matches.values()).slice(0, 15);
+}
+
+function rememberPlayerSearch(sport: 'mlb' | 'nfl', query: string, rows: any[]) {
+  const cache = PLAYER_SEARCH_CACHE[sport];
+  cache.set(normalizeSearchQuery(query), rows);
+  while (cache.size > 48) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 export async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBase();
   const url = `${base}${endpoint}`;
@@ -2466,9 +2504,11 @@ export interface NflPlayer {
 
 export async function searchNflPlayers(query: string): Promise<NflPlayer[]> {
   if (!query || query.length < 2) return [];
+  const cached = cachedPlayerSearch('nfl', query);
+  if (cached.length) return cached as NflPlayer[];
   const raw = await apiCall<any>(`/api/nfl/players/search?q=${encodeURIComponent(query)}`);
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
-  return rows.map((p: any) => ({
+  const mapped = rows.map((p: any) => ({
     id:        p.id        ?? 0,
     firstName: p.firstName ?? p.first_name  ?? '',
     lastName:  p.lastName  ?? p.last_name   ?? '',
@@ -2478,6 +2518,8 @@ export async function searchNflPlayers(query: string): Promise<NflPlayer[]> {
     jersey:    p.jersey    ?? null,
     college:   p.college   ?? null,
   }));
+  rememberPlayerSearch('nfl', query, mapped);
+  return mapped;
 }
 
 export interface NflNextMatch {
@@ -2596,9 +2638,11 @@ export interface MlbPlayer {
 
 export async function searchMlbPlayers(query: string): Promise<MlbPlayer[]> {
   if (!query || query.length < 2) return [];
+  const cached = cachedPlayerSearch('mlb', query);
+  if (cached.length) return cached as MlbPlayer[];
   const raw = await apiCall<any>(`/api/mlb/players/search?q=${encodeURIComponent(query)}`);
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
-  return rows.map((p: any) => ({
+  const mapped = rows.map((p: any) => ({
     id:        p.id         ?? p.player_id ?? 0,
     firstName: p.first_name ?? '',
     lastName:  p.last_name  ?? '',
@@ -2606,6 +2650,8 @@ export async function searchMlbPlayers(query: string): Promise<MlbPlayer[]> {
     position:  p.position   ?? '',
     team:      p.team       ?? null,
   }));
+  rememberPlayerSearch('mlb', query, mapped);
+  return mapped;
 }
 
 export interface MlbNextMatch {

@@ -26,6 +26,9 @@ NFL_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "")
 _rate_sem = asyncio.Semaphore(2)   # shared BDL key — keep burst low
 _last_req_time: float = 0.0
 _MIN_INTERVAL = 0.25               # max ~4 req/s from this client
+_rate_limited_until: float = 0.0
+_RATE_LIMIT_COOLDOWN = 30.0        # fail fast while BDL is throttling us
+_RATE_LIMIT_MESSAGE = "NFL API rate limited"
 
 CACHE_TTL = {
     "teams":         7 * 86400,
@@ -42,11 +45,13 @@ CURRENT_NFL_SEASON = int(os.environ.get("NFL_SEASON", str(datetime.now(timezone.
 
 
 async def _get(path: str, params: dict = None) -> dict:
-    global _last_req_time
+    global _last_req_time, _rate_limited_until
     headers = {"Authorization": NFL_API_KEY}
     url = f"{NFL_API_BASE}{path}"
 
     async with _rate_sem:
+        if time.monotonic() < _rate_limited_until:
+            raise RuntimeError(_RATE_LIMIT_MESSAGE)
         elapsed = time.monotonic() - _last_req_time
         if elapsed < _MIN_INTERVAL:
             await asyncio.sleep(_MIN_INTERVAL - elapsed)
@@ -63,26 +68,17 @@ async def _get(path: str, params: dict = None) -> dict:
                 raise RuntimeError(f"NFL API error {resp.status_code}: {resp.text[:200]}")
             return resp.json()
 
-        retry_after = min(int(resp.headers.get("retry-after", "5")), 10)
-
-    log.warning(f"[NFL CLIENT] 429 on {path} — waiting {retry_after}s")
-    await asyncio.sleep(retry_after)
-
-    async with _rate_sem:
-        elapsed = time.monotonic() - _last_req_time
-        if elapsed < _MIN_INTERVAL:
-            await asyncio.sleep(_MIN_INTERVAL - elapsed)
-        try:
-            async with httpx.AsyncClient(timeout=20) as c:
-                resp = await c.get(url, headers=headers, params=params or {})
-        except Exception as e:
-            raise RuntimeError(f"NFL API network error on retry: {e}")
-        finally:
-            _last_req_time = time.monotonic()
-
-        if resp.status_code >= 400:
-            raise RuntimeError(f"NFL API error {resp.status_code}: {resp.text[:200]}")
-        return resp.json()
+        # Do not sleep and retry here. Search-as-you-type can have several
+        # requests in flight, and sleeping each one creates a retry storm that
+        # keeps the provider throttled for longer. Search routes can fall back
+        # to the local player index immediately instead.
+        _rate_limited_until = time.monotonic() + _RATE_LIMIT_COOLDOWN
+        retry_after = resp.headers.get("retry-after", "?")
+        log.warning(
+            f"[NFL CLIENT] 429 on {path} — failing fast for "
+            f"{_RATE_LIMIT_COOLDOWN:.0f}s (provider retry-after={retry_after})"
+        )
+        raise RuntimeError(_RATE_LIMIT_MESSAGE)
 
 
 def _cache_fresh(doc: Optional[dict], ttl_seconds: int) -> bool:
@@ -117,12 +113,85 @@ async def _cache_set(key: str, data) -> None:
         pass
 
 
+_player_index: dict[int, dict] = {}
+_player_index_loaded = False
+
+
+def _normalise_player(player: dict) -> dict:
+    """Give cached and provider player records one consistent shape."""
+    p = dict(player or {})
+    if not p.get("full_name"):
+        p["full_name"] = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
+    return p
+
+
+async def _load_cached_player_index() -> None:
+    """Load previously resolved players once after a process restart.
+
+    Search results are also written as player:<id> records below. This makes
+    the fallback durable across VM restarts instead of relying only on the
+    in-memory index.
+    """
+    global _player_index_loaded
+    if _player_index_loaded:
+        return
+    _player_index_loaded = True
+    try:
+        cursor = db.nfl_cache.find(
+            {"key": {"$regex": r"^(player:|search3:)"}},
+            {"_id": 0, "data": 1},
+        )
+        async for doc in cursor:
+            data = doc.get("data")
+            candidates = data if isinstance(data, list) else [data]
+            for candidate in candidates:
+                player = _normalise_player(candidate or {})
+                if player.get("id") is not None:
+                    _player_index[int(player["id"])] = player
+    except Exception as e:
+        log.debug(f"[NFL CACHE] player index load skipped: {e}")
+
+
+def _local_player_search(query: str, limit: int) -> list:
+    """Search resolved NFL players without making a provider request."""
+    q = " ".join((query or "").lower().split())
+    if len(q) < 2:
+        return []
+    tokens = q.split()
+    matches = []
+    for player in _player_index.values():
+        name = " ".join(
+            str(player.get("full_name") or
+                f"{player.get('first_name', '')} {player.get('last_name', '')}").lower().split()
+        )
+        if all(token in name for token in tokens):
+            # Exact/full-prefix matches should beat a surname-only match.
+            exact = name == q
+            prefix = name.startswith(q)
+            token_score = sum(name.startswith(token) for token in tokens)
+            matches.append((0 if exact else 1, 0 if prefix else 1, -token_score, name, player))
+    matches.sort(key=lambda row: row[:4])
+    return [row[4] for row in matches[:limit]]
+
+
 async def search_players(query: str, limit: int = 15) -> list:
-    # search2: prefix busts stale caches poisoned by old-key 429 storms
+    query = " ".join((query or "").strip().split())
+    # search3: prefix busts stale caches poisoned by old-key 429 storms
     cache_key = f"search3:{query.lower()}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["player_search"]):
-        return cached["data"][:limit]
+        rows = [_normalise_player(p) for p in (cached.get("data") or [])]
+        for player in rows:
+            if player.get("id") is not None:
+                _player_index[int(player["id"])] = player
+        return rows[:limit]
+
+    await _load_cached_player_index()
+    local_results = _local_player_search(query, limit)
+    if local_results:
+        # A local hit is authoritative for identity and avoids spending a
+        # provider call on every partial keystroke.
+        return local_results
 
     results = []
     cursor = None
@@ -138,8 +207,9 @@ async def search_players(query: str, limit: int = 15) -> list:
         rows = data.get("data", [])
         # Synthesise full_name for NFL (BDL returns first_name + last_name only)
         for p in rows:
-            if "full_name" not in p:
-                p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+            p = _normalise_player(p)
+            if p.get("id") is not None:
+                _player_index[int(p["id"])] = p
         results.extend(rows)
         meta = data.get("meta", {})
         cursor = meta.get("next_cursor")
@@ -155,9 +225,10 @@ async def search_players(query: str, limit: int = 15) -> list:
             log.warning(f"[NFL SEARCH fallback] {e}")
         else:
             rows = data.get("data", [])
+            rows = [_normalise_player(p) for p in rows]
             for p in rows:
-                if "full_name" not in p:
-                    p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+                if p.get("id") is not None:
+                    _player_index[int(p["id"])] = p
             # Sort by how many original query tokens appear in the player name
             q_tokens = query.lower().split()
             rows.sort(key=lambda p: sum(1 for t in q_tokens if t in p.get("full_name","").lower()), reverse=True)
@@ -165,11 +236,17 @@ async def search_players(query: str, limit: int = 15) -> list:
 
     # Only cache non-empty results — transient 429 must not poison cache
     if results:
+        results = [_normalise_player(p) for p in results]
+        for player in results:
+            if player.get("id") is not None:
+                _player_index[int(player["id"])] = player
+                await _cache_set(f"player:{player['id']}", player)
         await _cache_set(cache_key, results[:limit])
     return results[:limit]
 
 
 async def get_player(player_id: int) -> Optional[dict]:
+    await _load_cached_player_index()
     cache_key = f"player:{player_id}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["player"]):
@@ -177,6 +254,9 @@ async def get_player(player_id: int) -> Optional[dict]:
     try:
         data = await _get(f"/players/{player_id}")
         player = data.get("data", {})
+        player = _normalise_player(player)
+        if player.get("id") is not None:
+            _player_index[int(player["id"])] = player
         await _cache_set(cache_key, player)
         return player
     except Exception as e:

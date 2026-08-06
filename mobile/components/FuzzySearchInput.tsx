@@ -262,7 +262,10 @@ export default function FuzzySearchInput({
     // Show the loading spinner immediately — before the debounce fires —
     // so the user gets instant feedback that something is happening.
     if (!staticItems) setLoading(true);
-    const delay = staticItems ? 60 : DEBOUNCE_MS;
+    const isRateLimitedPlayerSearch = searchType === 'mlb_players' || searchType === 'nfl_players';
+    // Give the user time to finish a name before hitting the provider. The
+    // API layer also filters recent results locally for subsequent letters.
+    const delay = staticItems ? 60 : isRateLimitedPlayerSearch ? 400 : DEBOUNCE_MS;
     debounceRef.current = setTimeout(() => {
       if (lastQueryRef.current === text) doSearch(text);
     }, delay);
