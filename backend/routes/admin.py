@@ -10,6 +10,7 @@ from config import (
 from models import AdminSettingsRequest, AdminTestKeyRequest
 from pass_projection_calibration import walk_forward_validate
 from model_metrics import build_scorecard, walk_forward_replay
+from routes.stripe_pay import checkout_idempotency_key, find_open_stripe_subscriptions
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -188,6 +189,11 @@ async def generate_checkout_link(req: CheckoutLinkRequest):
     client_email = req.clientEmail.lower().strip()
 
     try:
+        if find_open_stripe_subscriptions(client_email):
+            raise HTTPException(
+                status_code=409,
+                detail="This customer already has an open Stripe subscription. Use the existing account's Change Plan flow.",
+            )
         price_id = plan["price_id"]
 
         session = stripe.checkout.Session.create(
@@ -201,6 +207,7 @@ async def generate_checkout_link(req: CheckoutLinkRequest):
             },
             metadata={"email": client_email, "plan_key": plan_key},
             allow_promotion_codes=True,
+            idempotency_key=f"admin-website-checkout-{checkout_idempotency_key(client_email)}",
         )
         return {
             "checkoutUrl": session.url,

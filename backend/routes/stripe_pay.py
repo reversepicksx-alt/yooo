@@ -1,4 +1,5 @@
 import os
+import hashlib
 import stripe
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
@@ -71,10 +72,10 @@ class CheckoutRequest(BaseModel):
     redirectUrl: str = ""
 
 
-def _get_or_create_stripe_customer(email: str) -> str:
+def _get_existing_stripe_customer(email: str) -> str:
     """
-    Return the existing Stripe customer ID for this email, or create a new one.
-    Prevents duplicate customer records when a user subscribes more than once.
+    Return an existing Stripe customer ID for this email, if one exists.
+    Do not create a Stripe Customer merely because somebody opened checkout.
     Uses the customer with the most recent active/paid subscription to avoid
     returning a stale/incomplete duplicate.
     """
@@ -95,10 +96,36 @@ def _get_or_create_stripe_customer(email: str) -> str:
     if best_cust_id:
         print(f"[STRIPE] Reusing existing customer {best_cust_id} for {email_lower}")
         return best_cust_id
-    # No existing customer — create one
-    new_cust = stripe.Customer.create(email=email_lower, metadata={"email": email_lower})
-    print(f"[STRIPE] Created new customer {new_cust.id} for {email_lower}")
-    return new_cust.id
+    return ""
+
+
+def checkout_idempotency_key(email: str) -> str:
+    """Stable key for one website checkout attempt per email/time bucket."""
+    bucket = int(datetime.now(timezone.utc).timestamp()) // 600
+    seed = f"{email.lower().strip()}:{bucket}"
+    return hashlib.sha256(seed.encode()).hexdigest()[:32]
+
+
+def find_open_stripe_subscriptions(email: str) -> list[dict]:
+    """Return non-terminal Stripe subscriptions for an email.
+
+    This is deliberately fail-closed: if Stripe cannot be queried, the caller
+    must not create another checkout that could result in a duplicate charge.
+    """
+    email_lower = email.lower().strip()
+    customers = stripe.Customer.list(email=email_lower, limit=20)
+    open_subs: list[dict] = []
+    seen_ids: set[str] = set()
+    for customer in customers.auto_paging_iter():
+        for status in ("active", "trialing", "past_due", "unpaid", "incomplete"):
+            for sub in stripe.Subscription.list(
+                customer=customer.id, status=status, limit=20
+            ).auto_paging_iter():
+                if sub.id in seen_ids:
+                    continue
+                seen_ids.add(sub.id)
+                open_subs.append({"id": sub.id, "status": status})
+    return open_subs
 
 
 async def _recent_subscription_action_exists(email_lower: str, plan_key: str, action: str, minutes: int = 10) -> bool:
@@ -138,10 +165,9 @@ async def create_checkout(req: CheckoutRequest):
     success_url = req.redirectUrl or "https://reversepicks.com/auth"
     cancel_url = req.redirectUrl or "https://reversepicks.com/auth"
 
-    def _build_session(payment_method_types: list[str]) -> stripe.checkout.Session:
-        return stripe.checkout.Session.create(
+    def _build_session(payment_method_types: list[str], idempotency_key: str) -> stripe.checkout.Session:
+        session_args = dict(
             mode="subscription",
-            customer=customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
             success_url=success_url + "?stripe_success=1",
             cancel_url=cancel_url,
@@ -158,6 +184,14 @@ async def create_checkout(req: CheckoutRequest):
             },
             allow_promotion_codes=True,
         )
+        if customer_id:
+            session_args["customer"] = customer_id
+        else:
+            session_args["customer_email"] = email_lower
+        return stripe.checkout.Session.create(
+            **session_args,
+            idempotency_key=idempotency_key,
+        )
 
     try:
         price_id = _get_or_create_price(plan_key)
@@ -167,45 +201,34 @@ async def create_checkout(req: CheckoutRequest):
             if sub and sub.get("checkoutUrl"):
                 return {"checkoutUrl": sub["checkoutUrl"]}
 
-        # Reuse existing Stripe customer to prevent duplicate accounts
-        customer_id = _get_or_create_stripe_customer(email_lower)
+        # Never cancel or replace an existing subscription just because a
+        # customer opened the new-plan checkout. Existing open subscriptions
+        # must be changed through the explicit Change Plan flow.
+        open_subs = find_open_stripe_subscriptions(email_lower)
+        if open_subs:
+            raise HTTPException(
+                status_code=409,
+                detail="An existing Stripe subscription is already open for this email. Use Account → Change Plan instead of starting a second checkout.",
+            )
 
-        # ── Duplicate-subscription guard (HARDENED) ──────────────────────────
-        # Cancel EVERY non-terminal subscription across EVERY Stripe Customer
-        # record that shares this email — not just the one we're using for the
-        # new checkout. Past-due / unpaid / incomplete subs still retry charges
-        # on the user's card (that's the $15 bug Isaiah hit), and the same
-        # email can legitimately have multiple Customer records from prior
-        # signups. We must wipe them all before starting a fresh subscription.
-        #
-        # Stripe sub statuses we MUST cancel:
-        #   active, trialing, past_due, unpaid, incomplete
-        # Terminal (leave alone):
-        #   canceled, incomplete_expired
-        try:
-            all_custs = list(stripe.Customer.list(email=email_lower, limit=20).auto_paging_iter())
-            for ac in all_custs:
-                for status in ("active", "trialing", "past_due", "unpaid", "incomplete"):
-                    for esub in stripe.Subscription.list(
-                        customer=ac.id, status=status, limit=20
-                    ).auto_paging_iter():
-                        try:
-                            stripe.Subscription.cancel(esub.id)
-                            print(f"[STRIPE] Pre-checkout cleanup: canceled {status} sub {esub.id} on cust {ac.id} for {email_lower}")
-                        except Exception as _se:
-                            print(f"[STRIPE] Could not cancel sub {esub.id} ({status}): {_se}")
-        except Exception as _cancel_err:
-            print(f"[STRIPE] Warning: pre-checkout sub cleanup failed for {email_lower}: {_cancel_err}")
+        # Reuse an existing customer when possible, but do not create a
+        # customer record until checkout is actually completed.
+        customer_id = _get_existing_stripe_customer(email_lower)
+        checkout_key = checkout_idempotency_key(email_lower)
 
         # Try with expanded payment methods first (Cash App Pay + Stripe Link).
         # Cash App Pay / Link let users pay even if their bank blocks card subscriptions.
         # Fall back to card-only if the Stripe account doesn't have those methods enabled.
         try:
-            session = _build_session(["card", "cashapp", "link"])
+            # Reuse the exact same key for the fallback. If Stripe received
+            # the first request but returned a retryable response, the fallback
+            # must not be able to create a second Checkout Session.
+            idempotency_key = f"website-checkout-{checkout_key}"
+            session = _build_session(["card", "cashapp", "link"], idempotency_key)
             print(f"[STRIPE] Checkout created with card+cashapp+link for {email_lower}")
         except stripe.InvalidRequestError as _pmt_err:
             print(f"[STRIPE] Extended payment methods unavailable ({_pmt_err}), falling back to card-only")
-            session = _build_session(["card"])
+            session = _build_session(["card"], idempotency_key)
 
         now = datetime.now(timezone.utc).isoformat()
         try:

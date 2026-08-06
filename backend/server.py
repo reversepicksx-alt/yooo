@@ -556,6 +556,11 @@ async def _retire_stripe_subscriptions_once():
     incomplete subscriptions are canceled immediately so Stripe cannot retry
     charges. The marker makes this safe to run again after a transient error.
     """
+    # Stripe website billing has been reactivated. Keep this historical
+    # migration routine permanently dormant; subscriptions may only change
+    # through explicit customer/account actions or Stripe billing events.
+    return
+
     marker = await db.settings.find_one(
         {"key": "stripe_retirement_complete"}, {"_id": 0, "value": 1}
     )
