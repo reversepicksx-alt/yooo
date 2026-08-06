@@ -345,6 +345,15 @@ async def _atlas_storage_cleanup_loop():
                 {"resolvedAt": {"$lt": now - timedelta(days=30)}}
             )
 
+            # ── transfer audit history: retain only recent diagnostics ───────
+            # This collection is an owner-facing audit feed, not settlement or
+            # subscriber data. Keep a 90-day window so repeated squad scans
+            # cannot grow it without bound.
+            transfer_cutoff = (now - timedelta(days=90)).isoformat()
+            transfer_r = await db.cache_transfers.delete_many(
+                {"detectedAt": {"$lt": transfer_cutoff}}
+            )
+
             print(
                 f"[ATLAS CLEANUP] predictions={total_pred} "
                 f"team_fixture_history={th_deleted}(was {th_count}) "
@@ -352,7 +361,8 @@ async def _atlas_storage_cleanup_loop():
                 f"mlb_cache={mlb_r.deleted_count} "
                 f"cs2_cache={cs2_r.deleted_count} "
                 f"first_goal_cache={fg_r.deleted_count} "
-                f"player_positions={pp_r.deleted_count}"
+                f"player_positions={pp_r.deleted_count} "
+                f"cache_transfers={transfer_r.deleted_count}"
             )
         except Exception as _e:
             print(f"[ATLAS CLEANUP] error: {_e}")

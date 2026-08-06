@@ -14,3 +14,9 @@ The same Atlas write block affects support-critical features such as direct-mess
 **Why:** A successful read from `direct_messages` can create the misleading impression that customer replies are working even though the subsequent insert/update is rejected at the storage ceiling.
 
 **How to apply:** Never substitute ephemeral local files for production customer messages; make the failure visible and free space or increase the cluster tier before relying on messaging persistence.
+
+For storage maintenance, only remove rebuildable caches or bounded owner-diagnostic history after verifying the live code does not depend on the data. Never purge picks, users, sessions, subscriptions, payments, settlement evidence, or analytics used for recovery.
+
+**Why:** The Atlas free-tier ceiling can be relieved safely without compromising the product, but broad cleanup can destroy subscriber history or payment access.
+
+**How to apply:** Prefer retention/TTL guards on cache collections and audit feeds; inspect collection usage and field timestamps before any deletion, and require explicit confirmation for irreversible cleanup.

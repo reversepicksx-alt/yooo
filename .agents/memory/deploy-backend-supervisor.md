@@ -39,3 +39,13 @@ before start + a `--repair` fallback; `mongod --fork` blocks until ready so no
 `sleep` race with uvicorn. Residual gap: if `_run_startup_tasks` throws midway,
 background loops (auto-settlement, calibration, prefetch) silently never start —
 consider surfacing a startup-status flag on `/api/health`.
+
+The publishing configuration must match the deployment service's active target.
+If the project config says autoscale while the existing deployment reports VM,
+publishes can build and push successfully but fail at VM readiness with no app log.
+
+**Why:** The deployment target is part of the publish contract; a mismatch can make
+healthy code appear to fail during promote/readiness.
+
+**How to apply:** Check `getDeploymentInfo()` before debugging code, then use
+`deployConfig` to align the target and preserve the supervised backend run command.
