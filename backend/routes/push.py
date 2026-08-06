@@ -176,7 +176,14 @@ async def _send_pick_settled_push(pick: dict, result: str):
         emails=[email],
         title=title,
         body=body,
-        data={"screen": "picks", "pickId": pick.get("pickId", "")},
+        data={
+            "screen": "picks",
+            "pickId": pick.get("pickId", ""),
+            "result": result,
+            "line": pick.get("line"),
+            "actualValue": pick.get("actualValue"),
+            "voidReason": pick.get("voidReason"),
+        },
     ))
 
 
@@ -223,7 +230,14 @@ async def _notify_pick_settled(pick: dict, result: str) -> None:
             emails=[email],
             title=title,
             body=f"{body} — {label}",
-            data={"screen": "picks", "pickId": pick.get("pickId", "")},
+            data={
+                "screen": "picks",
+                "pickId": pick.get("pickId", ""),
+                "result": result,
+                "line": line,
+                "actualValue": pick.get("actualValue"),
+                "voidReason": pick.get("voidReason"),
+            },
         ))
 
     # 2. In-app inbox notification (awaited — fast MongoDB insert)
@@ -241,6 +255,9 @@ async def _notify_pick_settled(pick: dict, result: str) -> None:
                     "result":     result,
                     "propType":   pick.get("propType", ""),
                     "playerName": player,
+                    "line":       line,
+                    "actualValue": pick.get("actualValue"),
+                    "voidReason":  pick.get("voidReason"),
                 },
             )
         except Exception as _ne:

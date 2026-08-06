@@ -148,7 +148,7 @@ async def cs2_admin_manual_settle(payload: dict):
     rec         = pick.get("recommendation", "over")
     actual_value = float(actual_value)
     diff = actual_value - line
-    if abs(diff) < 0.001:
+    if float(line).is_integer() and abs(diff) < 0.001:
         result_str = "push"
     elif rec == "over":
         result_str = "hit" if actual_value > line else "miss"
@@ -1492,7 +1492,7 @@ async def list_picks(req: GetPicksRequest):
                                 if v is not None and v != "":
                                     meta_set[fld] = v
                                     p[fld] = v
-                            print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: VOID/PUSH ({refreshed['voidReason']})")
+                            print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: DNP/VOID ({refreshed['voidReason']})")
                         else:
                             for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
                                          "homePoss", "awayPoss"):
@@ -2096,7 +2096,7 @@ async def correct_pick(req: CorrectPickRequest):
         raise HTTPException(status_code=404, detail="Pick not found")
     line = pick.get("line", 0)
     rec = pick.get("recommendation", "over")
-    if req.actualValue == line:
+    if float(line).is_integer() and abs(req.actualValue - line) < 0.001:
         result_str = "push"
     elif (rec == "over" and req.actualValue > line) or (rec == "under" and req.actualValue < line):
         result_str = "hit"
@@ -2456,12 +2456,14 @@ async def _process_bdl_live(picks: list, email: str) -> list:
         """Settle a BDL pick and persist to DB."""
         line = pick.get("line", 0)
         rec  = pick.get("recommendation", "over")
-        if current_value > line:
+        if float(line).is_integer() and current_value == line:
+            result_str = "push"
+        elif current_value > line:
             result_str = "hit" if rec == "over" else "miss"
         elif current_value < line:
             result_str = "miss" if rec == "over" else "hit"
         else:
-            result_str = "push"
+            result_str = "hit" if rec == "under" else "miss"
 
         venue = (pick.get("venue") or "home").lower()
         p_score = home_score if venue == "home" else away_score
@@ -2500,9 +2502,9 @@ async def _process_bdl_live(picks: list, email: str) -> list:
         # In-app notification
         try:
             from routes.notifications import create_notification
-            _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+            _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
             _prop  = pick.get("propType", "").replace("_", " ").title()
-            _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+            _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
             await create_notification(
                 email=email,
                 ntype="pick_settled",
@@ -3439,9 +3441,9 @@ async def _build_bdl_soccer_update(
 
     try:
         from routes.notifications import create_notification
-        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
         _prop  = pick.get("propType", "").replace("_", " ").title()
-        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
         await create_notification(
             email=email,
             ntype="pick_settled",
@@ -3918,9 +3920,9 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         # ── In-app notification ──────────────────────────────────────────────
         try:
             from routes.notifications import create_notification
-            _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+            _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
             _prop  = pick.get("propType", "").replace("_", " ").title()
-            _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+            _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
             await create_notification(
                 email=email,
                 ntype="pick_settled",
@@ -3953,7 +3955,7 @@ def _calc_hit_pct(current_value, line, recommendation, elapsed, total_minutes, i
     """Calculate hit probability percentage."""
     rec = (recommendation or "").lower()
     if is_finished:
-        if current_value == line:
+        if float(line).is_integer() and current_value == line:
             return 50
         return 100 if ((rec == "over" and current_value > line) or
                        (rec == "under" and current_value < line)) else 0
@@ -3980,9 +3982,13 @@ def _calc_hit_pct(current_value, line, recommendation, elapsed, total_minutes, i
 
 
 def _settle_result(current_value, line, recommendation):
-    """Determine if a pick hit, missed, or pushed."""
+    """Determine if a pick hit, missed, or pushed.
+
+    Count-stat player props settle to integer actuals. A half-line such as
+    30.5 therefore can never be a push; only whole-number lines can push.
+    """
     rec = (recommendation or "").lower()
-    if current_value == line:
+    if float(line).is_integer() and current_value == line:
         return "push"
     elif (current_value > line and rec == "over") or \
          (current_value < line and rec == "under"):
@@ -4491,9 +4497,9 @@ async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
     # ── In-app notification ──────────────────────────────────────────────────
     try:
         from routes.notifications import create_notification
-        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
         _prop  = prop_type.replace("_", " ").title()
-        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
         await create_notification(
             email=pick.get("email", ""),
             ntype="pick_settled",
@@ -4599,9 +4605,9 @@ async def _settle_wta_pick(pick: dict) -> Optional[dict]:
 
     try:
         from routes.notifications import create_notification
-        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
         _prop  = prop_type.replace("_", " ").title()
-        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
         await create_notification(
             email=pick.get("email", ""),
             ntype="pick_settled",

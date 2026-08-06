@@ -23,21 +23,52 @@ function timeAgo(iso: string): string {
   } catch { return ''; }
 }
 
+function notificationResult(n: AppNotification): string {
+  const raw = String(n.data?.result || '').toLowerCase();
+  if (raw === 'dnp') return 'dnp';
+  if (raw !== 'push') return raw;
+
+  // A half-line cannot push. Older notifications were written as PUSH when
+  // the pick was voided, so render those legacy records as DNP/VOID too.
+  if (n.data?.voidReason) return 'dnp';
+  const actual = n.data?.actualValue;
+  const line = Number(n.data?.line);
+  const text = `${n.title} ${n.body}`;
+  const hasHalfLine = Number.isFinite(line)
+    ? !Number.isInteger(line)
+    : /\b\d+\.5\b/.test(text);
+  if (actual == null && hasHalfLine) return 'dnp';
+  return 'push';
+}
+
+function notificationTitle(n: AppNotification, result: string): string {
+  if (result !== 'dnp') return n.title;
+  return n.title.replace(/\bPUSH\b/gi, 'DNP/VOID');
+}
+
+function notificationBody(n: AppNotification, result: string): string {
+  if (result !== 'dnp') return n.body;
+  return n.body
+    .replace(/RESULT:\s*PUSH\b/gi, 'RESULT: DNP/VOID')
+    .replace(/Result:\s*PUSH\b/gi, 'Result: DNP/VOID');
+}
+
 function notifIcon(n: AppNotification): { name: keyof typeof Ionicons.glyphMap; color: string } {
   if (n.type === 'mention') return { name: 'chatbubble', color: '#4DA6FF' };
-  const result = (n.data?.result as string) || '';
+  const result = notificationResult(n);
   if (result === 'hit')  return { name: 'checkmark-circle',  color: '#39FF14' };
   if (result === 'miss') return { name: 'close-circle',      color: '#FF4444' };
   if (result === 'push') return { name: 'remove-circle',     color: '#FFB800' };
+  if (result === 'dnp')  return { name: 'notifications-off', color: '#FFB800' };
   return { name: 'notifications', color: Colors.primary };
 }
 
 function accentColor(n: AppNotification): string {
   if (n.type === 'mention') return '#4DA6FF';
-  const result = (n.data?.result as string) || '';
+  const result = notificationResult(n);
   if (result === 'hit')  return '#39FF14';
   if (result === 'miss') return '#FF4444';
-  if (result === 'push') return '#FFB800';
+  if (result === 'push' || result === 'dnp') return '#FFB800';
   return Colors.primary;
 }
 
@@ -46,6 +77,7 @@ function accentColor(n: AppNotification): string {
 function NotifCard({ item, onPress }: { item: AppNotification; onPress: (n: AppNotification) => void }) {
   const icon   = notifIcon(item);
   const accent = accentColor(item);
+  const result = notificationResult(item);
 
   return (
     <TouchableOpacity
@@ -63,8 +95,8 @@ function NotifCard({ item, onPress }: { item: AppNotification; onPress: (n: AppN
 
       {/* Content */}
       <View style={styles.content}>
-        <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
-        <Text style={styles.body}  numberOfLines={2}>{item.body}</Text>
+        <Text style={styles.title} numberOfLines={2}>{notificationTitle(item, result)}</Text>
+        <Text style={styles.body}  numberOfLines={2}>{notificationBody(item, result)}</Text>
         <Text style={styles.time}>{timeAgo(item.createdAt)}</Text>
       </View>
 

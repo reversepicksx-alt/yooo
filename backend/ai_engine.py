@@ -6,6 +6,24 @@ from datetime import datetime, timezone, timedelta
 from config import db
 
 
+def _line_allows_push(line) -> bool:
+    """Only whole-number player-prop lines can push."""
+    try:
+        return float(line).is_integer()
+    except (TypeError, ValueError):
+        return False
+
+
+def _settle_numeric_result(actual, line, recommendation):
+    """Resolve a numeric result without allowing half-line pushes."""
+    rec = (recommendation or "").upper()
+    if _line_allows_push(line) and actual == float(line):
+        return "push"
+    if rec == "OVER":
+        return "hit" if actual > float(line) else "miss"
+    return "hit" if actual < float(line) else "miss"
+
+
 def _parse_json(raw: str) -> dict | list | None:
     raw = raw.strip()
     if raw.startswith("```"):
@@ -221,12 +239,7 @@ async def _try_settle_mlb(pick: dict) -> bool:
                 pass
 
     line_f = float(line)
-    if actual == line_f:
-        result = "push"
-    elif rec == "OVER":
-        result = "hit" if actual > line_f else "miss"
-    else:
-        result = "hit" if actual < line_f else "miss"
+    result = _settle_numeric_result(actual, line_f, rec)
 
     await db.picks.update_one(
         {"pickId": pick["pickId"]},
@@ -358,12 +371,7 @@ async def _try_settle_bdl(pick: dict, sport: str) -> bool:
         return False
 
     line_f = float(line)
-    if actual == line_f:
-        result = "push"
-    elif rec == "OVER":
-        result = "hit" if actual > line_f else "miss"
-    else:
-        result = "hit" if actual < line_f else "miss"
+    result = _settle_numeric_result(actual, line_f, rec)
 
     await db.picks.update_one(
         {"pickId": pick["pickId"]},
@@ -934,14 +942,14 @@ async def _run_auto_settlement():
                             _now_iso_sv = datetime.now(timezone.utc).isoformat()
                             await db.picks.update_one(
                                 {"pickId": pick["pickId"]},
-                                {"$set": {"status":"settled","result":"push","hitPct":50,
+                                {"$set": {"status":"settled","result":"dnp","hitPct":0,
                                           "settledAt":_now_iso_sv,"settledBy":"stale_void_orphan",
-                                          "voidReason":"No opponent info on pick — cannot match fixture, voided as push"}},
+                                          "voidReason":"No opponent info on pick — cannot match fixture, voided as DNP"}},
                             )
                             settled_count += 1
                             try:
                                 from routes.push import _notify_pick_settled
-                                await _notify_pick_settled(pick, "push")
+                                await _notify_pick_settled(pick, "dnp")
                             except Exception as _pe:
                                 print(f"[ORPHAN-VOID] push error: {_pe}")
                             print(f"[ORPHAN-VOID] soccer {pick.get('playerName','?')} {pick.get('propType','?')} (no opponent)")
@@ -1139,14 +1147,8 @@ async def _run_auto_settlement():
                 continue
 
             actual_value = result["actualValue"]
-            # Determine hit/miss/push
-            _diff = actual_value - float(line)
-            if abs(_diff) < 0.001:
-                result_str = "push"
-            elif rec == "over":
-                result_str = "hit" if actual_value > float(line) else "miss"
-            else:
-                result_str = "hit" if actual_value < float(line) else "miss"
+            # A half-line can never push; only whole-number lines can.
+            result_str = _settle_numeric_result(actual_value, line, rec)
 
             hit_pct   = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
             now_iso   = datetime.now(timezone.utc).isoformat()
@@ -1181,9 +1183,9 @@ async def _run_auto_settlement():
                 # ── In-app notification ──────────────────────────────────────
                 try:
                     from routes.notifications import create_notification
-                    _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+                    _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
                     _prop  = prop_type.replace("_", " ").title()
-                    _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+                    _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
                     await create_notification(
                         email=email,
                         ntype="pick_settled",
@@ -1242,14 +1244,14 @@ async def _run_auto_settlement():
                     _now_iso_wta_sv = datetime.now(timezone.utc).isoformat()
                     await db.picks.update_one(
                         {"pickId": pick_id, "email": email},
-                        {"$set": {"status":"settled","result":"push","hitPct":50,
+                        {"$set": {"status":"settled","result":"dnp","hitPct":0,
                                   "settledAt":_now_iso_wta_sv,"settledBy":"stale_void_orphan",
-                                  "voidReason":"No opponent info stored — WTA pick cannot be settled, voided as push"}},
+                                  "voidReason":"No opponent info stored — WTA pick cannot be settled, voided as DNP"}},
                     )
                     settled_count += 1
                     try:
                         from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "push")
+                        await _notify_pick_settled(pick, "dnp")
                     except Exception as _pe:
                         print(f"[WTA ORPHAN-VOID] push error: {_pe}")
                     print(f"[WTA ORPHAN-VOID] {pick.get('playerName','?')} — no opponent info")
@@ -1297,27 +1299,21 @@ async def _run_auto_settlement():
                     now_iso = datetime.now(timezone.utc).isoformat()
                     await db.picks.update_one(
                         {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
                                   "settledAt": now_iso, "sport": "wta",
-                                  "voidReason": "No match data found after 14 days — voided as push"}},
+                                  "voidReason": "No match data found after 14 days — voided as DNP"}},
                     )
                     settled_count += 1
                     try:
                         from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "push")
+                        await _notify_pick_settled(pick, "dnp")
                     except Exception as _pe:
                         print(f"[WTA AUTO-SETTLE] push error: {_pe}")
                     print(f"[WTA AUTO-SETTLE] Stale-void push: {pick.get('playerName','?')} (14d+ no data)")
                 continue
 
             actual_value = result["actualValue"]
-            _diff = actual_value - float(line)
-            if abs(_diff) < 0.001:
-                result_str = "push"
-            elif rec.lower() == "over":
-                result_str = "hit" if actual_value > float(line) else "miss"
-            else:
-                result_str = "hit" if actual_value < float(line) else "miss"
+            result_str = _settle_numeric_result(actual_value, line, rec)
 
             hit_pct  = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
             now_iso  = datetime.now(timezone.utc).isoformat()
@@ -1350,9 +1346,9 @@ async def _run_auto_settlement():
                     print(f"[WTA AUTO-SETTLE] push error: {_pe}")
                 try:
                     from routes.notifications import create_notification
-                    _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+                    _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else ("🔔" if result_str == "dnp" else "↔️"))
                     _prop  = prop_type.replace("_", " ").title()
-                    _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+                    _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else ("DNP" if result_str == "dnp" else "PUSH"))
                     await create_notification(
                         email=email,
                         ntype="pick_settled",
@@ -1412,18 +1408,18 @@ async def _run_auto_settlement():
                 await db.picks.update_one(
                     {"pickId": _sp["pickId"]},
                     {"$set": {
-                        "result":      "push",
+                        "result":      "dnp",
                         "status":      "settled",
                         "matchStatus": "final",
                         "settledAt":   _now_sv.isoformat(),
                         "settledBy":   "stale_void",
-                        "voidReason":  f"No data found after 7+ days ({_sport}) — voided as push",
+                        "voidReason":  f"No data found after 7+ days ({_sport}) — voided as DNP",
                     }},
                 )
                 _sv_count += 1
                 try:
                     from routes.push import _notify_pick_settled
-                    await _notify_pick_settled(_sp, "push")
+                    await _notify_pick_settled(_sp, "dnp")
                 except Exception as _pe:
                     print(f"[STALE-VOID] push error: {_pe}")
                 print(f"[STALE-VOID] {_sp.get('playerName','?')} {_sp.get('propType','?')} ({_sport}) → push")
@@ -1575,14 +1571,14 @@ async def _try_settle_wc_api_only(pick: dict) -> bool:
                     return False
                 if minutes_played is not None and minutes_played < 30:
                     void_set = {
-                        "status": "settled", "result": "push",
+                        "status": "settled", "result": "dnp",
                         "actualValue": actual_value, "minutesPlayed": minutes_played,
                         "settledAt": datetime.now(timezone.utc).isoformat(),
                         "settledBy": "wc_api", "wcSettled": True,
                         "voidReason": f"Player only played {minutes_played} min (min 30 required)",
                     }
                     await db.picks.update_one({"pickId": pick_id}, {"$set": void_set})
-                    print(f"[WC SETTLE] {player_name}/{prop_type} → VOID/PUSH ({minutes_played} min)")
+                    print(f"[WC SETTLE] {player_name}/{prop_type} → DNP/VOID ({minutes_played} min)")
                     return True
                 result = "win" if (
                     (rec == "over" and actual_value > line) or
@@ -1905,7 +1901,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 _scen_bucket = None
             _push_set = {
                 "status": "settled",
-                "result": "push",
+                "result": "dnp",
                 "actualValue": actual_value,
                 "minutesPlayed": minutes_played,
                 "matchScore": f"{_player_goals}-{_opp_goals}",
@@ -1942,21 +1938,16 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 return True
             try:
                 from routes.push import _notify_pick_settled
-                await _notify_pick_settled(pick, "push")
+                await _notify_pick_settled(pick, "dnp")
             except Exception as _pe:
                 print(f"[AUTO-SETTLE] push error: {_pe}")
-            print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → VOID/PUSH (only {minutes_played} min played)")
+            print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → DNP/VOID (only {minutes_played} min played)")
             return True
 
         # Determine result
         line = pick.get("line", 0)
         rec = pick.get("recommendation", "over")
-        if actual_value > line:
-            result = "hit" if rec == "over" else "miss"
-        elif actual_value < line:
-            result = "hit" if rec == "under" else "miss"
-        else:
-            result = "push"
+        result = _settle_numeric_result(actual_value, line, rec)
 
         home_goals = matched.get("goals", {}).get("home", 0) or 0
         away_goals = matched.get("goals", {}).get("away", 0) or 0
@@ -2057,7 +2048,7 @@ async def _settle_dnp_push(pick: dict, matched: dict, void_reason: str) -> bool:
             _scen_bucket = None
         _push_set = {
             "status": "settled",
-            "result": "push",
+            "result": "dnp",
             "actualValue": None,
             "minutesPlayed": 0,
             "matchScore": f"{_player_goals}-{_opp_goals}",
@@ -2083,7 +2074,7 @@ async def _settle_dnp_push(pick: dict, matched: dict, void_reason: str) -> bool:
             return True
         try:
             from routes.push import _notify_pick_settled
-            await _notify_pick_settled(pick, "push")
+            await _notify_pick_settled(pick, "dnp")
         except Exception as _pe:
             print(f"[AUTO-SETTLE-DNP] push error: {_pe}")
         print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','')} → push ({void_reason})")
@@ -2312,20 +2303,16 @@ async def _update_mlb_live_picks():
                                 ip_parts = str(ip_raw).split(".")
                                 ip_float = int(ip_parts[0]) + (int(ip_parts[1]) / 3.0 if len(ip_parts) > 1 else 0)
                                 if ip_float == 0.0:
-                                    result_str = "push"
-                                    print(f"[MLB LIVE] DNP {pick.get('playerName')} {prop_type} IP=0 → push")
+                                    result_str = "dnp"
+                                    print(f"[MLB LIVE] DNP {pick.get('playerName')} {prop_type} IP=0")
                                 else:
-                                    result_str = "push" if current_value == line_f else ("hit" if (rec == "OVER" and current_value > line_f) or (rec != "OVER" and current_value < line_f) else "miss")
+                                    result_str = _settle_numeric_result(current_value, line_f, rec)
                             except Exception:
-                                result_str = "push" if current_value == line_f else ("hit" if (rec == "OVER" and current_value > line_f) or (rec != "OVER" and current_value < line_f) else "miss")
+                                result_str = _settle_numeric_result(current_value, line_f, rec)
                         else:
-                            result_str = "push" if current_value == line_f else ("hit" if (rec == "OVER" and current_value > line_f) or (rec != "OVER" and current_value < line_f) else "miss")
-                    elif current_value == line_f:
-                        result_str = "push"
-                    elif rec == "OVER":
-                        result_str = "hit" if current_value > line_f else "miss"
+                            result_str = _settle_numeric_result(current_value, line_f, rec)
                     else:
-                        result_str = "hit" if current_value < line_f else "miss"
+                        result_str = _settle_numeric_result(current_value, line_f, rec)
                     set_fields.update({
                         "actualValue": round(current_value, 1),
                         "result":      result_str,

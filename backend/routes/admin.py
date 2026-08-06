@@ -750,7 +750,7 @@ async def admin_regrade_dnp_picks(req: RegradeDnpRequest):
 
     def _settle_result(actual, line, rec):
         rec = (rec or "").lower()
-        if actual == line:
+        if float(line).is_integer() and actual == line:
             return "push"
         elif (actual > line and rec == "over") or (actual < line and rec == "under"):
             return "hit"
