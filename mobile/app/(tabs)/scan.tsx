@@ -174,6 +174,7 @@ export default function ScanScreen() {
   const [playerContexts, setPlayerContexts] = useState<PlayerContext[]>([]);
   const [selectedContext, setSelectedContext] = useState<PlayerContext | null>(null);
   const [contextsLoading, setContextsLoading] = useState(false);
+  const [clubVerificationStatus, setClubVerificationStatus] = useState<'idle' | 'loading' | 'verified' | 'unavailable'>('idle');
   const [nextMatchLoading, setNextMatchLoading] = useState(false);
   const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
@@ -274,7 +275,7 @@ export default function ScanScreen() {
       playerId: p.playerId,
       playerName: p.playerName,
       teamId: p.teamId,
-      teamName: p.teamName,
+      teamName: '',
       leagueId: p.leagueId,
       position: p.position,
     });
@@ -284,6 +285,7 @@ export default function ScanScreen() {
     setPlayerContexts([]);
     setLeagueId(0);
     setLeagueQuery('');
+    setClubVerificationStatus('loading');
     Haptics.selectionAsync();
     setRoleLoading(true);
     resolvePlayerRole(
@@ -300,8 +302,18 @@ export default function ScanScreen() {
         const res = await getPlayerContexts(p.playerId);
         const ctxs = res?.contexts || [];
         setPlayerContexts(ctxs);
-        if (ctxs.length > 0) {
-          const preferredContext = ctxs.find(c => !c.isNational) || ctxs[0];
+        const verifiedClub = res?.teamVerified === true
+          ? ctxs.find(c => !c.isNational && c.verified !== false)
+          : null;
+        if (verifiedClub) {
+          setClubVerificationStatus('verified');
+          setResolvedPlayer(current => current ? {
+            ...current,
+            teamId: verifiedClub.teamId,
+            teamName: verifiedClub.teamName,
+            leagueId: verifiedClub.leagueId,
+          } : current);
+          const preferredContext = verifiedClub;
           setSelectedContext(preferredContext);
           setNextMatchLoading(true);
           try {
@@ -322,9 +334,36 @@ export default function ScanScreen() {
             }
           } catch {}
           setNextMatchLoading(false);
+        } else {
+          // A provider outage/quota response is not permission to reuse the
+          // cached club from the search result.
+          setClubVerificationStatus('unavailable');
+          setResolvedPlayer(current => current ? {
+            ...current,
+            teamId: 0,
+            teamName: '',
+            leagueId: 0,
+          } : current);
+          setSelectedContext(null);
+          setAutoMatch(null);
+          setManualError('Current club could not be verified right now. No old-team matchup was filled.');
         }
-      } catch {}
+      } catch {
+        setClubVerificationStatus('unavailable');
+        setResolvedPlayer(current => current ? {
+          ...current,
+          teamId: 0,
+          teamName: '',
+          leagueId: 0,
+        } : current);
+        setSelectedContext(null);
+        setAutoMatch(null);
+        setManualError('Current club could not be verified right now. No old-team matchup was filled.');
+      }
       setContextsLoading(false);
+    } else {
+      setClubVerificationStatus('unavailable');
+      setManualError('This player has no verifiable current club. No old-team matchup was filled.');
     }
   };
 
@@ -849,6 +888,20 @@ export default function ScanScreen() {
       return;
     }
     if (!playerQuery.trim()) { setManualError('Enter a player name to analyze.'); return; }
+    const hasVerifiedClub = clubVerificationStatus === 'verified'
+      && !!resolvedPlayer?.teamId
+      && !!resolvedPlayer?.teamName;
+    const hasExplicitNationalContext = !!selectedContext?.isNational
+      && !!selectedContext.teamId
+      && !!selectedContext.teamName;
+    if (!hasVerifiedClub && !hasExplicitNationalContext) {
+      setManualError(
+        clubVerificationStatus === 'loading'
+          ? 'Still verifying the player’s current club. Try again in a moment.'
+          : 'The player’s current club could not be verified. Select an explicit national-team context or retry; no old-team prediction was created.',
+      );
+      return;
+    }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 2.5).'); return; }
     setManualError(null);
     setMode('manual');
@@ -1516,13 +1569,14 @@ export default function ScanScreen() {
                   if (!text) {
                     setResolvedPlayer(null); setAutoMatch(null);
                     setSelectedContext(null); setPlayerContexts([]);
+                    setClubVerificationStatus('idle');
                     setNextMatchLoading(false);
                   }
                 }
               }}
               searchType="all_players"
               placeholder="Search any player — soccer, MLB, or NFL"
-              confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : !!resolvedPlayer}
+               confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && clubVerificationStatus === 'verified')}
               style={{ marginBottom: 2 }}
               onSelectAllPlayer={handleUniversalPlayerSelect}
             />
@@ -1540,8 +1594,12 @@ export default function ScanScreen() {
             )}
             {resolvedPlayer && (
               <View style={{ marginBottom: 4, marginLeft: 2 }}>
-                <Text style={{ color: Colors.primary, fontSize: 11 }}>
-                  ✓ {resolvedPlayer.teamName}
+                <Text style={{ color: clubVerificationStatus === 'verified' ? Colors.primary : '#f0a500', fontSize: 11 }}>
+                  {clubVerificationStatus === 'loading'
+                    ? '⟳ Verifying current club…'
+                    : clubVerificationStatus === 'verified'
+                      ? `✓ ${resolvedPlayer.teamName}`
+                      : '⚠ Current club unavailable — retry player selection'}
                   {resolvedRole?.position
                     ? ` · ${resolvedRole.position}`
                     : resolvedPlayer.position
@@ -1567,8 +1625,9 @@ export default function ScanScreen() {
               const displayCtxs = playerContexts.filter(
                 c => c.isNational || c.teamId === currentClub?.teamId
               );
-              // Only show picker when there's an actual national team alternative
-              if (displayCtxs.length <= 1 || !displayCtxs.some(c => c.isNational)) return null;
+              // Show the national context even when the current club could not
+              // be verified. Never hide the only safe, explicit alternative.
+              if (displayCtxs.length === 0 || !displayCtxs.some(c => c.isNational)) return null;
               return (
                 <View style={{ marginBottom: 12 }}>
                   <Text style={styles.fieldLabel}>PREDICT AS</Text>

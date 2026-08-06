@@ -332,6 +332,45 @@ async def predict(req: PredictionRequest):
     access = sess.get("access_type", "")
     if not access or access == "NoSubscription":
         raise HTTPException(status_code=403, detail="Active subscription required")
+    # A prediction submitted by an older client must not bypass current-club
+    # verification.  This protects against stale cache rows such as a player
+    # remaining at Liverpool after moving to another club. Explicit national
+    # team contexts remain allowed.
+    if (
+        req.sport == "soccer"
+        and req.playerId
+        and req.teamId
+        and req.leagueId not in INTERNATIONAL_LEAGUES
+    ):
+        try:
+            from routes.misc import _resolve_verified_club
+            from cache import COL_NATIONAL
+            is_national_context = await db[COL_NATIONAL].find_one(
+                {"teamId": req.teamId}, {"_id": 1}
+            )
+            if not is_national_context:
+                verified_club = await _resolve_verified_club(req.playerId)
+                if not verified_club:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="The player's current club could not be verified. Please retry before predicting.",
+                    )
+                if int(req.teamId) != int(verified_club["teamId"]):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Current club changed to {verified_club['teamName']}. "
+                            "Please reselect the player before predicting."
+                        ),
+                    )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            print(f"[CLUB GUARD] player={req.playerId} verification failed: {exc}")
+            raise HTTPException(
+                status_code=409,
+                detail="The player's current club could not be verified. Please retry before predicting.",
+            )
         # User-triggered predictions must not be starved by the shared background
         # soft budget. The HTTP 429/daily-quota response still trips the real
         # circuit breaker in utils.py.

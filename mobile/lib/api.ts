@@ -1546,6 +1546,7 @@ export interface PlayerContext {
   teamName: string;
   leagueId: number;
   isNational: boolean;
+  verified?: boolean;
 }
 
 export interface NextMatchData {
@@ -1558,7 +1559,11 @@ export interface NextMatchData {
   fixtureId?: number;
 }
 
-export async function getPlayerContexts(playerId: number): Promise<{ contexts: PlayerContext[] }> {
+export async function getPlayerContexts(playerId: number): Promise<{
+  contexts: PlayerContext[];
+  teamVerified?: boolean;
+  verificationStatus?: 'verified' | 'unavailable';
+}> {
   return apiCall(`/api/players/${playerId}/contexts`);
 }
 

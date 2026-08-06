@@ -22,6 +22,10 @@ _CONTEXT_CACHE_TTL_H = 12  # hours
 # Collection for caching team next-match results
 COL_NEXT_MATCH_CACHE = "next_match_cache"
 _NEXT_MATCH_TTL_H = 0.25  # 15 min; never let a schedule change linger for hours
+_CLUB_VERIFY_CACHE_TTL_H = 0.25  # 15 minutes; transfer detection must stay fresh
+_CLUB_LEAGUE_EXCLUDES = {
+    1, 9, 10, 11, 15, 16, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 667
+}
 
 
 def _cached_match_is_active(result: dict, now: datetime) -> bool:
@@ -112,6 +116,61 @@ async def _verify_player_club_bg(player_id: int, cached_contexts: list):
         print(f"[CLUB VERIFY BG] pid={player_id} err={e}")
 
 
+async def _resolve_verified_club(player_id: int):
+    """Resolve the player's current club without falling back to cache.
+
+    A cached club is useful for search ranking but is not evidence of a current
+    transfer.  This helper intentionally returns ``None`` when the provider is
+    unavailable or has no current club row.  Callers must not substitute an old
+    cache row in that case.
+    """
+    # Historical seasons are deliberately not a fallback. During a transfer
+    # window the newest provider row may still be the old club; using an older
+    # season as "current" makes that failure invisible to the user. The
+    # current operational season is the only season allowed to establish a
+    # current club.
+    verification_season = max(CURRENT_SEASON + 1, datetime.now(timezone.utc).year)
+    for season in [verification_season]:
+        try:
+            data = await priority_api_football_request(
+                "players", {"id": player_id, "season": season},
+                force_refresh=True,
+            )
+        except Exception as exc:
+            print(f"[CLUB VERIFY] pid={player_id} season={season} err={exc}")
+            continue
+        if not data:
+            # api_football_request uses [] for quota exhaustion, timeout, and
+            # provider errors.  None of those states authorizes a stale cache
+            # row to be shown as current.
+            continue
+
+        # Prefer the most recent real club stat in the current season response.
+        # Do not let an international fixture or Club Friendlies row win.
+        stats = data[0].get("statistics") or {}
+        if isinstance(stats, dict):
+            stats = [stats]
+        for stat in reversed(stats):
+            league = stat.get("league") or {}
+            team = stat.get("team") or {}
+            team_id = team.get("id")
+            team_name = (team.get("name") or "").strip()
+            league_id = league.get("id")
+            if (
+                team_id
+                and team_name
+                and league_id
+                and league_id not in _CLUB_LEAGUE_EXCLUDES
+            ):
+                return {
+                    "teamId": int(team_id),
+                    "teamName": team_name,
+                    "leagueId": int(league_id),
+                    "verifiedSeason": season,
+                }
+    return None
+
+
 @router.get("/players/{player_id}/contexts")
 async def player_contexts(player_id: int):
     """Return all team contexts (club + national) for a given player ID.
@@ -123,29 +182,39 @@ async def player_contexts(player_id: int):
     now = datetime.now(timezone.utc)
 
     # ── Cache read ────────────────────────────────────────────────────────────
-    # Respect per-record TTL: records without a national team are stored with
-    # ttlHours=1 so they retry quickly after an API quota / transient failure.
+    # Only a recently provider-verified cache may be reused.  Older cache
+    # records are search hints, not current-team evidence.
     cached = await db[COL_PLAYER_CTX_CACHE].find_one(
         {"playerId": player_id},
-        {"_id": 0, "contexts": 1, "cachedAt": 1, "ttlHours": 1}
+        {"_id": 0, "contexts": 1, "cachedAt": 1, "ttlHours": 1, "clubVerifiedAt": 1}
     )
     if cached:
-        ttl_h = cached.get("ttlHours", _CONTEXT_CACHE_TTL_H)
+        ttl_h = min(
+            float(cached.get("ttlHours", _CONTEXT_CACHE_TTL_H)),
+            _CLUB_VERIFY_CACHE_TTL_H,
+        )
         cached_at = cached.get("cachedAt")
-        if cached_at:
+        club_verified_at = cached.get("clubVerifiedAt")
+        if cached_at and club_verified_at:
             # Normalise: make cached_at timezone-aware if MongoDB returned naive
             if cached_at.tzinfo is None:
                 cached_at = cached_at.replace(tzinfo=timezone.utc)
-            if (now - cached_at).total_seconds() < ttl_h * 3600:
-                # Cache is fresh — but if it's older than 12 h, fire a background
-                # club-verification so any transfer is caught before the next
-                # interaction rather than waiting for the full TTL to expire.
-                age_h = (now - cached_at).total_seconds() / 3600
-                if age_h > 12:
-                    asyncio.ensure_future(
-                        _verify_player_club_bg(player_id, cached["contexts"])
-                    )
-                return {"contexts": cached["contexts"]}
+            if club_verified_at.tzinfo is None:
+                club_verified_at = club_verified_at.replace(tzinfo=timezone.utc)
+            if (
+                (now - cached_at).total_seconds() < ttl_h * 3600
+                and (now - club_verified_at).total_seconds() < _CLUB_VERIFY_CACHE_TTL_H * 3600
+            ):
+                return {
+                    "contexts": cached["contexts"],
+                    "teamVerified": True,
+                    "verificationStatus": "verified",
+                }
+
+    # Never serve a stale club row while the provider is unavailable.  This is
+    # intentionally synchronous on selection: displaying the old club creates a
+    # false next-match identity and can produce a completely wrong prediction.
+    verified_club = await _resolve_verified_club(player_id)
 
     # ── Live build ────────────────────────────────────────────────────────────
     # Load national team IDs from cache
@@ -157,7 +226,9 @@ async def player_contexts(player_id: int):
     seen: set = set()
     contexts = []
 
-    # Step 1 — club contexts from cache_players (fast, no API)
+    # Step 1 — national contexts from cache_players. These are separate from
+    # the current club and may still be offered as an explicit "predict as"
+    # choice, but cached club rows are never copied into the current context.
     docs = await db[COL_PLAYERS].find(
         {"playerId": player_id},
         {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1, "leagueId": 1}
@@ -166,12 +237,15 @@ async def player_contexts(player_id: int):
         tid = d.get("teamId", 0)
         if not tid or tid in seen:
             continue
+        if d.get("leagueId") not in _CLUB_LEAGUE_EXCLUDES:
+            continue
         seen.add(tid)
         contexts.append({
             "teamId": tid,
             "teamName": d.get("teamName", ""),
             "leagueId": d.get("leagueId", 0),
             "isNational": tid in national_ids,
+            "verified": False,
         })
 
     # Step 2 — national team discovery via API-Football player profile.
@@ -203,20 +277,69 @@ async def player_contexts(player_id: int):
                         "teamName": t.get("name", ""),
                         "leagueId": lg.get("id") or 0,
                         "isNational": True,
+                        "verified": True,
                     })
         # Once we found a season with national-team data, don't try older seasons
         if found_national:
             break
 
+    # The live club is the only authoritative current-team context.
+    if verified_club:
+        old_club_ids = {
+            d.get("teamId")
+            for d in docs
+            if d.get("teamId") and d.get("leagueId") not in _CLUB_LEAGUE_EXCLUDES
+        }
+        club_context = {
+            **verified_club,
+            "isNational": False,
+            "verified": True,
+        }
+        contexts.insert(0, club_context)
+        if old_club_ids and verified_club["teamId"] not in old_club_ids:
+            print(
+                f"[CLUB CHANGE] pid={player_id}: "
+                f"cached={sorted(old_club_ids)} → "
+                f"new={verified_club['teamId']} ({verified_club['teamName']})"
+            )
+
+        # Correct only club rows.  Previous code updated every row for the
+        # player, which could overwrite a national-team context with the club.
+        await db[COL_PLAYERS].update_many(
+            {
+                "playerId": player_id,
+                "leagueId": {"$nin": list(_CLUB_LEAGUE_EXCLUDES)},
+            },
+            {"$set": {
+                "teamId": verified_club["teamId"],
+                "teamName": verified_club["teamName"],
+                "leagueId": verified_club["leagueId"],
+                "_cachedAt": now.timestamp(),
+            }},
+        )
+        await db[COL_PLAYERS].update_one(
+            {
+                "playerId": player_id,
+                "teamId": verified_club["teamId"],
+                "leagueId": verified_club["leagueId"],
+            },
+            {"$set": {
+                "playerId": player_id,
+                "teamId": verified_club["teamId"],
+                "teamName": verified_club["teamName"],
+                "leagueId": verified_club["leagueId"],
+                "_cachedAt": now.timestamp(),
+            }},
+            upsert=True,
+        )
+
     # ── Cache write ───────────────────────────────────────────────────────────
-    # Only cache when we have at least the club context (avoids storing empty
-    # results when the player ID is wrong or not yet active).
-    # If no national team context was found (API-Football call may have failed or
-    # quota exhausted), use a much shorter TTL (1 h) so we retry sooner instead
-    # of serving a stale single-club result for a full 12 h.
+    # An unavailable provider must not refresh the timestamp on stale club
+    # data.  Cache only a verified club response; national-only results remain
+    # short-lived and cannot become a current club by accident.
     has_national = any(c.get("isNational") for c in contexts)
-    effective_ttl_h = _CONTEXT_CACHE_TTL_H if has_national else 1
-    if contexts:
+    effective_ttl_h = _CONTEXT_CACHE_TTL_H if verified_club and has_national else 1
+    if verified_club:
         await db[COL_PLAYER_CTX_CACHE].update_one(
             {"playerId": player_id},
             {"$set": {
@@ -224,11 +347,24 @@ async def player_contexts(player_id: int):
                 "contexts": contexts,
                 "cachedAt": now,
                 "ttlHours": effective_ttl_h,
+                "clubVerifiedAt": now,
             }},
             upsert=True,
         )
 
-    return {"contexts": contexts}
+    if not verified_club:
+        # Keep national-only options if they were discovered, but explicitly
+        # tell the client that no current club is verified.
+        return {
+            "contexts": [c for c in contexts if c.get("isNational")],
+            "teamVerified": False,
+            "verificationStatus": "unavailable",
+        }
+    return {
+        "contexts": contexts,
+        "teamVerified": True,
+        "verificationStatus": "verified",
+    }
 
 
 @router.get("/teams/{team_id}/next-match")

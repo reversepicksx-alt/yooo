@@ -618,6 +618,21 @@ async def search_players(req: PlayerSearchRequest):
             player_list = [p for p in player_list if sort_key(p)[0] == 0]
         return player_list[:15]
 
+    def _mask_unverified_team(player_list):
+        """Keep search useful without presenting cache data as current club.
+
+        Search is an identity step. The selected player gets a synchronous
+        current-club verification from /players/{id}/contexts. Until then,
+        cache/provider team fields are intentionally hidden so an old club
+        cannot be mistaken for a confirmed transfer destination.
+        """
+        for player in player_list:
+            player["teamId"] = 0
+            player["teamName"] = ""
+            player["leagueId"] = 0
+            player["teamVerified"] = False
+        return player_list
+
     async def _resolve_club_for_intl_player(p: dict) -> dict:
         """If a cache hit shows a national team, fetch the player's actual club
         from API-Football and override teamName/teamId/leagueId in the result.
@@ -917,6 +932,15 @@ async def search_players(req: PlayerSearchRequest):
                                 print(f"[BG-CLUB-STALE] pid={p.get('id')} err={_e}")
                     aio.ensure_future(_bg_refresh_stale(stale_club_hits))
 
+            # Cache rows are search hints, not proof of a current club.  Do
+            # not put their historical team into the universal search result:
+            # the selection flow performs a synchronous current-club
+            # verification before it can auto-fill a fixture.
+            for player in sorted_results:
+                player["teamId"] = 0
+                player["teamName"] = ""
+                player["leagueId"] = 0
+                player["teamVerified"] = False
             return {"players": sorted_results}
     except (aio.TimeoutError, TimeoutError):
         print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")
@@ -932,7 +956,7 @@ async def search_players(req: PlayerSearchRequest):
                 try:
                     fallback = await _search_players_cache(last_word, req.league_id, relaxed=True)
                     if fallback:
-                        return {"players": _apply_sort_and_quality(fallback)}
+                        return {"players": _mask_unverified_team(_apply_sort_and_quality(fallback))}
                 except Exception:
                     pass
         # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
@@ -942,7 +966,7 @@ async def search_players(req: PlayerSearchRequest):
             from soccer_bdl_client import search_bdl_players
             bdl_hits = await aio.wait_for(search_bdl_players(req.query), timeout=1.25)
             if bdl_hits:
-                return {"players": _apply_sort_and_quality(bdl_hits)}
+                return {"players": _mask_unverified_team(_apply_sort_and_quality(bdl_hits))}
         except (aio.TimeoutError, TimeoutError):
             print(f"[PLAYER SEARCH] BDL lookup exceeded 1250ms for {req.query!r}")
         except Exception:
@@ -1034,7 +1058,7 @@ async def search_players(req: PlayerSearchRequest):
         except Exception as exc:
             print(f"[PLAYER SEARCH] exact context lookup failed for {req.query!r}: {exc}")
 
-    return {"players": _apply_sort_and_quality(live_players)}
+    return {"players": _mask_unverified_team(_apply_sort_and_quality(live_players))}
 
     all_players = []
 

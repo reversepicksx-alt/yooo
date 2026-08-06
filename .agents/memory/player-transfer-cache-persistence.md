@@ -3,7 +3,7 @@ name: Player transfer cache persistence
 description: Transfer detection worked but never persisted to the player cache, so repeated lookups returned the old club
 ---
 
-# Player transfer cache persistence
+# Player transfer cache persistence and verification
 
 ## Problem
 
@@ -26,3 +26,18 @@ Detecting a transfer at predict-time is only useful if the detection is durable.
 - Any code path that detects a club mismatch between a live API response and the local cache must also write the correction to the cache.
 - Do not rely only on background squad syncs for transfer freshness; real-time lookups should self-correct.
 - Keep a transfers audit trail (or at least structured logging) so users can verify why a club changed.
+
+Cached club rows are not current-team evidence. Search may use them to identify a
+player, but selection must verify the club from the current operational season
+before displaying it or fetching a next match. If the provider is unavailable or
+has not published the transfer, return an explicit unavailable state rather than
+showing the old club. Explicit national-team contexts remain separate and may be
+selected intentionally.
+
+**Why:** A background refresh or cached profile can lag a transfer by days. The
+old behavior turned that lag into a false Liverpool/old-club matchup and made the
+wrong team look authoritative.
+
+**How to apply:** Treat `teamVerified` as required for club predictions, keep
+search team fields blank until verification, and re-check the player/team pair at
+prediction time so stale clients cannot bypass the guard.

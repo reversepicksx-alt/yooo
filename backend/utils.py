@@ -149,11 +149,16 @@ def reset_api_request_priority(token):
     _api_request_priority.reset(token)
 
 
-async def priority_api_football_request(endpoint: str, params: dict = None):
+async def priority_api_football_request(
+    endpoint: str,
+    params: dict = None,
+    *,
+    force_refresh: bool = False,
+):
     """Run one interactive request above the maintenance soft budget."""
     token = set_api_request_priority(True)
     try:
-        return await api_football_request(endpoint, params)
+        return await api_football_request(endpoint, params, force_refresh=force_refresh)
     finally:
         reset_api_request_priority(token)
 
@@ -381,16 +386,22 @@ async def resolve_verified_fixture(
     return _fixture_context(selected, team_id) if selected else None
 
 
-async def api_football_request(endpoint: str, params: dict = None):
+async def api_football_request(
+    endpoint: str,
+    params: dict = None,
+    *,
+    force_refresh: bool = False,
+):
     global _daily_call_count
     # Short-circuit immediately if today's quota is already known to be gone
     if _quota_tripped():
         return []
 
     cache_key = _request_cache_key(endpoint, params)
-    cached = _cached_response(endpoint, cache_key)
-    if cached is not None:
-        return cached
+    if not force_refresh:
+        cached = _cached_response(endpoint, cache_key)
+        if cached is not None:
+            return cached
 
     _reset_daily_budget_if_needed()
     if _daily_call_count >= API_DAILY_SOFT_LIMIT and not _api_request_priority.get():
