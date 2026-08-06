@@ -141,6 +141,19 @@ export default function FuzzySearchInput({
   const lastQueryRef = useRef('');
   const searchIdRef = useRef(0);
 
+  const invalidatePendingSearch = () => {
+    searchIdRef.current += 1;
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    setLoading(false);
+  };
+
   const doSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return; }
 
@@ -202,12 +215,17 @@ export default function FuzzySearchInput({
       } else if (searchType === 'nfl_players') {
         r = await searchNflPlayers(q);
       }
-      if (searchIdRef.current !== myId) return;
+      // A response must still belong to the exact text currently in the
+      // control. Selection and clear actions can update the parent value
+      // without going through handleChange, so the request id alone is not
+      // sufficient protection against an older empty response repainting the
+      // dropdown over a valid result.
+      if (searchIdRef.current !== myId || lastQueryRef.current !== q) return;
       setResults(r);
       setShowDropdown(r.length > 0);
       setHasSearched(true);
     } catch {
-      if (searchIdRef.current !== myId) return;
+      if (searchIdRef.current !== myId || lastQueryRef.current !== q) return;
       setResults([]);
       setShowDropdown(false);
       setSearchError(true);
@@ -291,12 +309,19 @@ export default function FuzzySearchInput({
   };
   const handleSelectMlbPlayer = (p: MlbPlayer) => {
     const name = p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
+    invalidatePendingSearch();
+    lastQueryRef.current = name;
     if (name) onChangeText(name);
     dismiss(); setResults([]);
+    setHasSearched(false); setSearchError(false);
     onSelectMlbPlayer?.(p);
   };
   const handleSelectNflPlayer = (p: NflPlayer) => {
-    onChangeText(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()); dismiss(); setResults([]);
+    const name = p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
+    invalidatePendingSearch();
+    lastQueryRef.current = name;
+    onChangeText(name); dismiss(); setResults([]);
+    setHasSearched(false); setSearchError(false);
     onSelectNflPlayer?.(p);
   };
   const handleSelectStatic = (item: StaticItem) => {

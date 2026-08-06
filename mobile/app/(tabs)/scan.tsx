@@ -1487,12 +1487,17 @@ export default function ScanScreen() {
                     const res = await getPlayerContexts(p.playerId);
                     const ctxs = res?.contexts || [];
                     setPlayerContexts(ctxs);
-                    if (ctxs.length === 1) {
-                      // Single context: auto-select + full next-match fetch
-                      setSelectedContext(ctxs[0]);
+                    if (ctxs.length > 0) {
+                      // Prefer the player's current club when the provider
+                      // also returns a national-team context. The context
+                      // picker remains available so the user can switch to
+                      // Portugal/another national side explicitly.
+                      const preferredContext =
+                        ctxs.find(c => !c.isNational) || ctxs[0];
+                      setSelectedContext(preferredContext);
                       setNextMatchLoading(true);
                       try {
-                        const nm = await getTeamNextMatch(ctxs[0].teamId);
+                        const nm = await getTeamNextMatch(preferredContext.teamId);
                         if (nm?.found) {
                           setAutoMatch(nm);
                           setVenueOverride(nm.isHome ? 'home' : 'away');
@@ -1501,7 +1506,7 @@ export default function ScanScreen() {
                           setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
                         } else {
                           // next-match failed — look up league name by ID from MongoDB
-                          const fallbackId = ctxs[0].leagueId || 0;
+                          const fallbackId = preferredContext.leagueId || 0;
                           if (fallbackId && fallbackId !== 667) {
                             const lgInfo = await getLeagueById(fallbackId);
                             setLeagueId(fallbackId);
@@ -1510,23 +1515,6 @@ export default function ScanScreen() {
                         }
                       } catch {}
                       setNextMatchLoading(false);
-                    } else if (ctxs.length > 1) {
-                      // Multiple contexts: pre-fetch first context's league so field isn't blank
-                      // while user decides which context to pick. Don't auto-select or set venue.
-                      try {
-                        const nm = await getTeamNextMatch(ctxs[0].teamId);
-                        if (nm?.leagueId) {
-                          setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
-                        } else {
-                          // next-match failed — look up league name by ID from MongoDB
-                          const fallbackId = ctxs[0].leagueId || 0;
-                          if (fallbackId && fallbackId !== 667) {
-                            const lgInfo = await getLeagueById(fallbackId);
-                            setLeagueId(fallbackId);
-                            setLeagueQuery(lgInfo?.name || '');
-                          }
-                        }
-                      } catch {}
                     }
                   } catch {}
                   setContextsLoading(false);
@@ -1554,10 +1542,13 @@ export default function ScanScreen() {
 
             {/* ── Team context picker: current team + national teams only ── */}
             {resolvedPlayer && (() => {
-              // Filter to: current club + any national team entries only
-              // This eliminates historical old-club entries (e.g. River Plate for a Cruz Azul player)
+              // Keep the current club context plus national-team alternatives.
+              // The search result can identify the national side (e.g.
+              // Cristiano → Portugal) even when the club is the useful
+              // default for next-match lookup.
+              const currentClub = playerContexts.find(c => !c.isNational);
               const displayCtxs = playerContexts.filter(
-                c => c.isNational || c.teamId === resolvedPlayer.teamId
+                c => c.isNational || c.teamId === currentClub?.teamId
               );
               // Only show picker when there's an actual national team alternative
               if (displayCtxs.length <= 1 || !displayCtxs.some(c => c.isNational)) return null;
