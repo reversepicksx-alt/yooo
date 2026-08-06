@@ -622,7 +622,7 @@ export default function FuzzySearchInput({
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'relative', zIndex: 100 },
+  container: { position: 'relative', zIndex: 9999 },
   inputRow: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12,

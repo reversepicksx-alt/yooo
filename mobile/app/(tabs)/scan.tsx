@@ -1709,6 +1709,7 @@ export default function ScanScreen() {
               </View>
             )}
 
+            {resolvedPlayer && (<>
             <Text style={styles.fieldLabel}>BET</Text>
             {/* ── Compact BET card: Prop / Line / Venue in one block ── */}
             <View style={{ borderRadius: 14, borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)', overflow: 'hidden', marginTop: 4 }}>
@@ -1797,6 +1798,7 @@ export default function ScanScreen() {
                 </TouchableOpacity>
               );
             })()}
+            </>)}
           </View>
         )}
 
@@ -5725,7 +5727,7 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: Colors.error, fontSize: 12, fontWeight: '700' },
 
   /* Manual form */
-  manualForm: { gap: 10 },
+  manualForm: { gap: 10, zIndex: 1 },
   playerConfirmCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6608,6 +6610,9 @@ const styles = StyleSheet.create({
   },
   universalPlayerSection: {
     marginBottom: 4,
+    position: 'relative',
+    zIndex: 9999,
+    elevation: 999,
   },
 
   summarySection: { padding: 16, gap: 10 },
