@@ -547,3 +547,98 @@ def build_deterministic_explanation(
     result["explanationSource"] = "deterministic_model"
     result["explanationVersion"] = "reverse-picks-model-v2"
     return result
+
+
+def build_sport_deterministic_explanation(
+    prediction: dict[str, Any],
+    sport: str,
+) -> dict[str, Any]:
+    """Describe non-soccer projections from their recorded model inputs.
+
+    MLB and NFL do not have soccer's possession/tactical packet.  They still
+    need a useful explanation, but it must stay honest: every sentence is
+    derived from the projection, baseline, recent form, matchup fields, or
+    explicitly available engine factors.
+    """
+    sport = str(sport or "").lower()
+    prop = _prop_label(str(prediction.get("propType") or "prop"))
+    player = prediction.get("playerName") or "This player"
+    team = prediction.get("teamName") or "the player's team"
+    opponent = prediction.get("opponentName") or "the opponent"
+    projection = _num(prediction.get("projection"))
+    line = _num(prediction.get("line"))
+    p_over = _num(prediction.get("pOver"))
+    p_under = _num(prediction.get("pUnder"))
+    confidence = _num(prediction.get("confidenceScore"))
+    rec = _direction(prediction.get("recommendation"))
+    prior = _num(prediction.get("priorMean"))
+    momentum = _num(prediction.get("momentum"))
+    logs = prediction.get("gameLogs") or []
+    history_count = prediction.get("historyGameCount") or len(logs)
+    factors = prediction.get("bayesianMetrics") or {}
+    notes: list[str] = []
+
+    if projection is not None and line is not None:
+        gap = projection - line
+        notes.append(
+            f"{player} projects to {projection:g} {prop} against a {line:g} line "
+            f"({gap:+.1f} from the market line)."
+        )
+    if prior is not None:
+        notes.append(f"The baseline is {prior:g} {prop} from the available player sample.")
+    if momentum is not None and abs(momentum) >= 0.2:
+        notes.append(
+            f"Recent form shifts the baseline {'up' if momentum > 0 else 'down'} "
+            f"by {abs(momentum):.1f} {prop} per game."
+        )
+
+    if sport == "mlb":
+        park_pct = _num(factors.get("parkFactorPct"))
+        if park_pct is not None and abs(park_pct) >= 2:
+            notes.append(
+                f"The park factor is {park_pct:+.1f}%, so the venue "
+                f"{'supports' if park_pct > 0 else 'suppresses'} {prop} production."
+            )
+        platoon = _num(factors.get("platoonSplitMult"))
+        if platoon is not None and abs(platoon - 1) >= 0.03:
+            notes.append(
+                f"The handedness matchup applies a {(platoon - 1) * 100:+.1f}% "
+                f"platoon adjustment to the projection."
+            )
+        era = _num(factors.get("eraFactor"))
+        if era is not None and abs(era - 1) >= 0.03:
+            notes.append(
+                f"The opposing pitcher context applies a {(era - 1) * 100:+.1f}% "
+                f"ERA adjustment."
+            )
+        matchup = f"{team} vs {opponent}"
+    else:
+        total = _num(prediction.get("gameTotal"))
+        matchup = f"{team} vs {opponent}"
+        if total is not None:
+            notes.append(f"The game-total input is {total:g}, used as scoring environment context.")
+
+    if not notes:
+        notes.append("No optional matchup adjustment was available; the result is based on player logs.")
+    notes.append(
+        f"Evidence: {history_count} game log{'s' if history_count != 1 else ''} "
+        f"across the seasons returned by the provider."
+    )
+    summary = (
+        f"{matchup}: {rec} {prop} at {line:g} with "
+        f"{max(p_over or 0, p_under or 0):.0f}% modeled probability."
+        if line is not None else f"{matchup}: {rec} recommendation for {prop}."
+    )
+    prediction["sharpSummary"] = summary
+    prediction["tacticalBreakdown"] = (
+        f"**{sport.upper()} matchup context**\n" + "\n".join(f"- {n}" for n in notes) +
+        f"\n\n**Decision**\n- {rec} is supported by "
+        f"{max(p_over or 0, p_under or 0):.0f}% modeled probability"
+        + (f" and {confidence:.0f}% displayed confidence." if confidence is not None else ".")
+    )
+    prediction["reasoning"] = prediction["tacticalBreakdown"]
+    prediction["keyFactors"] = notes[:6]
+    prediction["aiSource"] = "deterministic_model"
+    prediction["explanationSource"] = "deterministic_model"
+    prediction["explanationVersion"] = "reverse-picks-sport-v1"
+    return prediction

@@ -1147,6 +1147,10 @@ def compute_mlb_projection(
         valid_games.append({"val": val, "game": g})
 
     valid_games.sort(key=lambda x: x["game"].get("game_id") or 0, reverse=True)
+    # Keep the model responsive and recent-form weighted while allowing the
+    # route to expose the complete fetched evidence set below.
+    all_valid_games = valid_games
+    valid_games = valid_games[:30]
 
     n_games   = len(valid_games)
     game_vals = [g["val"] for g in valid_games]
@@ -1464,7 +1468,7 @@ def compute_mlb_projection(
 
     # ── BUILD GAME LOG FOR DISPLAY ────────────────────────────────────────────
     display_logs = []
-    for idx, entry in enumerate(valid_games[:30]):
+    for idx, entry in enumerate(all_valid_games[:60]):
         g   = entry["game"]
         val = entry["val"]
         if prop_type in COUNT_STATS and prop_type != "innings_pitched":
@@ -1483,6 +1487,7 @@ def compute_mlb_projection(
         log_entry = {
             "gameId":     g.get("game_id"),
             "gameNumber": idx + 1,
+            "season":     g.get("season"),
             "value":      display_val,
             "propType":   prop_type,
             "sport":      "mlb",

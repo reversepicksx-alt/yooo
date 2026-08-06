@@ -198,6 +198,7 @@ export interface ScanResult {
   teamName?: string;
   opponentName?: string;
   propType?: string;
+  season?: number | null;
   line?: number;
   playerId?: number;
   teamId?: number;
@@ -265,6 +266,7 @@ export interface GameLog {
   opponent?: string | null;
   venue: string;
   value: number | null;
+  season?: number | null;
   minutes: number;
   score?: string;
   oppRank?: number | null;
@@ -347,6 +349,9 @@ export interface PredictionResult {
   fixtureTeamId?: number;
   isHome?: boolean;
   confidenceLevel?: string;
+  historyGameCount?: number;
+  historySeasons?: number[];
+  historyRange?: { min: number; max: number };
   confidenceInterval?: [number, number];
   priorMean?: number;
   priorWeight?: number;
@@ -2506,6 +2511,7 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
     venue:           g.venue           ?? '',
     value:           g.value           ?? null,
     week:            g.week            ?? null,
+    season:          g.season          ?? null,
     sport:           'nfl',
     passing_yards:   g.passing_yards   ?? null,
     rushing_yards:   g.rushing_yards   ?? null,
@@ -2539,6 +2545,9 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
     priorMean:          raw.priorMean         ?? bm.priorMean,
     momentumMean:       raw.momentum          ?? bm.momentumMean,
     gameLogs,
+    historyGameCount:   raw.historyGameCount ?? undefined,
+    historySeasons:     raw.historySeasons ?? undefined,
+    historyRange:       raw.historyRange ?? undefined,
     matchupOverview: raw.matchupOverview ? {
       homeTeam:         raw.matchupOverview.homeTeam,
       awayTeam:         raw.matchupOverview.awayTeam,
@@ -2629,6 +2638,7 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     date:          g.date     ?? '',
     opponent:      g.opponent ?? '',
     venue:         g.venue    ?? '',
+    season:        g.season   ?? null,
     score:         g.score    ?? null,
     value:         g[raw.propType] ?? g.value ?? null,
     minutes:       0,
@@ -2670,6 +2680,9 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     priorMean:          raw.priorMean         ?? bm.priorMean,
     momentumMean:       raw.momentum          ?? bm.momentumMean,
     gameLogs,
+    historyGameCount:   raw.historyGameCount ?? undefined,
+    historySeasons:     raw.historySeasons ?? undefined,
+    historyRange:       raw.historyRange ?? undefined,
     matchupOverview: raw.matchupOverview ? {
       homeTeam:         raw.matchupOverview.homeTeam,
       awayTeam:         raw.matchupOverview.awayTeam,

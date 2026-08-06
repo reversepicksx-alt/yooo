@@ -118,3 +118,4 @@
 - [RevenueCat managed credential access](revenuecat-managed-credential.md) — attached RevenueCat may still withhold catalog-management credentials; verify production project access before mutating offerings.
 - [Positional reality shadow packet](positional-reality-shadow.md) — match script, attacking-direction zones, prop signals, and robust outlier weighting are visible but remain non-live until replay validation.
 - [Sport re-enable audit](sport-reenable-audit.md) — restoring a sport requires auditing picker, saved-history, response-contract, live-tracking, and settlement gates together; config alone is insufficient.
+- [MLB/NFL identity and history](mlb-nfl-confirmation-and-history.md) — confirm player identity before matchup enrichment; keep NFL seasons dynamic and expose broader labelled evidence than model input.

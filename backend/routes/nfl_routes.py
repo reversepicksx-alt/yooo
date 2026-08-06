@@ -142,22 +142,31 @@ async def nfl_predict(req: NflPredictRequest):
 
     log.info(f"[NFL PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
 
-    # ── Fetch game logs (with fallback to previous season) ────────────────────
-    game_logs = []
-    for try_season in [req.season, req.season - 1]:
+    # ── Fetch bounded model logs plus deeper user-visible history ─────────────
+    # Recent logs drive the projection; older seasons remain available as
+    # labelled evidence instead of being silently discarded after one fallback.
+    history_logs = []
+    history_seasons = []
+    for try_season in [req.season, req.season - 1, req.season - 2, req.season - 3]:
         try:
             logs_r = await nfl_client.get_player_game_logs(player_id, try_season)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to fetch NFL data: {e}")
         if logs_r:
-            game_logs = logs_r
-            break
+            history_seasons.append(try_season)
+            for row in logs_r:
+                enriched = dict(row)
+                enriched["season"] = try_season
+                history_logs.append(enriched)
 
-    if not game_logs:
+    if not history_logs:
         raise HTTPException(
             status_code=404,
-            detail=f"No stats found for {req.playerName} in the {req.season} or {req.season - 1} season."
+            detail=f"No stats found for {req.playerName} in {req.season} or the three prior seasons."
         )
+
+    history_logs.sort(key=lambda x: x.get("date", ""), reverse=True)
+    game_logs = history_logs[:30]
 
     # ── Run engine ────────────────────────────────────────────────────────────
     result = nfl_engine.compute_nfl_projection(
@@ -188,11 +197,12 @@ async def nfl_predict(req: NflPredictRequest):
 
     field = nfl_engine.NFL_PROPS.get(prop_type, prop_type)
     game_log_tiles = []
-    for g in game_logs[:10]:
+    for g in history_logs[:60]:
         game_log_tiles.append({
             "date":             g.get("date", ""),
             "value":            g.get(field),
             "week":             g.get("week"),
+            "season":           g.get("season"),
             "venue":            g.get("venue", ""),
             "opponent":         g.get("opponent"),
             "score":            g.get("score"),
@@ -203,9 +213,7 @@ async def nfl_predict(req: NflPredictRequest):
             "receptions":       g.get("receptions"),
         })
 
-    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
-
-    return normalize_response({
+    response = {
         "sport":            "nfl",
         "playerName":       req.playerName,
         "playerId":         player_id,
@@ -227,11 +235,13 @@ async def nfl_predict(req: NflPredictRequest):
         "streakFlag":       result["streakFlag"],
         "gameLogs":         game_log_tiles,
         "recentValues":     result.get("recentValues", []),
-        "sharpSummary":      ai_result.get("sharpSummary", ""),
-        "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
-        "reasoning":         ai_result.get("reasoning", ""),
-        "keyFactors":        ai_result.get("keyFactors", []),
         "rawConfidence":     result["confidenceScore"],
+        "historyGameCount": len(history_logs),
+        "historySeasons":   history_seasons,
+        "historyRange": {
+            "min": min(history_seasons) if history_seasons else req.season,
+            "max": max(history_seasons) if history_seasons else req.season,
+        },
         "matchupOverview": {
             "homeTeam":         team_name if venue == "home" else (req.opponentName or "Opponent"),
             "awayTeam":         (req.opponentName or "Opponent") if venue == "home" else team_name,
@@ -243,4 +253,7 @@ async def nfl_predict(req: NflPredictRequest):
                 f"Game total {req.gameTotal:.1f}" if req.gameTotal is not None else None
             ),
         },
-    })
+    }
+    from deterministic_explanations import build_sport_deterministic_explanation
+    build_sport_deterministic_explanation(response, "nfl")
+    return normalize_response(response)

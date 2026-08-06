@@ -233,6 +233,7 @@ export default function ScanScreen() {
 
   // NFL manual mode fields
   const [nflPlayerQuery, setNflPlayerQuery] = useState('');
+  const [nflPendingPlayer, setNflPendingPlayer] = useState<NflPlayer | null>(null);
   const [nflResolvedPlayer, setNflResolvedPlayer] = useState<NflPlayer | null>(null);
   const [nflOpponentQuery, setNflOpponentQuery] = useState('');
   const [nflPropType, setNflPropType] = useState('passing_yards');
@@ -243,6 +244,7 @@ export default function ScanScreen() {
 
   // MLB manual mode fields
   const [mlbPlayerQuery, setMlbPlayerQuery] = useState('');
+  const [mlbPendingPlayer, setMlbPendingPlayer] = useState<MlbPlayer | null>(null);
   const [mlbResolvedPlayer, setMlbResolvedPlayer] = useState<MlbPlayer | null>(null);
   const [mlbOpponentQuery, setMlbOpponentQuery] = useState('');
   const [mlbPropType, setMlbPropType] = useState('hits');
@@ -415,6 +417,13 @@ export default function ScanScreen() {
     setNhlNextMatch(null);
     setNhlNextMatchLoading(false);
     setMlbPlayerQuery('');
+    setNflPendingPlayer(null);
+    setNflPlayerQuery('');
+    setNflResolvedPlayer(null);
+    setNflOpponentQuery('');
+    setNflNextMatch(null);
+    setNflNextMatchLoading(false);
+    setMlbPendingPlayer(null);
     setMlbResolvedPlayer(null);
     setMlbOpponentQuery('');
     setMlbPropType('hits');
@@ -997,6 +1006,28 @@ export default function ScanScreen() {
     } finally { cancelAbortRef.current = null; }
   };
 
+  const confirmNflPlayer = async (player: NflPlayer) => {
+    setNflPendingPlayer(null);
+    setNflResolvedPlayer(player);
+    setNflNextMatch(null);
+    setNflOpponentQuery('');
+    Haptics.selectionAsync();
+    if (!player.id) return;
+    setNflNextMatchLoading(true);
+    try {
+      const nm = await getNflNextMatch(player.id);
+      setNflNextMatch(nm);
+      if (nm.found) {
+        if (nm.opponent?.name) setNflOpponentQuery(nm.opponent.name);
+        if (nm.venue) setNflVenue(nm.venue);
+      }
+    } catch {
+      setNflNextMatch({ found: false });
+    } finally {
+      setNflNextMatchLoading(false);
+    }
+  };
+
   // ── MLB handlers ─────────────────────────────────────────────────────────
   const handleMlbAnalyze = async () => {
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
@@ -1032,6 +1063,28 @@ export default function ScanScreen() {
       setManualError(e instanceof Error ? e.message : 'MLB analysis failed — try again');
       setPhase('idle');
     } finally { cancelAbortRef.current = null; }
+  };
+
+  const confirmMlbPlayer = async (player: MlbPlayer) => {
+    setMlbPendingPlayer(null);
+    setMlbResolvedPlayer(player);
+    setMlbNextMatch(null);
+    setMlbOpponentQuery('');
+    Haptics.selectionAsync();
+    if (!player.id) return;
+    setMlbNextMatchLoading(true);
+    try {
+      const nm = await getMlbNextMatch(player.id);
+      setMlbNextMatch(nm);
+      if (nm.found) {
+        if (nm.opponent?.name) setMlbOpponentQuery(nm.opponent.name);
+        if (nm.venue) setMlbVenue(nm.venue);
+      }
+    } catch {
+      setMlbNextMatch({ found: false });
+    } finally {
+      setMlbNextMatchLoading(false);
+    }
   };
 
   const handleSavePick = async () => {
@@ -2247,40 +2300,57 @@ export default function ScanScreen() {
                 <FuzzySearchInput
                   searchType="nfl_players"
                   value={nflPlayerQuery}
-                  onChangeText={(t) => { setNflPlayerQuery(t); if (!t) { setNflResolvedPlayer(null); setNflNextMatch(null); setNflOpponentQuery(''); setNflVenue('home'); } }}
+                  onChangeText={(t) => {
+                    setNflPlayerQuery(t);
+                    const confirmedName = nflResolvedPlayer?.fullName || (nflResolvedPlayer ? `${nflResolvedPlayer.firstName} ${nflResolvedPlayer.lastName}`.trim() : '');
+                    if (!t || (nflResolvedPlayer && t !== confirmedName)) {
+                      setNflPendingPlayer(null);
+                      setNflResolvedPlayer(null);
+                      setNflNextMatch(null);
+                      setNflOpponentQuery('');
+                      setNflVenue('home');
+                    }
+                  }}
                   placeholder="e.g. Patrick Mahomes, Justin Jefferson"
                   confirmed={!!nflResolvedPlayer}
                   autoCapitalize="words"
-                  onSelectNflPlayer={async (p) => {
-                    setNflResolvedPlayer(p);
+                  onSelectNflPlayer={(p) => {
+                    setNflPendingPlayer(p);
+                    setNflResolvedPlayer(null);
                     setNflPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
                     setNflNextMatch(null);
                     setNflOpponentQuery('');
                     Haptics.selectionAsync();
-                    if (p.id) {
-                      setNflNextMatchLoading(true);
-                      try {
-                        const nm = await getNflNextMatch(p.id);
-                        setNflNextMatch(nm);
-                        if (nm.found) {
-                          if (nm.opponent?.name) setNflOpponentQuery(nm.opponent.name);
-                          if (nm.venue) setNflVenue(nm.venue);
-                        }
-                      } catch { /* silent */ } finally { setNflNextMatchLoading(false); }
-                    }
                   }}
                 />
+                {nflPendingPlayer && !nflResolvedPlayer && (
+                  <View style={styles.playerConfirmCard}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.playerConfirmEyebrow}>CONFIRM PLAYER IDENTITY</Text>
+                      <Text style={styles.playerConfirmName} numberOfLines={1}>
+                        {nflPendingPlayer.fullName || `${nflPendingPlayer.firstName} ${nflPendingPlayer.lastName}`.trim()}
+                      </Text>
+                      <Text style={styles.playerConfirmTeam} numberOfLines={1}>
+                        {nflPendingPlayer.team?.full_name || 'Team not listed'}{nflPendingPlayer.position ? ` · ${nflPendingPlayer.position}` : ''}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={styles.playerConfirmBtn} onPress={() => confirmNflPlayer(nflPendingPlayer)} activeOpacity={0.8}>
+                      <Ionicons name="checkmark" size={15} color="#000" />
+                      <Text style={styles.playerConfirmBtnText}>Confirm</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
                 {nflResolvedPlayer && (
                   <View style={styles.sportTeamContext}>
                     <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
                     <Text style={styles.sportTeamContextText} numberOfLines={1}>
-                      {nflResolvedPlayer.team?.full_name || 'Team not listed'}
+                      PLAYER CONFIRMED · {nflResolvedPlayer.team?.full_name || 'Team not listed'}
                       {nflResolvedPlayer.position ? ` · ${nflResolvedPlayer.position}` : ''}
                     </Text>
                   </View>
                 )}
                 {nflResolvedPlayer && (
-                  <TouchableOpacity onPress={() => { setNflPlayerQuery(''); setNflResolvedPlayer(null); setNflNextMatch(null); setNflOpponentQuery(''); setNflVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                  <TouchableOpacity onPress={() => { setNflPlayerQuery(''); setNflPendingPlayer(null); setNflResolvedPlayer(null); setNflNextMatch(null); setNflOpponentQuery(''); setNflVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
                     <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
                     <Text style={styles.changePlayerBtnText}>Change player</Text>
                   </TouchableOpacity>
@@ -2365,41 +2435,58 @@ export default function ScanScreen() {
                 <FuzzySearchInput
                   searchType="mlb_players"
                   value={mlbPlayerQuery}
-                  onChangeText={(t) => { setMlbPlayerQuery(t); if (!t) { setMlbResolvedPlayer(null); setMlbNextMatch(null); setMlbOpponentQuery(''); setMlbVenue('home'); } }}
+                  onChangeText={(t) => {
+                    setMlbPlayerQuery(t);
+                    const confirmedName = mlbResolvedPlayer?.fullName || (mlbResolvedPlayer ? `${mlbResolvedPlayer.firstName} ${mlbResolvedPlayer.lastName}`.trim() : '');
+                    if (!t || (mlbResolvedPlayer && t !== confirmedName)) {
+                      setMlbPendingPlayer(null);
+                      setMlbResolvedPlayer(null);
+                      setMlbNextMatch(null);
+                      setMlbOpponentQuery('');
+                      setMlbVenue('home');
+                    }
+                  }}
                   placeholder="e.g. Shohei Ohtani, Juan Soto"
                   confirmed={!!mlbResolvedPlayer}
                   autoCapitalize="words"
-                  onSelectMlbPlayer={async (p) => {
-                    setMlbResolvedPlayer(p);
+                  onSelectMlbPlayer={(p) => {
+                    setMlbPendingPlayer(p);
+                    setMlbResolvedPlayer(null);
                     const _mlbName = p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
                     if (_mlbName) setMlbPlayerQuery(_mlbName);
                     setMlbNextMatch(null);
                     setMlbOpponentQuery('');
                     Haptics.selectionAsync();
-                    if (p.id) {
-                      setMlbNextMatchLoading(true);
-                      try {
-                        const nm = await getMlbNextMatch(p.id);
-                        setMlbNextMatch(nm);
-                        if (nm.found) {
-                          if (nm.opponent?.name) setMlbOpponentQuery(nm.opponent.name);
-                          if (nm.venue) setMlbVenue(nm.venue);
-                        }
-                      } catch { /* silent */ } finally { setMlbNextMatchLoading(false); }
-                    }
                   }}
                 />
+                {mlbPendingPlayer && !mlbResolvedPlayer && (
+                  <View style={styles.playerConfirmCard}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.playerConfirmEyebrow}>CONFIRM PLAYER IDENTITY</Text>
+                      <Text style={styles.playerConfirmName} numberOfLines={1}>
+                        {mlbPendingPlayer.fullName || `${mlbPendingPlayer.firstName} ${mlbPendingPlayer.lastName}`.trim()}
+                      </Text>
+                      <Text style={styles.playerConfirmTeam} numberOfLines={1}>
+                        {mlbPendingPlayer.team?.full_name || 'Team not listed'}{mlbPendingPlayer.position ? ` · ${mlbPendingPlayer.position}` : ''}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={styles.playerConfirmBtn} onPress={() => confirmMlbPlayer(mlbPendingPlayer)} activeOpacity={0.8}>
+                      <Ionicons name="checkmark" size={15} color="#000" />
+                      <Text style={styles.playerConfirmBtnText}>Confirm</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
                 {mlbResolvedPlayer && (
                   <View style={styles.sportTeamContext}>
                     <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
                     <Text style={styles.sportTeamContextText} numberOfLines={1}>
-                      {mlbResolvedPlayer.team?.full_name || 'Team not listed'}
+                      PLAYER CONFIRMED · {mlbResolvedPlayer.team?.full_name || 'Team not listed'}
                       {mlbResolvedPlayer.position ? ` · ${mlbResolvedPlayer.position}` : ''}
                     </Text>
                   </View>
                 )}
                 {mlbResolvedPlayer && (
-                  <TouchableOpacity onPress={() => { setMlbPlayerQuery(''); setMlbResolvedPlayer(null); setMlbNextMatch(null); setMlbOpponentQuery(''); setMlbVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                  <TouchableOpacity onPress={() => { setMlbPlayerQuery(''); setMlbPendingPlayer(null); setMlbResolvedPlayer(null); setMlbNextMatch(null); setMlbOpponentQuery(''); setMlbVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
                     <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
                     <Text style={styles.changePlayerBtnText}>Change player</Text>
                   </TouchableOpacity>
@@ -3677,6 +3764,14 @@ export default function ScanScreen() {
                         <Text style={styles.gameLogsTitle}>
                           {allSynthetic ? 'GAME LOG' : `GAME LOG  ·  ${displayLogs.length} GAMES`}
                         </Text>
+                        {prediction.historyGameCount && prediction.historyGameCount > displayLogs.length && (
+                          <Text style={styles.gameLogsHistoryMeta}>
+                            {prediction.historyRange
+                              ? `${prediction.historyRange.min}–${prediction.historyRange.max} · `
+                              : ''}
+                            {prediction.historyGameCount} TOTAL EVIDENCE GAMES
+                          </Text>
+                        )}
                         {prediction.opponentName && prediction.currentOppTier && (() => {
                           const tierColor: Record<string, string> = {
                             ELITE: '#FF4444', STRONG: '#FF8C00', MID: '#FFCC00', WEAK: '#39FF14',
@@ -5669,6 +5764,48 @@ const styles = StyleSheet.create({
 
   /* Manual form */
   manualForm: { gap: 10 },
+  playerConfirmCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+    padding: 10,
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.3)',
+  },
+  playerConfirmEyebrow: {
+    color: Colors.primary,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+  },
+  playerConfirmName: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+  playerConfirmTeam: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  playerConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: Colors.primary,
+  },
+  playerConfirmBtnText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '800',
+  },
   formEyebrow: {
     fontSize: 11, color: Colors.textTertiary, fontWeight: '700',
     letterSpacing: 2.5, textAlign: 'center', marginBottom: 14,
@@ -6215,6 +6352,13 @@ const styles = StyleSheet.create({
   gameLogsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   glHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   gameLogsTitle: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.2 },
+  gameLogsHistoryMeta: {
+    fontSize: 8,
+    color: Colors.primary,
+    fontWeight: '700',
+    letterSpacing: 0.7,
+    marginTop: 3,
+  },
   hitRateBadge: {
     backgroundColor: 'rgba(57,255,20,0.12)', borderRadius: 20,
     paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(57,255,20,0.3)',

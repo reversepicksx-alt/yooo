@@ -34,7 +34,11 @@ CACHE_TTL = {
     "stats":         2 * 3600,
 }
 
-CURRENT_NFL_SEASON = 2025
+# NFL seasons follow the calendar year in the provider.  Keeping this dynamic
+# matters in the offseason: a hard-coded prior season makes valid upcoming
+# schedules look like "no next game" and also sends prediction requests to
+# stale stat buckets.
+CURRENT_NFL_SEASON = int(os.environ.get("NFL_SEASON", str(datetime.now(timezone.utc).year)))
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -287,16 +291,21 @@ async def get_next_match(player_id: int) -> dict:
         return {"found": False}
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    try:
-        data = await _get("/games", {
-            "team_ids[]": team_id,
-            "seasons[]":  CURRENT_NFL_SEASON,
-            "per_page":   100,
-        })
-        games = data.get("data", [])
-    except Exception as e:
-        log.warning(f"[NFL NEXT MATCH] {e}")
-        return {"found": False}
+    games = []
+    # In the offseason the provider can publish the next schedule under the
+    # active season while the current season has no completed games yet.  Try
+    # the active season and one forward season without treating a missing
+    # active-season schedule as a terminal failure.
+    for try_season in (CURRENT_NFL_SEASON, CURRENT_NFL_SEASON + 1):
+        try:
+            data = await _get("/games", {
+                "team_ids[]": team_id,
+                "seasons[]":  try_season,
+                "per_page":   100,
+            })
+            games.extend(data.get("data", []))
+        except Exception as e:
+            log.warning(f"[NFL NEXT MATCH] season={try_season}: {e}")
 
     future = [
         g for g in games

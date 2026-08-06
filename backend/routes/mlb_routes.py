@@ -453,9 +453,22 @@ async def mlb_predict(req: MlbPredictRequest):
         response["moneyline"] = {"home": ml_h, "away": ml_a}
     elif ml_h is not None or ml_a is not None:
         log.warning(f"[MLB PREDICT] Rejected out-of-range moneyline home={ml_h} away={ml_a}")
-    response["sharpSummary"] = ""
-    response["reasoning"] = ""
-    response["tacticalBreakdown"] = ""
+    # MLB used to explicitly erase these fields, leaving a math-only result
+    # even though the shared deterministic explanation layer can describe the
+    # actual baseball factors without inventing a narrative.
+    from deterministic_explanations import build_sport_deterministic_explanation
+    response["historyGameCount"] = len(game_logs)
+    response["historySeasons"] = sorted({
+        int(g.get("season"))
+        for g in game_logs
+        if str(g.get("season", "")).isdigit()
+    })
+    if response["historySeasons"]:
+        response["historyRange"] = {
+            "min": min(response["historySeasons"]),
+            "max": max(response["historySeasons"]),
+        }
+    build_sport_deterministic_explanation(response, "mlb")
 
     # ── Standard matchupOverview (unified UI — works for all sports) ─────────
     _home_team = team_name if venue == "home" else (req.opponentName or "Opponent")
@@ -543,13 +556,16 @@ async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):
     if isinstance(prev2_stats,  Exception): prev2_stats  = None
     if isinstance(team_games,   Exception): team_games   = []
 
-    # Backfill with previous seasons so we always have up to 30 games of history
-    if len(game_logs) < 30 and prev_logs:
-        needed = 30 - len(game_logs)
-        game_logs = list(game_logs) + list(prev_logs[:needed])
-    if len(game_logs) < 30 and prev2_logs:
-        needed = 30 - len(game_logs)
-        game_logs = list(game_logs) + list(prev2_logs[:needed])
+    # Preserve the multi-season evidence set.  The engine caps the sample used
+    # for projection math, while the response keeps all fetched rows and their
+    # season provenance for the history view.
+    merged = []
+    for source_season, rows in ((season, game_logs), (season - 1, prev_logs), (season - 2, prev2_logs)):
+        for row in rows:
+            enriched = dict(row)
+            enriched["season"] = source_season
+            merged.append(enriched)
+    game_logs = merged
 
     # If season-1 stats are also missing, fall back to season-2 stats
     if prev_stats is None and prev2_stats is not None:
