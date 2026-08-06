@@ -85,10 +85,7 @@ export default function WebAuthScreen() {
             Choose a website plan below. Secure checkout is powered by Stripe.
           </Text>
           {!!error && <Text style={styles.error}>{error}</Text>}
-          <Pressable style={[styles.primaryButton, loading && styles.disabled]} disabled={loading} onPress={() => checkout('weekly')}>
-            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>WEEKLY · $13.99/WEEK</Text>}
-          </Pressable>
-          <Pressable style={[styles.primaryButton, styles.secondaryPlan, loading && styles.disabled]} disabled={loading} onPress={() => checkout('monthly')}>
+          <Pressable style={[styles.primaryButton, loading && styles.disabled]} disabled={loading} onPress={() => checkout('monthly')}>
             {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>MONTHLY · $46.99/MONTH</Text>}
           </Pressable>
           <Pressable style={styles.linkButton} onPress={() => setStep('email')}>

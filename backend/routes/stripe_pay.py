@@ -12,7 +12,9 @@ router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 # Stripe checkout is active for website subscriptions only. Native iOS
 # subscriptions continue to use RevenueCat/App Store billing.
 STRIPE_RETIRED = False
-STRIPE_CHECKOUT_PLAN_KEYS = {"weekly", "monthly"}
+# New website purchases are monthly-only. The legacy weekly entry remains
+# below solely so historical records can still be displayed/read safely.
+STRIPE_CHECKOUT_PLAN_KEYS = {"monthly"}
 
 STRIPE_PLANS = {
     "weekly":    {"name": "Weekly",    "amount": 1399,  "interval": "week",  "interval_count": 1, "label": "$13.99/week",      "price_id": "price_1U1TeZE5jSGb860H5gPUjrZv"},

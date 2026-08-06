@@ -1906,7 +1906,6 @@ export async function getTopPropsTable(): Promise<TopPropsData> {
 }
 
 export const PLAN_OPTIONS = [
-  { key: 'weekly',  name: 'Weekly',  price: '$13.99/week'  },
   { key: 'monthly', name: 'Monthly', price: '$46.99/month' },
 ] as const;
 

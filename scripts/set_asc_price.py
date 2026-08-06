@@ -7,11 +7,10 @@ PRIVATE_KEY  = os.environ["ASC_PRIVATE_KEY"]
 BUNDLE_ID    = "com.reversepicks.app"
 APP_ID       = "6781092173"
 
-# Current Apple pricing configuration. The price change was applied with a
-# three-day lead time so Apple can propagate the scheduled change.
+# Apple pricing configuration. Existing subscribers retain their current
+# price according to Apple's subscription price-change rules.
 PLANS = [
-    {"product_id": "reversepicks_weekly", "name": "Weekly", "duration": "ONE_WEEK", "price": "13.99"},
-    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "44.99"},
+    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "39.99"},
 ]
 
 # Use ASC_TARGET_PRODUCT for a one-plan change without rescheduling the other
@@ -108,7 +107,6 @@ for plan in ACTIVE_PLANS:
 # ── 3. Add English localization (required before review) ──────────────────────
 print("\n── Localizations ────────────────────────")
 DESCRIPTIONS = {
-    "reversepicks_weekly":  "7-day Pro access. Soccer player props analytics.",
     "reversepicks_monthly": "Monthly Pro access. Soccer player props analytics.",
 }
 for plan in ACTIVE_PLANS:

@@ -177,7 +177,7 @@ async def generate_checkout_link(req: CheckoutLinkRequest):
     await verify_owner(req.adminEmail, req.sessionToken)
 
     plan_key = req.planKey.lower()
-    if plan_key not in ("weekly", "monthly"):
+    if plan_key != "monthly":
         raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
 
     stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")

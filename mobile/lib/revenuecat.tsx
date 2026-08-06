@@ -77,7 +77,10 @@ function useSubscriptionContext() {
     refetchOnMount: true,
   });
 
-  const packages = offeringsQuery.data?.current?.availablePackages ?? [];
+  // New iOS purchases are monthly-only. Keep legacy weekly purchases
+  // restorable for existing customers, but never present weekly to new buyers.
+  const packages = (offeringsQuery.data?.current?.availablePackages ?? [])
+    .filter((pkg) => pkg.product?.identifier === "reversepicks_monthly");
 
   const purchaseMutation = useMutation({
     mutationFn: async (pkg: PurchasesPackage) => {
