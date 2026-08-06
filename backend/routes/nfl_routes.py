@@ -9,6 +9,7 @@ from typing import Optional
 from config import db
 import nfl_client
 import nfl_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("nfl_routes")
 router = APIRouter(prefix="/api/nfl", tags=["nfl"])
@@ -194,6 +195,7 @@ async def nfl_predict(req: NflPredictRequest):
             "week":             g.get("week"),
             "venue":            g.get("venue", ""),
             "opponent":         g.get("opponent"),
+            "score":            g.get("score"),
             "won":              g.get("won"),
             "passing_yards":    g.get("passing_yards"),
             "rushing_yards":    g.get("rushing_yards"),
@@ -203,7 +205,7 @@ async def nfl_predict(req: NflPredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
-    return {
+    return normalize_response({
         "sport":            "nfl",
         "playerName":       req.playerName,
         "playerId":         player_id,
@@ -230,4 +232,15 @@ async def nfl_predict(req: NflPredictRequest):
         "reasoning":         ai_result.get("reasoning", ""),
         "keyFactors":        ai_result.get("keyFactors", []),
         "rawConfidence":     result["confidenceScore"],
-    }
+        "matchupOverview": {
+            "homeTeam":         team_name if venue == "home" else (req.opponentName or "Opponent"),
+            "awayTeam":         (req.opponentName or "Opponent") if venue == "home" else team_name,
+            "playerIsHome":     venue == "home",
+            "expectedGameType": "High-scoring game" if req.gameTotal and req.gameTotal >= 48
+                                else "Low-scoring game" if req.gameTotal and req.gameTotal <= 40
+                                else "Balanced matchup",
+            "keyMatchupFactor": (
+                f"Game total {req.gameTotal:.1f}" if req.gameTotal is not None else None
+            ),
+        },
+    })

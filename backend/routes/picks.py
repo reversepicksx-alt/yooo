@@ -364,14 +364,14 @@ async def save_pick(req: SavePickRequest):
 
     # Detect sport from pick payload
     _sport_raw = str(pick.get("sport", "soccer")).lower()
-    if _sport_raw == "mlb":
-        sport = "mlb"
-    elif _sport_raw == "cs2":
-        sport = "cs2"
-    elif _sport_raw == "wta":
-        sport = "wta"
-    else:
-        sport = "soccer"
+    # Preserve the sport selected by the user.  Falling every unknown/non-MLB
+    # payload into soccer used to silently mislabel NFL (and other supported
+    # sport) picks, which then sent them through soccer settlement logic.
+    _supported_sports = {
+        "soccer", "mlb", "nfl", "nba", "nhl", "wnba", "cs2", "wta",
+        "ncaab", "ncaaw", "ncaaf", "atp", "f1", "mma", "pga", "dota2", "lol",
+    }
+    sport = _sport_raw if _sport_raw in _supported_sports else "soccer"
 
     if sport == "soccer":
         _save_request = pick.get("_request") or {}
@@ -882,10 +882,6 @@ async def list_picks(req: GetPicksRequest):
         {"email": requester_email},
         {"_id": 0},
     ).sort("timestamp", -1).to_list(None)
-
-    # Budget cut: NFL/NBA/MLB are no longer offered; hide them from settled picks too.
-    _HIDDEN_SPORTS = {"mlb", "nba", "nfl"}
-    picks = [p for p in picks if p.get("sport", "soccer") not in _HIDDEN_SPORTS]
 
     def _pick_email(p: dict) -> str:
         return requester_email

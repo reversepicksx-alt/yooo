@@ -213,6 +213,7 @@ def _transform_nfl_log(row: dict) -> dict:
     # W/L from game scores
     home_sc = game.get("home_team_score")
     vis_sc  = game.get("visitor_team_score")
+    score = f"{home_sc}-{vis_sc}" if home_sc is not None and vis_sc is not None else None
     won = None
     if home_sc is not None and vis_sc is not None:
         won = (home_sc > vis_sc) if is_home else (vis_sc > home_sc)
@@ -242,6 +243,7 @@ def _transform_nfl_log(row: dict) -> dict:
         "game_id":             game.get("id"),
         "venue":               venue,
         "opponent":            opp_abbr,
+        "score":               score,
         "won":                 won,
         "week":                game.get("week"),
         "season":              game.get("season"),

@@ -2511,6 +2511,7 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
     rushing_yards:   g.rushing_yards   ?? null,
     receiving_yards: g.receiving_yards ?? null,
     receptions:      g.receptions      ?? null,
+    score:           g.score           ?? null,
   }));
   return {
     sport:              'nfl',
@@ -2538,6 +2539,14 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
     priorMean:          raw.priorMean         ?? bm.priorMean,
     momentumMean:       raw.momentum          ?? bm.momentumMean,
     gameLogs,
+    matchupOverview: raw.matchupOverview ? {
+      homeTeam:         raw.matchupOverview.homeTeam,
+      awayTeam:         raw.matchupOverview.awayTeam,
+      playerIsHome:     raw.matchupOverview.playerIsHome,
+      expectedGameType: raw.matchupOverview.expectedGameType,
+      keyMatchupFactor: raw.matchupOverview.keyMatchupFactor,
+      moneyline:        raw.matchupOverview.moneyline ?? raw.moneyline,
+    } : undefined,
     bayesianMetrics: {
       priorMean:    bm.priorMean    ?? raw.priorMean,
       momentumMean: bm.momentumMean ?? raw.momentum,

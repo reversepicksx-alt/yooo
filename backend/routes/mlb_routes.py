@@ -11,6 +11,7 @@ from typing import Optional
 from config import db
 import mlb_client
 import mlb_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("mlb_routes")
 
@@ -505,7 +506,7 @@ async def mlb_predict(req: MlbPredictRequest):
     except Exception:
         pass
 
-    return response
+    return normalize_response(response)
 
 
 async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):

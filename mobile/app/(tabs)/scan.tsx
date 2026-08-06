@@ -254,7 +254,8 @@ export default function ScanScreen() {
   // Sport picker modal + server-side sport config
   const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
     { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null,         available: true  },
-    { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
+    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',          label: null,         available: true  },
+    { sport: 'nfl',    displayName: 'NFL',         icon: 'american-football', label: null,         available: true  },
   ]);
 
 
@@ -264,6 +265,21 @@ export default function ScanScreen() {
       if (cfg?.length) setSportsConfig(cfg.filter(s => s.sport !== 'wta' && s.sport !== 'cs2'));
     }).catch(() => {});
   }, []);
+
+  const selectSport = (next: Sport) => {
+    cancelAbortRef.current?.abort();
+    setSport(next);
+    setMode('manual');
+    setPhase('idle');
+    setPrediction(null);
+    setPredictionRequest(null);
+    setScanResult(null);
+    setTacticalAnalysis(null);
+    setAnalyzeError(null);
+    setManualError(null);
+    setScanFillHint(null);
+    setPickSaved(false);
+  };
 
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
@@ -470,6 +486,34 @@ export default function ScanScreen() {
               if (results && results.length > 0) {
                 setWtaResolvedOpponent(results[0]);
                 setWtaOpponentQuery(results[0].fullName || scanned.opponentName!);
+              }
+            }).catch(() => {});
+          }
+        } else if (sport === 'mlb') {
+          const mlbKeys = MLB_PROP_TYPES.map((p: { value: string }) => p.value);
+          if (scanned.playerName) setMlbPlayerQuery(scanned.playerName);
+          if (scanned.opponentName) setMlbOpponentQuery(scanned.opponentName);
+          setMlbPropType(mapProp(scanned.propType, mlbKeys, 'hits'));
+          if (scanned.line) setLine(String(scanned.line));
+          if (scanned.playerName) {
+            searchMlbPlayers(scanned.playerName).then(results => {
+              if (results?.length) {
+                setMlbResolvedPlayer(results[0]);
+                setMlbPlayerQuery(results[0].fullName || scanned.playerName!);
+              }
+            }).catch(() => {});
+          }
+        } else if (sport === 'nfl') {
+          const nflKeys = NFL_PROP_TYPES.map((p: { value: string }) => p.value);
+          if (scanned.playerName) setNflPlayerQuery(scanned.playerName);
+          if (scanned.opponentName) setNflOpponentQuery(scanned.opponentName);
+          setNflPropType(mapProp(scanned.propType, nflKeys, 'passing_yards'));
+          if (scanned.line) setLine(String(scanned.line));
+          if (scanned.playerName) {
+            searchNflPlayers(scanned.playerName).then(results => {
+              if (results?.length) {
+                setNflResolvedPlayer(results[0]);
+                setNflPlayerQuery(results[0].fullName || scanned.playerName!);
               }
             }).catch(() => {});
           }
@@ -1194,6 +1238,32 @@ export default function ScanScreen() {
           </View>
         </View>
         <NotificationBell />
+      </View>
+
+      <View style={styles.sportSelector}>
+        {sportsConfig
+          .filter(s => ['soccer', 'mlb', 'nfl'].includes(s.sport))
+          .map(item => {
+            const active = sport === item.sport;
+            const icon = item.sport === 'mlb'
+              ? 'baseball-outline'
+              : item.sport === 'nfl'
+                ? 'american-football-outline'
+                : 'football-outline';
+            return (
+              <TouchableOpacity
+                key={item.sport}
+                style={[styles.sportSelectorItem, active && styles.sportSelectorItemActive]}
+                onPress={() => selectSport(item.sport as Sport)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={icon as any} size={15} color={active ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.sportSelectorText, active && styles.sportSelectorTextActive]}>
+                  {item.displayName}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
       </View>
 
       <ScrollView
@@ -6376,6 +6446,33 @@ const styles = StyleSheet.create({
   modalItemActive: { backgroundColor: Colors.primaryDim, borderRadius: 8, paddingHorizontal: 10 },
   modalItemText: { fontSize: 15, color: Colors.text },
   modalItemTextActive: { color: Colors.primary, fontWeight: '600' },
+  sportSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(57,255,20,0.10)',
+  },
+  sportSelectorItem: {
+    flex: 1,
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#252525',
+    backgroundColor: '#151515',
+  },
+  sportSelectorItemActive: {
+    borderColor: 'rgba(57,255,20,0.55)',
+    backgroundColor: 'rgba(57,255,20,0.10)',
+  },
+  sportSelectorText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
+  sportSelectorTextActive: { color: Colors.primary },
 
   summarySection: { padding: 16, gap: 10 },
   summaryHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
