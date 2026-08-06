@@ -78,6 +78,10 @@ async def nfl_next_match(player_id: int = Query(...)):
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class NflPredictRequest(BaseModel):
+    # Session credentials are sent in the JSON body by the mobile client,
+    # matching the MLB/NBA/NHL prediction contracts.
+    email:              str = ""
+    token:              str = ""
     playerName:         str
     playerId:           Optional[int]   = None
     teamName:           Optional[str]   = ""

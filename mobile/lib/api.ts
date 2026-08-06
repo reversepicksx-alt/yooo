@@ -2528,6 +2528,8 @@ export interface NflNextMatch {
   date?:     string;
   venue?:    'home' | 'away';
   opponent?: { id: number | null; name: string; abbreviation?: string } | null;
+  seasonType?: 'preseason' | 'regular' | 'postseason' | string;
+  source?: string;
 }
 
 export async function getNflNextMatch(playerId: number): Promise<NflNextMatch> {

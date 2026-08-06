@@ -42,6 +42,9 @@ CACHE_TTL = {
 # schedules look like "no next game" and also sends prediction requests to
 # stale stat buckets.
 CURRENT_NFL_SEASON = int(os.environ.get("NFL_SEASON", str(datetime.now(timezone.utc).year)))
+ESPN_NFL_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+_espn_schedule_cache: dict[str, tuple[float, list[dict]]] = {}
+_ESPN_SCHEDULE_TTL = 10 * 60
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -93,6 +96,91 @@ def _cache_fresh(doc: Optional[dict], ttl_seconds: int) -> bool:
         return age < ttl_seconds
     except Exception:
         return False
+
+
+def _team_matches_espn(competitor: dict, team: dict) -> bool:
+    """Match an ESPN competitor to the BDL player team without guessing IDs."""
+    espn_team = competitor.get("team") or {}
+    bdl_abbr = str(team.get("abbreviation") or "").upper()
+    espn_abbr = str(espn_team.get("abbreviation") or "").upper()
+    if bdl_abbr and espn_abbr and bdl_abbr == espn_abbr:
+        return True
+    bdl_name = str(team.get("full_name") or team.get("name") or "").lower()
+    espn_name = str(espn_team.get("displayName") or espn_team.get("name") or "").lower()
+    return bool(bdl_name and espn_name and (bdl_name == espn_name or bdl_name in espn_name or espn_name in bdl_name))
+
+
+async def _get_espn_upcoming_game(team: dict, today: str) -> Optional[dict]:
+    """Find the nearest NFL game, including preseason, from ESPN's schedule.
+
+    BallDontLie is authoritative for player identity/stats, but its NFL games
+    endpoint omits the current 2026 preseason schedule. ESPN is used only to
+    fill this upcoming-fixture gap; prediction math and settlement remain BDL.
+    """
+    cache_key = today[:7]
+    now = time.monotonic()
+    cached = _espn_schedule_cache.get(cache_key)
+    if cached and now - cached[0] < _ESPN_SCHEDULE_TTL:
+        events = cached[1]
+    else:
+        try:
+            start = datetime.fromisoformat(today).date()
+            end = start.fromordinal(start.toordinal() + 180)
+            async with httpx.AsyncClient(timeout=12) as client:
+                resp = await client.get(
+                    ESPN_NFL_SCOREBOARD,
+                    params={
+                        "dates": f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}",
+                        "limit": 1000,
+                    },
+                )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP {resp.status_code}")
+            events = resp.json().get("events") or []
+            _espn_schedule_cache[cache_key] = (now, events)
+        except Exception as e:
+            log.warning(f"[NFL ESPN SCHEDULE] unavailable: {e}")
+            return None
+
+    candidates = []
+    for event in events:
+        event_date = (event.get("date") or "")[:10]
+        if event_date < today:
+            continue
+        status = ((event.get("status") or {}).get("type") or {}).get("name", "")
+        if status.lower() in {"final", "completed", "closed", "complete"}:
+            continue
+        competitions = event.get("competitions") or []
+        if not competitions:
+            continue
+        competition = competitions[0]
+        competitors = competition.get("competitors") or []
+        player_competitor = next(
+            (c for c in competitors if _team_matches_espn(c, team)),
+            None,
+        )
+        if not player_competitor:
+            continue
+        opponent = next((c for c in competitors if c is not player_competitor), None)
+        if not opponent:
+            continue
+        player_home = player_competitor.get("homeAway") == "home"
+        opponent_team = opponent.get("team") or {}
+        candidates.append({
+            "found": True,
+            "gameId": int(event["id"]) if str(event.get("id", "")).isdigit() else event.get("id"),
+            "date": event_date,
+            "venue": "home" if player_home else "away",
+            "opponent": {
+                "id": int(opponent_team["id"]) if str(opponent_team.get("id", "")).isdigit() else None,
+                "name": opponent_team.get("displayName") or opponent_team.get("name") or "",
+                "abbreviation": opponent_team.get("abbreviation"),
+            },
+            "seasonType": ((event.get("season") or {}).get("slug") or "regular"),
+            "source": "espn_schedule",
+        })
+    candidates.sort(key=lambda game: game.get("date", ""))
+    return candidates[0] if candidates else None
 
 
 async def _cache_get(key: str) -> Optional[dict]:
@@ -393,6 +481,13 @@ async def get_next_match(player_id: int) -> dict:
         and g.get("status") not in ("Final", "completed", "closed", "complete")
     ]
     future.sort(key=lambda g: g.get("date", ""))
+
+    # BallDontLie currently omits the 2026 preseason schedule. Use ESPN only
+    # as an upcoming-fixture fallback and select the earliest event across
+    # both feeds, so preseason is never skipped before the regular season.
+    espn_game = await _get_espn_upcoming_game(team, today)
+    if espn_game and (not future or espn_game.get("date", "") < (future[0].get("date") or "")[:10]):
+        return espn_game
 
     if not future:
         return {"found": False}

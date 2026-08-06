@@ -2112,7 +2112,9 @@ export default function ScanScreen() {
                   <View style={styles.autoFillBanner}>
                     <Ionicons name="flash" size={12} color={Colors.primary} />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
+                        NEXT GAME AUTO-FILLED
+                      </Text>
                       <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nbaNextMatch.opponent?.name}</Text>
                       <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nbaNextMatch.venue?.toUpperCase()}{nbaNextMatch.date ? ` · ${new Date(nbaNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
                     </View>
@@ -2221,7 +2223,9 @@ export default function ScanScreen() {
                   <View style={styles.autoFillBanner}>
                     <Ionicons name="flash" size={12} color={Colors.primary} />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
+                        NEXT GAME AUTO-FILLED
+                      </Text>
                       <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nhlNextMatch.opponent?.name}</Text>
                       <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nhlNextMatch.venue?.toUpperCase()}{nhlNextMatch.date ? ` · ${new Date(nhlNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
                     </View>
@@ -2356,7 +2360,9 @@ export default function ScanScreen() {
                   <View style={styles.autoFillBanner}>
                     <Ionicons name="flash" size={12} color={Colors.primary} />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
+                        NEXT GAME AUTO-FILLED{nflNextMatch.seasonType === 'preseason' ? ' · PRESEASON' : ''}
+                      </Text>
                       <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nflNextMatch.opponent?.name}</Text>
                       <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nflNextMatch.venue?.toUpperCase()}{nflNextMatch.date ? ` · ${new Date(nflNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
                     </View>

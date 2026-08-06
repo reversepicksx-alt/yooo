@@ -119,3 +119,4 @@
 - [Positional reality shadow packet](positional-reality-shadow.md) — match script, attacking-direction zones, prop signals, and robust outlier weighting are visible but remain non-live until replay validation.
 - [Sport re-enable audit](sport-reenable-audit.md) — restoring a sport requires auditing picker, saved-history, response-contract, live-tracking, and settlement gates together; config alone is insufficient.
 - [MLB/NFL identity and history](mlb-nfl-confirmation-and-history.md) — invalidate stale search responses; default multi-context soccer players to club fixtures and keep MLB/NFL evidence history visible.
+- [NFL preseason schedule fallback](nfl-preseason-schedule.md) — BallDontLie may omit preseason games; use a clearly marked schedule-only fallback and choose the earliest verified fixture.
