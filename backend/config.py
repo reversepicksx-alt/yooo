@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pathlib as _pathlib
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import ConfigurationError
 
 # Load .env as fallback — only for keys not already set in the environment.
 # This prevents the committed backend/.env (localhost MONGO_URL) from
@@ -205,7 +206,30 @@ _DB_NAME = DB_NAME or "reversepicks"
 # serverSelectionTimeoutMS=10000 → give Atlas replica-set elections room to
 # settle before fast-failing, while still not blocking the 15s client timeout.
 # 3s was too aggressive during transient Atlas primary stepdowns.
-mongo_client = AsyncIOMotorClient(_EFFECTIVE_MONGO_URL, serverSelectionTimeoutMS=10000, retryWrites=True)
+try:
+    mongo_client = AsyncIOMotorClient(
+        _EFFECTIVE_MONGO_URL,
+        serverSelectionTimeoutMS=10000,
+        retryWrites=True,
+    )
+except ConfigurationError as exc:
+    # PyMongo resolves mongodb+srv records while constructing the client. A
+    # transient DNS/SRV failure must not prevent the API process from starting
+    # at all: search and provider-backed routes can still serve while Mongo is
+    # unavailable, and the workflow starts a local Mongo fallback for cache
+    # reads. Production keeps using Atlas whenever its SRV record resolves.
+    if "mongodb+srv" not in _EFFECTIVE_MONGO_URL:
+        raise
+    print(
+        f"[CONFIG] Atlas SRV unavailable ({exc}); falling back to local MongoDB",
+        file=_sys.stderr,
+        flush=True,
+    )
+    mongo_client = AsyncIOMotorClient(
+        _local_url,
+        serverSelectionTimeoutMS=3000,
+        retryWrites=False,
+    )
 db = mongo_client[_DB_NAME]
 
 # ── Prop type aliases (for scan) ──
