@@ -1196,6 +1196,7 @@ export default function ScanScreen() {
           || (prediction as any).skipDetails?.direction?.toLowerCase()
           || undefined,
         passReason: (prediction as any).passReason || undefined,
+        qualityConfidenceCapped: (prediction as any).qualityConfidenceCapped || undefined,
         isCalibrationOnly: prediction.recommendation === 'PASS',
         confidence: prediction.confidence,
         confidenceScore: prediction.confidenceScore ?? (typeof prediction.confidence === 'number' && prediction.confidence <= 1 ? Math.round(prediction.confidence * 100) : prediction.confidence),
@@ -2774,6 +2775,34 @@ export default function ScanScreen() {
                   </View>
                 </View>
               )}
+
+              {/* Evidence Quality Callout — shown when confidence was capped due to limited data */}
+              {(prediction as any).qualityConfidenceCapped && (() => {
+                const eq = (prediction as any).evidenceQuality as Record<string, unknown> | undefined;
+                const logCount = (eq?.realPlayerLogCount as number | undefined) ?? null;
+                const capReasons = (eq?.capReasons as string[] | undefined) ?? [];
+                const firstReason = capReasons[0] ?? 'Limited match data available.';
+                return (
+                  <View style={{
+                    marginTop: 10, marginBottom: 4,
+                    paddingHorizontal: 12, paddingVertical: 9,
+                    backgroundColor: 'rgba(245,158,11,0.08)',
+                    borderRadius: 10, borderWidth: 1,
+                    borderColor: 'rgba(245,158,11,0.3)',
+                    flexDirection: 'row', alignItems: 'center', gap: 8,
+                  }}>
+                    <Ionicons name="warning-outline" size={14} color="#F59E0B" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#F59E0B', letterSpacing: 0.4 }}>
+                        EVIDENCE LIMITED{logCount != null ? ` · ${logCount} game log${logCount !== 1 ? 's' : ''}` : ''}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2, lineHeight: 15 }}>
+                        {firstReason} Confidence capped accordingly.
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })()}
 
               {/* Line vs Season Average + Edge Explanation */}
               {prediction.priorMean != null && prediction.line != null && (() => {

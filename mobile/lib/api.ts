@@ -364,6 +364,8 @@ export interface PredictionResult {
   passLeaning?: 'OVER' | 'UNDER' | string;
   passReason?: string;
   skipReason?: string;
+  qualityConfidenceCapped?: boolean;
+  evidenceQuality?: Record<string, unknown>;
   skipDetails?: { direction?: string; hitRate?: number; sampleSize?: number; windowDays?: number };
   confidenceScore?: number;
   bayesianMetrics?: Record<string, unknown>;
@@ -1132,6 +1134,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     tacticalBreakdown: raw.tacticalBreakdown || undefined,
     aiSource: (raw as any).aiSource || undefined,
     keyFactors: Array.isArray((raw as any).keyFactors) ? ((raw as any).keyFactors as string[]) : undefined,
+    qualityConfidenceCapped: (raw as any).qualityConfidenceCapped ?? undefined,
+    evidenceQuality: (raw as any).evidenceQuality ?? undefined,
     qualitySignal: (raw as any).qualitySignal || undefined,
     currentOppTier: (raw as any).currentOppTier || undefined,
     currentOppRank: (raw as any).currentOppRank ?? undefined,
@@ -1262,6 +1266,9 @@ export interface Pick {
   managerChangedAfterPick?: boolean;
   managerChangeCoachName?: string;
   managerChangeDate?: string;
+  // Evidence-quality gate — set when the model capped confidence due to limited data
+  qualityConfidenceCapped?: boolean;
+  passReason?: string;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -1348,6 +1355,9 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     managerChangedAfterPick: (p.managerChangedAfterPick as boolean) || undefined,
     managerChangeCoachName: (p.managerChangeCoachName as string) || undefined,
     managerChangeDate: (p.managerChangeDate as string) || undefined,
+    // Evidence-quality gate fields persisted at save time
+    qualityConfidenceCapped: (p.qualityConfidenceCapped as boolean) || undefined,
+    passReason: (p.passReason as string) || undefined,
   }));
 }
 

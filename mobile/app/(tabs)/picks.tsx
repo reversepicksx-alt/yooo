@@ -1448,6 +1448,65 @@ export default function PicksScreen() {
               );
             })()}
 
+            {/* ── EVIDENCE QUALITY CALLOUT — confidence cap or PASS reason ── */}
+            {!analysisModal?.loading && (() => {
+              const pick = analysisModal?.pick as any;
+              const data = analysisModal?.data as any;
+              // qualityConfidenceCapped persisted on the pick at save time
+              const capped = pick?.qualityConfidenceCapped === true;
+              // passReason — shown for PASS picks
+              const passReason = pick?.passReason || data?.passReason;
+              const isPass = (pick?.recommendation || '').toUpperCase() === 'PASS';
+              // evidence quality from the fetched analysis data
+              const eq = data?.evidenceQuality as Record<string, unknown> | undefined;
+              const logCount = (eq?.realPlayerLogCount as number | undefined) ?? null;
+              const capReasons = (eq?.capReasons as string[] | undefined) ?? [];
+              const firstReason = capReasons[0] ?? null;
+
+              if (!capped && !isPass) return null;
+              if (isPass && passReason) {
+                return (
+                  <View style={{
+                    marginBottom: 12,
+                    padding: 12, borderRadius: 10,
+                    backgroundColor: 'rgba(255,165,0,0.08)',
+                    borderWidth: 1, borderColor: 'rgba(255,165,0,0.35)',
+                    flexDirection: 'row', gap: 8, alignItems: 'flex-start',
+                  }}>
+                    <Ionicons name="pause-circle-outline" size={14} color="#FFA500" style={{ marginTop: 1 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFA500', letterSpacing: 0.4, marginBottom: 3 }}>
+                        PASS — SKIP THIS PROP
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 17 }}>{passReason}</Text>
+                    </View>
+                  </View>
+                );
+              }
+              if (capped) {
+                return (
+                  <View style={{
+                    marginBottom: 12,
+                    padding: 12, borderRadius: 10,
+                    backgroundColor: 'rgba(245,158,11,0.08)',
+                    borderWidth: 1, borderColor: 'rgba(245,158,11,0.30)',
+                    flexDirection: 'row', gap: 8, alignItems: 'flex-start',
+                  }}>
+                    <Ionicons name="warning-outline" size={14} color="#F59E0B" style={{ marginTop: 1 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#F59E0B', letterSpacing: 0.4, marginBottom: 3 }}>
+                        EVIDENCE LIMITED{logCount != null ? ` · ${logCount} game log${logCount !== 1 ? 's' : ''}` : ''}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 17 }}>
+                        {firstReason ?? 'Confidence was capped because game-log data was limited at prediction time.'}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              }
+              return null;
+            })()}
+
             {/* ── EVIDENCE SUMMARY ── */}
             {!analysisModal?.loading && renderEvidenceSummary(analysisModal?.data as Record<string, unknown> | null)}
 
