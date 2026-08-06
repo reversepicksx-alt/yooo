@@ -1299,10 +1299,9 @@ export default function ScanScreen() {
         <View
           pointerEvents={isNoSub ? 'none' : 'auto'}
           style={[
-            { minHeight: SCREEN_H - 200 },
-            mode === 'manual' && phase === 'idle' && !prediction
-              ? { justifyContent: 'center', paddingBottom: 60 }
-              : {},
+            mode === 'manual'
+              ? { paddingTop: 22, paddingBottom: 40 }
+              : { minHeight: SCREEN_H - 200 },
           ]}
         >
             {/* Idle: cartoon sports image only */}
