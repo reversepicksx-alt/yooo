@@ -181,6 +181,7 @@ export default function FuzzySearchInput({
     // A rate-limited upstream search must not leave the control looking
     // permanently busy.  The request itself is ignored if it completes after
     // this timeout; the user gets an explicit retry affordance instead.
+    const searchTimeoutMs = searchType === 'all_players' ? 12_000 : 2_900;
     searchTimeoutRef.current = setTimeout(() => {
       if (searchIdRef.current !== myId) return;
       searchIdRef.current += 1;
@@ -189,7 +190,7 @@ export default function FuzzySearchInput({
       setShowDropdown(true);
       setHasSearched(true);
       setSearchError(true);
-    }, 2900);
+    }, searchTimeoutMs);
     try {
       let r: any[] = [];
       if (searchType === 'teams') {
@@ -341,7 +342,12 @@ export default function FuzzySearchInput({
     onSelectPlayer?.(item);
   };
   const handleSelectAllPlayer = (item: UniversalPlayerResult) => {
+    // Stop the in-flight universal request before committing the selection.
+    // Otherwise a slower provider can repaint the dropdown after the tap.
+    invalidatePendingSearch();
+    lastQueryRef.current = item.playerName;
     onChangeText(item.playerName); dismiss(); setResults([]);
+    setHasSearched(false); setSearchError(false);
     onSelectAllPlayer?.(item);
   };
   const handleSelectLeague = (item: any) => {

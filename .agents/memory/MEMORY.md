@@ -123,3 +123,4 @@
 - [Half-line settlement](half-line-settlement.md) — `.5` player-prop lines can only be HIT/MISS; DNP/void outcomes must never be stored or rendered as PUSH.
 - [Universal player search](universal-player-search.md) — one search covers soccer, MLB, and NFL; verified result selection auto-detects the read-only sport badge and form.
 - [Backend Atlas DNS fallback](backend-atlas-dns-fallback.md) — Atlas SRV/DNS import failures can make every provider search look empty; verify backend health before changing search UI.
+- [Universal selection flow](universal-selection-flow.md) — tapping a verified result must commit identity and start sport-specific matchup lookup, not only fill the text field.

@@ -338,20 +338,17 @@ export default function ScanScreen() {
     if (p.sport === 'mlb') {
       const player = p.raw as MlbPlayer;
       setMlbPlayerQuery(p.playerName);
-      setMlbPendingPlayer(player);
-      setMlbResolvedPlayer(null);
-      setMlbNextMatch(null);
-      setMlbOpponentQuery('');
-      Haptics.selectionAsync();
+      // Universal search results are already provider-verified. Commit the
+      // player immediately instead of stopping at the old second confirmation
+      // step, which made a tap appear to do nothing and never fetched the game.
+      await confirmMlbPlayer(player);
       return;
     }
     const player = p.raw as NflPlayer;
     setNflPlayerQuery(p.playerName);
-    setNflPendingPlayer(player);
-    setNflResolvedPlayer(null);
-    setNflNextMatch(null);
-    setNflOpponentQuery('');
-    Haptics.selectionAsync();
+    // Same immediate commit for NFL so the existing next-match lookup starts
+    // from the universal result tap.
+    await confirmNflPlayer(player);
   };
 
   // Auto-quality-filter whenever a new prediction loads:

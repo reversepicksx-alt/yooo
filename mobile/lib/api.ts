@@ -18,7 +18,10 @@ const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/pred
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
-const PLAYER_SEARCH_TIMEOUT_MS = 3_000;
+// Provider-backed player searches can take several seconds on mobile Safari,
+// especially when the MLB/NFL provider has to warm its cache. Do not turn a
+// slow provider into a false "no results" state in the universal search.
+const PLAYER_SEARCH_TIMEOUT_MS = 10_000;
 const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
 const MEDIUM_TIMEOUT_MS    = 15_000;
 const CS2_TIMEOUT_MS       = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
