@@ -1176,6 +1176,34 @@ class _QuotaResetRequest(BaseModel):
     token: str
 
 
+@router.get("/quota-status")
+async def admin_quota_status(email: str, token: str):
+    """Owner-only: check whether the API-Football quota circuit breaker is active."""
+    await verify_owner(email, token)
+    import os as _os
+    _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+    active = _os.path.exists(_BREAKER_FILE)
+    tripped_date: str | None = None
+    if active:
+        try:
+            with open(_BREAKER_FILE) as f:
+                tripped_date = f.read().strip() or None
+        except Exception:
+            pass
+    # Also reflect in-memory state
+    try:
+        import utils as _utils
+        if _utils._quota_exhausted_date:
+            active = True
+            tripped_date = tripped_date or _utils._quota_exhausted_date
+    except Exception:
+        pass
+    return {
+        "active": active,
+        "trippedDate": tripped_date,
+    }
+
+
 @router.post("/quota-reset")
 async def admin_quota_reset(req: _QuotaResetRequest):
     """Owner-only: clear the API-Football daily quota circuit breaker.
