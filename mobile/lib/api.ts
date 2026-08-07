@@ -195,8 +195,11 @@ export async function iapSignup(
   });
 }
 
-export async function verifySession(email: string, session_token: string) {
-  return apiCall('/api/auth/verify-session', {
+export async function verifySession(
+  email: string,
+  session_token: string,
+): Promise<{ valid?: boolean; access_type?: string }> {
+  return apiCall<{ valid?: boolean; access_type?: string }>('/api/auth/verify-session', {
     method: 'POST',
     body: JSON.stringify({ email, session_token }),
   });

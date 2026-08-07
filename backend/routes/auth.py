@@ -627,7 +627,7 @@ async def check_access(email_lower: str) -> str | None:
         return apple
     # 3) Live RevenueCat fallback (covers missed/delayed webhooks)
     apple_live = await _check_revenuecat_live(email_lower)
-    if apple_live:
+    if apple_live and apple_live != _RC_NETWORK_ERROR:
         return apple_live
     # 4) Live Stripe fallback
     return await _check_stripe_live(email_lower)
@@ -918,8 +918,24 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
     if access_type == "Owner":
         return {"valid": True, "access_type": "Owner"}
 
+    # A NoSubscription session may be stale: the device can complete an Apple
+    # restore/purchase after the session was created, or a Stripe webhook can
+    # arrive after the session was cached. Use the unified server-side access
+    # check here so every protected route sees the same current truth.
+    if access_type == "NoSubscription":
+        current = await check_access(email_lower)
+        # _RC_NETWORK_ERROR means verification was unavailable, not that the
+        # customer is unsubscribed. Keep the session conservative in that case.
+        if current and current != _RC_NETWORK_ERROR:
+            await db.sessions.update_one(
+                {"email": email_lower, "session_token": token},
+                {"$set": {"access_type": current, "last_active": datetime.now(timezone.utc).isoformat()}},
+            )
+            return {"valid": True, "access_type": current}
+        return {"valid": True, "access_type": "NoSubscription"}
+
     # Apple IAP sessions — re-check Apple (local DB, then live RevenueCat fallback)
-    if "Apple" in access_type or access_type == "NoSubscription":
+    if "Apple" in access_type:
         current = await _check_apple_access(email_lower)
         if not current:
             current = await _check_revenuecat_live(email_lower)

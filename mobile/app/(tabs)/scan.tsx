@@ -19,7 +19,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, syncAppleAccess, verifySession } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,6 +27,8 @@ import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import Purchases from 'react-native-purchases';
+import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenuecat';
 
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -106,9 +108,12 @@ type Sport = 'soccer' | 'cs2' | 'wta' | 'nba' | 'nhl' | 'mlb' | 'nfl';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { session, logout, accessType } = useAuth();
+  const { session, logout, accessType, loginWithResponse } = useAuth();
+  const { isSubscribed: hasNativeAppleEntitlement } = useSubscription();
   // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
-  const isNoSub = !accessType || accessType === 'NoSubscription';
+  const isNoSub = (!accessType || accessType === 'NoSubscription')
+    && !(Platform.OS === 'ios' && hasNativeAppleEntitlement);
+  const accessRefreshRef = useRef<string | null>(null);
   const qc = useQueryClient();
   // AbortController ref so reset() can cancel an in-flight prediction
   const cancelAbortRef = useRef<AbortController | null>(null);
@@ -183,6 +188,56 @@ export default function ScanScreen() {
   const [leagueQuery, setLeagueQuery] = useState('');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
+
+  // Older/reinstalled iOS sessions can have an active StoreKit entitlement
+  // while the backend session still says NoSubscription. Refresh the
+  // authenticated account immediately before Analyze so the customer does
+  // not have to log out, reinstall, or guess which restore flow to use.
+  const refreshAppleAccess = async (): Promise<boolean> => {
+    if (!session?.email || !session.token || Platform.OS !== 'ios') return !isNoSub;
+    const sessionKey = `${session.email}:${session.token}`;
+    if (accessRefreshRef.current === sessionKey) return !isNoSub;
+    try {
+      const info = await Purchases.getCustomerInfo();
+      const entitlement = info?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
+      if (!entitlement) return !isNoSub;
+      const customerId = await Purchases.getAppUserID();
+      const synced = await syncAppleAccess(session.email, session.token, customerId);
+      if (!synced.access_type) return false;
+      await loginWithResponse({
+        email: session.email,
+        session_token: session.token,
+        access_type: synced.access_type,
+      });
+      accessRefreshRef.current = sessionKey;
+      return true;
+    } catch (error) {
+      console.warn('[Subscription] Analyze-time Apple sync skipped:', error);
+      return false;
+    }
+  };
+
+  const ensurePredictionAccess = async (): Promise<boolean> => {
+    if (Platform.OS === 'ios') return refreshAppleAccess();
+    if (!isNoSub) return true;
+    // Web/Stripe sessions can also be stale after a checkout or webhook.
+    // verifySession uses the same server-side access check as /api/predict.
+    if (!session?.email || !session.token) return false;
+    try {
+      const refreshed = await verifySession(session.email, session.token);
+      if (refreshed?.valid && refreshed.access_type && refreshed.access_type !== 'NoSubscription') {
+        await loginWithResponse({
+          email: session.email,
+          session_token: session.token,
+          access_type: refreshed.access_type,
+        });
+        return true;
+      }
+    } catch (error) {
+      console.warn('[Subscription] Analyze-time session refresh skipped:', error);
+    }
+    return false;
+  };
 
   // CS2 manual mode fields
   const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
@@ -822,7 +877,7 @@ export default function ScanScreen() {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
     }
-    if (isNoSub) {
+    if (!(await ensurePredictionAccess())) {
       if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
       return;
     }
@@ -888,7 +943,7 @@ export default function ScanScreen() {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
     }
-    if (isNoSub) {
+    if (!(await ensurePredictionAccess())) {
       if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
       return;
     }
@@ -933,7 +988,7 @@ export default function ScanScreen() {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
     }
-    if (isNoSub) {
+    if (!(await ensurePredictionAccess())) {
       if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
       return;
     }
@@ -984,7 +1039,7 @@ export default function ScanScreen() {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
     }
-    if (isNoSub) {
+    if (!(await ensurePredictionAccess())) {
       if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
       return;
     }
@@ -1033,7 +1088,7 @@ export default function ScanScreen() {
   // ── NBA handlers ─────────────────────────────────────────────────────────
   const handleNbaAnalyze = async () => {
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
-    if (isNoSub) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
+    if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nbaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 24.5).'); return; }
     setManualError(null);
@@ -1070,7 +1125,7 @@ export default function ScanScreen() {
   // ── NHL handlers ─────────────────────────────────────────────────────────
   const handleNhlAnalyze = async () => {
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
-    if (isNoSub) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
+    if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nhlPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 0.5).'); return; }
     setManualError(null);
@@ -1107,7 +1162,7 @@ export default function ScanScreen() {
   // ── NFL handlers ─────────────────────────────────────────────────────────
   const handleNflAnalyze = async () => {
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
-    if (isNoSub) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
+    if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nflPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 24.5).'); return; }
     setManualError(null);
@@ -1166,7 +1221,7 @@ export default function ScanScreen() {
   // ── MLB handlers ─────────────────────────────────────────────────────────
   const handleMlbAnalyze = async () => {
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
-    if (isNoSub) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
+    if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!mlbPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 1.5).'); return; }
     setManualError(null);

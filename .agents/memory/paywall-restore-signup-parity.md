@@ -14,3 +14,9 @@ Authenticated restore is also a recovery path for older native builds and reinst
 **Why:** A device can show an active Apple entitlement while `/api/predict` rejects the account if the anonymous customer was never linked to the email session. Blocking anonymous IDs at the authenticated grant endpoint made this mismatch persist even after Restore Purchases.
 
 **How to apply:** Keep anonymous IDs allowed only on the authenticated, server-verified grant path; never trust the client entitlement alone, and update local access state after a successful grant.
+
+Analyze-time access must revalidate the current native entitlement and refresh the server session before protected prediction requests; Account's cached Premium label is not sufficient evidence.
+
+**Why:** Older or reinstalled native sessions can show an active Apple entitlement in Account while the backend session still contains `NoSubscription`, producing a false “Active subscription required” response.
+
+**How to apply:** Keep RevenueCat as evidence only, send its current customer identity to the server for verification, persist the refreshed access type, and fail closed when RevenueCat is unavailable.
