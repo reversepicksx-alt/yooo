@@ -158,7 +158,7 @@ async def get_calibration(email: str, token: str):
 # ─── ADMIN: Generate a direct Stripe checkout link for any client ───────────
 
 STRIPE_PLANS = {
-    "weekly":    {"name": "Weekly",    "amount": 1399,  "interval": "week",  "interval_count": 1, "price_id": "price_1U1TeZE5jSGb860H5gPUjrZv"},
+    "weekly":    {"name": "Weekly",    "amount": 1499,  "interval": "week",  "interval_count": 1, "price_id": "price_1U1pJGE5jSGb860HksWrSySu"},
     "monthly":   {"name": "Monthly",   "amount": 3999,  "interval": "month", "interval_count": 1, "price_id": "price_1U1UsHE5jSGb860HzSkJ0JK1"},
     "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3},
 }

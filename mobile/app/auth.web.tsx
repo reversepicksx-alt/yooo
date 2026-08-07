@@ -88,6 +88,9 @@ export default function WebAuthScreen() {
           <Pressable style={[styles.primaryButton, loading && styles.disabled]} disabled={loading} onPress={() => checkout('monthly')}>
             {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryText}>MONTHLY · $39.99/MONTH</Text>}
           </Pressable>
+          <Pressable style={[styles.secondaryButton, loading && styles.disabled]} disabled={loading} onPress={() => checkout('weekly')}>
+            {loading ? <ActivityIndicator color={Colors.primary} /> : <Text style={styles.secondaryText}>WEEKLY · $14.99/WEEK</Text>}
+          </Pressable>
           <Pressable style={styles.linkButton} onPress={() => setStep('email')}>
             <Text style={styles.linkText}>Back to Login</Text>
           </Pressable>
@@ -182,6 +185,17 @@ const styles = StyleSheet.create({
     borderRadius: Colors.radius,
   },
   primaryText: { color: '#000', fontSize: 14, fontWeight: '900', letterSpacing: 0.6 },
+  secondaryButton: {
+    height: 54,
+    marginTop: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.card,
+    borderColor: Colors.primary,
+    borderWidth: 1,
+    borderRadius: Colors.radius,
+  },
+  secondaryText: { color: Colors.primary, fontSize: 14, fontWeight: '900', letterSpacing: 0.6 },
   disabled: { opacity: 0.6 },
   secondaryPlan: { marginTop: 10 },
   error: { color: Colors.error, fontSize: 13, textAlign: 'center' },

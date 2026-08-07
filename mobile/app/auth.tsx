@@ -23,6 +23,7 @@ const NO_CODE_EMAILS = new Set([
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 const PLANS = [
+  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$14.99', unit: '/week',  popular: false },
   { key: 'monthly',   label: 'Monthly',  sub: 'Billed monthly', price: '$39.99', unit: '/month', popular: true },
 ];
 

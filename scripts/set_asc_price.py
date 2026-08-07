@@ -10,6 +10,7 @@ APP_ID       = "6781092173"
 # Apple pricing configuration. Existing subscribers retain their current
 # price according to Apple's subscription price-change rules.
 PLANS = [
+    {"product_id": "reversepicks_weekly", "name": "Weekly", "duration": "ONE_WEEK", "price": "14.99"},
     {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "39.99"},
 ]
 
@@ -107,6 +108,7 @@ for plan in ACTIVE_PLANS:
 # ── 3. Add English localization (required before review) ──────────────────────
 print("\n── Localizations ────────────────────────")
 DESCRIPTIONS = {
+    "reversepicks_weekly": "Weekly Pro access. Soccer player props analytics.",
     "reversepicks_monthly": "Monthly Pro access. Soccer player props analytics.",
 }
 for plan in ACTIVE_PLANS:

@@ -12,12 +12,12 @@ router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 # Stripe checkout is active for website subscriptions only. Native iOS
 # subscriptions continue to use RevenueCat/App Store billing.
 STRIPE_RETIRED = False
-# New website purchases are monthly-only. The legacy weekly entry remains
-# below solely so historical records can still be displayed/read safely.
-STRIPE_CHECKOUT_PLAN_KEYS = {"monthly"}
+# Website customers may choose either billing cycle. Existing subscriptions
+# keep their current Stripe price until the customer explicitly changes plans.
+STRIPE_CHECKOUT_PLAN_KEYS = {"weekly", "monthly"}
 
 STRIPE_PLANS = {
-    "weekly":    {"name": "Weekly",    "amount": 1399,  "interval": "week",  "interval_count": 1, "label": "$13.99/week",      "price_id": "price_1U1TeZE5jSGb860H5gPUjrZv"},
+    "weekly":    {"name": "Weekly",    "amount": 1499,  "interval": "week",  "interval_count": 1, "label": "$14.99/week",      "price_id": "price_1U1pJGE5jSGb860HksWrSySu"},
     "monthly":   {"name": "Monthly",   "amount": 3999,  "interval": "month", "interval_count": 1, "label": "$39.99/month",     "price_id": "price_1U1UsHE5jSGb860HzSkJ0JK1"},
     # Retained for legacy subscription records; not offered for website
     # checkouts or plan changes.
@@ -26,7 +26,7 @@ STRIPE_PLANS = {
 
 # Versioned lookup keys — used as fallback when no price_id is hardcoded.
 STRIPE_LOOKUP_KEY_VERSION = {
-    "weekly":    "reversepicks_weekly_v2",
+    "weekly":    "reversepicks_weekly_v4",
     "monthly":   "reversepicks_monthly_v2",
     "quarterly": "reversepicks_quarterly",
 }

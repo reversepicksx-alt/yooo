@@ -77,10 +77,14 @@ function useSubscriptionContext() {
     refetchOnMount: true,
   });
 
-  // New iOS purchases are monthly-only. Keep legacy weekly purchases
-  // restorable for existing customers, but never present weekly to new buyers.
+  // RevenueCat/App Store Connect owns the live price strings. Keep both
+  // available packages visible so weekly and monthly buyers see the catalog
+  // configured in the store instead of a hardcoded client-side price.
   const packages = (offeringsQuery.data?.current?.availablePackages ?? [])
-    .filter((pkg) => pkg.product?.identifier === "reversepicks_monthly");
+    .filter((pkg) => (
+      pkg.product?.identifier === "reversepicks_weekly" ||
+      pkg.product?.identifier === "reversepicks_monthly"
+    ));
 
   const purchaseMutation = useMutation({
     mutationFn: async (pkg: PurchasesPackage) => {
