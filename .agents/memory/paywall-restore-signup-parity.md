@@ -20,3 +20,9 @@ Analyze-time access must revalidate the current native entitlement and refresh t
 **Why:** Older or reinstalled native sessions can show an active Apple entitlement in Account while the backend session still contains `NoSubscription`, producing a false “Active subscription required” response.
 
 **How to apply:** Keep RevenueCat as evidence only, send its current customer identity to the server for verification, persist the refreshed access type, and fail closed when RevenueCat is unavailable.
+
+RevenueCat V2 `active_entitlements.items[].entitlement_id` is the entitlement resource ID, not necessarily the mobile SDK identifier; production currently returns `entl9515aab63f` for Pro.
+
+**Why:** Checking only the SDK-facing identifier (`pro`) caused verified active Apple subscribers to appear unsubscribed to the backend and receive 403 prediction responses.
+
+**How to apply:** Treat the V2 resource ID as canonical, keep it configurable with a hardcoded project fallback, and validate both live-access and purchase-grant paths against the same ID set.

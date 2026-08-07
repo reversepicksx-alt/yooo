@@ -137,7 +137,21 @@ async def _check_apple_access(email_lower: str) -> str | None:
     return None
 
 REVENUECAT_PROJECT_ID = os.environ.get("REVENUECAT_PROJECT_ID", "proj3a3fd517")
-REVENUECAT_PRO_ENTITLEMENT = os.environ.get("REVENUECAT_PRO_ENTITLEMENT", "pro")
+# RevenueCat's mobile SDK exposes the entitlement's public identifier
+# ("pro"), but the V2 server API returns the entitlement resource ID. Using
+# "pro" here made valid Apple subscribers look unsubscribed to prediction
+# routes even though Account correctly showed an active entitlement.
+REVENUECAT_PRO_ENTITLEMENT = os.environ.get(
+    "REVENUECAT_PRO_ENTITLEMENT",
+    "entl9515aab63f",
+)
+# Keep the project entitlement resource ID as a hard safety net if an older
+# deployment still has REVENUECAT_PRO_ENTITLEMENT=pro configured. RevenueCat's
+# V2 API returns resource IDs in active_entitlements, not the SDK identifier.
+REVENUECAT_PRO_ENTITLEMENT_IDS = {
+    REVENUECAT_PRO_ENTITLEMENT,
+    "entl9515aab63f",
+}
 
 # Sentinel returned by _check_revenuecat_live when the call failed due to a
 # network / server error (as opposed to "customer has no active entitlement").
@@ -179,7 +193,7 @@ async def _check_revenuecat_live(email_lower: str) -> str | None:
         active_items = ((data.get("active_entitlements") or {}).get("items")) or []
         active_items = [
             item for item in active_items
-            if item.get("entitlement_id") == REVENUECAT_PRO_ENTITLEMENT
+            if item.get("entitlement_id") in REVENUECAT_PRO_ENTITLEMENT_IDS
         ]
         if not active_items:
             return None
@@ -300,7 +314,7 @@ async def _verify_revenuecat_purchase(
 
     active_entitlements = (customer.get("active_entitlements") or {}).get("items") or []
     if not any(
-        item.get("entitlement_id") == REVENUECAT_PRO_ENTITLEMENT
+        item.get("entitlement_id") in REVENUECAT_PRO_ENTITLEMENT_IDS
         for item in active_entitlements
     ):
         raise HTTPException(status_code=402, detail="No active Pro subscription was found.")
