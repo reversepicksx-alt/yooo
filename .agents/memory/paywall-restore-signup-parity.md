@@ -8,3 +8,9 @@ In `mobile/app/paywall.tsx`, `handlePurchase` checks `if (!session?.email)` and 
 **Why:** This is the exact scenario that happens on a fresh reinstall/new device: user taps "Restore Purchases" before logging in via email OTP. Any future addition of a new "no session" branch to one entry point (purchase, restore, or a future third path) must be checked against all sibling entry points that also call `syncBackendAndEnter`.
 
 **How to apply:** When touching IAP purchase/restore code, search all callers of the backend sync function and confirm each one has matching guest-signup handling, not just the one you're editing.
+
+Authenticated restore is also a recovery path for older native builds and reinstalls. RevenueCat may return an anonymous StoreKit customer ID there; the server must still verify that anonymous customer directly with RevenueCat before linking the active entitlement to the signed-in email. The client must refresh its stored session from the grant response.
+
+**Why:** A device can show an active Apple entitlement while `/api/predict` rejects the account if the anonymous customer was never linked to the email session. Blocking anonymous IDs at the authenticated grant endpoint made this mismatch persist even after Restore Purchases.
+
+**How to apply:** Keep anonymous IDs allowed only on the authenticated, server-verified grant path; never trust the client entitlement alone, and update local access state after a successful grant.

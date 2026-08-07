@@ -198,8 +198,10 @@ export default function OwnerPickCard({
   const nowValue = pendingReview
     ? (pick.actualValue ?? pick.currentValue ?? null)
     : settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
-  const paceValue = live ? (livePace ?? projValue) : projValue;
-  const paceLabel = dnp ? 'DNP' : pendingReview ? 'REVIEW' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
+  // The saved model projection is permanent context. Live pace is a separate
+  // in-game estimate and must never replace PROJ in the compact iOS card.
+  const paceValue = live ? livePace : null;
+  const paceLabel = 'PACE';
   // hitPct is a live pace estimate.  Once settled, 0/100 is the outcome,
   // not a model probability; showing it as "hit prob" was misleading.
   const hitPct = live ? (pick.hitPct ?? null) : null;
@@ -521,9 +523,15 @@ export default function OwnerPickCard({
                   <Text style={styles.compactStatValue}>{fmt(lineValue)}</Text>
                 </View>
                 <View style={styles.compactStat}>
-                  <Text style={styles.compactStatLabel}>{paceLabel}</Text>
-                  <Text style={[styles.compactStatValue, { color: live ? Colors.primary : Colors.text }]}>{fmt(paceValue)}</Text>
+                  <Text style={styles.compactStatLabel}>PROJ</Text>
+                  <Text style={styles.compactStatValue}>{fmt(projValue)}</Text>
                 </View>
+                {live && paceValue != null && (
+                  <View style={styles.compactStat}>
+                    <Text style={styles.compactStatLabel}>{paceLabel}</Text>
+                    <Text style={[styles.compactStatValue, { color: Colors.primary }]}>{fmt(paceValue)}</Text>
+                  </View>
+                )}
                 {live && onTrack && (
                   <TouchableOpacity onPress={onTrack} style={styles.compactTrackBtn} activeOpacity={0.7}>
                     <Ionicons name="pulse" size={11} color={Colors.primary} />
@@ -649,9 +657,15 @@ export default function OwnerPickCard({
             <Text style={styles.statVal}>{fmt(lineValue)}</Text>
           </View>
           <View style={styles.statBlock}>
-            <Text style={styles.statLbl}>{paceLabel}</Text>
-            <Text style={[styles.statVal, { color: live ? Colors.primary : Colors.text }]}>{fmt(paceValue)}</Text>
+            <Text style={styles.statLbl}>PROJ</Text>
+            <Text style={styles.statVal}>{fmt(projValue)}</Text>
           </View>
+          {live && paceValue != null && (
+            <View style={styles.statBlock}>
+              <Text style={styles.statLbl}>{paceLabel}</Text>
+              <Text style={[styles.statVal, { color: Colors.primary }]}>{fmt(paceValue)}</Text>
+            </View>
+          )}
         </View>
 
         {/* ── Progress track ─────────────────────────────── */}
@@ -752,7 +766,10 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
   let statsHTML = '';
   if (!pending && nowValue != null) statsHTML += statBlockHTML(won || !live ? 'FINAL' : 'NOW', fmt(nowValue), nowColor);
   statsHTML += statBlockHTML('LINE', fmt(lineValue));
-  statsHTML += statBlockHTML(paceLabel, fmt(paceValue), live ? '#39FF14' : '#fff');
+  statsHTML += statBlockHTML('PROJ', fmt(pick.projection ?? pick.projectedValue ?? null));
+  if (live && paceValue != null) {
+    statsHTML += statBlockHTML(paceLabel, fmt(paceValue), '#39FF14');
+  }
   if (hitPct != null) statsHTML += statBlockHTML('HIT%', `${Math.round(hitPct)}%`);
 
   return `

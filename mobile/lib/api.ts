@@ -202,6 +202,21 @@ export async function verifySession(email: string, session_token: string) {
   });
 }
 
+export async function syncAppleAccess(
+  email: string,
+  session_token: string,
+  revenueCatCustomerId: string,
+): Promise<{ ok: boolean; access_type?: string }> {
+  return apiCall('/api/auth/iap-grant', {
+    method: 'POST',
+    body: JSON.stringify({
+      email,
+      session_token,
+      revenuecat_customer_id: revenueCatCustomerId,
+    }),
+  });
+}
+
 export async function linkPayment(loginEmail: string, paymentEmail: string): Promise<AccessCheckResponse> {
   return apiCall<AccessCheckResponse>('/api/auth/link-payment', {
     method: 'POST',

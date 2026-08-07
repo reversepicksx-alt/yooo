@@ -128,3 +128,4 @@
 - [Role fingerprint accuracy](role-fingerprint-accuracy.md) — stat fingerprint for Attackers: False 9 requires key_passes≥2.0 + dribbles≥2.0 + shots<2.5; DEFAULT_POSITION_ROLE["Attacker"] must not be "Pressing Forward"; fallback_pos must search _POSITION_ROLE_MAP for the role, not pick alphabetically.
 - [Backend Atlas DNS fallback](backend-atlas-dns-fallback.md) — Atlas SRV/DNS import failures can make every provider search look empty; verify backend health before changing search UI.
 - [Universal selection flow](universal-selection-flow.md) — tapping a verified result must commit identity and start sport-specific matchup lookup, not only fill the text field.
+- [Live projection display](live-projection-display.md) — keep saved PROJ visible; NOW and PACE are separate live context, never a replacement.

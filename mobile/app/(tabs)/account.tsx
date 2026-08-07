@@ -169,7 +169,7 @@ function formatExpiryDate(ms?: number): string {
 
 function IAPPaywall() {
   const { packages, isLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
-  const { email, session } = useAuth();
+  const { email, session, loginWithResponse } = useAuth();
   const [buyingId, setBuyingId] = useState<string | null>(null);
   const [confirmPkg, setConfirmPkg] = useState<PurchasesPackage | null>(null);
 
@@ -184,6 +184,14 @@ function IAPPaywall() {
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       throw new Error(body?.detail || 'Apple subscription verification failed. Please try again.');
+    }
+    const result = await response.json().catch(() => null);
+    if (result?.access_type) {
+      await loginWithResponse({
+        email,
+        session_token: session.token,
+        access_type: result.access_type,
+      });
     }
   };
 

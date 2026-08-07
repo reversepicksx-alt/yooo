@@ -1077,7 +1077,15 @@ async def iap_grant(req: IAPGrantRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    verified = await _verify_revenuecat_purchase(req.revenuecat_customer_id, email_lower)
+    # Restore can legitimately return RevenueCat's anonymous StoreKit
+    # customer ID on an older app build or after reinstall. RevenueCat still
+    # verifies the active Apple entitlement server-side; allowing that
+    # identity here lets the authenticated account be linked during recovery.
+    verified = await _verify_revenuecat_purchase(
+        req.revenuecat_customer_id,
+        email_lower,
+        allow_anonymous=True,
+    )
     now_iso = verified["verified_at"]
 
     await db.apple_iap_subscriptions.update_one(

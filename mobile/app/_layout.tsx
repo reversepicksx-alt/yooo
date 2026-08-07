@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, View, Text, TouchableOpacity, Linking, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,9 +8,10 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
-import { registerPushToken } from '@/lib/api';
+import { registerPushToken, syncAppleAccess } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
 import { initializeRevenueCat, setRevenueCatUserId, SubscriptionProvider } from '@/lib/revenuecat';
+import Purchases from 'react-native-purchases';
 
 try {
   initializeRevenueCat();
@@ -73,13 +74,51 @@ function PushRegistrar() {
 }
 
 function RevenueCatSync() {
-  const { session } = useAuth();
+  const { session, loginWithResponse } = useAuth();
+  const syncedSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (session?.email && Platform.OS !== 'web') {
-      setRevenueCatUserId(session.email);
-    }
-  }, [session?.email]);
+    if (!session?.email || !session.token || Platform.OS === 'web') return;
+
+    const sessionKey = `${session.email}:${session.token}`;
+    if (syncedSessionRef.current === sessionKey) return;
+    syncedSessionRef.current = sessionKey;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // RevenueCat must finish identifying the customer before we read the
+        // entitlement. Otherwise a reinstall can report the anonymous
+        // StoreKit customer while the server verifies the email customer.
+        await setRevenueCatUserId(session.email);
+        const info = await Purchases.getCustomerInfo();
+        const entitlement = info?.entitlements?.active?.['pro'];
+        if (!entitlement || cancelled) return;
+
+        const customerId = await Purchases.getAppUserID();
+        const synced = await syncAppleAccess(session.email, session.token, customerId);
+        if (!cancelled && synced.access_type) {
+          // The prediction gate uses this same server-backed session. Keep the
+          // local route guard in step with it before the user can analyze.
+          await loginWithResponse({
+            email: session.email,
+            session_token: session.token,
+            access_type: synced.access_type,
+          });
+          console.log('[RevenueCat] Apple access synchronized with backend');
+        }
+      } catch (e) {
+        // A network/RevenueCat outage must not log the user out. The existing
+        // paywall and Restore Purchases flows remain available for recovery.
+        syncedSessionRef.current = null;
+        console.warn('[RevenueCat] Apple access sync skipped:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, loginWithResponse]);
 
   return null;
 }

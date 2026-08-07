@@ -29,12 +29,13 @@ export function initializeRevenueCat() {
   console.log("[RevenueCat] Configured");
 }
 
-export function setRevenueCatUserId(userId: string) {
+export async function setRevenueCatUserId(userId: string): Promise<void> {
   if (Platform.OS === "web") return;
   try {
-    Purchases.logIn(userId);
+    await Purchases.logIn(userId);
   } catch (e) {
     console.warn("[RevenueCat] logIn error:", e);
+    throw e;
   }
 }
 
