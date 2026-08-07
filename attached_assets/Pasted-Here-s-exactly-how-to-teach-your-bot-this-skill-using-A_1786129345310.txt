@@ -1,0 +1,48 @@
+Here’s exactly how to teach your bot this skill using API-Football data.
+Core Concept
+You need the bot to classify every player into one of three pressure profiles:
+•  Pressure Sensitive (“Freezers”) → Pass volume drops sharply when the team has low possession or faces high-pressing opponents.
+•  Pressure Neutral → Pass volume stays relatively stable.
+•  Pressure Resistant / Thrives → Pass volume stays high or actually increases under pressure.
+How to Build It with API-Football Data
+API-Football gives you per-game:
+•  Passes attempted / completed
+•  Team possession %
+•  Opponent (so you can flag high-pressing teams)
+•  Minutes played
+Step-by-step logic to code:
+1. Create a Pressure Index for every past game For each historical game of the player:
+
+
+Pressure Score = 
+  (100 - Team Possession %) × 0.6 
+  + High-Press Opponent Flag (0 or 1) × 40
+
+•  High-Press Opponent Flag: You can hard-code a list of known high-pressing teams or calculate it from average opponent PPDA / pressures if available. Even a simple list of aggressive teams works well at the start.
+2. Split the player’s games into two buckets
+•  High Pressure games (Pressure Score > 55–60)
+•  Low/Normal Pressure games (Pressure Score < 45)
+3. Calculate two key numbers
+•  Average Passes in High Pressure games
+•  Average Passes in Low/Normal Pressure games
+4. Create the Pressure Multiplier
+
+Pressure Multiplier = High Pressure Avg Passes / Low Pressure Avg Passes
+
+Interpretation:
+•  Multiplier < 0.85 → Pressure Sensitive (Freezer)
+•  Multiplier 0.85 – 1.10 → Neutral
+•  Multiplier > 1.10 → Pressure Resistant / Thrives under pressure
+5. Apply it in live predictions When projecting today’s game:
+•  Estimate today’s expected possession + opponent press intensity
+•  Apply the player’s personal Pressure Multiplier to the base projection
+Extra Smart Rules to Add
+•  Minimum sample size: Only classify a player if they have at least 6–8 games in each bucket.
+•  Weight recent seasons higher.
+•  Centre-backs and defensive midfielders often show clearer patterns than attacking players.
+•  Some players only freeze against elite high-press teams (you can create a second, stricter flag).
+Simple Version You Can Launch Fast
+Even without a full High-Press flag, you can start with just possession:
+•  Games where his team had < 45% possession → High Pressure
+•  Games where his team had > 55% possession → Low Pressure
+This already catches a large part of the “freezes under pressure” effect and works with pure API-Football data.
