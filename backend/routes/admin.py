@@ -1178,29 +1178,56 @@ class _QuotaResetRequest(BaseModel):
 
 @router.get("/quota-status")
 async def admin_quota_status(email: str, token: str):
-    """Owner-only: check whether the API-Football quota circuit breaker is active."""
+    """Owner-only: API-Football quota usage — daily call count, soft/hard limits, and circuit breaker state."""
     await verify_owner(email, token)
     import os as _os
-    _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
-    active = _os.path.exists(_BREAKER_FILE)
+    from config import API_DAILY_SOFT_LIMIT
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Use the authoritative date-aware helper — this handles midnight UTC
+    # roll-over and in-memory vs disk state reconciliation correctly.
+    import utils as _utils
+    active = _utils.is_quota_exhausted()
+
+    # Recover the date the breaker was tripped (metadata only — not used for
+    # active/inactive state decision, which is made by is_quota_exhausted()).
     tripped_date: str | None = None
-    if active:
-        try:
-            with open(_BREAKER_FILE) as f:
-                tripped_date = f.read().strip() or None
-        except Exception:
-            pass
-    # Also reflect in-memory state
     try:
-        import utils as _utils
-        if _utils._quota_exhausted_date:
-            active = True
-            tripped_date = tripped_date or _utils._quota_exhausted_date
+        if active:
+            tripped_date = _utils._quota_exhausted_date
+        if not tripped_date:
+            _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+            if _os.path.exists(_BREAKER_FILE):
+                with open(_BREAKER_FILE) as f:
+                    raw = f.read().strip()
+                    # Only expose as tripped if it matches today (is_quota_exhausted
+                    # already handles the date comparison, but keep metadata consistent).
+                    if raw == today:
+                        tripped_date = raw
     except Exception:
         pass
+
+    # Call count — reset if the stored date is a prior UTC day.
+    daily_call_count = 0
+    try:
+        daily_call_date = _utils._daily_call_date
+        daily_call_count = _utils._daily_call_count or 0
+        if daily_call_date and daily_call_date != today:
+            daily_call_count = 0
+    except Exception:
+        pass
+
+    # Hard plan limit is configurable via env var (default matches API-Football
+    # Pro plan; override in production to match the actual subscribed plan).
+    hard_limit = int(_os.environ.get("API_FOOTBALL_HARD_LIMIT", "450000"))
     return {
         "active": active,
         "trippedDate": tripped_date,
+        "dailyCallCount": daily_call_count,
+        "softLimit": API_DAILY_SOFT_LIMIT,
+        "hardLimit": hard_limit,
+        "date": today,
     }
 
 

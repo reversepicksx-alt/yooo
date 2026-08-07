@@ -1932,6 +1932,10 @@ export async function triggerStorageCleanup(
 export interface QuotaStatus {
   active: boolean;
   trippedDate: string | null;
+  dailyCallCount: number;
+  softLimit: number;
+  hardLimit: number;
+  date: string;
 }
 
 export async function getQuotaStatus(
