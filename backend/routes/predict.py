@@ -1241,6 +1241,19 @@ async def predict(req: PredictionRequest):
                             fid_str = meta.get("_k", "")[4:]  # strip "fxm_"
                             fxm_docs[fid_str] = meta.get("d", {})
 
+                    # Pressure-response profiles need measured possession on
+                    # cached player logs too.  Prefetch stores this separately
+                    # under fxt_poss_{fixture}; join it without an API call.
+                    poss_docs: dict[str, dict] = {}
+                    if fid_map and req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
+                        poss_keys = [f"fxt_poss_{fid}" for fid in fid_map]
+                        poss_results = await db.fixture_player_cache.find(
+                            {"_k": {"$in": poss_keys}}, {"_id": 0, "d": 1}
+                        ).to_list(len(poss_keys))
+                        for poss_doc in poss_results:
+                            fid_str = poss_doc.get("_k", "")[9:]  # strip "fxt_poss_"
+                            poss_docs[fid_str] = poss_doc.get("d") or {}
+
                     for fid_str, entry in fid_map.items():
                         d = entry.get("d", {})
                         if not d:
@@ -1272,6 +1285,22 @@ async def predict(req: PredictionRequest):
                             is_home = (home_id_meta == actual_team_id)
                             gl["venue"] = "home" if is_home else "away"
                             gl["opponent"] = meta.get("away_name", "") if is_home else meta.get("home_name", "")
+                            if req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
+                                poss = poss_docs.get(fid_str, {})
+                                try:
+                                    home_poss = float(str(poss.get("home_poss")).replace("%", "").strip())
+                                except (TypeError, ValueError):
+                                    home_poss = None
+                                try:
+                                    away_poss = float(str(poss.get("away_poss")).replace("%", "").strip())
+                                except (TypeError, ValueError):
+                                    away_poss = None
+                                if is_home and home_poss is not None:
+                                    gl["teamPossession"] = home_poss
+                                    gl["opponentPossession"] = away_poss
+                                elif not is_home and away_poss is not None:
+                                    gl["teamPossession"] = away_poss
+                                    gl["opponentPossession"] = home_poss
                         else:
                             gl["venue"] = ""
                             gl["opponent"] = ""
@@ -1303,11 +1332,24 @@ async def predict(req: PredictionRequest):
                         _saves_ok = any(g.get(target_f) is not None for g in collected)
                         if not _saves_ok:
                             print(f"[CACHE-STAGE0] {req.playerName}/saves: 0 of {len(collected)} cached logs have goals_saves — falling through to Stage 1")
-                    if len(collected) >= 15 and len(good) >= len(collected) // 2 and _saves_ok:
+                    _pressure_possession_count = sum(
+                        1 for g in collected if g.get("teamPossession") is not None
+                    )
+                    _pressure_cache_ready = (
+                        req.sport != "soccer"
+                        or req.propType not in {"pass_attempts", "passes"}
+                        or _pressure_possession_count >= 12
+                    )
+                    if len(collected) >= 15 and len(good) >= len(collected) // 2 and _saves_ok and _pressure_cache_ready:
                         print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
                         return collected
                     elif collected:
-                        print(f"[CACHE-STAGE0] Only {len(collected)} games (venue ok: {len(good)}, saves_ok={_saves_ok}) — falling through to Stage 1 for more data")
+                        print(
+                            f"[CACHE-STAGE0] Only {len(collected)} games "
+                            f"(venue ok: {len(good)}, saves_ok={_saves_ok}, "
+                            f"pressure_poss={_pressure_possession_count}) — "
+                            "falling through to Stage 1 for more data"
+                        )
             except Exception as _ce:
                 print(f"[CACHE-STAGE0] Error: {_ce}")
 
@@ -3302,6 +3344,15 @@ async def predict(req: PredictionRequest):
         # =============================================
         early_bayes = None
         bayesian_prompt_anchor = ""
+        _pressure_response = {
+            "version": "pressure-response-v1",
+            "status": "not_applicable",
+            "classification": "unknown",
+            "label": "Not applicable",
+            "pressureMultiplier": 1.0,
+            "projectionAdjustment": 0.0,
+            "projectionAdjustmentStatus": "shadow_only",
+        }
         # Safety defaults for T003/T004 — always defined even if exception occurs
         _redist_alerts: list = []
         _redist_multiplier: float = 1.0
@@ -3316,6 +3367,23 @@ async def predict(req: PredictionRequest):
         _opp_tier_filter_kept_tiers: list = []
         try:
             from bayesian_engine import compute_bayesian_projection
+            if req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
+                try:
+                    from pressure_response import classify_pressure_response
+                    _pressure_response = classify_pressure_response(
+                        player_game_logs,
+                        expected_possession=(match_dominance or {}).get("expectedPoss"),
+                        possession_is_real=bool((match_dominance or {}).get("seasonAvgIsReal")),
+                    )
+                    print(
+                        f"[PRESSURE RESPONSE] {req.playerName}: "
+                        f"{_pressure_response.get('label')} "
+                        f"mult={_pressure_response.get('pressureMultiplier')} "
+                        f"high_n={_pressure_response.get('highPressureSamples', 0)} "
+                        f"low_n={_pressure_response.get('lowPressureSamples', 0)}"
+                    )
+                except Exception as _pressure_err:
+                    print(f"[PRESSURE RESPONSE] non-fatal: {_pressure_err}")
 
             # ── Quick position cache lookup (fast indexed read) ──────────────
             # We look up the cached position so the engine can apply the correct
@@ -4099,6 +4167,8 @@ async def predict(req: PredictionRequest):
                 tournament_game_index=_tourn_game_idx,
                 player_stats=player_stats,
             )
+            if isinstance(early_bayes, dict):
+                early_bayes["pressureResponse"] = _pressure_response
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
 
@@ -4575,6 +4645,19 @@ Possession Pressure Index: {_pi_label} | Opponent avg {_pi_poss}% ball possessio
 High opponent possession = the subject player's team has less time on the ball → subject player makes fewer pass attempts.
 Mathematical possession penalty already applied: ×{_pi_mult} reduction to pass projection.
 CRITICAL: This opponent dominates ball possession. Do NOT project pass totals near season average — the subject player's team will have significantly reduced time with the ball."""
+                if (
+                    req.propType in {"pass_attempts", "passes"}
+                    and _pressure_response.get("status") == "classified"
+                ):
+                    bayesian_prompt_anchor += f"""
+[PLAYER PRESSURE RESPONSE — SHADOW EVIDENCE ONLY]
+This player's historical profile is {_pressure_response.get('label', 'unknown')}:
+{_pressure_response.get('reason', '')}
+High-pressure sample: {_pressure_response.get('highPressureSamples', 0)} games at {_pressure_response.get('highPressurePassesPer90')} passes/90.
+Low-pressure sample: {_pressure_response.get('lowPressureSamples', 0)} games at {_pressure_response.get('lowPressurePassesPer90')} passes/90.
+Shrunk pressure multiplier: {_pressure_response.get('pressureMultiplier')}.
+This is a possession-based pressure proxy, not a direct passes-under-pressure measurement.
+Do not change the mathematical projection for this signal; explain it as shadow evidence only."""
 
                 # Inject positional baseline context into structured evidence
                 _pb = (early_bayes or {}).get("positionalBaseline")
@@ -5844,6 +5927,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                 "line": req.line,
             },
+            "pressureResponse": _pressure_response,
         }
 
         # Mirror condPossAdj into bayesianMetrics so the mobile structured-evidence
@@ -8267,6 +8351,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 or _tc_bm.get("opponentAllowedSamples")
                 or 0
             ),
+            "pressureResponse": _pressure_response,
             "opponentProfileTier": _tc_opp_profile.get("tier"),
             "opponentProfileDiffPct": _tc_opp_profile.get("diffPct"),
             "venueAverage": venue_avg,
@@ -9231,6 +9316,34 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         "Shadow tactical signals are visible for audit and explanation but do not move the projection until calibrated.",
                     )
                 )
+            _pressure_factor = prediction.get("pressureResponse") or {}
+            if req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
+                _pressure_factor_status = (
+                    "applied"
+                    if _pressure_factor.get("status") == "classified"
+                    else "warning"
+                )
+                _pressure_factor_label = _pressure_factor.get("label") or "Insufficient evidence"
+                _pressure_factor_detail = (
+                    "Shadow-only player response profile. It does not move the projection until "
+                    "walk-forward validation supports a live adjustment."
+                )
+                prediction["analysisFactors"].append(
+                    _af_factor(
+                        "player_pressure_response",
+                        "Player pressure-response profile",
+                        _pressure_factor_status,
+                        _pressure_factor_label,
+                        _pressure_factor,
+                        (
+                            (_pressure_factor.get("highPressureSamples") or 0)
+                            + (_pressure_factor.get("lowPressureSamples") or 0)
+                        ),
+                        "context",
+                        "neutral",
+                        _pressure_factor_detail,
+                    )
+                )
             prediction["modelInputSnapshot"] = {
                 "capturedAt": datetime.now(timezone.utc).isoformat(),
                 "fixture": {
@@ -9258,6 +9371,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "lineupStatus": _af_lineup_status,
                     "gameScript": _af_game_script or None,
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
+                    "pressureResponse": prediction.get("pressureResponse"),
                     "tacticalIntelligence": prediction.get("tacticalIntelligence"),
                 },
             }

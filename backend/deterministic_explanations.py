@@ -422,6 +422,37 @@ def build_deterministic_explanation(
                 "the tactical comparison remains nominal."
             )
 
+    # Player-specific pressure response is a descriptive API-Football signal.
+    # It is deliberately not treated as an applied projection factor until it
+    # has passed leakage-safe walk-forward validation.
+    pressure_response = tactical_context.get("pressureResponse") or result.get("pressureResponse") or {}
+    if isinstance(pressure_response, dict) and pressure_response.get("status") == "classified":
+        pressure_label = pressure_response.get("label") or "classified"
+        high_n = pressure_response.get("highPressureSamples", 0)
+        low_n = pressure_response.get("lowPressureSamples", 0)
+        high_avg = pressure_response.get("highPressurePassesPer90")
+        low_avg = pressure_response.get("lowPressurePassesPer90")
+        multiplier = pressure_response.get("pressureMultiplier")
+        tactical_lines.append(
+            f"Pressure-response profile: **{pressure_label}** — "
+            f"{high_n} low-possession games averaged {_fmt(high_avg)} passes/90 versus "
+            f"{low_n} higher-possession games at {_fmt(low_avg)} "
+            f"(shrunk multiplier {_fmt(multiplier, 2)})."
+        )
+        tactical_lines.append(
+            "This uses team possession as an API-Football pressure proxy; it is shadow evidence "
+            "and does not change the projection until walk-forward validation supports it."
+        )
+    elif (
+        prop_raw in {"pass_attempts", "passes"}
+        and isinstance(pressure_response, dict)
+        and pressure_response.get("status") == "insufficient_evidence"
+    ):
+        tactical_lines.append(
+            "Player pressure-response profile unavailable: API-Football does not yet provide "
+            "enough qualifying low- and high-possession appearances to classify this player."
+        )
+
     # Venue average
     if venue_avg is not None and prior_mean is not None:
         _venue_label = venue.capitalize() if venue in {"home", "away"} else "Venue"
