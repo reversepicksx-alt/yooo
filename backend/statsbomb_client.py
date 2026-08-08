@@ -539,6 +539,175 @@ def _target_lineup(lineups: Any, *, team_name: str, player_name: str) -> dict[st
     return None
 
 
+def _position_group(value: Any) -> str | None:
+    """Normalize StatsBomb lineup positions into stable analysis groups."""
+    text = _norm(value)
+    if not text:
+        return None
+    if "goalkeeper" in text or text in {"keeper", "gk"}:
+        return "GK"
+    if "center back" in text or "centre back" in text or text in {"cb", "defender"}:
+        return "CB"
+    if "left back" in text or text in {"lb", "left wing back"}:
+        return "LB"
+    if "right back" in text or text in {"rb", "right wing back"}:
+        return "RB"
+    if "wing back" in text:
+        return "WB"
+    if "defensive midfield" in text or text in {"dm", "cdm"}:
+        return "DM"
+    if "center midfield" in text or "centre midfield" in text or text in {"cm", "midfielder"}:
+        return "CM"
+    if "left midfield" in text or text in {"lm", "left wing"}:
+        return "LM/LW" if "wing" in text else "LM"
+    if "right midfield" in text or text in {"rm", "right wing"}:
+        return "RM/RW" if "wing" in text else "RM"
+    if "attacking midfield" in text or text in {"am", "cam"}:
+        return "AM"
+    if "left wing" in text:
+        return "LW"
+    if "right wing" in text:
+        return "RW"
+    if "center forward" in text or "centre forward" in text or text in {"cf", "forward"}:
+        return "CF"
+    if "striker" in text or text in {"st", "ss"}:
+        return "ST"
+    return None
+
+
+def _lineup_position_map(lineups: Any) -> dict[int, str]:
+    """Return provider player ID → normalized position group."""
+    positions: dict[int, str] = {}
+    for row in lineups if isinstance(lineups, list) else []:
+        if not isinstance(row, dict):
+            continue
+        for item in row.get("lineup") or []:
+            if not isinstance(item, dict):
+                continue
+            player = item.get("player") or {}
+            raw_id = item.get("player_id") or (
+                player.get("id") if isinstance(player, dict) else None
+            )
+            try:
+                player_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            raw_positions = item.get("positions") or []
+            position = raw_positions[0] if raw_positions else item.get("position")
+            position_name = (
+                position.get("position") or position.get("name")
+                if isinstance(position, dict) else position
+            )
+            group = _position_group(position_name)
+            if group:
+                positions[player_id] = group
+    return positions
+
+
+def compute_position_pass_metrics(
+    events: list[dict[str, Any]],
+    *,
+    team_id: int,
+    opponent_id: int,
+    lineups: Any,
+) -> dict[str, Any]:
+    """Count completed passes received by each lineup position in this match.
+
+    The metric is deliberately match-level and evidence-only.  It does not claim
+    a league baseline or infer a missing recipient position.
+    """
+    position_map = _lineup_position_map(lineups)
+    if not position_map:
+        return {
+            "status": "unavailable",
+            "reason": "No verified StatsBomb lineup positions were available.",
+            "provider": "statsbomb_open_data",
+        }
+
+    profiles: dict[str, dict[str, int]] = {}
+    identified_passes = 0
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict) or _event_type(event) != "Pass":
+            continue
+        passer_team = _team_id(event)
+        if passer_team not in {team_id, opponent_id}:
+            continue
+        raw_pass = event.get("pass") or {}
+        recipient = raw_pass.get("recipient") or {}
+        raw_recipient_id = recipient.get("id") if isinstance(recipient, dict) else recipient
+        try:
+            recipient_id = int(raw_recipient_id)
+        except (TypeError, ValueError):
+            continue
+        position = position_map.get(recipient_id)
+        if not position:
+            continue
+        identified_passes += 1
+        profile = profiles.setdefault(position, {"attempted": 0, "completed": 0})
+        profile["attempted"] += 1
+        outcome = raw_pass.get("outcome")
+        outcome_name = outcome.get("name") if isinstance(outcome, dict) else outcome
+        if not outcome_name:
+            profile["completed"] += 1
+        elif str(outcome_name).strip().lower() in {"complete", "successful"}:
+            profile["completed"] += 1
+
+    if identified_passes == 0:
+        return {
+            "status": "unavailable",
+            "reason": "The exact event stream did not identify pass recipients and positions.",
+            "provider": "statsbomb_open_data",
+        }
+
+    by_team: dict[str, dict[str, dict[str, float | int]]] = {
+        "targetTeam": {},
+        "opponent": {},
+    }
+    for event in events:
+        if not isinstance(event, dict) or _event_type(event) != "Pass":
+            continue
+        passer_team = _team_id(event)
+        if passer_team not in {team_id, opponent_id}:
+            continue
+        raw_pass = event.get("pass") or {}
+        recipient = raw_pass.get("recipient") or {}
+        raw_recipient_id = recipient.get("id") if isinstance(recipient, dict) else recipient
+        try:
+            recipient_id = int(raw_recipient_id)
+        except (TypeError, ValueError):
+            continue
+        position = position_map.get(recipient_id)
+        if not position:
+            continue
+        outcome = raw_pass.get("outcome")
+        outcome_name = outcome.get("name") if isinstance(outcome, dict) else outcome
+        completed = not outcome_name or str(outcome_name).strip().lower() in {"complete", "successful"}
+        team_key = "targetTeam" if passer_team == team_id else "opponent"
+        row = by_team[team_key].setdefault(position, {"attempted": 0, "completed": 0, "per90": 0.0})
+        row["attempted"] += 1
+        if completed:
+            row["completed"] += 1
+
+    for rows in by_team.values():
+        for row in rows.values():
+            row["per90"] = round(float(row["completed"]), 1)
+
+    return {
+        "status": "event_derived",
+        "provider": "statsbomb_open_data",
+        "sampleMatches": 1,
+        "normalization": "completed passes received per 90 match minutes",
+        "targetTeam": by_team["targetTeam"],
+        "opponent": by_team["opponent"],
+        "opponentAllowedToTargetPositions": by_team["targetTeam"],
+        "limitations": [
+            "This is an exact-match event metric, not a league baseline.",
+            "Only recipients with a verified lineup position are counted.",
+            "The metric is shadow-only and does not change the projection.",
+        ],
+    }
+
+
 async def fetch_match_enrichment(
     db,
     *,
@@ -607,14 +776,19 @@ async def fetch_match_enrichment(
                 sb_team_id, sb_opponent_id = home.get("home_team_id"), away.get("away_team_id")
             else:
                 sb_team_id, sb_opponent_id = away.get("away_team_id"), home.get("home_team_id")
-            metrics = compute_event_metrics(events, team_id=int(sb_team_id), opponent_id=int(sb_opponent_id))
-
             lineups = await _cached_json(
                 db,
                 f"statsbomb_lineups_{match_id}",
                 f"lineups/{match_id}.json",
                 EVENT_TTL_SECONDS,
                 client,
+            )
+            metrics = compute_event_metrics(events, team_id=int(sb_team_id), opponent_id=int(sb_opponent_id))
+            metrics["positionPassesReceived"] = compute_position_pass_metrics(
+                events,
+                team_id=int(sb_team_id),
+                opponent_id=int(sb_opponent_id),
+                lineups=lineups,
             )
             target = _target_lineup(lineups, team_name=team_name, player_name=player_name)
             freeze = None

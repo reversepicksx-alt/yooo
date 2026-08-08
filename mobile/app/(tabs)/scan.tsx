@@ -23,6 +23,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
+import EventEvidenceCard from '@/components/EventEvidenceCard';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
@@ -4056,6 +4057,9 @@ export default function ScanScreen() {
                </>)}
             </View>
             <CompactAnalysisBars prediction={prediction} />
+            <EventEvidenceCard
+              data={(prediction as any).tacticalContext?.positionPassesReceived}
+            />
             {(() => {
               const _hr = (prediction as any).playerGameLogs?.hitRates;
               const _propHist = (prediction as any).propHistoricalRate;

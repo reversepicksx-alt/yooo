@@ -131,6 +131,7 @@
 - [Live projection display](live-projection-display.md) — keep saved PROJ visible; NOW and PACE are separate live context, never a replacement.
 - [App Store price scheduling](app-store-price-scheduling.md) — StoreKit keeps returning the old subscription price until Apple’s scheduled effective date; inspect the price schedule before changing client code.
 - [Tactical evidence provenance](tactical-evidence-provenance.md) — provider-observed roles and exact sample-labeled opponent/cohort evidence prevent generic or overstated tactical explanations.
+- [Free event position metrics](free-event-position-metrics.md) — StatsBomb Open Data supports exact-match position-aware pass evidence; restricted coverage must remain unavailable, not fabricated.
 - [Bzzoiro enrichment boundary](bzzoiro-enrichment-boundary.md) — optional lineup/position/stat enrichment uses name-bridged exact fixtures; its defensive-actions proxy is not true PPDA and stays shadow-only.
 - [StatsBomb Open Data evidence](statsbomb-open-data.md) — exact public event coverage supports PPDA/pressure explanations only; restricted or missing coverage stays unavailable and projection-neutral.
 - [Historical evidence replay limits](historical-evidence-replay.md) — separate prediction reruns from evidence coverage; preserve provider date-coverage and rate-limit reasons.

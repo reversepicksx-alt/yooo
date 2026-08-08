@@ -3,6 +3,7 @@ from statsbomb_client import (
     _find_match,
     _target_lineup,
     compute_event_metrics,
+    compute_position_pass_metrics,
     summarize_freeze_frames,
 )
 
@@ -143,3 +144,50 @@ def test_statsbomb_lineup_parser_supports_open_data_lineup_schema_and_name_bridg
         "position": "Left Wing",
         "starter": True,
     }
+
+
+def test_position_pass_metrics_counts_only_verified_completed_recipient_positions():
+    lineups = [
+        {
+            "team_id": 20,
+            "team_name": "Opponent",
+            "lineup": [
+                {"player_id": 201, "player_name": "Centre Back", "positions": [{"position": "Center Back"}]},
+                {"player_id": 202, "player_name": "Striker", "positions": [{"position": "Striker"}]},
+            ],
+        },
+        {
+            "team_id": 10,
+            "team_name": "Target",
+            "lineup": [
+                {"player_id": 101, "player_name": "Keeper", "positions": [{"position": "Goalkeeper"}]},
+            ],
+        },
+    ]
+    events = [
+        _event(20, "Pass", 20, **{"pass": {"recipient": {"id": 201}}}),
+        _event(20, "Pass", 20, **{"pass": {"recipient": {"id": 201}, "outcome": {"name": "Incomplete"}}}),
+        _event(20, "Pass", 20, **{"pass": {"recipient": {"id": 202}}}),
+        _event(10, "Pass", 20, **{"pass": {"recipient": {"id": 101}}}),
+        _event(20, "Pass", 20, **{"pass": {"recipient": {"id": 999}}}),
+    ]
+    result = compute_position_pass_metrics(
+        events,
+        team_id=10,
+        opponent_id=20,
+        lineups=lineups,
+    )
+    assert result["status"] == "event_derived"
+    assert result["opponent"]["CB"] == {"attempted": 2, "completed": 1, "per90": 1.0}
+    assert result["opponent"]["ST"]["completed"] == 1
+    assert result["targetTeam"]["GK"]["completed"] == 1
+
+
+def test_position_pass_metrics_does_not_turn_missing_recipient_data_into_zero():
+    result = compute_position_pass_metrics(
+        [_pass_event(20, 20, 30)],
+        team_id=10,
+        opponent_id=20,
+        lineups=[],
+    )
+    assert result["status"] == "unavailable"

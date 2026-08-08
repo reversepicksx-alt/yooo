@@ -437,6 +437,17 @@ export interface PredictionResult {
     lineupStatus?: string;
     lineupFormation?: string | null;
     opponentFormation?: string | null;
+    positionPassesReceived?: {
+      status?: string;
+      provider?: string;
+      normalization?: string;
+      targetTeam?: Record<string, { attempted?: number; completed?: number; per90?: number }>;
+      opponent?: Record<string, { attempted?: number; completed?: number; per90?: number }>;
+      opponentAllowedToTargetPositions?: Record<string, { attempted?: number; completed?: number; per90?: number }>;
+      sampleMatches?: number;
+      limitations?: string[];
+      reason?: string;
+    } | null;
   };
   tacticalIntelligence?: TacticalIntelligence;
   matchScript?: MatchScript;

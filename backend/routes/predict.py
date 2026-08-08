@@ -6426,6 +6426,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "pressureResponse": _pressure_response,
             "bzzoiroEnrichment": bzzoiro_enrichment,
             "statsbombEnrichment": statsbomb_enrichment,
+            "positionPassesReceived": (
+                (statsbomb_enrichment.get("eventMetrics") or {})
+                .get("positionPassesReceived")
+            ),
         }
 
         # Mirror condPossAdj into bayesianMetrics so the mobile structured-evidence

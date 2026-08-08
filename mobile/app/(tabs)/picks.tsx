@@ -32,6 +32,7 @@ import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
+import EventEvidenceCard from '@/components/EventEvidenceCard';
 
 type Tab = 'live' | 'history';
 
@@ -1553,6 +1554,12 @@ export default function PicksScreen() {
                   ...(analysisModal.pick as any),
                   ...(analysisModal.data as any),
                 }}
+              />
+            )}
+            {!analysisModal?.loading && (
+              <EventEvidenceCard
+                data={(analysisModal?.data as any)?.tacticalContext?.positionPassesReceived
+                  ?? (analysisModal?.pick as any)?.tacticalContext?.positionPassesReceived}
               />
             )}
 
