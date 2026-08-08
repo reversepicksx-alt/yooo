@@ -138,7 +138,7 @@ def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> 
 H2H_HISTORY_SEASONS = 6
 H2H_FIXTURE_LIMIT = 20
 H2H_PLAYER_SCAN_LIMIT = 20
-H2H_PLAYER_RESULT_LIMIT = 10
+H2H_PLAYER_RESULT_LIMIT = 20
 _H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
@@ -1344,11 +1344,11 @@ async def predict(req: PredictionRequest):
                             fid_str = meta.get("_k", "")[4:]  # strip "fxm_"
                             fxm_docs[fid_str] = meta.get("d", {})
 
-                    # Pressure-response profiles need measured possession on
-                    # cached player logs too.  Prefetch stores this separately
-                    # under fxt_poss_{fixture}; join it without an API call.
+                    # Join verified fixture possession onto every cached soccer
+                    # game log so the compact history bars can label all props,
+                    # not just pass-volume props.
                     poss_docs: dict[str, dict] = {}
-                    if fid_map and req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
+                    if fid_map and req.sport == "soccer":
                         poss_keys = [f"fxt_poss_{fid}" for fid in fid_map]
                         poss_results = await db.fixture_player_cache.find(
                             {"_k": {"$in": poss_keys}}, {"_id": 0, "d": 1}
@@ -1388,7 +1388,7 @@ async def predict(req: PredictionRequest):
                             is_home = (home_id_meta == actual_team_id)
                             gl["venue"] = "home" if is_home else "away"
                             gl["opponent"] = meta.get("away_name", "") if is_home else meta.get("home_name", "")
-                            if req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
+                            if req.sport == "soccer":
                                 poss = poss_docs.get(fid_str, {})
                                 try:
                                     home_poss = float(str(poss.get("home_poss")).replace("%", "").strip())
@@ -1481,7 +1481,7 @@ async def predict(req: PredictionRequest):
 
                 if team_fixtures_raw is None and not _is_bdl_league:
                     team_fixtures_raw = await api_football_request(
-                        "fixtures", {"team": actual_team_id, "last": 25, "status": "FT"}
+                        "fixtures", {"team": actual_team_id, "last": 40, "status": "FT"}
                     )
                     if not team_fixtures_raw:
                         print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
@@ -5080,6 +5080,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                 except Exception:
                                     pass
                                 return {
+                                     "fixtureId": fid,
                                     "date": fixture_info.get("fixture", {}).get("date", ""),
                                     "opponent": opponent_name,
                                     "venue": venue_in_match,
@@ -5206,6 +5207,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     fid = (fixture_info.get("fixture") or {}).get("id")
                     home_poss, away_poss = await _read_h2h_possession(fid, player_home) if fid else (None, None)
                     row = {
+                         "fixtureId": fid,
                         "date": (fixture_info.get("fixture") or {}).get("date", ""),
                         "score": f"{fixture_info.get('goals', {}).get('home', '—')}-"
                                  f"{fixture_info.get('goals', {}).get('away', '—')}",
@@ -5235,6 +5237,27 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             _meetings_by_venue = {"home": [], "away": []}
 
         if h2h_player_stats:
+            # The player-appearance rows and team-meeting rows are both tied to
+            # the exact fixture. Reuse the verified possession pair discovered
+            # by the meeting enrichment instead of leaving player rows blank.
+            _meeting_by_fixture = {}
+            for _venue_rows in (_meetings_by_venue or {}).values():
+                for _meeting in _venue_rows or []:
+                    if _meeting.get("fixtureId") is not None:
+                        _meeting_by_fixture[_meeting["fixtureId"]] = _meeting
+            for _appearance in h2h_player_stats:
+                _meeting = _meeting_by_fixture.get(_appearance.get("fixtureId"))
+                if _meeting:
+                    _appearance["teamPossession"] = (
+                        _meeting.get("homePossession")
+                        if _appearance.get("venue") == "home"
+                        else _meeting.get("awayPossession")
+                    )
+                    _appearance["opponentPossession"] = (
+                        _meeting.get("awayPossession")
+                        if _appearance.get("venue") == "home"
+                        else _meeting.get("homePossession")
+                    )
             # Calculate H2H averages for the target stat
             h2h_values = [s["targetStat"] for s in h2h_player_stats if s.get("targetStat") is not None]
             h2h_summary = {

@@ -2986,6 +2986,43 @@ export default function ScanScreen() {
 
               <View style={styles.analysisDivider} />
 
+              {/* Verified fixture context belongs at the top of the card, before
+                  the model evidence and history. */}
+              {(prediction.moneyline || prediction.expectedGameType || prediction.gameScript?.dominant) && (
+                <View style={{ paddingHorizontal: 14, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+                    <Ionicons name="globe-outline" size={12} color={Colors.textSecondary} />
+                    <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>MATCH CONTEXT</Text>
+                    {prediction.expectedGameType ? (
+                      <View style={{ marginLeft: 'auto', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: Colors.primary + '18', borderWidth: 1, borderColor: Colors.primary + '33' }}>
+                        <Text style={{ fontSize: 8, color: Colors.primary, fontWeight: '800', letterSpacing: 0.6 }}>
+                          {prediction.expectedGameType.toUpperCase()}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    {prediction.moneyline ? (
+                      <>
+                        <Text style={{ fontSize: 10, color: Colors.textTertiary }}>ML</Text>
+                        <Text style={{ fontSize: 10, color: Colors.text, fontWeight: '700' }}>
+                          {String(prediction.homeTeam || 'HOME').split(' ').pop()} {prediction.moneyline.home}
+                        </Text>
+                        {prediction.moneyline.draw ? <Text style={{ fontSize: 10, color: Colors.textTertiary }}>D {prediction.moneyline.draw}</Text> : null}
+                        <Text style={{ fontSize: 10, color: Colors.text, fontWeight: '700' }}>
+                          {String(prediction.awayTeam || 'AWAY').split(' ').pop()} {prediction.moneyline.away}
+                        </Text>
+                      </>
+                    ) : null}
+                    {prediction.gameScript?.dominant ? (
+                      <Text style={{ fontSize: 10, color: Colors.textSecondary, marginLeft: prediction.moneyline ? 3 : 0 }}>
+                        SCRIPT · {String(prediction.gameScript.dominant).replace(/_/g, ' ').toUpperCase()}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              )}
+
               {/* Edge & Safety Rating Banner */}
               {prediction.edgeRating && prediction.recommendation !== 'PASS' && (() => {
                 const EDGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
@@ -3017,7 +3054,9 @@ export default function ScanScreen() {
                 const histClause = rate != null && n > 0
                   ? `${propLabel} ${dir} hits ${rate}% from ${n} picks`
                   : null;
-                const marginClause = `+${margin.toFixed(1)} projection gap`;
+                 const linePct = line !== 0 ? (margin / Math.abs(line)) * 100 : null;
+                 const marginClause = `${margin.toFixed(1)}-point projection gap`;
+                 const edgeSnapshot = `Line ${line.toFixed(1)} · Projection ${Number(proj).toFixed(1)} · Gap ${margin.toFixed(1)}${linePct != null ? ` (${linePct.toFixed(1)}%)` : ''}`;
 
                 if (er === 'SHARP EDGE') {
                   whyText = histClause
@@ -3060,7 +3099,7 @@ export default function ScanScreen() {
                 return (
                   <View style={styles.edgeSafetyWrapper}>
                     {/* Pills row */}
-                    <View style={styles.edgeSafetyBanner}>
+                     <View style={styles.edgeSafetyBanner}>
                       <View style={[styles.edgeSafetyPill, { backgroundColor: ec.bg, borderColor: ec.color + '55' }]}>
                         <Ionicons name={ec.icon as any} size={11} color={ec.color} />
                         <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>EDGE  </Text>
@@ -3074,6 +3113,12 @@ export default function ScanScreen() {
                         </Text>
                       </View>
                     </View>
+                     <Text style={{ fontSize: 10, color: whyColor, lineHeight: 15, marginTop: 7 }}>
+                       {edgeSnapshot}
+                     </Text>
+                     <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 2 }}>
+                       {whyText}
+                     </Text>
                   </View>
                 );
               })()}
@@ -4011,6 +4056,17 @@ export default function ScanScreen() {
                </>)}
             </View>
             <CompactAnalysisBars prediction={prediction} />
+            {(prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary) && (
+              <View style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={12} color={Colors.primary} />
+                  <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>TACTICAL READ</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18 }}>
+                  {prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary}
+                </Text>
+              </View>
+            )}
 
             {/* ─── MATCHUP OVERVIEW (non-soccer sports) ─── */}
             {false && (<>
@@ -5100,7 +5156,7 @@ export default function ScanScreen() {
             })()}
 
             {/* ─── FULL STRUCTURED ANALYSIS ─── */}
-            {(tacticalAnalysis || prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary) && (() => {
+            {false && (tacticalAnalysis || prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary) && (() => {
               const isOver = prediction.recommendation === 'OVER';
               const isUnder = prediction.recommendation === 'UNDER';
               const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;

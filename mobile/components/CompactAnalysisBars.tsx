@@ -1,5 +1,6 @@
-import React from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 
@@ -21,7 +22,7 @@ function shortOpponent(value: unknown) {
 export function CompactAnalysisBars({ prediction }: { prediction: CompactPrediction }) {
   const logs = (prediction.gameLogs ?? [])
     .filter((game) => !game.synthetic && game.value != null)
-    .slice(0, 10);
+    .slice(0, 20);
   const h2h = prediction.h2hPlayerStats ?? {};
   const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
   const meetingsByVenue = h2h.teamMeetingsByVenue ?? {};
@@ -42,17 +43,28 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       : []),
   ];
   const h2hRows = playerMatches.length
-    ? playerMatches.slice(0, 8).map((match: any) => ({
+    ? playerMatches.slice(0, 20).map((match: any) => ({
         ...match,
         possession: match.teamPossession,
         displayValue: match.targetStat,
         teamOnly: false,
       }))
-    : teamMeetings.slice(0, 8).map((meeting: any) => ({
+    : teamMeetings.slice(0, 20).map((meeting: any) => ({
         ...meeting,
         displayValue: meeting.possession,
         teamOnly: true,
       }));
+
+  const [selected, setSelected] = useState<{ group: 'recent' | 'h2h'; index: number } | null>(null);
+  const selectBar = (group: 'recent' | 'h2h', index: number) => {
+    setSelected((current) => current?.group === group && current.index === index ? null : { group, index });
+    Haptics.selectionAsync().catch(() => undefined);
+  };
+  const selectedGame = selected?.group === 'recent' ? logs[selected.index] : null;
+  const selectedH2H = selected?.group === 'h2h' ? h2hRows[selected.index] : null;
+  const detailRow = selectedGame || selectedH2H;
+  const detailPossession = detailRow?.teamPossession ?? detailRow?.possession;
+  const detailOpponentPossession = detailRow?.opponentPossession;
 
   return (
     <>
@@ -74,18 +86,34 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
                   const height = Math.max(10, (value / maxValue) * 112);
                   const date = game.date ? String(game.date).slice(5, 10) : '—';
+                  const possession = game.teamPossession != null ? `P${game.teamPossession}%` : 'P—';
+                  const isSelected = selected?.group === 'recent' && selected.index === index;
                   return (
-                    <View key={`${date}-${index}`} style={styles.barColumn}>
+                    <TouchableOpacity
+                      key={`${date}-${index}`}
+                      style={[styles.barColumn, isSelected && styles.barColumnSelected]}
+                      onPress={() => selectBar('recent', index)}
+                      activeOpacity={0.8}
+                      accessibilityLabel={`${game.opponent || 'Recent match'}, ${game.value} ${prediction.line != null ? `against line ${prediction.line}` : ''}`}
+                    >
                       <Text style={[styles.value, { color }]}>{game.value}</Text>
                       <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]} />
                       <Text style={styles.date}>{date}</Text>
                       <Text style={[styles.opponent, { color: game.venue === 'home' ? Colors.success : '#60A5FA' }]}>
                         {shortOpponent(game.opponent)}
                       </Text>
-                    </View>
+                      <Text style={styles.possessionLabel}>{possession}</Text>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
+              {selectedGame && (
+                <Text style={styles.detail}>
+                  {selectedGame.date ? String(selectedGame.date).slice(0, 10) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
+                  {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
+                  {selectedGame.score ? ` · ${selectedGame.score}` : ''}
+                </Text>
+              )}
             </View>
           </ScrollView>
         </View>
@@ -113,8 +141,15 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const height = value != null ? Math.max(10, (value / maxValue) * 112) : 10;
                   const possession = row.possession != null ? `POSS ${row.possession}%` : 'POSS N/A';
                   const date = row.date ? String(row.date).slice(5, 10) : '—';
+                  const isSelected = selected?.group === 'h2h' && selected.index === index;
                   return (
-                    <View key={`${date}-${index}`} style={styles.barColumn}>
+                    <TouchableOpacity
+                      key={`${date}-${index}`}
+                      style={[styles.barColumn, isSelected && styles.barColumnSelected]}
+                      onPress={() => selectBar('h2h', index)}
+                      activeOpacity={0.8}
+                      accessibilityLabel={`${row.opponent || row.homeTeam || 'H2H meeting'}, ${row.teamOnly ? 'team meeting' : `${value ?? 'unavailable'} stat`}`}
+                    >
                       <Text style={[styles.value, { color: value != null && !row.teamOnly ? color : Colors.textTertiary }]}>
                         {value != null && !row.teamOnly ? value : row.teamOnly && value != null ? `${value}%` : '—'}
                       </Text>
@@ -125,10 +160,19 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       <Text style={[styles.opponent, { color: row.teamOnly ? '#4A6CFF' : Colors.textSecondary }]}>
                         {shortOpponent(row.opponent || row.homeTeam)}
                       </Text>
-                    </View>
+                      <Text style={styles.possessionLabel}>{possession.replace('POSS ', 'P')}</Text>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
+              {selectedH2H && (
+                <Text style={styles.detail}>
+                  {selectedH2H.date ? String(selectedH2H.date).slice(0, 10) : 'Meeting'} · {selectedH2H.opponent || selectedH2H.homeTeam || 'Opponent'} · {selectedH2H.teamOnly ? 'team meeting; player did not appear' : `${selectedH2H.displayValue ?? 'stat unavailable'} stat`}
+                  {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
+                  {detailOpponentPossession != null ? ` / OPP ${detailOpponentPossession}%` : ''}
+                  {selectedH2H.matchScore || selectedH2H.score ? ` · ${selectedH2H.matchScore || selectedH2H.score}` : ''}
+                </Text>
+              )}
               <View style={styles.legend}>
                 <View style={styles.legendDot} />
                 <Text style={styles.legendText}>{h2hRows.every((row: any) => row.teamOnly) ? 'team meeting · player did not appear' : 'player appearance'}</Text>
@@ -164,13 +208,16 @@ const styles = {
   title: { fontSize: 9, color: Colors.textSecondary, fontWeight: '800' as const, letterSpacing: 1 },
   meta: { marginLeft: 'auto' as const, fontSize: 9, color: Colors.textTertiary, fontFamily: 'JetBrainsMono_700Bold' },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
-  chart: { height: 137, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
-  barColumn: { width: 34, height: 137, alignItems: 'center' as const, justifyContent: 'flex-end' as const },
+  chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
+  barColumn: { width: 34, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
+  barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   value: { fontSize: 8, fontWeight: '800' as const, marginBottom: 2 },
   bar: { width: 28, minHeight: 10, borderRadius: 3, justifyContent: 'flex-end' as const, alignItems: 'center' as const, position: 'relative' as const },
   possession: { position: 'absolute' as const, bottom: 4, color: '#FFF', fontSize: 6.5, fontWeight: '900' as const },
+  possessionLabel: { fontSize: 6.5, color: '#7D8796', lineHeight: 9, fontWeight: '800' as const },
   date: { fontSize: 7, color: '#555', lineHeight: 10, marginTop: 4 },
   opponent: { fontSize: 7, fontWeight: '700' as const, lineHeight: 10 },
+  detail: { paddingHorizontal: 2, paddingTop: 4, paddingBottom: 2, color: '#9CA3AF', fontSize: 8, lineHeight: 12 },
   legend: { marginTop: 5, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 5 },
   legendDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#4A6CFF' },
   legendText: { fontSize: 7, color: '#555' },

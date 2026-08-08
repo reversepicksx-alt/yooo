@@ -1551,6 +1551,23 @@ export default function PicksScreen() {
               />
             )}
 
+            {/* Keep the customer-facing tactical paragraph directly beneath
+                the shared history bars so the evidence and explanation read
+                as one compact sequence. */}
+            {!analysisModal?.loading && modalText && (
+              <View style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={12} color={Colors.primary} />
+                  <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>
+                    TACTICAL READ
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18 }}>
+                  {modalText}
+                </Text>
+              </View>
+            )}
+
             {/* No analysis yet */}
             {!analysisModal?.loading && !modalText && modalAlerts.length === 0 && (() => {
               const pick = analysisModal?.pick as any;
