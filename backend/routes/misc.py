@@ -378,35 +378,40 @@ async def player_contexts(player_id: int):
                 f"new={verified_club['teamId']} ({verified_club['teamName']})"
             )
 
-        # Correct only club rows.  Previous code updated every row for the
-        # player, which could overwrite a national-team context with the club.
-        await db[COL_PLAYERS].update_many(
-            {
-                "playerId": player_id,
-                "leagueId": {"$nin": list(_CLUB_LEAGUE_EXCLUDES)},
-            },
-            {"$set": {
-                "teamId": verified_club["teamId"],
-                "teamName": verified_club["teamName"],
-                "leagueId": verified_club["leagueId"],
-                "_cachedAt": now.timestamp(),
-            }},
-        )
-        await db[COL_PLAYERS].update_one(
-            {
-                "playerId": player_id,
-                "teamId": verified_club["teamId"],
-                "leagueId": verified_club["leagueId"],
-            },
-            {"$set": {
-                "playerId": player_id,
-                "teamId": verified_club["teamId"],
-                "teamName": verified_club["teamName"],
-                "leagueId": verified_club["leagueId"],
-                "_cachedAt": now.timestamp(),
-            }},
-            upsert=True,
-        )
+        # Correct only club rows.  Persistence is an optimization, not part
+        # of identity verification: Atlas can be write-blocked while the
+        # provider result is still valid. Never turn that storage condition
+        # into a 500 on the player-selection path.
+        try:
+            await db[COL_PLAYERS].update_many(
+                {
+                    "playerId": player_id,
+                    "leagueId": {"$nin": list(_CLUB_LEAGUE_EXCLUDES)},
+                },
+                {"$set": {
+                    "teamId": verified_club["teamId"],
+                    "teamName": verified_club["teamName"],
+                    "leagueId": verified_club["leagueId"],
+                    "_cachedAt": now.timestamp(),
+                }},
+            )
+            await db[COL_PLAYERS].update_one(
+                {
+                    "playerId": player_id,
+                    "teamId": verified_club["teamId"],
+                    "leagueId": verified_club["leagueId"],
+                },
+                {"$set": {
+                    "playerId": player_id,
+                    "teamId": verified_club["teamId"],
+                    "teamName": verified_club["teamName"],
+                    "leagueId": verified_club["leagueId"],
+                    "_cachedAt": now.timestamp(),
+                }},
+                upsert=True,
+            )
+        except Exception as exc:
+            print(f"[CLUB VERIFY] persistence skipped; serving verified club pid={player_id}: {exc}")
     elif last_known_club:
         # Remove an old cached copy of the same club before adding the
         # explicitly-labelled last-known row.
@@ -428,17 +433,20 @@ async def player_contexts(player_id: int):
     has_national = any(c.get("isNational") for c in contexts)
     effective_ttl_h = _CONTEXT_CACHE_TTL_H if verified_club and has_national else 1
     if verified_club:
-        await db[COL_PLAYER_CTX_CACHE].update_one(
-            {"playerId": player_id},
-            {"$set": {
-                "playerId": player_id,
-                "contexts": contexts,
-                "cachedAt": now,
-                "ttlHours": effective_ttl_h,
-                "clubVerifiedAt": now,
-            }},
-            upsert=True,
-        )
+        try:
+            await db[COL_PLAYER_CTX_CACHE].update_one(
+                {"playerId": player_id},
+                {"$set": {
+                    "playerId": player_id,
+                    "contexts": contexts,
+                    "cachedAt": now,
+                    "ttlHours": effective_ttl_h,
+                    "clubVerifiedAt": now,
+                }},
+                upsert=True,
+            )
+        except Exception as exc:
+            print(f"[PLAYER CONTEXT] cache write skipped; serving verified contexts pid={player_id}: {exc}")
 
     if not verified_club:
         # Keep national-only options if they were discovered, but explicitly

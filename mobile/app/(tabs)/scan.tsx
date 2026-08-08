@@ -332,7 +332,7 @@ export default function ScanScreen() {
       playerId: p.playerId,
       playerName: p.playerName,
       teamId: p.teamId,
-      teamName: '',
+      teamName: p.teamName || '',
       leagueId: p.leagueId,
       position: p.position,
     });
@@ -411,16 +411,52 @@ export default function ScanScreen() {
           );
         }
       } catch {
-        setClubVerificationStatus('unavailable');
-        setResolvedPlayer(current => current ? {
-          ...current,
-          teamId: 0,
-          teamName: '',
-          leagueId: 0,
-        } : current);
-        setSelectedContext(null);
-        setAutoMatch(null);
-        setManualError('Current club could not be verified right now. No old-team matchup was filled.');
+        // Context enrichment may fail independently of the verified search
+        // result (for example, Atlas can be write-blocked). Preserve the
+        // provider-backed club selected by the user instead of converting a
+        // valid player into manual setup.
+        if (p.teamId && p.teamName) {
+          const fallbackContext = {
+            teamId: p.teamId,
+            teamName: p.teamName,
+            leagueId: p.leagueId || 0,
+            isNational: false,
+            verified: true,
+          };
+          setClubVerificationStatus('verified');
+          setResolvedPlayer(current => current ? {
+            ...current,
+            teamId: p.teamId,
+            teamName: p.teamName,
+            leagueId: p.leagueId || current.leagueId,
+          } : current);
+          setSelectedContext(fallbackContext);
+          setNextMatchLoading(true);
+          try {
+            const nm = await getTeamNextMatch(p.teamId);
+            if (nm?.found) {
+              setAutoMatch(nm);
+              setVenueOverride(nm.isHome ? 'home' : 'away');
+            }
+            if (nm?.leagueId) {
+              setLeagueId(nm.leagueId);
+              setLeagueQuery(nm.leagueName || '');
+            }
+          } catch {}
+          setNextMatchLoading(false);
+          setManualError(null);
+        } else {
+          setClubVerificationStatus('unavailable');
+          setResolvedPlayer(current => current ? {
+            ...current,
+            teamId: 0,
+            teamName: '',
+            leagueId: 0,
+          } : current);
+          setSelectedContext(null);
+          setAutoMatch(null);
+          setManualError('Current club could not be verified right now. No old-team matchup was filled.');
+        }
       }
       setContextsLoading(false);
     } else {

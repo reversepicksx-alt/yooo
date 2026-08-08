@@ -136,3 +136,4 @@
 - [Historical evidence replay limits](historical-evidence-replay.md) — separate prediction reruns from evidence coverage; preserve provider date-coverage and rate-limit reasons.
 - [Prediction response identity](prediction-response-identity.md) — normalize explicit null identity fields at the final response boundary, not only missing keys.
 - [Tactical explanation assembly](tactical-explanation-assembly.md) — generate one final role-specific narrative after the ledger; never append early and late explanations together.
+- [Player context write fail-open](player-context-write-fail-open.md) — verified club identity must survive Atlas/cache write failures; persistence outages must not force manual matchup setup.
