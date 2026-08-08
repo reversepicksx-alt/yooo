@@ -31,7 +31,7 @@ import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { CompactAnalysisBars } from '@/components/CompactAnalysisBars';
+import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 
 type Tab = 'live' | 'history';
 
@@ -1049,9 +1049,10 @@ export default function PicksScreen() {
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
-  const _rawModalText = (analysisModal?.data?.tacticalBreakdown ?? analysisModal?.pick?.tacticalBreakdown ?? analysisModal?.data?.reasoning ?? analysisModal?.pick?.reasoning ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary ?? analysisModal?.pick?.sharpSummary) as string | undefined;
-  // Filter out stale placeholder text that was stored while analysis was still pending
-  const modalText = (_rawModalText && !_rawModalText.startsWith('Structured analysis loading')) ? _rawModalText : undefined;
+  const modalText = getTacticalRead({
+    ...(analysisModal?.pick as any),
+    ...(analysisModal?.data as any),
+  });
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
   const capturedModalFactors = (
     (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]

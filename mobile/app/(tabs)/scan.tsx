@@ -22,7 +22,7 @@ import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
-import { CompactAnalysisBars } from '@/components/CompactAnalysisBars';
+import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
@@ -4056,14 +4056,14 @@ export default function ScanScreen() {
                </>)}
             </View>
             <CompactAnalysisBars prediction={prediction} />
-            {(prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary) && (
+            {getTacticalRead(prediction as any) && (
               <View style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 5 }}>
                   <Ionicons name="chatbubble-ellipses-outline" size={12} color={Colors.primary} />
                   <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>TACTICAL READ</Text>
                 </View>
                 <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18 }}>
-                  {prediction.tacticalBreakdown || prediction.reasoning || prediction.sharpSummary}
+                  {getTacticalRead(prediction as any)}
                 </Text>
               </View>
             )}
