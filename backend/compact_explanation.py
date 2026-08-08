@@ -19,9 +19,9 @@ from config import db
 
 
 _MODEL = os.environ.get("GEMINI_EXPLANATION_MODEL", "gemini-2.5-flash")
-_MIN_WORDS = 800
-_MAX_WORDS = 1100
-_CACHE_VERSION = "compact-v2-longform"
+_MIN_WORDS = 380
+_MAX_WORDS = 600
+_CACHE_VERSION = "compact-v3-tactical"
 _DAILY_LIMIT = max(1, int(os.environ.get("GEMINI_EXPLANATION_DAILY_LIMIT", "200")))
 _memory_cache: dict[str, str] = {}
 _generation_locks: dict[str, aio.Lock] = {}
@@ -217,7 +217,11 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
         "opponentProfile": {
             "opponent": opponent_profile.get("opponent"),
             "position": opponent_profile.get("position"),
-            "allowedAverage": opponent_profile.get("avgAllowed") or opponent_profile.get("allowedAvg"),
+            "allowedAverage": (
+                opponent_profile.get("avgAllowed")
+                or opponent_profile.get("allowedAvg")
+                or opponent_profile.get("allowedAverage")
+            ),
             "sampleSize": opponent_profile.get("sampleSize"),
             "vsPlayerSeasonAvg": opponent_profile.get("vsPlayerSeasonAvg"),
             "isFavorable": opponent_profile.get("isFavorable"),
@@ -244,122 +248,108 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fallback(packet: dict[str, Any]) -> str:
+    """Deterministic explanation used when AI generation is unavailable or too short."""
     match = packet["match"]
     pick = packet["pick"]
-    context = packet["context"]
     h2h = packet["h2h"]
     player = match.get("player") or "The player"
-    matchup = f"{match.get('team') or 'The team'} vs {match.get('opponent') or 'the opponent'}"
+    team = match.get("team") or "the team"
+    opponent = match.get("opponent") or "the opponent"
     rec = pick.get("recommendation") or "PASS"
     recent = packet.get("recentForm") or {}
-    opponent = packet.get("opponentProfile") or {}
+    opp_profile = packet.get("opponentProfile") or {}
     signals = packet.get("modelSignals") or {}
     quality = packet.get("evidenceQuality") or {}
-    context_bits = packet.get("context") or {}
     prop = str(pick.get("prop") or "prop").replace("_", " ")
     projection = _fmt(pick.get("projection"))
     line = _fmt(pick.get("line"))
-    venue = match.get("venue") or "the listed venue"
-    paragraphs = [
-        (
-            f"{player} enters this {prop} matchup on the {venue} side for {matchup}. "
-            f"The finalized projection is {projection} against a {line} line, producing a {rec} "
-            f"recommendation at {pick.get('confidence') or 'unavailable'}% displayed confidence. "
-            f"This is not a recommendation based on one recent box score. The decision is the "
-            f"result of the player's baseline, recent form, venue context, opponent profile, "
-            f"and the way those signals interact with the posted number. The line is the market "
-            f"reference; the projection is the model's estimate of the player's expected workload "
-            f"before the match begins."
-        ),
-        (
-            f"The recent sample contains {recent.get('sampleSize') or 0} usable matches, including "
-            f"{recent.get('homeCount') or 0} home and {recent.get('awayCount') or 0} away appearances. "
-            f"The venue split is important because a player's responsibilities can change when the "
-            f"team controls territory, protects a lead, absorbs pressure, or plays through a more "
-            f"direct transition plan. The recorded home average is {_fmt(recent.get('homeAverage'))} "
-            f"and the away average is {_fmt(recent.get('awayAverage'))}. The recent hit-rate record "
-            f"is {json.dumps(recent.get('hitRates') or {}, separators=(',', ':'))}; it is supporting "
-            f"context rather than a guarantee. The model also accounts for sample quality, minutes, "
-            f"and whether a result represents a normal role rather than a short cameo."
-        ),
-        (
-            f"The tactical environment is anchored by the player's resolved position "
-            f"({context_bits.get('playerPosition') or 'unavailable'}) and role "
-            f"({context_bits.get('playerRole') or 'unavailable'}). That matters because {prop} "
-            f"production is created by repeatable actions: where the player receives the ball, "
-            f"whether they are asked to progress or recycle possession, how often they defend in "
-            f"their own half, and whether the match script gives them time to complete the relevant "
-            f"action. The expected possession split is "
-            f"{_fmt(context.get('playerTeamPossession'))}% for the player's team and "
-            f"{_fmt(context.get('opponentPossession'))}% for the opponent. The recorded match script "
-            f"is {context_bits.get('matchScript') or context_bits.get('gameScript') or 'unavailable'}, "
-            f"so no unverified game-state claim is being added."
-        ),
-        (
-            f"The opponent-specific evidence shows an allowed average of {_fmt(opponent.get('allowedAverage'))} "
-            f"for the relevant comparison group across {opponent.get('sampleSize') or 'an unavailable'} "
-            f"sample. Relative to the player's season baseline, that opponent signal is "
-            f"{_fmt(opponent.get('vsPlayerSeasonAvg'))}% different when available, and the model labels "
-            f"the matchup as {'favorable' if opponent.get('isFavorable') else 'not favorable' if opponent.get('isFavorable') is False else 'unresolved'}. "
-            f"This is the tactical distinction between a generic season average and an opponent-aware "
-            f"projection: the same player can have a different workload when the opposing team "
-            f"presses aggressively, concedes the relevant zone, closes passing lanes, or forces "
-            f"play into a different channel. If the comparison sample is thin, its influence is kept "
-            f"small rather than treated as a full scouting truth."
-        ),
-        (
-            f"The direct H2H record contains {h2h.get('playerAppearances') or 0} player appearances "
-            f"with an average of {_fmt(h2h.get('playerAverage'))}, while the teams have "
-            f"{h2h.get('teamMeetings') or 0} verified meetings in the broader fixture history. "
-            f"Player appearances and team-only meetings are kept separate: a match can reveal the "
-            f"opponent's possession and tactical shape without proving that this player was on the "
-            f"pitch. H2H therefore acts as a matchup-specific adjustment only when the identity, "
-            f"fixture, venue, and player participation are verified. Missing H2H is not silently "
-            f"converted into a zero or a fabricated neutral average."
-        ),
-        (
-            f"The model's internal signals describe the baseline as {_fmt(signals.get('priorMean'))}, "
-            f"recent momentum as {_fmt(signals.get('momentumMean'))} with a "
-            f"{signals.get('momentumLabel') or 'unavailable'} label, and volatility as "
-            f"{signals.get('volatility') or 'unavailable'}. The evidence uses "
-            f"{signals.get('priorSamples') or recent.get('sampleSize') or 0} prior observations, "
-            f"with a context adjustment of {_fmt(signals.get('covariateAdjustment'))}. These numbers "
-            f"explain why the projection can differ from both the season average and the line. A "
-            f"small gap should not be described as a dominant tactical mismatch; conversely, a "
-            f"larger gap still needs to survive venue, role, opponent, and evidence-quality checks "
-            f"before the recommendation earns strong confidence."
-        ),
-        (
-            f"The evidence-quality status is {quality.get('level') or 'unavailable'} at "
-            f"{quality.get('score') or 'unavailable'}/100 with {quality.get('realPlayerLogCount') or recent.get('sampleSize') or 0} "
-            f"real player logs. Any confidence cap or limitation is reported as "
-            f"{'; '.join(quality.get('capReasons') or packet.get('limitations') or ['no additional limitation recorded'])}. "
-            f"The final read is therefore specific but bounded: the model leans {rec} because the "
-            f"final projection sits on that side of the line after the deterministic adjustments, "
-            f"not because the narrative is trying to manufacture certainty. The most important "
-            f"question for this pick is whether the expected venue, role, and match script actually "
-            f"appear after kickoff. If they do, the tactical pathway supports the call; if they do "
-            f"not, the pre-match projection should be treated as a measured estimate rather than a "
-            f"promise."
-        ),
-        (
-            f"There are also practical conditions that would make this read less reliable. A late "
-            f"lineup change, an unexpected position, a shortened workload, or a tactical instruction "
-            f"that moves {player} away from the relevant zone can reduce the number of opportunities "
-            f"available for {prop}. The same is true if the player's team loses the expected "
-            f"territorial balance and spends the match defending, or if an early score creates a "
-            f"script that is materially different from the pre-match expectation. Those are not "
-            f"reasons to rewrite the projection after the fact; they are the boundaries of a "
-            f"pre-match estimate. The responsible interpretation is to check whether the observed "
-            f"role and venue match the verified inputs, then judge the result against the original "
-            f"line rather than against an invented narrative. With that limitation stated clearly, "
-            f"the {rec} direction is the deterministic conclusion supported by the available "
-            f"evidence, while the confidence level communicates how much of that evidence is "
-            f"actually verified."
-        ),
-    ]
-    paragraph = "\n\n".join(paragraphs)
-    return _clean_text(paragraph)
+    venue = match.get("venue") or "home"
+    conf = pick.get("confidence")
+    home_avg = _fmt(recent.get("homeAverage"))
+    away_avg = _fmt(recent.get("awayAverage"))
+    baseline = _fmt(signals.get("priorMean"))
+    momentum = _fmt(signals.get("momentumMean"))
+    momentum_label = (signals.get("momentumLabel") or "").lower()
+    opp_allowed = _fmt(opp_profile.get("allowedAverage"))
+    opp_n = opp_profile.get("sampleSize") or 0
+    lims = quality.get("capReasons") or packet.get("limitations") or []
+
+    # Para 1: the pick itself
+    p1 = (
+        f"The Reverse Formula projects {player} for {projection} {prop} in "
+        f"{team} vs {opponent} — {venue} side — against a posted line of {line}. "
+        f"That gap is enough to lean {rec}"
+        + (f" at {conf}% confidence" if conf else "")
+        + ". The projection is built from the player's baseline, recent form weighted "
+        "toward the last ten appearances, a venue adjustment, and an opponent-specific "
+        "comparison where the sample exists."
+    )
+
+    # Para 2: form and venue split
+    split_note = ""
+    home_n = recent.get("homeCount") or 0
+    away_n = recent.get("awayCount") or 0
+    if home_avg != "unavailable" and away_avg != "unavailable":
+        dominant = "home" if float(home_avg) > float(away_avg) else "away"
+        gap = abs(float(home_avg) - float(away_avg))
+        split_note = (
+            f"{player}'s home average is {home_avg} against an away average of {away_avg} "
+            f"across the recent {recent.get('sampleSize') or home_n + away_n}-match sample — "
+            f"a {gap:.1f}-point venue gap that favours the {dominant} environment. "
+        )
+    p2 = (
+        split_note
+        + f"The baseline across the full season is {baseline}. "
+        + (
+            f"Recent momentum reads {momentum} ({momentum_label}) — "
+            "suggesting the current trajectory is pulling the projection away from that baseline. "
+            if momentum != "unavailable" and momentum_label else
+            "The momentum and baseline are aligned within normal variance. "
+        )
+        + f"The model is running on {recent.get('sampleSize') or 0} real game logs with full-minute filtering, "
+        "so cameo appearances that would inflate or deflate the average are excluded."
+    )
+
+    # Para 3: opponent context
+    if opp_allowed != "unavailable" and opp_n:
+        opp_direction = "above" if float(opp_allowed) > float(baseline if baseline != "unavailable" else line) else "below"
+        p3 = (
+            f"Against {opponent} specifically, the comparison group has averaged {opp_allowed} "
+            f"{prop} across {opp_n} measured match{'es' if opp_n != 1 else ''} — "
+            f"{opp_direction} the player's season baseline. "
+            f"That opponent signal {'pulls the projection toward the ' + rec + ' side' if opp_n >= 5 else 'carries limited weight given the thin sample size'}."
+        )
+    else:
+        p3 = (
+            f"Opponent-specific evidence for {opponent} against this prop is not available in the "
+            "verified sample, so no opponent-allowed adjustment was applied. The projection rests "
+            "on the player's own form and venue history."
+        )
+
+    # Para 4: H2H and limitations
+    h2h_note = ""
+    if h2h.get("playerAppearances"):
+        h2h_note = (
+            f"{player} has {h2h['playerAppearances']} verified appearances against {opponent} "
+            f"with an average of {_fmt(h2h.get('playerAverage'))} {prop}. "
+        )
+    elif h2h.get("teamMeetings"):
+        h2h_note = (
+            f"The teams have {h2h['teamMeetings']} prior meetings in the record, but no verified "
+            f"player appearances for {player}, so the H2H component stays neutral. "
+        )
+    lim_note = ""
+    if lims:
+        lim_note = f"Flagged limitations: {'; '.join(str(l) for l in lims[:2])}. "
+    p4 = (
+        h2h_note
+        + lim_note
+        + f"The {rec} direction stands as the deterministic conclusion from the Reverse Formula. "
+        "It stays valid as long as the pre-match conditions — lineup, role, and game state — "
+        "match what was expected when the projection was built."
+    )
+
+    return _clean_text("\n\n".join([p1, p2, p3, p4]))
 
 
 async def _cached_text(cache_key: str) -> str:
@@ -413,8 +403,8 @@ async def _generate(prompt: str) -> str:
                 model=_MODEL,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=1800,
+                    temperature=0.35,
+                    max_output_tokens=900,
                 ),
             ),
             timeout=18,
@@ -458,21 +448,79 @@ async def build_compact_explanation(
         if not await _within_daily_limit():
             return fallback, "compact_budget_fallback", cache_key
 
+        match = packet["match"]
+        pick = packet["pick"]
+        recent = packet.get("recentForm") or {}
+        signals = packet.get("modelSignals") or {}
+        player_name = match.get("player") or "the player"
+        team = match.get("team") or "the team"
+        opponent = match.get("opponent") or "the opponent"
+        venue = match.get("venue") or "home"
+        prop_label = str(pick.get("prop") or "prop").replace("_", " ")
+        rec = str(pick.get("recommendation") or "OVER").upper()
+        line = pick.get("line")
+        proj = pick.get("projection")
+        conf = pick.get("confidence")
+        home_avg = recent.get("homeAverage")
+        away_avg = recent.get("awayAverage")
+        baseline = signals.get("priorMean")
+        momentum = signals.get("momentumMean")
+        momentum_label = signals.get("momentumLabel") or ""
+        opp_profile = packet.get("opponentProfile") or {}
+
+        # Build a tight evidence block — anchors Gemini's numbers without
+        # dumping the full JSON.  Gemini must use its own tactical knowledge;
+        # these are the only specific figures it may cite.
+        evidence_lines = [
+            f"Player: {player_name}",
+            f"Team: {team} ({venue} side) vs Opponent: {opponent}",
+            f"Prop: {prop_label} | Line: {_fmt(line)} | Projection: {_fmt(proj)} | Verdict: {rec} ({_fmt(conf)}% confidence)",
+            f"Season baseline: {_fmt(baseline)} | Recent momentum: {_fmt(momentum)} ({momentum_label})",
+            f"Home average: {_fmt(home_avg)} | Away average: {_fmt(away_avg)} | Sample: {recent.get('sampleSize') or 0} matches",
+        ]
+        if opp_profile.get("allowedAverage") is not None:
+            evidence_lines.append(
+                f"Opponent allowed average for this prop: {_fmt(opp_profile.get('allowedAverage'))} "
+                f"(n={opp_profile.get('sampleSize') or 'thin'})"
+            )
+        h2h_block = packet.get("h2h") or {}
+        if h2h_block.get("playerAppearances"):
+            evidence_lines.append(
+                f"H2H player appearances vs this opponent: {h2h_block['playerAppearances']}"
+                f" (avg {_fmt(h2h_block.get('playerAverage'))})"
+            )
+        lims = packet.get("limitations") or []
+        if lims:
+            evidence_lines.append(f"Model limitations noted: {'; '.join(lims)}")
+        evidence_block = "\n".join(evidence_lines)
+
         prompt = (
-            "Write a detailed customer-facing tactical scouting report of 900-1100 words "
-            "about this sports pick. Use only the JSON evidence below. Write 6-9 connected "
-            "paragraphs with substantial tactical reasoning, not filler. Explain the exact "
-            "matchup, line, projection, recommendation, recent-form pattern, home/away split, "
-            "possession environment, resolved position and role, formation or match-script "
-            "implications, opponent-specific evidence, H2H evidence, and evidence limitations. "
-            "Explain mechanisms: where the player is likely to receive or lose opportunities, "
-            "how pressure/territory/game state can change the prop, and why the evidence supports "
-            "or limits the final direction. Use exact numbers only when present in the JSON. If a "
-            "feed is unavailable, say it is unavailable rather than inventing it. Player H2H and "
-            "team-only meetings must remain distinct. Do not use headings, bullets, markdown, "
-            "provider names, model names, guarantees, or the word Bayesian. Say Reverse Formula "
-            "instead. Do not change the deterministic recommendation.\n\n"
-            f"EVIDENCE JSON:\n{json.dumps(packet, separators=(',', ':'), default=str)}"
+            f"You are a soccer prop analyst writing for subscribers of a player prop analytics platform.\n\n"
+            f"THE PICK\n"
+            f"{evidence_block}\n\n"
+            f"TASK\n"
+            f"Write a focused ~500-word tactical explanation (4-5 paragraphs, no headings, no bullets, no markdown). "
+            f"You know who {player_name} is, what {team} look like tactically, and how {opponent} press and defend. "
+            f"Use that real-world knowledge as your primary foundation. The numbers above are anchors — "
+            f"reference them when they support the argument, but build the reasoning from actual soccer tactics, "
+            f"not from re-reading the stats back to the subscriber.\n\n"
+            f"Cover these four things:\n"
+            f"1. {player_name}'s actual position and role, and why that role specifically does or does not generate "
+            f"high {prop_label} volume — describe the real on-pitch mechanism.\n"
+            f"2. How {team}'s tactical shape and {opponent}'s defensive/pressing style interact to affect {player_name}'s "
+            f"expected {prop_label} count today ({venue} side).\n"
+            f"3. Why the Reverse Formula lands at {_fmt(proj)} against a {_fmt(line)} line and leans {rec}: "
+            f"explain the home/away split difference, the {momentum_label.lower() or 'current'} momentum reading, "
+            f"and any opponent-allowed evidence — in plain English that connects the numbers to the tactical picture.\n"
+            f"4. What would have to happen in-game for this read to be wrong. Be specific to this matchup, "
+            f"not generic (don't just list 'red card or substitution').\n\n"
+            f"RULES\n"
+            f"- Call the player by name ({player_name}) throughout.\n"
+            f"- Do NOT say 'Bayesian' — say 'Reverse Formula' instead.\n"
+            f"- Do NOT invent statistics. Use only the numbers in THE PICK block for specific figures.\n"
+            f"- The {rec} recommendation is final — do not argue the other side or hedge the direction.\n"
+            f"- No headings, no bullets, no markdown, no provider names, no betting guarantees.\n"
+            f"- Write as if talking to a subscriber who follows soccer — skip the basics, go tactical."
         )
         text = await _generate(prompt)
         if not _longform_usable(text):
