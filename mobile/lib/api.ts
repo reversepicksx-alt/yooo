@@ -566,6 +566,9 @@ export interface PredictionResult {
       statValue?: number | null;
       passAttempts?: number | null;
       crossPropStats?: Record<string, number>;
+      matchPosition?: string | null;
+      observedPosition?: string | null;
+      position?: string | null;
     }>;
     sourceScope?: string;
     verdict?: {

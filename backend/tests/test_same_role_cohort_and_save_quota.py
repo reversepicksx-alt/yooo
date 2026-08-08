@@ -23,6 +23,7 @@ def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
     assert '"targetRole": display_role or player_role' in PREDICT_SOURCE
     assert '"targetPosition": specific_position or display_position' in PREDICT_SOURCE
     assert '"passAttempts": (pstats.get("passes") or {}).get("total")' in PREDICT_SOURCE
+    assert '"matchPosition": pos or None' in PREDICT_SOURCE
 
 
 def test_cohort_verdict_is_not_evaluated_before_prediction_exists():

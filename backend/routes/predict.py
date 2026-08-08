@@ -1934,6 +1934,7 @@ async def predict(req: PredictionRequest):
                                 "per90": round((stat_val / minutes) * 90, 2) if minutes > 0 else 0,
                                 "venue": comp_team_venue,
                                 "position": spec_pos or pos,
+                                "matchPosition": pos or None,
                                 "positionMatch": "specific" if spec_pos else "provider_category",
                                 "observedPosition": pos or None,
                                 "role": candidate_role,

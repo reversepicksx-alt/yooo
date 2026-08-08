@@ -11,6 +11,8 @@ type CohortPlayer = {
   crossPropStats?: Record<string, number>;
   minutes?: number | null;
   position?: string;
+  matchPosition?: string | null;
+  observedPosition?: string | null;
   role?: string;
   date?: string;
 };
@@ -143,6 +145,8 @@ export default function SameRoleEvidenceCard({
                   style={{ flex: 1, fontSize: 10, color: Colors.text, lineHeight: 15 }}
                 >
                   {index + 1}. {player.name || 'Unknown player'}
+                  {' · '}
+                  {player.matchPosition || player.observedPosition || player.position || 'Position unavailable'}
                 </Text>
                 <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '900', marginLeft: 8 }}>
                   {passAttempts != null ? Number(passAttempts).toFixed(0) : '—'}
