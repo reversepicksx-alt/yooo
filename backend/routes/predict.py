@@ -86,6 +86,50 @@ def _json_safe_prediction(value, *, _active=None, _depth=0):
         return value.decode("utf-8", errors="replace")
     return str(value)
 
+
+def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> dict:
+    """Keep the public prediction identity contract complete.
+
+    The soccer engine resolves fixture identity in several stages and can
+    legitimately leave request-shaped fields absent or explicitly null. The
+    mobile card and saved-pick flow consume the top-level contract, so fill
+    only identity fallbacks here; never replace a verified canonical fixture
+    value with stale request data.
+    """
+    player = prediction.get("player") or {}
+    prediction["playerName"] = prediction.get("playerName") or player.get("name") or req.playerName or ""
+    prediction["playerId"] = prediction.get("playerId") or player.get("id") or req.playerId
+    prediction["teamName"] = prediction.get("teamName") or player.get("team") or req.teamName or ""
+    prediction["opponentName"] = prediction.get("opponentName") or prediction.get("opponent") or req.opponentName or ""
+    prediction["playerPosition"] = (
+        prediction.get("playerPosition")
+        or player.get("position")
+        or prediction.get("position")
+        or ""
+    )
+    prediction["leagueId"] = prediction.get("leagueId") or req.leagueId or None
+
+    is_home = prediction.get("isHome")
+    if not isinstance(is_home, bool):
+        matchup = prediction.get("matchupOverview") or {}
+        matchup_home = matchup.get("playerIsHome")
+        is_home = matchup_home if isinstance(matchup_home, bool) else None
+    if isinstance(is_home, bool):
+        prediction["isHome"] = is_home
+        prediction["playerIsHome"] = (
+            prediction.get("playerIsHome")
+            if isinstance(prediction.get("playerIsHome"), bool)
+            else is_home
+        )
+        prediction["venue"] = prediction.get("venue") or ("home" if is_home else "away")
+    else:
+        prediction["venue"] = prediction.get("venue") or req.venue or "home"
+
+    match_context = prediction.get("matchContext") or {}
+    if not prediction.get("leagueName") and match_context.get("league"):
+        prediction["leagueName"] = match_context["league"]
+    return prediction
+
 # H2H history is intentionally broader than the current-season prediction
 # window. The player-specific pass still caps the displayed sample so older
 # meetings cannot dominate the model, but it must inspect enough real fixtures
@@ -10107,6 +10151,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["aiSource"] = "model"
             prediction["aiPending"] = False
 
+        prediction = _normalize_prediction_identity(prediction, req)
         prediction["_ts"] = datetime.now(timezone.utc).isoformat()
         safe_prediction = _json_safe_prediction(prediction)
         try:
