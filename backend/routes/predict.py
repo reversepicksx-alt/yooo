@@ -34,7 +34,7 @@ from tactical_evidence import (
 )
 from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
-from compact_explanation import build_compact_explanation
+# compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -10282,45 +10282,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["factorLedgerFingerprint"] = _ledger_fingerprint
 
             # The ledger is now complete. Gemini may only write the long-form
-            # customer report from this final snapshot; it cannot alter
-            # projection, direction, confidence, or any evidence field.
-            if str(req.sport or "soccer").lower() == "soccer":
-                try:
-                    (
-                        _compact_text,
-                        _compact_source,
-                        _compact_cache_key,
-                    ) = await build_compact_explanation(
-                        prediction,
-                        _ledger_payload,
-                        _ledger_fingerprint,
-                    )
-                    prediction["tacticalBreakdown"] = _compact_text
-                    prediction["reasoning"] = _compact_text
-                    prediction["sharpSummary"] = _compact_text
-                    prediction["aiSource"] = _compact_source
-                    prediction["explanationSource"] = _compact_source
-                    prediction["explanationVersion"] = "compact-match-context-v2-longform"
-                    prediction["aiExplanationCacheKey"] = _compact_cache_key
-                    prediction["aiPending"] = False
-                    print(
-                        f"[COMPACT EXPLANATION] source={_compact_source} "
-                        f"chars={len(_compact_text)} cache={_compact_cache_key}"
-                    )
-                except Exception as _compact_err:
-                    # Explanation generation is strictly optional; never turn
-                    # a valid deterministic prediction into a 500.
-                    print(f"[COMPACT EXPLANATION] failed: {_compact_err}")
-                    prediction["tacticalBreakdown"] = (
-                        "The final model projection is available above. "
-                        "Additional match context is unavailable for this pick."
-                    )
-                    prediction["reasoning"] = prediction["tacticalBreakdown"]
-                    prediction["sharpSummary"] = prediction["tacticalBreakdown"]
-                    prediction["aiSource"] = "compact_deterministic"
-                    prediction["explanationSource"] = "compact_deterministic"
-                    prediction["explanationVersion"] = "compact-match-context-v2-longform"
-                    prediction["aiPending"] = False
+            # AI tactical explanation removed — prop hit rates shown on frontend
 
             # Rebuild the authoritative math footer after all late calibration
             # and guard stages. This prevents a correct structured narrative from being

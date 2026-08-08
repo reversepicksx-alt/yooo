@@ -13,14 +13,15 @@ Analysis should feel like a dense stats interface, not a stack of dashboard card
 
 `H` / `A` venue marker appears as its own `<Text>` element (`styles.venueLabel`) directly beneath the `possessionLabel` row — NOT beside the abbreviated opponent name. Both Recent Matches and H2H bars follow this layout. Color: green for home, blue for away.
 
-## Tactical Read / explanation
+## Prop History card (replaces Tactical Read / AI explanation)
 
-The user requires genuine soccer tactical reasoning — not template-filled boilerplate. Key design decisions:
+Gemini tactical explanation was removed entirely. No AI calls happen on prediction.
 
-- Cache version: `compact-v3-tactical` (bumped from v2-longform and v1). Any new explanation change **must** bump this to prevent stale cached text from being reused.
-- Target length: **~500 words** (`_MIN_WORDS=380`, `_MAX_WORDS=600`, `max_output_tokens=900`).
-- Prompt strategy: Gemini is told explicitly WHO the player is, WHAT team, WHAT opponent, and instructed to **use its real-world knowledge** as the primary foundation. The evidence block provides only the specific numbers (projection, line, baseline, momentum, home/away split, opponent allowed avg) as anchors. The old "use only the JSON evidence" instruction was the root cause of generic template output.
-- Evidence block (not full JSON dump): `Player`, `Team vs Opponent`, `Line/Projection/Verdict`, `Baseline/Momentum`, `Home avg/Away avg/Sample`, `Opponent allowed avg if available`, `H2H appearances if any`, `Limitations if any`.
-- Fallback: `_fallback()` produces a clean 4-paragraph deterministic explanation using real names and numbers (not "unavailable" placeholders). It does NOT need to pass `_longform_usable()` — that check is only for Gemini output.
-- `opponentProfile.allowedAverage` in the evidence packet now checks `avgAllowed`, `allowedAvg`, AND `allowedAverage` (mapping fix).
-- All sports get the fallback (deterministic). Only soccer goes through Gemini generation.
+Where "TACTICAL READ" used to appear (scan.tsx predict view and picks.tsx analysis modal), a **PROP HISTORY** card now shows:
+1. Two stat boxes — OVER RATE (green) and UNDER RATE (red) from `playerGameLogs.hitRates` (`overPct`, `underPct`, `overHits`, `underHits`, `total`)
+2. System-wide accuracy line from `propHistoricalRate` (e.g., "UNDER PASS ATTEMPTS picks: 58% accuracy system-wide")
+3. Deviation band accuracy from `lineDeviationHitRate` ("This deviation band: 61% historical hit rate")
+
+Card is hidden if all three data sources are absent. `backend/compact_explanation.py` file still exists but `build_compact_explanation` is no longer called from `predict.py` — the import line is commented out and the call block removed.
+
+**Why:** User explicitly removed Gemini/AI tactical text. Hit-rate data is more trustworthy and directly useful than AI-generated tactical prose.

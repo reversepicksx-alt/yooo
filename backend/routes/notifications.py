@@ -92,5 +92,8 @@ async def mark_read(req: MarkReadRequest):
     query: dict = {"email": req.email.lower().strip()}
     if req.notificationIds:
         query["notificationId"] = {"$in": req.notificationIds}
-    await db.notifications.update_many(query, {"$set": {"read": True}})
+    try:
+        await db.notifications.update_many(query, {"$set": {"read": True}})
+    except Exception as _e:
+        print(f"[NOTIFICATIONS WRITE FAIL] mark-read {req.email}: {_e}")
     return {"ok": True}

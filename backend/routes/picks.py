@@ -932,10 +932,13 @@ async def list_picks(req: GetPicksRequest):
             p["recommendation"] = rec_raw.lower()
             updates["recommendation"] = rec_raw.lower()
         if updates:
-            await db.picks.update_one(
-                {"pickId": p["pickId"], "email": pick_email},
-                {"$set": updates}
-            )
+            try:
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": pick_email},
+                    {"$set": updates}
+                )
+            except Exception as _e:
+                print(f"[PICKS-LIST WRITE FAIL] repair {p.get('playerName','')}: {_e}")
 
     for p in picks:
         if p.get("status") not in {"settled", "pending_review"}:
@@ -975,11 +978,14 @@ async def list_picks(req: GetPicksRequest):
                     if _sport == "soccer" else f"DNP ({_sport})"
                 )
                 print(f"[CONSISTENCY] DNP→dnp {p.get('playerName','')} {p.get('propType','')} ({void_label})")
-                await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": pick_email},
-                    {"$set": {"result": "dnp", "hitPct": 0,
-                              "voidReason": p.get("voidReason") or void_label}}
-                )
+                try:
+                    await db.picks.update_one(
+                        {"pickId": p["pickId"], "email": pick_email},
+                        {"$set": {"result": "dnp", "hitPct": 0,
+                                  "voidReason": p.get("voidReason") or void_label}}
+                    )
+                except Exception as _e:
+                    print(f"[PICKS-LIST WRITE FAIL] DNP {p.get('playerName','')}: {_e}")
             continue
 
         # Repair an already-settled false DNP in-place the next time the
@@ -1009,10 +1015,13 @@ async def list_picks(req: GetPicksRequest):
             }
             if pass_outcome:
                 repair_set["passOutcome"] = pass_outcome
-            await db.picks.update_one(
-                {"pickId": p["pickId"], "email": pick_email},
-                {"$set": repair_set, "$unset": {"voidReason": ""}},
-            )
+            try:
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": pick_email},
+                    {"$set": repair_set, "$unset": {"voidReason": ""}},
+                )
+            except Exception as _e:
+                print(f"[PICKS-LIST WRITE FAIL] DNP repair {p.get('playerName','')}: {_e}")
             print(
                 f"[CONSISTENCY] Repaired false DNP {p.get('playerName','')} "
                 f"{p.get('propType','')} stat={p['actualValue']} min={_min_played} → {correct}"
@@ -1050,22 +1059,25 @@ async def list_picks(req: GetPicksRequest):
                 p["settlementSource"] = _legacy_source
                 p["settledAt"] = p.get("settledAt") or datetime.now(timezone.utc).isoformat()
                 p.pop("settlementReview", None)
-                await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": pick_email},
-                    {"$set": {
-                        "status": "settled",
-                        "result": correct,
-                        "hitPct": 100 if correct == "hit" else 0 if correct == "miss" else 50,
-                        "settledAt": p["settledAt"],
-                        "settlementSource": _legacy_source,
-                        "settledBy": "legacy_final_reconciliation",
-                    },
-                    "$unset": {
-                        "settlementReview": "",
-                        "settlementRepairLastAttemptAt": "",
-                        "settlementRepairLastAttemptReason": "",
-                    }},
-                )
+                try:
+                    await db.picks.update_one(
+                        {"pickId": p["pickId"], "email": pick_email},
+                        {"$set": {
+                            "status": "settled",
+                            "result": correct,
+                            "hitPct": 100 if correct == "hit" else 0 if correct == "miss" else 50,
+                            "settledAt": p["settledAt"],
+                            "settlementSource": _legacy_source,
+                            "settledBy": "legacy_final_reconciliation",
+                        },
+                        "$unset": {
+                            "settlementReview": "",
+                            "settlementRepairLastAttemptAt": "",
+                            "settlementRepairLastAttemptReason": "",
+                        }},
+                    )
+                except Exception as _e:
+                    print(f"[PICKS-LIST WRITE FAIL] legacy-source {p.get('playerName','')}: {_e}")
                 continue
             # A verified final can never remain a user-facing PASS. Older
             # records used PASS for calibration-only rows; once the exact
@@ -1112,10 +1124,13 @@ async def list_picks(req: GetPicksRequest):
                         "settlementRepairLastAttemptAt": "",
                         "settlementRepairLastAttemptReason": "",
                     })
-                await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": pick_email},
-                    {"$set": updates, "$unset": unset} if unset else {"$set": updates}
-                )
+                try:
+                    await db.picks.update_one(
+                        {"pickId": p["pickId"], "email": pick_email},
+                        {"$set": updates, "$unset": unset} if unset else {"$set": updates}
+                    )
+                except Exception as _e:
+                    print(f"[PICKS-LIST WRITE FAIL] consistency {p.get('playerName','')}: {_e}")
 
     # ── CS2 settled-pick data repair ─────────────────────────────────────────
     # Only run for the requester's OWN picks (owner-view must not repair other
