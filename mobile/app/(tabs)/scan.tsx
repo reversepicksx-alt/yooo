@@ -11,6 +11,7 @@ import {
   renderMatchupPossession,
   renderManagerContext,
   renderTacticalIntelligence,
+  renderTacticalVerdict,
 } from '@/components/AnalysisCards';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -2760,6 +2761,9 @@ export default function ScanScreen() {
 
               <View style={styles.analysisDivider} />
 
+              {/* ─── PLAYER-SPECIFIC TACTICAL VERDICT ─── */}
+              {renderTacticalVerdict(prediction as any, prediction as any)}
+
               {/* Edge & Safety Rating Banner */}
               {prediction.edgeRating && prediction.recommendation !== 'PASS' && (() => {
                 const EDGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
@@ -2935,8 +2939,9 @@ export default function ScanScreen() {
                 );
               })()}
 
-              {/* Line vs Season Average + Edge Explanation */}
-              {prediction.priorMean != null && prediction.line != null && (() => {
+              {/* Line vs Season Average + Edge Explanation — tactical verdict replaces
+                  generic soccer prose so the customer sees one coherent read. */}
+              {prediction.sport !== 'soccer' && prediction.priorMean != null && prediction.line != null && (() => {
                 const pct = ((prediction.line - prediction.priorMean) / prediction.priorMean) * 100;
                 const lineBelow = pct < 0;
                 const absPct = Math.abs(pct).toFixed(1);

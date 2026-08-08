@@ -1,0 +1,134 @@
+Verdict — Reverse Picks projects 67, below the 70.5 line: UNDER at 62% modeled probability.
+MATCHUP
+Mamadou Fofana is evaluated for pass attempts for New England Revolution against Houston Dynamo. Verified expected possession: 53% (vs 48% for Houston Dynamo).
+TACTICAL CONTEXT
+• Role anchor: CB · Stopper — As a central defender, the pass volume is primarily circulation behind the attack: it depends on how often the team can retain possession and reset through the first line rather than on final-third touches.
+• Shape evidence: the available predicted lineup data shows 4-2-3-1 vs 4-2-3-1; no additional zone or matchup claim is made without event-level data.
+• Game-state context: the team model classifies the match as normal tempo (3.2 expected total goals), which affects the number of available sequences but does not replace the player's role evidence.
+• Tactical intelligence identifies the player's nominal role as Stopper; this is role context, not a verified average-position map.
+• Shape comparison: 4-2-3-1 vs 4-2-3-1 (projected lineup data).
+• Market game script: balanced market from the verified fixture moneyline. This is combined with possession and role evidence rather than counted as a second independent adjustment.
+• Possession game script: possession balanced at 53% expected player-team possession from verified fixture statistics.
+• Position comparison has 3 comparable observations.
+• Passing opportunity is compared with the opponent's nominal pressure structure; no direct press assignment is assumed.
+• Direct marking, exact operating zones, and average positions are not verified; the tactical comparison remains nominal.
+• Player pressure-response profile unavailable: API-Football does not yet provide enough qualifying low- and high-possession appearances to classify this player.
+• Venue average: 64.7 pass attempts (-1.4 vs season average of 66.1).
+• Recent-form momentum: Hot (+2.1 per game) — recent games are trending above the seasonal baseline, pulling the projection accordingly.
+• Match-context covariates (possession, opponent press, game state) shift the projection downward by 1.5.
+APPLIED MODEL FACTORS
+• Model factor (66.1 → 63.7): Season prior: 66.1 across 12 logs; momentum Hot (+2.1); match-context covariate -1.5.
+• Model factor (63.7 → 66.9): Compared the opponent's recent output allowed to same-position players, pair-calibrated to this player's baseline.
+• Model factor (66.9 → 67): Captures any late guard or calibration change before the result is returned.
+CONFIDENCE AND RISK
+Displayed confidence is 62% (Medium). Edge: 3.5 (NO EDGE); safety: RISKY.
+LIMITATIONS
+• head-to-head player games: unavailable
+---
+FINAL MATH LEDGER
+Projection: 67 | Line: 70.5 | Recommendation: UNDER | Edge: 3.5
+P(OVER): 38.4% | P(UNDER): 61.6% | Confidence: 62% (Medium)
+Ledger: 65d393abcbf2684559a9 | Factors recorded: 3
+95
+EV SCORE
+20
+GAME LOGS
+3
+COMP GAMES
+5
+POSS OBS
+6/9
+APPLIED
+MATCHUP
+HIGH-TEMPO
+52%
+REVOLUTION
+48%
+DYNAMO
+Balanced possession expected (52% vs 48%) — high-tempo game
+Reverse Picks model: 67 UNDER 70.5 with 62% modeled probability and 3.5 edge. Confidence is 62% (Medium); safety is RISKY.
+TACTICAL INTELLIGENCE
+SHADOW · NOT LIVE
+CB · Stopper
+PLAYER ROLE
+4-2-3-1 Vs 4-2-3-1
+PROJECTED SHAPE
+Role evidence: cached role resolver · low confidence
+MATCH SCRIPT
+95% HIGH
+Low-Event / Compressed
+Classified from verified fixture moneyline + verified possession + score-scenario model. This is a pre-match scenario, not a guaranteed game state.
+POSITIONAL REALITY
+88% ZONE
+Own Third Left
+PROVIDER COORDINATES
+Lower Volume
+PROP SHADOW SIGNAL
+A deeper or reactive script can replace short settled circulation with longer, lower-frequency actions.
+Shadow read: lower volume · ×0.975 potential movement. Not applied to the displayed projection.
+Robust history: n=20 · weighted avg 58.8
+Market script: balanced market · 44% player-team implied win probability · verified fixture odds
+Possession script: 53% · possession balanced · verified data
+Position comparison has 3 comparable observations.
+Opponent role mix: goalkeeper 1 · unknown 10. Passing opportunity is compared with the opponent's nominal pressure structure; no direct press assignment is assumed.
+PLAYER · OPPONENT EVIDENCE
+No verified player-level appearance history against this opponent was found.
+Same-position cohort: n=3 · average 71.33 · 67% OVER · limited (target n≥10).
+Mamadou Fofana is treated as Stopper; the pass attempts pathway is role-specific, not a generic forward assumption. There is no verified player-level history against Houston Dynamo in the searched fixtures. The same-position opponent cohort is n=3 with a None average (limited sample).
+No direct one-to-one marking assignment is claimed.
+Limits: pre-match classification; an early goal, red card, or substitution can change the script · nominal lineup coordinates are not a verified in-possession heat map · direct marking is not verified.
+Comparable role sample: 3 observations.
+New England Revolution
+4-2-3-1
+PROJECTED XI
+Houston Dynamo
+4-2-3-1
+30
+Turner
+8
+Polster
+22
+Kohler
+2
+Fofana
+23
+Sands
+21
+Raines
+80
+Yusuf
+25
+Miller
+10
+Gil
+17
+Zambrano
+99
+Turgeman
+31
+Bond
+11
+Ennali
+5
+Halter
+34
+Resch
+36
+Andrade
+6
+Artur
+16
+Herrera
+8
+McGlynn
+30
+Bouzat
+20
+Guilherme
+10
+Ponce
+Coach: Marko Mitrovic
+Coach: Ben Olsen
+DISMISSAL RISK
+LOW
+FIXTURE LOAD

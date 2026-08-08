@@ -212,6 +212,131 @@ export function renderMatchupPossession(
   );
 }
 
+/** Customer-facing tactical verdict — one coherent player/prop read. */
+export function renderTacticalVerdict(
+  data: Record<string, unknown> | null,
+  pick: {
+    playerName?: string | null;
+    propType?: string | null;
+    recommendation?: string | null;
+    projectedValue?: number | null;
+    projection?: number | null;
+    line?: number | null;
+    teamName?: string | null;
+    opponentName?: string | null;
+  } | null,
+) {
+  if (!data || String((data as any)?.sport ?? 'soccer').toLowerCase() !== 'soccer') return null;
+
+  const ti = ((data as any)?.tacticalIntelligence ?? {}) as any;
+  const tc = ((data as any)?.tacticalContext ?? {}) as any;
+  const player = ti.player ?? {};
+  const lineup = ti.lineup ?? {};
+  const possession = ti.possessionGameScript ?? {};
+  const mechanism = ti.propMechanism ?? {};
+  const comparison = ti.opponentRoleComparison ?? {};
+  const matchScript = ti.matchScript ?? (data as any)?.matchScript ?? {};
+  const positional = ti.positionalReality ?? (data as any)?.positionalReality ?? {};
+  const propType = String(pick?.propType ?? (data as any)?.propType ?? '');
+  const prop = PROP_LABELS[propType] ?? (propType.replace(/_/g, ' ') || 'prop');
+  const playerName = pick?.playerName ?? (data as any)?.playerName ?? 'This player';
+  const role = player.role ?? tc.role ?? player.position ?? tc.position;
+  const position = player.position ?? tc.position;
+  const recommendation = String(
+    pick?.recommendation ?? (data as any)?.recommendation ?? '',
+  ).toUpperCase();
+  const projection = Number(pick?.projectedValue ?? pick?.projection ?? (data as any)?.projectedValue ?? (data as any)?.projection);
+  const line = Number(pick?.line ?? (data as any)?.line);
+  const playerPoss = Number(possession.expectedPlayerTeamPossession ?? tc.expectedPossession);
+  const opponentPoss = Number(tc.opponentExpectedPossession ?? (100 - playerPoss));
+  const hasPossession = Number.isFinite(playerPoss) && Number.isFinite(opponentPoss);
+  const roleLower = String(role ?? '').toLowerCase();
+  const isPass = ['pass_attempts', 'passes', 'key_passes', 'crosses'].includes(propType);
+  const isDefender = ['defender', 'cb', 'def', 'fullback', 'wingback', 'stopper'].some((x) => roleLower.includes(x));
+
+  let roleMechanism = '';
+  if (isPass && isDefender) {
+    roleMechanism = `${playerName} is being used as a ${role || 'defensive'} player, so ${prop.toLowerCase()} come mainly from first-phase circulation: receiving the ball from the goalkeeper, recycling possession across the back line, and finding the next outlet. This is not a final-third volume role.`;
+  } else if (isPass) {
+    roleMechanism = `${playerName}'s ${role || 'resolved'} role creates ${prop.toLowerCase()} through ${roleLower.includes('mid') || roleLower.includes('deep') ? 'repeated buildup and recycle actions' : 'linking play when the team can establish possession'}.`;
+  } else if (['shots', 'shots_on_target', 'goals', 'assists'].includes(propType)) {
+    roleMechanism = `${playerName}'s ${role || 'resolved'} role creates this prop through attacking-third access and final actions; possession only helps if it reaches the player's zone.`;
+  } else if (role) {
+    roleMechanism = `${playerName}'s ${role} role is the primary tactical anchor for this ${prop.toLowerCase()} projection.`;
+  }
+
+  let possessionRead = '';
+  if (hasPossession && isPass) {
+    const direction = playerPoss < 50
+      ? 'fewer settled possessions and recycle sequences'
+      : 'more settled possessions and recycle sequences';
+    const supports = (playerPoss < 50 && recommendation === 'UNDER')
+      || (playerPoss >= 50 && recommendation === 'OVER');
+    possessionRead = `The team is projected for ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for ${pick?.opponentName ?? (data as any)?.opponentName ?? 'the opponent'}, which points to ${direction}. ${supports ? `That supports the ${recommendation} read.` : `That conflicts with the ${recommendation} read, so this is a key uncertainty.`}`;
+  } else if (hasPossession) {
+    possessionRead = `The team is projected for ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for the opponent; the effect on ${prop.toLowerCase()} depends on whether the relevant actions are attacking or defensive.`;
+  }
+
+  const shape = lineup.formation && lineup.opponentFormation
+    ? `${lineup.formation} vs ${lineup.opponentFormation}`
+    : null;
+  const shapeRead = shape
+    ? `The projected shape is ${shape}. It supports the role context, but it does not prove a direct marking assignment or exact in-possession zone.`
+    : '';
+
+  const h2h = ti.playerOpponentHistory ?? (data as any)?.h2hPlayerStats?.opponentHitRate;
+  const cohort = ti.positionCohort ?? (data as any)?.positionComparison;
+  const h2hN = Number(h2h?.sampleSize ?? 0);
+  const cohortN = Number(cohort?.sampleSize ?? 0);
+  let opponentRead = '';
+  if (h2hN > 0) {
+    opponentRead = `Against ${h2h?.opponent ?? pick?.opponentName ?? 'this opponent'}, the player has ${h2hN} verified appearance${h2hN === 1 ? '' : 's'}${h2h?.average != null ? ` averaging ${Number(h2h.average).toFixed(1)} ${prop.toLowerCase()}` : ''}; that is ${h2hN < 5 ? 'useful but thin evidence' : 'relevant matchup evidence'}.`;
+  } else if (cohortN > 0) {
+    opponentRead = `No direct player history is available against this opponent. The same-position comparison has only ${cohortN} observation${cohortN === 1 ? '' : 's'}, so it is a limited context signal rather than a decisive edge.`;
+  } else {
+    opponentRead = 'No verified player-level or same-position opponent history is available, so the matchup read is driven by role and team context.';
+  }
+
+  const scriptLabel = String(matchScript.label ?? matchScript.classification ?? '').replace(/_/g, ' ');
+  const scriptRead = scriptLabel && scriptLabel.toLowerCase() !== 'unavailable'
+    ? `Pre-match environment: ${scriptLabel.toLowerCase()}. This is a scenario estimate, not a guaranteed game state.`
+    : '';
+  const limitations: string[] = [];
+  const pressure = tc.pressureResponse ?? (data as any)?.pressureResponse;
+  if (pressure?.status === 'insufficient_evidence') limitations.push('no player pressure-response classification');
+  if (comparison.directMarkingVerified === false) limitations.push('no verified direct marking assignment');
+  if (positional.mode === 'shadow' || mechanism.projectionAdjustmentStatus) limitations.push('tactical signal is context-only, not an extra projection adjustment');
+
+  const conclusion = Number.isFinite(projection) && Number.isFinite(line)
+    ? `Bottom line: the model lands at ${projection.toFixed(1)} against ${line.toFixed(1)}. The ${recommendation || 'model'} is based on the role mechanism plus the evidence above—not on a generic recent-form sentence.`
+    : '';
+
+  if (!roleMechanism && !possessionRead && !shapeRead && !opponentRead) return null;
+  const accent = recommendation === 'OVER' ? Colors.success : recommendation === 'UNDER' ? Colors.error : '#F59E0B';
+
+  return (
+    <View style={[aStyles.tacticalVerdictCard, { borderColor: accent + '66' }]}>
+      <View style={aStyles.proCardHeader}>
+        <View style={[aStyles.proCardPill, { backgroundColor: accent + '20' }]}>
+          <Text style={[aStyles.proCardPillText, { color: accent }]}>PLAYER READ</Text>
+        </View>
+        <Text style={aStyles.proCardTitle}>TACTICAL VERDICT</Text>
+      </View>
+      {roleMechanism ? <Text style={aStyles.tacticalVerdictLead}>{roleMechanism}</Text> : null}
+      {possessionRead ? <Text style={aStyles.proCardNote}>{possessionRead}</Text> : null}
+      {shapeRead ? <Text style={aStyles.proCardNote}>{shapeRead}</Text> : null}
+      {scriptRead ? <Text style={aStyles.proCardNote}>{scriptRead}</Text> : null}
+      {opponentRead ? <Text style={aStyles.proCardNote}>{opponentRead}</Text> : null}
+      {conclusion ? <Text style={[aStyles.tacticalVerdictConclusion, { color: accent }]}>{conclusion}</Text> : null}
+      {limitations.length > 0 ? (
+        <Text style={[aStyles.proCardNote, { color: '#F59E0B' }]}>
+          Limits: {limitations.join(' · ')}.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 /** H2H Intelligence card — historical head-to-head stats vs the same opponent. */
 export function renderH2HIntelligence(
   data: Record<string, unknown> | null,
@@ -710,6 +835,17 @@ export const aStyles = StyleSheet.create({
   proCardPill: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
   proCardPillText: { fontSize: 7, fontWeight: '900', letterSpacing: 1 },
   proCardTitle: { flex: 1, fontSize: 11, fontWeight: '700', color: Colors.text },
+  tacticalVerdictCard: {
+    backgroundColor: 'rgba(20,20,20,0.98)', borderRadius: 11,
+    borderWidth: 1, padding: 12, marginBottom: 8, gap: 8,
+  },
+  tacticalVerdictLead: {
+    fontSize: 12.5, color: Colors.text, lineHeight: 19, fontWeight: '600',
+  },
+  tacticalVerdictConclusion: {
+    fontSize: 11.5, lineHeight: 17, fontWeight: '800',
+    borderTopWidth: 1, borderTopColor: Colors.borderSubtle, paddingTop: 8,
+  },
   proCardMetrics: { flexDirection: 'row', gap: 5 },
   proCardMetric: {
     flex: 1, alignItems: 'center', gap: 2,

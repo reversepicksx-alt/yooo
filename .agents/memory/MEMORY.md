@@ -135,3 +135,4 @@
 - [StatsBomb Open Data evidence](statsbomb-open-data.md) — exact public event coverage supports PPDA/pressure explanations only; restricted or missing coverage stays unavailable and projection-neutral.
 - [Historical evidence replay limits](historical-evidence-replay.md) — separate prediction reruns from evidence coverage; preserve provider date-coverage and rate-limit reasons.
 - [Prediction response identity](prediction-response-identity.md) — normalize explicit null identity fields at the final response boundary, not only missing keys.
+- [Tactical explanation assembly](tactical-explanation-assembly.md) — generate one final role-specific narrative after the ledger; never append early and late explanations together.

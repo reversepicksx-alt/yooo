@@ -109,10 +109,10 @@ def _role_mechanism(position: str, role: str, prop_raw: str) -> str | None:
     if prop in {"pass_attempts", "passes", "key_passes", "crosses"}:
         if pos in {"GK", "GOALKEEPER"}:
             return "As the goalkeeper, the pass volume is primarily a build-up and restart signal: it rises when the team recycles possession through the back line and falls when the team plays longer or spends more time defending."
+        if pos in {"LB", "RB", "LWB", "RWB", "FB"} or "fullback" in role_norm or "wingback" in role_norm:
+            return "As a fullback/wingback, the pass volume is tied to outlet work and width in possession; it can accumulate passes when the team controls territory, but it is less stable when the player is pinned into defensive actions."
         if pos in {"CB", "SW", "DEF"} or "ball-playing defender" in role_norm or "stopper" in role_norm:
             return "As a central defender, the pass volume is primarily circulation behind the attack: it depends on how often the team can retain possession and reset through the first line rather than on final-third touches."
-        if pos in {"LB", "RB", "LWB", "RWB", "FB"} or "fullback" in role_norm or "wingback" in role_norm:
-            return "As a fullback/wingback, the pass volume is tied to the team's outlet work and width in possession; the role can accumulate passes when the team controls territory, but is less stable when the player is pinned into defensive actions."
         if pos in {"DM", "CDM"} or "deep" in role_norm or "regista" in role_norm or "ball winner" in role_norm:
             return "As a deeper midfielder, the pass volume is tied to first- and second-phase circulation: possession control creates repeated outlet and recycle actions before the ball reaches the attacking line."
         if pos in {"CM", "MID"} or "box-to-box" in role_norm or "playmaker" in role_norm or "mezzala" in role_norm:
@@ -213,7 +213,7 @@ def _tactical_mechanism_lines(context: dict[str, Any], prop_raw: str) -> list[st
         )
     elif formation or opponent_formation:
         lines.append(
-            "Shape evidence unavailable: the provider supplied only one formation, "
+            "Shape evidence unavailable: only one lineup formation was available, "
             "so no formation matchup is claimed."
         )
 
@@ -402,34 +402,17 @@ def build_deterministic_explanation(
         ti_poss = tactical_intelligence.get("possessionGameScript") or {}
         ti_compare = tactical_intelligence.get("opponentRoleComparison") or {}
         ti_mechanism = tactical_intelligence.get("propMechanism") or {}
-        ti_role = ti_player.get("role") or ti_player.get("position")
-        ti_shape = ti_lineup.get("formation") and ti_lineup.get("opponentFormation")
-        if ti_role:
-            tactical_lines.append(
-                f"Tactical intelligence identifies the player's nominal role as "
-                f"**{ti_role}**; this is role context, not a verified average-position map."
-            )
-        if ti_shape:
-            tactical_lines.append(
-                f"Shape comparison: **{ti_lineup.get('formation')}** "
-                f"vs **{ti_lineup.get('opponentFormation')}** "
-                f"({str(ti_lineup.get('shapeStatus') or 'unavailable')} lineup data)."
-            )
-        elif ti_lineup.get("formation") or ti_lineup.get("opponentFormation"):
-            tactical_lines.append(
-                "Shape comparison unavailable: one or both provider formations are missing."
-            )
         if ti_market.get("classification") and ti_market.get("status") == "verified_fixture_moneyline":
             _market_label = str(ti_market.get("classification")).replace("_", " ")
             tactical_lines.append(
-                f"Market game script: **{_market_label}** from the verified fixture moneyline. "
-                f"This is combined with possession and role evidence rather than counted as a second independent adjustment."
+                f"Pre-match game script: **{_market_label}** from the fixture market. "
+                f"It is read together with possession and role evidence, not counted twice."
             )
         if ti_poss.get("classification") and ti_poss.get("status") == "verified":
             tactical_lines.append(
                 f"Possession game script: **{str(ti_poss.get('classification')).replace('_', ' ')}** "
                 f"at {_fmt(ti_poss.get('expectedPlayerTeamPossession'), 0)}% expected player-team possession "
-                f"from {ti_poss.get('source') or 'verified fixture statistics'}."
+                f"based on the verified match context."
             )
         if ti_mechanism.get("opponentNote"):
             tactical_lines.append(str(ti_mechanism["opponentNote"]))
@@ -441,7 +424,7 @@ def build_deterministic_explanation(
                 "the tactical comparison remains nominal."
             )
 
-    # Player-specific pressure response is a descriptive API-Football signal.
+    # Player-specific pressure response is a descriptive historical signal.
     # It is deliberately not treated as an applied projection factor until it
     # has passed leakage-safe walk-forward validation.
     pressure_response = tactical_context.get("pressureResponse") or result.get("pressureResponse") or {}
@@ -459,8 +442,8 @@ def build_deterministic_explanation(
             f"(shrunk multiplier {_fmt(multiplier, 2)})."
         )
         tactical_lines.append(
-            "This uses team possession as an API-Football pressure proxy; it is shadow evidence "
-            "and does not change the projection until walk-forward validation supports it."
+            "This is a team-possession pressure proxy, not event-level pressure data; "
+            "it is context-only until walk-forward validation supports using it in the projection."
         )
     elif (
         prop_raw in {"pass_attempts", "passes"}
@@ -468,8 +451,8 @@ def build_deterministic_explanation(
         and pressure_response.get("status") == "insufficient_evidence"
     ):
         tactical_lines.append(
-            "Player pressure-response profile unavailable: API-Football does not yet provide "
-            "enough qualifying low- and high-possession appearances to classify this player."
+            "Pressure-response profile unavailable: there are not enough qualifying "
+            "low- and high-possession appearances to classify this player."
         )
 
     # StatsBomb is a public, historical event-level ground-truth layer.  It is
@@ -482,7 +465,6 @@ def build_deterministic_explanation(
         sb_ppda = sb_metrics.get("ppda")
         sb_pressures = sb_metrics.get("pressureEvents")
         sb_pass_pressure = (sb_metrics.get("passesUnderPressure") or {}).get("opponent")
-        sb_source = statsbomb.get("source") or "StatsBomb Open Data"
         sb_bits = []
         if sb_ppda is not None:
             sb_bits.append(f"event-derived PPDA **{_fmt(sb_ppda, 2)}**")
@@ -492,14 +474,14 @@ def build_deterministic_explanation(
             sb_bits.append(f"**{sb_pass_pressure}** opponent passes under pressure")
         if sb_bits:
             tactical_lines.append(
-                f"Public historical event evidence ({sb_source}) for "
+                f"Public historical event evidence for "
                 f"{sb_match.get('homeTeam', 'home')} vs {sb_match.get('awayTeam', 'away')}: "
                 + ", ".join(sb_bits)
                 + ". This is shadow-only context and does not move the projection."
             )
         else:
             tactical_lines.append(
-                f"{sb_source} covers this historical match, but the requested event metrics are unavailable; "
+                "Historical event coverage exists for this match, but the requested event metrics are unavailable; "
                 "no projection adjustment was applied."
             )
 
