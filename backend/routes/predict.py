@@ -34,6 +34,7 @@ from tactical_evidence import (
 )
 from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
+from compact_explanation import build_compact_explanation
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -5111,6 +5112,128 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     h2h_player_stats = []
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
+        # Team meetings are useful even when the player did not appear in any
+        # of them. Keep them separate from player H2H and group them by the
+        # player's venue. Possession is only shown when a verified fixture
+        # stat cache contains it; missing possession is not converted to 50/50.
+        if h2h_data:
+            async def _read_h2h_possession(fid: int, player_home: bool) -> tuple[int | None, int | None]:
+                home_poss = away_poss = None
+                try:
+                    cached = await db.fixture_player_cache.find_one(
+                        {"_k": f"fxt_poss_{fid}"}, {"_id": 0, "d": 1}
+                    )
+                    raw = (cached or {}).get("d") or {}
+                    home_poss = raw.get("home_poss")
+                    away_poss = raw.get("away_poss")
+
+                    # Older fixture caches may only contain the player's
+                    # team's possession under fxt_{fixture}_{team}.
+                    if home_poss is None or away_poss is None:
+                        team_cached = await db.fixture_player_cache.find_one(
+                            {"_k": f"fxt_{fid}_{actual_team_id}"}, {"_id": 0, "d.possession": 1}
+                        )
+                        team_raw = str(((team_cached or {}).get("d") or {}).get("possession") or "")
+                        team_raw = team_raw.replace("%", "").strip()
+                        if team_raw:
+                            team_poss = int(float(team_raw))
+                            if player_home:
+                                home_poss = team_poss
+                                away_poss = 100 - team_poss
+                            else:
+                                away_poss = team_poss
+                                home_poss = 100 - team_poss
+
+                    # If this historical fixture was never used in a recent
+                    # game-log request, retrieve the verified team stats once
+                    # and persist the pair for future H2H views.
+                    if home_poss is None or away_poss is None:
+                        fixture_stats = await api_football_request(
+                            "fixtures/statistics", {"fixture": fid}
+                        )
+                        for team_stats in fixture_stats or []:
+                            team_id = (team_stats.get("team") or {}).get("id")
+                            for stat in team_stats.get("statistics") or []:
+                                if stat.get("type") != "Ball Possession":
+                                    continue
+                                raw_value = str(stat.get("value") or "").replace("%", "").strip()
+                                try:
+                                    value = int(float(raw_value))
+                                except (TypeError, ValueError):
+                                    continue
+                                if team_id == actual_team_id:
+                                    if player_home:
+                                        home_poss = value
+                                    else:
+                                        away_poss = value
+                                else:
+                                    if player_home:
+                                        away_poss = value
+                                    else:
+                                        home_poss = value
+                        if home_poss is not None or away_poss is not None:
+                            await db.fixture_player_cache.update_one(
+                                {"_k": f"fxt_poss_{fid}"},
+                                {"$set": {"_k": f"fxt_poss_{fid}", "d": {
+                                    "home_poss": home_poss,
+                                    "away_poss": away_poss,
+                                }}},
+                                upsert=True,
+                            )
+                except (TypeError, ValueError):
+                    pass
+                except Exception:
+                    pass
+
+                def _int_poss(value):
+                    try:
+                        return int(float(str(value).replace("%", "").strip()))
+                    except (TypeError, ValueError):
+                        return None
+
+                return _int_poss(home_poss), _int_poss(away_poss)
+
+            async def _build_team_meeting_row(fixture_info: dict) -> tuple[str, dict] | None:
+                try:
+                    teams = fixture_info.get("teams") or {}
+                    home = teams.get("home") or {}
+                    away = teams.get("away") or {}
+                    home_id = home.get("id")
+                    away_id = away.get("id")
+                    if home_id != actual_team_id and away_id != actual_team_id:
+                        return None
+                    player_home = home_id == actual_team_id
+                    fid = (fixture_info.get("fixture") or {}).get("id")
+                    home_poss, away_poss = await _read_h2h_possession(fid, player_home) if fid else (None, None)
+                    row = {
+                        "date": (fixture_info.get("fixture") or {}).get("date", ""),
+                        "score": f"{fixture_info.get('goals', {}).get('home', '—')}-"
+                                 f"{fixture_info.get('goals', {}).get('away', '—')}",
+                        "homeTeam": home.get("name", ""),
+                        "awayTeam": away.get("name", ""),
+                        "homePossession": home_poss,
+                        "awayPossession": away_poss,
+                        "possessionAvailable": home_poss is not None and away_poss is not None,
+                        "venue": "home" if player_home else "away",
+                    }
+                    return row["venue"], row
+                except Exception:
+                    return None
+
+            try:
+                _meeting_rows = await aio.gather(*[
+                    _build_team_meeting_row(item) for item in h2h_data[:H2H_FIXTURE_LIMIT]
+                ])
+                _meetings_by_venue = {"home": [], "away": []}
+                for _meeting in _meeting_rows:
+                    if _meeting:
+                        _venue_key, _row = _meeting
+                        _meetings_by_venue[_venue_key].append(_row)
+            except Exception:
+                _meetings_by_venue = {"home": [], "away": []}
+        else:
+            _meetings_by_venue = {"home": [], "away": []}
+
         if h2h_player_stats:
             # Calculate H2H averages for the target stat
             h2h_values = [s["targetStat"] for s in h2h_player_stats if s.get("targetStat") is not None]
@@ -5140,6 +5263,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             # ── Enriched H2H metadata for the pro analysis display ──────────
             # Total team meetings found (not just ones the player appeared in)
             h2h_summary["teamMeetings"] = len(h2h_data) if h2h_data else 0
+            h2h_summary["teamMeetingsByVenue"] = _meetings_by_venue
 
             # Season span from team H2H fixture dates
             try:
@@ -5195,6 +5319,20 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 pass
 
             historical_data["h2hPlayerStats"] = h2h_summary
+        elif h2h_data:
+            # Preserve team-meeting context for players with no verified
+            # player-specific appearances in the historical fixture set.
+            historical_data["h2hPlayerStats"] = {
+                "matches": [],
+                "targetProp": req.propType,
+                "sampleSize": 0,
+                "searchedFixtureCount": min(len(h2h_data), H2H_FIXTURE_LIMIT),
+                "historySeasons": H2H_HISTORY_SEASONS,
+                "historyDepth": "six seasons",
+                "teamMeetings": len(h2h_data),
+                "teamMeetingsByVenue": _meetings_by_venue,
+                "trendDirection": "stable",
+            }
 
         # Extract player's ACTUAL position from API-Sports data
         player_position = ""
@@ -10120,8 +10258,46 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["factorLedgerVersion"] = "projection-ledger-v1"
             prediction["factorLedgerFingerprint"] = _ledger_fingerprint
 
-            from deterministic_explanations import build_deterministic_explanation
-            build_deterministic_explanation(prediction, _ledger_payload)
+            # The ledger is now complete. Gemini may only write the short
+            # customer paragraph from this final snapshot; it cannot alter
+            # projection, direction, confidence, or any evidence field.
+            if str(req.sport or "soccer").lower() == "soccer":
+                try:
+                    (
+                        _compact_text,
+                        _compact_source,
+                        _compact_cache_key,
+                    ) = await build_compact_explanation(
+                        prediction,
+                        _ledger_payload,
+                        _ledger_fingerprint,
+                    )
+                    prediction["tacticalBreakdown"] = _compact_text
+                    prediction["reasoning"] = _compact_text
+                    prediction["sharpSummary"] = _compact_text
+                    prediction["aiSource"] = _compact_source
+                    prediction["explanationSource"] = _compact_source
+                    prediction["explanationVersion"] = "compact-match-context-v1"
+                    prediction["aiExplanationCacheKey"] = _compact_cache_key
+                    prediction["aiPending"] = False
+                    print(
+                        f"[COMPACT EXPLANATION] source={_compact_source} "
+                        f"chars={len(_compact_text)} cache={_compact_cache_key}"
+                    )
+                except Exception as _compact_err:
+                    # Explanation generation is strictly optional; never turn
+                    # a valid deterministic prediction into a 500.
+                    print(f"[COMPACT EXPLANATION] failed: {_compact_err}")
+                    prediction["tacticalBreakdown"] = (
+                        "The final model projection is available above. "
+                        "Additional match context is unavailable for this pick."
+                    )
+                    prediction["reasoning"] = prediction["tacticalBreakdown"]
+                    prediction["sharpSummary"] = prediction["tacticalBreakdown"]
+                    prediction["aiSource"] = "compact_deterministic"
+                    prediction["explanationSource"] = "compact_deterministic"
+                    prediction["explanationVersion"] = "compact-match-context-v1"
+                    prediction["aiPending"] = False
 
             # Rebuild the authoritative math footer after all late calibration
             # and guard stages. This prevents a correct structured narrative from being
@@ -10143,7 +10319,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 f"Confidence: {_display_conf_final:.0f}% ({prediction.get('confidenceLevel', 'Medium')})\n"
                 f"Ledger: {_ledger_fingerprint} | Factors recorded: {len(_factor_ledger)}"
             )
-            prediction["tacticalBreakdown"] += "\n\n---\n" + _final_math_footer
+            # Keep the math ledger structured for the UI/owner audit trail.
+            # Do not append it to the customer paragraph; that was the source
+            # of the oversized Turner-style explanation.
+            prediction["finalMathLedgerText"] = _final_math_footer
         except Exception as _ledger_err:
             # The ledger is diagnostic/explanatory and must never take down a
             # valid math prediction. Keep the explicit math source marker.

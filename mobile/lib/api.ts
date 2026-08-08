@@ -508,6 +508,26 @@ export interface PredictionResult {
     sampleSize: number;
     targetProp?: string;
     teamMeetings?: number;
+    teamMeetingsByVenue?: {
+      home?: Array<{
+        date?: string;
+        score?: string;
+        homeTeam?: string;
+        awayTeam?: string;
+        homePossession?: number | null;
+        awayPossession?: number | null;
+        possessionAvailable?: boolean;
+      }>;
+      away?: Array<{
+        date?: string;
+        score?: string;
+        homeTeam?: string;
+        awayTeam?: string;
+        homePossession?: number | null;
+        awayPossession?: number | null;
+        possessionAvailable?: boolean;
+      }>;
+    };
     seasonsCovered?: { min: number; max: number; range: string } | null;
     trendDirection?: 'improving' | 'declining' | 'stable';
     trendDelta?: number;
@@ -767,6 +787,27 @@ interface RawPrediction {
     avgVsOpponent?: number;
     sampleSize?: number;
     targetProp?: string;
+    teamMeetings?: number;
+    teamMeetingsByVenue?: {
+      home?: Array<{
+        date?: string;
+        score?: string;
+        homeTeam?: string;
+        awayTeam?: string;
+        homePossession?: number | null;
+        awayPossession?: number | null;
+        possessionAvailable?: boolean;
+      }>;
+      away?: Array<{
+        date?: string;
+        score?: string;
+        homeTeam?: string;
+        awayTeam?: string;
+        homePossession?: number | null;
+        awayPossession?: number | null;
+        possessionAvailable?: boolean;
+      }>;
+    };
   };
   matchDominance?: {
     applied?: boolean;
@@ -1104,9 +1145,10 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
           total: raw.playerGameLogs.hitRates.total,
         }
       : undefined,
-    h2hPlayerStats: raw.h2hPlayerStats?.matches?.length
+    h2hPlayerStats: raw.h2hPlayerStats
+      && (raw.h2hPlayerStats.matches?.length || raw.h2hPlayerStats.teamMeetings)
       ? {
-          matches: raw.h2hPlayerStats.matches.map(m => ({
+          matches: (raw.h2hPlayerStats.matches ?? []).map(m => ({
             date: m.date || '',
             score: m.score || m.matchScore || '',
             venue: m.venue || '',
@@ -1119,6 +1161,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
           avgVsOpponent: raw.h2hPlayerStats.avgVsOpponent,
           sampleSize: raw.h2hPlayerStats.sampleSize || 0,
           targetProp: raw.h2hPlayerStats.targetProp,
+          teamMeetings: raw.h2hPlayerStats.teamMeetings,
+          teamMeetingsByVenue: raw.h2hPlayerStats.teamMeetingsByVenue,
         }
       : undefined,
     expectedPossession: raw.matchupOverview?.expectedPossession

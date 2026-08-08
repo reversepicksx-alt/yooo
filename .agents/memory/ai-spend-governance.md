@@ -1,10 +1,10 @@
 ---
 name: AI spend governance
-description: Durable rule that external language and vision generation is disabled.
+description: Durable rule for one bounded cached Gemini paragraph and deterministic math
 ---
 
-External language and vision generation is permanently disabled. User-facing explanations must be deterministic and derived only from the finalized model ledger and recorded evidence. API-backed data retrieval and structured sports math remain allowed.
+External language and vision generation remains disabled except for one short Gemini paragraph per finalized soccer pick. The paragraph is wording only: projection, direction, confidence, and evidence come from the finalized deterministic ledger. API-backed data retrieval and structured sports math remain allowed.
 
-**Why:** Shared provider budget exhaustion made explanations unavailable and multiple legacy entry points could bypass a single guard. A deterministic-only policy removes that failure mode and keeps explanations reproducible.
+**Why:** Shared provider budget exhaustion made explanations unavailable and multiple legacy entry points could bypass a single guard. The narrow exception restores useful customer wording without reopening chat, OCR, background enrichment, or long reports.
 
-**How to apply:** Do not add provider clients, provider keys, generation calls, OCR, tactical generation, or background enrichment. Return an explicit unavailable response for features that cannot be implemented with structured data.
+**How to apply:** Bound output and evidence, serialize duplicate generation by finalized ledger identity, cache successful text, count attempts against a daily limit, and fail back to compact deterministic text on errors.

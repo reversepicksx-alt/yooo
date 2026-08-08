@@ -12,6 +12,7 @@ import {
   renderManagerContext,
   renderTacticalIntelligence,
   renderTacticalVerdict,
+  renderH2HIntelligence,
 } from '@/components/AnalysisCards';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -4901,7 +4902,7 @@ export default function ScanScreen() {
                       MODEL EXPLANATION
                     </Text>
                     <Text style={{ fontSize: 9, color: Colors.textTertiary, marginLeft: 'auto', fontWeight: '600' }}>
-                      DETERMINISTIC · FULL ANALYSIS
+                      COMPACT MATCH CONTEXT
                     </Text>
                   </View>
                   <View style={{ gap: 0, marginTop: 4 }}>
@@ -4951,7 +4952,11 @@ export default function ScanScreen() {
               const matchupEl   = renderMatchupPossession(pred, pickCtx);
               const mgrEl       = renderManagerContext(pred);
               const tacticalEl = renderTacticalIntelligence(pred);
-                if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl && !tacticalEl) return null;
+              const h2hEl       = renderH2HIntelligence(pred, {
+                opponentName: prediction.opponentName || prediction.opponent,
+                line: prediction.line,
+              });
+              if (!evidenceEl && !oppDefEl && !matchupEl && !mgrEl && !tacticalEl && !h2hEl) return null;
               return (
                 <View style={{ gap: 0, marginTop: 6 }}>
                   {evidenceEl}
@@ -4959,6 +4964,7 @@ export default function ScanScreen() {
                   {oppDefEl}
                   {matchupEl}
                   {tacticalEl}
+                  {h2hEl}
                 </View>
               );
             })()}

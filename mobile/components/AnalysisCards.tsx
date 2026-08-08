@@ -344,7 +344,7 @@ export function renderH2HIntelligence(
 ) {
   if (!data) return null;
   const h2h = (data as any)?.h2hPlayerStats;
-  if (!h2h || !h2h.sampleSize) return null;
+  if (!h2h || (!(h2h.sampleSize > 0) && !(h2h.teamMeetings > 0))) return null;
   const matches: any[] = h2h.matches ?? [];
   const avg: number | undefined = h2h.avgVsOpponent;
   const trend: string | undefined = h2h.trendDirection;
@@ -357,6 +357,11 @@ export function renderH2HIntelligence(
   const trendIcon: any =
     trend === 'improving' ? 'trending-up' : trend === 'declining' ? 'trending-down' : 'remove';
   const vhr = h2h.venueHitRate;
+  const meetingsByVenue = h2h.teamMeetingsByVenue ?? {};
+  const venueMeetings = [
+    ...(Array.isArray(meetingsByVenue.home) ? meetingsByVenue.home.map((m: any) => ({ ...m, venueLabel: 'HOME' })) : []),
+    ...(Array.isArray(meetingsByVenue.away) ? meetingsByVenue.away.map((m: any) => ({ ...m, venueLabel: 'AWAY' })) : []),
+  ];
   const prop =
     PROP_LABELS[h2h.targetProp ?? ''] ?? (h2h.targetProp ?? '').replace(/_/g, ' ');
   return (
@@ -366,7 +371,9 @@ export function renderH2HIntelligence(
           <Text style={[aStyles.proCardPillText, { color: Colors.primary }]}>H2H</Text>
         </View>
         <Text style={aStyles.proCardTitle} numberOfLines={1}>
-          {h2h.sampleSize} app{h2h.sampleSize !== 1 ? 's' : ''} vs {pick?.opponentName}
+          {h2h.sampleSize
+            ? `${h2h.sampleSize} app${h2h.sampleSize !== 1 ? 's' : ''} vs ${pick?.opponentName}`
+            : `${h2h.teamMeetings ?? 0} team meeting${h2h.teamMeetings !== 1 ? 's' : ''} vs ${pick?.opponentName}`}
           {h2h.seasonsCovered ? ` · ${h2h.seasonsCovered.range}` : ''}
         </Text>
       </View>
@@ -446,6 +453,27 @@ export function renderH2HIntelligence(
               </View>
             );
           })}
+        </View>
+      )}
+      {venueMeetings.length > 0 && (
+        <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: Colors.borderSubtle, paddingTop: 8 }}>
+          <Text style={[aStyles.proCardMetricLabel, { marginBottom: 5 }]}>
+            TEAM MEETINGS BY VENUE · POSSESSION
+          </Text>
+          {venueMeetings.slice(0, 8).map((m: any, i: number) => (
+            <View key={`team-meeting-${i}`} style={aStyles.h2hRow}>
+              <Text style={aStyles.h2hDate}>{String(m.date ?? '').slice(0, 10) || '—'}</Text>
+              <Text style={aStyles.h2hVenue}>{m.venueLabel}</Text>
+              <Text style={aStyles.h2hOpp} numberOfLines={1}>
+                {m.homeTeam || '?'}–{m.awayTeam || '?'}
+              </Text>
+              <Text style={aStyles.h2hPoss}>
+                {m.homePossession != null && m.awayPossession != null
+                  ? `${m.homePossession}%–${m.awayPossession}%`
+                  : 'Poss. —'}
+              </Text>
+            </View>
+          ))}
         </View>
       )}
     </View>

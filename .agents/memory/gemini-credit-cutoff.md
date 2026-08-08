@@ -1,10 +1,10 @@
 ---
 name: Gemini credit cutoff
-description: Emergency operating mode that disables all Gemini generation while preserving deterministic prediction math
+description: Emergency operating mode and narrowly controlled exception for short cached match explanations
 ---
 
-Gemini generation must remain disabled globally when credit protection is active. This includes shared prediction calls, background narrative synthesis, tactical chat, OCR/vision, and direct LLM adapter calls; deterministic Bayesian/math predictions must continue without waiting for AI.
+Gemini generation remains disabled globally except for the explicitly bounded soccer match-explanation path: one short call after the final ledger, with a compact evidence packet, strict output cap, daily attempt budget, and ledger-bound cache. Chat, OCR/vision, background enrichment, and direct legacy adapters remain disabled.
 
-**Why:** Repeated background, fallback, chat, and vision requests consumed credits too quickly. A single wrapper guard was insufficient because several routes instantiated the LLM adapter or Google client directly.
+**Why:** The earlier broad disable protected against repeated background, fallback, chat, and vision requests. The exception restores useful customer wording without reopening those surfaces or the old long report.
 
-**How to apply:** Re-enable only by deliberately changing the global feature flag, restoring any client-side AI requests, rebuilding the web bundle, restarting services, and publishing the updated deployment. Do not infer production is protected from local verification alone.
+**How to apply:** Keep `api_version: ''` on the Replit Gemini client, never pass provider names to customers, and verify cache/budget/fallback behavior after deployment. Do not re-enable other generation surfaces.

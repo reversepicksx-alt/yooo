@@ -1156,14 +1156,18 @@ class _AiBudgetRequest(BaseModel):
 
 @router.post("/ai-budget")
 async def admin_ai_budget(req: _AiBudgetRequest):
-    """Owner-only status for the permanently disabled external-generation path."""
+    """Owner-only status for the bounded compact-explanation path."""
     await verify_owner(req.email, req.token)
     return {
-        "enabled": False,
-        "available": False,
+        "enabled": True,
+        "available": True,
+        "scope": "compact_match_explanation_only",
         "count": 0,
-        "limit": 0,
-        "message": "External generation is permanently disabled; deterministic model explanations are active.",
+        "limit": 200,
+        "message": (
+            "Only one short cached match-context paragraph is allowed per finalized "
+            "soccer pick. Projection math, chat, OCR, vision, and background generation remain disabled."
+        ),
     }
 
 class _StorageHealthRequest(BaseModel):

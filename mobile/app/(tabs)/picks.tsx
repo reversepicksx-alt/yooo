@@ -31,7 +31,11 @@ import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { renderTacticalIntelligence, renderTacticalVerdict } from '@/components/AnalysisCards';
+import {
+  renderH2HIntelligence,
+  renderTacticalIntelligence,
+  renderTacticalVerdict,
+} from '@/components/AnalysisCards';
 
 type Tab = 'live' | 'history';
 
@@ -1549,6 +1553,10 @@ export default function PicksScreen() {
               analysisModal?.data as Record<string, unknown> | null,
               analysisModal?.pick ?? null,
             )}
+            {!analysisModal?.loading && renderH2HIntelligence(
+              analysisModal?.data as Record<string, unknown> | null,
+              analysisModal?.pick as any,
+            )}
 
             {/* ── OPPONENT DEFENSIVE PROFILE ── */}
             {!analysisModal?.loading && renderOpponentDefProfile(
@@ -1600,7 +1608,7 @@ export default function PicksScreen() {
                         color={Colors.textTertiary}
                       />
                       <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 1.1, color: Colors.textTertiary }}>
-                        DETERMINISTIC · FULL MODEL EXPLANATION
+                        COMPACT MATCH CONTEXT
                       </Text>
                     </View>
                     {renderAnalysisBlocks(modalText, modalRec)}
