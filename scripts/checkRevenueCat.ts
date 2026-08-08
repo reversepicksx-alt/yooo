@@ -9,7 +9,7 @@ async function checkRevenueCat() {
 
   // Project
   const { data: projects } = await listProjects({ client, query: { limit: 20 } });
-  const project = projects.items?.find((p: any) => p.name === "Reverse Picks") ?? projects.items?.[0];
+  const project = projects.items?.find((p: any) => /reverse\s*picks/i.test(p.name ?? "")) ?? projects.items?.[0];
   if (!project) { console.log("❌ No project found"); return; }
   console.log(`✅ Project: ${project.name} (${project.id})`);
 
