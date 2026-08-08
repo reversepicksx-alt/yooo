@@ -457,6 +457,7 @@ async def mlb_predict(req: MlbPredictRequest):
     # even though the shared deterministic explanation layer can describe the
     # actual baseball factors without inventing a narrative.
     from deterministic_explanations import build_sport_deterministic_explanation
+    from prop_safety_cache import get_prop_safety as _get_prop_safety
     response["historyGameCount"] = len(game_logs)
     response["historySeasons"] = sorted({
         int(g.get("season"))
@@ -468,6 +469,21 @@ async def mlb_predict(req: MlbPredictRequest):
             "min": min(response["historySeasons"]),
             "max": max(response["historySeasons"]),
         }
+    # Attach empirical safety data so the explanation layer can surface AVOID evidence.
+    _mlb_rec_upper = str(response.get("recommendation") or "").upper()
+    if _mlb_rec_upper in {"OVER", "UNDER"}:
+        _mlb_safety_data = _get_prop_safety(
+            prop_type,
+            _mlb_rec_upper,
+            league_id=None,
+            position=position or "",
+        )
+        if _mlb_safety_data:
+            response["safetyRating"] = _mlb_safety_data.get("safety", "RISKY")
+            response["propHistoricalRate"] = _mlb_safety_data.get("hitRate")
+            response["propHistoricalN"] = _mlb_safety_data.get("n")
+        else:
+            response.setdefault("safetyRating", "RISKY")
     build_sport_deterministic_explanation(response, "mlb")
 
     # ── Standard matchupOverview (unified UI — works for all sports) ─────────

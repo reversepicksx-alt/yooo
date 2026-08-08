@@ -9729,6 +9729,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 if _final_projection is not None and req.line is not None else None,
                 "edgeRating": prediction.get("edgeRating"),
                 "safetyRating": prediction.get("safetyRating"),
+                "propHistoricalRate": _final_hist_rate,
+                "propHistoricalN": _final_hist_n if _final_hist_n else None,
             }
             for _idx, _factor in enumerate(_factor_ledger, start=1):
                 _factor["sequence"] = _idx

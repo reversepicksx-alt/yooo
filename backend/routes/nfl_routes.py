@@ -259,5 +259,21 @@ async def nfl_predict(req: NflPredictRequest):
         },
     }
     from deterministic_explanations import build_sport_deterministic_explanation
+    from prop_safety_cache import get_prop_safety as _get_prop_safety
+    # Attach empirical safety data so the explanation layer can surface AVOID evidence.
+    _nfl_rec_upper = str(response.get("recommendation") or "").upper()
+    if _nfl_rec_upper in {"OVER", "UNDER"}:
+        _nfl_safety_data = _get_prop_safety(
+            prop_type,
+            _nfl_rec_upper,
+            league_id=None,
+            position=position or "",
+        )
+        if _nfl_safety_data:
+            response["safetyRating"] = _nfl_safety_data.get("safety", "RISKY")
+            response["propHistoricalRate"] = _nfl_safety_data.get("hitRate")
+            response["propHistoricalN"] = _nfl_safety_data.get("n")
+        else:
+            response.setdefault("safetyRating", "RISKY")
     build_sport_deterministic_explanation(response, "nfl")
     return normalize_response(response)

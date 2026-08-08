@@ -318,12 +318,31 @@ def build_deterministic_explanation(
         if expected_poss_player:
             expected_poss_opp = round(100 - expected_poss_player, 1)
 
+    # ── AVOID evidence ────────────────────────────────────────────────────────
+    avoid_hist_rate = _num(final.get("propHistoricalRate", result.get("propHistoricalRate")))
+    avoid_hist_n = final.get("propHistoricalN") or result.get("propHistoricalN")
+    try:
+        avoid_hist_n = int(avoid_hist_n) if avoid_hist_n is not None else None
+    except (TypeError, ValueError):
+        avoid_hist_n = None
+
+    def _avoid_evidence_str(direction: str) -> str:
+        """Return an inline evidence string for AVOID ratings."""
+        if avoid_hist_rate is not None and avoid_hist_n:
+            return (
+                f"{avoid_hist_rate:.0f}% historical {direction} hit rate, "
+                f"n={avoid_hist_n} settled events"
+            )
+        if avoid_hist_rate is not None:
+            return f"{avoid_hist_rate:.0f}% historical {direction} hit rate"
+        return "calibrated empirical hit-rate data"
+
     # ── Verdict ───────────────────────────────────────────────────────────────
     if recommendation == "PASS":
         _edge_num = _num(edge)
         if safety in {"AVOID", "AVOID**"}:
             _pass_reason = (
-                f"safety is {safety} based on calibrated empirical hit-rate data"
+                f"safety is {safety} ({_avoid_evidence_str('OVER/UNDER')})"
             )
         elif _edge_num is not None and _edge_num < 2.0:
             _pass_reason = f"the {_fmt(edge)}-unit edge is within the model's noise range"
@@ -555,10 +574,12 @@ def build_deterministic_explanation(
     )
     if recommendation == "PASS":
         confidence_line += " Confidence does not override the PASS decision."
-    elif safety in {"AVOID", "AVOID**"}:
+    if safety in {"AVOID", "AVOID**"}:
+        _avoid_dir = recommendation if recommendation in {"OVER", "UNDER"} else "OVER/UNDER"
+        _avoid_detail = _avoid_evidence_str(_avoid_dir)
         confidence_line += (
-            " AVOID safety means empirical hit-rate data for this prop/direction "
-            "does not support the math edge — treat as informational only."
+            f" **AVOID**: {_avoid_detail} — empirical data does not support the math edge; "
+            f"treat as informational only."
         )
 
     # ── Summary (sharpSummary) ────────────────────────────────────────────────
@@ -660,12 +681,41 @@ def build_sport_deterministic_explanation(
         f"{max(p_over or 0, p_under or 0):.0f}% modeled probability."
         if line is not None else f"{matchup}: {rec} recommendation for {prop}."
     )
+    # ── Safety / AVOID evidence ───────────────────────────────────────────────
+    sport_safety = str(prediction.get("safetyRating") or "RISKY").upper()
+    sport_hist_rate = _num(prediction.get("propHistoricalRate"))
+    sport_hist_n_raw = prediction.get("propHistoricalN")
+    try:
+        sport_hist_n = int(sport_hist_n_raw) if sport_hist_n_raw is not None else None
+    except (TypeError, ValueError):
+        sport_hist_n = None
+
+    avoid_note = ""
+    if sport_safety in {"AVOID", "AVOID**"}:
+        if sport_hist_rate is not None and sport_hist_n:
+            avoid_note = (
+                f" **AVOID**: {sport_hist_rate:.0f}% historical {rec.upper()} hit rate, "
+                f"n={sport_hist_n} settled events — empirical data does not support the math edge; "
+                f"treat as informational only."
+            )
+        elif sport_hist_rate is not None:
+            avoid_note = (
+                f" **AVOID**: {sport_hist_rate:.0f}% historical {rec.upper()} hit rate — "
+                f"empirical data does not support the math edge; treat as informational only."
+            )
+        else:
+            avoid_note = (
+                f" **AVOID** safety: calibrated empirical hit-rate data does not support the math edge; "
+                f"treat as informational only."
+            )
+
     prediction["sharpSummary"] = summary
     prediction["tacticalBreakdown"] = (
         f"**{sport.upper()} matchup context**\n" + "\n".join(f"- {n}" for n in notes) +
         f"\n\n**Decision**\n- {rec} is supported by "
         f"{max(p_over or 0, p_under or 0):.0f}% modeled probability"
         + (f" and {confidence:.0f}% displayed confidence." if confidence is not None else ".")
+        + avoid_note
     )
     prediction["reasoning"] = prediction["tacticalBreakdown"]
     prediction["keyFactors"] = notes[:6]
