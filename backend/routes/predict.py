@@ -1233,10 +1233,15 @@ async def predict(req: PredictionRequest):
                         result["cards_yellow_agg"]      = None
                         result["cards_red_agg"]         = None
 
-                    # Cache the enriched result
-                    await db.fixture_player_cache.update_one(
-                        {"_k": cache_key}, {"$set": {"_k": cache_key, "_ts": datetime.now(timezone.utc), "d": result}}, upsert=True
-                    )
+                    # Cache the enriched result when storage permits. Atlas
+                    # quota exhaustion must never discard an otherwise valid
+                    # fixture/player result.
+                    try:
+                        await db.fixture_player_cache.update_one(
+                            {"_k": cache_key}, {"$set": {"_k": cache_key, "_ts": datetime.now(timezone.utc), "d": result}}, upsert=True
+                        )
+                    except Exception as _cache_write_err:
+                        print(f"[FIXTURE CACHE WRITE] skipped: {_cache_write_err}")
                     result["date"]     = fix.get("date", "")[:10]
                     result["opponent"] = fix.get("opponent", "")
                     result["venue"]    = fix.get("venue", "")
@@ -1549,13 +1554,16 @@ async def predict(req: PredictionRequest):
                                                         pass
                                         # Cache for future calls (permanent — historical fixtures don't change)
                                         if home_poss is not None or away_poss is not None:
-                                            await db.fixture_player_cache.update_one(
-                                                {"_k": poss_cache_key},
-                                                {"$set": {"_k": poss_cache_key, "d": {
-                                                    "home_poss": home_poss, "away_poss": away_poss
-                                                }}},
-                                                upsert=True
-                                            )
+                                            try:
+                                                await db.fixture_player_cache.update_one(
+                                                    {"_k": poss_cache_key},
+                                                    {"$set": {"_k": poss_cache_key, "d": {
+                                                        "home_poss": home_poss, "away_poss": away_poss
+                                                    }}},
+                                                    upsert=True
+                                                )
+                                            except Exception as _poss_cache_err:
+                                                print(f"[POSSESSION CACHE WRITE] skipped: {_poss_cache_err}")
                                 # Assign to the game log based on this player's venue
                                 if fix_venue == "home" and home_poss is not None:
                                     gl_dict["teamPossession"] = home_poss
@@ -5173,14 +5181,17 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                     else:
                                         home_poss = value
                         if home_poss is not None or away_poss is not None:
-                            await db.fixture_player_cache.update_one(
-                                {"_k": f"fxt_poss_{fid}"},
-                                {"$set": {"_k": f"fxt_poss_{fid}", "d": {
-                                    "home_poss": home_poss,
-                                    "away_poss": away_poss,
-                                }}},
-                                upsert=True,
-                            )
+                            try:
+                                await db.fixture_player_cache.update_one(
+                                    {"_k": f"fxt_poss_{fid}"},
+                                    {"$set": {"_k": f"fxt_poss_{fid}", "d": {
+                                        "home_poss": home_poss,
+                                        "away_poss": away_poss,
+                                    }}},
+                                    upsert=True,
+                                )
+                            except Exception as _poss_cache_err:
+                                print(f"[POSSESSION CACHE WRITE] skipped: {_poss_cache_err}")
                 except (TypeError, ValueError):
                     pass
                 except Exception:
@@ -5479,10 +5490,13 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         corrected_role = sorted(valid_roles)[0] if valid_roles else ""
                         print(f"[POS RESOLVE] Cache role fix: {req.playerName} {specific_position}/{player_role} → {corrected_role}")
                         player_role = corrected_role
-                        await db.player_positions.update_one(
-                            {"playerId": req.playerId},
-                            {"$set": {"role": corrected_role}}
-                        )
+                        try:
+                            await db.player_positions.update_one(
+                                {"playerId": req.playerId},
+                                {"$set": {"role": corrected_role}}
+                            )
+                        except Exception as _role_cache_err:
+                            print(f"[POS ROLE CACHE WRITE] skipped: {_role_cache_err}")
                     else:
                         print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
 
@@ -5500,20 +5514,23 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         "Attacker": ("ST", "Complete Forward"),
                     }
                     specific_position, player_role = category_defaults[player_position]
-                    await db.player_positions.update_one(
-                        {"playerId": req.playerId},
-                        {"$set": {
-                            "playerId": req.playerId,
-                            "playerName": req.playerName,
-                            "team": corrected_team_name,
-                            "genericPosition": player_position,
-                            "specificPosition": specific_position,
-                            "role": player_role,
-                            "promptVersion": POSITION_PROMPT_VERSION,
-                            "updatedAt": datetime.now(timezone.utc).isoformat(),
-                        }},
-                        upsert=True
-                    )
+                    try:
+                        await db.player_positions.update_one(
+                            {"playerId": req.playerId},
+                            {"$set": {
+                                "playerId": req.playerId,
+                                "playerName": req.playerName,
+                                "team": corrected_team_name,
+                                "genericPosition": player_position,
+                                "specificPosition": specific_position,
+                                "role": player_role,
+                                "promptVersion": POSITION_PROMPT_VERSION,
+                                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                            }},
+                            upsert=True
+                        )
+                    except Exception as _position_cache_err:
+                        print(f"[POSITION CACHE WRITE] skipped: {_position_cache_err}")
                     print(
                         f"[POS RESOLVE] Category fallback: {req.playerName} "
                         f"{player_position} → {specific_position} | {player_role} (cached)"
