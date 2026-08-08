@@ -9,6 +9,12 @@ The final prediction persistence write and every optional cache write inside pre
 
 **How to apply:** Guard cache writes for fixture/player data, possession, resolved roles/positions, and final prediction analytics independently. Reads and math must continue when writes fail. Do not delete production data automatically, and separately clean up or upgrade the Atlas cluster before relying on stored analytics again.
 
+Required saved-pick writes are different: a quota rejection must return an explicit storage-full response and must never report the pick as saved.
+
+**Why:** A required save that fails silently creates false user history and cannot be repaired reliably from process-local state.
+
+**How to apply:** Preserve the structured storage-full response through the client; repair Atlas capacity before relying on saved-pick persistence again.
+
 The same Atlas write block affects support-critical features such as direct-message sends and read receipts. Those routes must return an explicit storage-full response for sends and treat read receipts as non-critical, while the database is repaired.
 
 **Why:** A successful read from `direct_messages` can create the misleading impression that customer replies are working even though the subsequent insert/update is rejected at the storage ceiling.

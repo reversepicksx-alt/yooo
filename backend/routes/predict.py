@@ -27,6 +27,8 @@ from prop_safety_cache import (
 import soccer_bdl_client as _bdl_soc
 from tactical_evidence import (
     build_tactical_conclusion,
+    normalize_observed_position,
+    position_cohort_verdict,
     resolve_observed_role,
     summarize_observed_positions,
     summarize_player_opponent_history,
@@ -1767,11 +1769,23 @@ async def predict(req: PredictionRequest):
             "duels_won": ("duels", "won"), "yellow_cards": ("cards", "yellow"),
         }
 
-        async def fetch_position_comparison(opp_fixtures, target_pos, prop_type, opponent_id, player_venue_filter, limit=10, target_specific_pos=None):
-            """Fetch same-position players who played against the opponent recently.
+        async def fetch_position_comparison(
+            opp_fixtures,
+            target_pos,
+            prop_type,
+            opponent_id,
+            player_venue_filter,
+            limit=15,
+            target_specific_pos=None,
+            target_role=None,
+        ):
+            """Fetch same-position, same-role players who played against the opponent.
             Filters by venue: if target player is AWAY, only show comparison players' AWAY performances.
             Also fetches possession data for each match.
-            If target_specific_pos is set (e.g., 'CB'), filters out players with cached positions that don't match."""
+            If target_specific_pos/target_role is set, the candidate must match the
+            verified specific position and deterministic role. API-Football does not
+            provide tactical role labels, so role matching uses cached role when
+            available and the fixture player's own stat fingerprint otherwise."""
             fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
             if not fixture_pos or not opp_fixtures:
                 return []
@@ -1833,27 +1847,67 @@ async def predict(req: PredictionRequest):
                             stat_val = pstats.get(stat_cat, {}).get(stat_sub)
                             if stat_val is None:
                                 continue
+                            cross_prop_stats = {}
+                            for _cross_prop, (_cross_cat, _cross_sub) in PROP_STAT_KEYS.items():
+                                _cross_value = (pstats.get(_cross_cat) or {}).get(_cross_sub)
+                                if _cross_value is not None:
+                                    try:
+                                        cross_prop_stats[_cross_prop] = float(_cross_value)
+                                    except (TypeError, ValueError):
+                                        pass
                             rating = pstats.get("games", {}).get("rating")
                             p_id = p.get("player", {}).get("id")
                             p_name = p.get("player", {}).get("name", "")
 
-                            # Look up cached specific position + role
+                            # Look up cached specific position + role. Atlas may be
+                            # write-blocked, so a missing cache row is expected; in
+                            # that case infer the role from this API fixture row.
                             cached_pr = await db.player_positions.find_one(
                                 {"playerId": p_id}, {"_id": 0, "specificPosition": 1, "role": 1}
                             ) if p_id else None
                             spec_pos = (cached_pr or {}).get("specificPosition", "")
                             spec_role = (cached_pr or {}).get("role", "")
+                            observed_normalized = normalize_observed_position(pos)
+                            role_stats = {
+                                "appearances": 1,
+                                "passes_total": (pstats.get("passes") or {}).get("total"),
+                                "key_passes": (pstats.get("passes") or {}).get("key"),
+                                "tackles_total": (pstats.get("tackles") or {}).get("total"),
+                                "dribbles_attempts": (pstats.get("dribbles") or {}).get("attempts"),
+                                "shots_total": (pstats.get("shots") or {}).get("total"),
+                                "clearances": (pstats.get("tackles") or {}).get("clearances"),
+                            }
+                            observed_role = resolve_observed_role(pos, role_stats)
+                            candidate_role = spec_role or observed_role.get("role") or ""
 
                             # Prefer the actual position recorded in this match
                             # over a stale cache row. If neither exists, retain
                             # the broad provider category rather than inventing
                             # an exact position.
                             observed_pos = str(pos or "").strip().upper().replace(" ", "")
+                            target_generic_category = {
+                                "GK": "GK",
+                                "CB": "DEF", "LB": "DEF", "RB": "DEF",
+                                "LWB": "DEF", "RWB": "DEF",
+                                "CDM": "MID", "CM": "MID", "CAM": "MID",
+                                "LM": "MID", "RM": "MID",
+                                "LW": "FWD", "RW": "FWD", "CF": "FWD",
+                                "ST": "FWD", "SS": "FWD",
+                            }.get(target_specific_pos, fixture_pos)
                             if target_specific_pos and (
                                 (spec_pos and spec_pos != target_specific_pos)
-                                or (not spec_pos and observed_pos and observed_pos != target_specific_pos)
+                                or (
+                                    not spec_pos
+                                    and observed_pos
+                                    and observed_normalized not in {
+                                        target_specific_pos,
+                                        target_generic_category,
+                                    }
+                                )
                             ):
                                 continue  # Skip — cached position doesn't match target
+                            if target_role and candidate_role != target_role:
+                                continue  # Same position is not enough; role must match too.
 
                             # GK-specific: capture goals conceded for per-game save rate.
                             # For saves prop: stat_cat="goals", stat_sub="saves" per PROP_STAT_KEYS.
@@ -1873,13 +1927,16 @@ async def predict(req: PredictionRequest):
                                 "team": team_name,
                                 "minutes": minutes,
                                 "statValue": stat_val,
+                                "crossPropStats": cross_prop_stats,
                                 "rating": float(rating) if rating else None,
                                 "date": fix.get("date", "")[:10],
                                 "per90": round((stat_val / minutes) * 90, 2) if minutes > 0 else 0,
                                 "venue": comp_team_venue,
                                 "position": spec_pos or pos,
+                                "positionMatch": "specific" if spec_pos else "provider_category",
                                 "observedPosition": pos or None,
-                                "role": spec_role,
+                                "role": candidate_role,
+                                "roleSource": "cached_role" if spec_role else observed_role.get("source"),
                                 "teamPossession": team_poss,
                                 "oppPossession": opp_poss,
                                 "goalsConceded": _gk_conceded,
@@ -1899,7 +1956,6 @@ async def predict(req: PredictionRequest):
             seen_names = set()
             unique = []
             for p in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
-                team = p.get("team", "")
                 if p["name"] in seen_names:
                     continue
                 seen_names.add(p["name"])
@@ -1964,7 +2020,9 @@ async def predict(req: PredictionRequest):
         # Also keep all fixtures for general context
         all_team_fixtures = recent_fixtures
 
-        # Get opponent's recent fixtures — local DB first, API fallback
+        # Get opponent's recent fixtures — local DB first, API fallback.
+        # Keep a broad enough API-backed pool to reach the 10-player cohort
+        # target; the cohort itself still refuses to pad missing evidence.
         opponent_recent_raw = None
         if safe_opp_id:
             try:
@@ -1976,10 +2034,10 @@ async def predict(req: PredictionRequest):
             except Exception:
                 pass
             if not opponent_recent_raw and not _is_bdl_league:
-                opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 8})
+                opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 15})
         opponent_fixture_list = []
         if opponent_recent_raw:
-            for f in opponent_recent_raw[:8]:
+            for f in opponent_recent_raw[:15]:
                 opp_home_id = f.get("teams", {}).get("home", {}).get("id")
                 opp_venue = "home" if opp_home_id == req.opponentId else "away"
                 opponent_fixture_list.append({
@@ -6070,7 +6128,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             position_comparison = await aio.wait_for(
                 fetch_position_comparison(
                     opponent_fixture_list, player_position, req.propType, req.opponentId,
-                    player_venue, 10, target_specific_pos=specific_position
+                    player_venue,
+                    15,
+                    target_specific_pos=specific_position,
+                    target_role=display_role or player_role,
                 ) if player_position else _empty_list(),
                 timeout=10
             )
@@ -6164,6 +6225,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else None
             comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else None
             comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
+            cross_prop_values = {}
+            cross_prop_samples = {}
+            for _row in position_comparison:
+                for _cross_prop, _cross_value in (_row.get("crossPropStats") or {}).items():
+                    cross_prop_values.setdefault(_cross_prop, []).append(_cross_value)
+            cross_prop_averages = {}
+            for _cross_prop, _values in cross_prop_values.items():
+                if _values:
+                    cross_prop_averages[_cross_prop] = round(sum(_values) / len(_values), 2)
+                    cross_prop_samples[_cross_prop] = len(_values)
             position_comp_data = {
                 "position": display_position,
                 "positionShort": pos_short,
@@ -6178,9 +6249,19 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "underHits": _cohort_evidence["underHits"],
                 "overHitRate": _cohort_evidence["overHitRate"],
                 "underHitRate": _cohort_evidence["underHitRate"],
+                "crossPropAverages": cross_prop_averages,
+                "crossPropSampleSizes": cross_prop_samples,
+                "verdict": position_cohort_verdict(
+                    _cohort_evidence,
+                    prediction.get("recommendation"),
+                    req.line,
+                ),
                 "propType": req.propType,
                 "opponent": req.opponentName,
                 "venue": player_venue,
+                "targetPosition": specific_position or display_position,
+                "targetRole": display_role or player_role,
+                "sourceScope": "exact_opponent_same_role_same_venue",
                 "source": "api_football_fixture_player_stats",
             }
 
@@ -10337,6 +10418,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["aiPending"] = False
 
         prediction = _normalize_prediction_identity(prediction, req)
+        # Reconcile the evidence verdict with the final displayed direction.
+        # Late safety/calibration gates can change OVER/UNDER; the cohort must
+        # describe that final saved recommendation, without changing it.
+        if isinstance(prediction.get("positionComparison"), dict):
+            _final_cohort = prediction["positionComparison"]
+            _final_cohort["verdict"] = position_cohort_verdict(
+                _final_cohort,
+                prediction.get("recommendation"),
+                req.line,
+            )
         prediction["_ts"] = datetime.now(timezone.utc).isoformat()
         safe_prediction = _json_safe_prediction(prediction)
         try:

@@ -546,7 +546,33 @@ export interface PredictionResult {
     historySeasons?: number;
     searchedFixtureCount?: number;
   };
-  positionComparison?: { positionShort?: string; opponent?: string; venue?: string; avgStatValue?: number; sampleSize?: number; players?: Record<string, unknown>[] };
+  positionComparison?: {
+    targetPosition?: string;
+    targetRole?: string;
+    positionShort?: string;
+    opponent?: string;
+    venue?: string;
+    propType?: string;
+    avgStatValue?: number;
+    average?: number;
+    sampleSize?: number;
+    minimumRecommendedSample?: number;
+    sampleStatus?: string;
+    overHitRate?: number;
+    underHitRate?: number;
+    players?: Record<string, unknown>[];
+    sourceScope?: string;
+    verdict?: {
+      verdict?: string;
+      reason?: string;
+      average?: number | null;
+      line?: number | null;
+      sampleSize?: number;
+      recommendation?: string | null;
+    };
+    crossPropAverages?: Record<string, number>;
+    crossPropSampleSizes?: Record<string, number>;
+  };
   opponentDefensiveProfile?: {
     opponent: string;
     propType: string;

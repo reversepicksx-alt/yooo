@@ -223,6 +223,46 @@ def summarize_position_cohort(
     }
 
 
+def position_cohort_verdict(
+    cohort: dict[str, Any] | None,
+    recommendation: Any,
+    line: Any,
+) -> dict[str, Any]:
+    """Compare exact-role opponent evidence with the selected direction.
+
+    This is descriptive evidence only. It never changes the projection or
+    recommendation, and unavailable evidence is not represented as a zero.
+    """
+    cohort = cohort or {}
+    sample_size = int(cohort.get("sampleSize") or 0)
+    average = _number(cohort.get("average") or cohort.get("avgStatValue"))
+    threshold = _number(line)
+    direction = str(recommendation or "").strip().lower()
+    if sample_size <= 0 or average is None or threshold is None:
+        verdict = "unavailable"
+        reason = "No valid same-role opponent sample is available."
+    elif direction == "over" and average > threshold:
+        verdict = "verifies"
+        reason = "The same-role opponent average is above the saved line."
+    elif direction == "under" and average < threshold:
+        verdict = "verifies"
+        reason = "The same-role opponent average is below the saved line."
+    elif direction in {"over", "under"}:
+        verdict = "contradicts"
+        reason = "The same-role opponent average points to the opposite side of the saved line."
+    else:
+        verdict = "neutral"
+        reason = "No OVER/UNDER direction was selected for this evidence."
+    return {
+        "verdict": verdict,
+        "reason": reason,
+        "average": average,
+        "line": threshold,
+        "sampleSize": sample_size,
+        "recommendation": direction.upper() if direction else None,
+    }
+
+
 def build_tactical_conclusion(
     *,
     player_name: str,

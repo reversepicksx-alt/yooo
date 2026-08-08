@@ -33,6 +33,7 @@ import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, f
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
+import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 
 type Tab = 'live' | 'history';
 
@@ -1562,6 +1563,15 @@ export default function PicksScreen() {
                   ?? (analysisModal?.pick as any)?.tacticalContext?.positionPassesReceived}
               />
             )}
+             {!analysisModal?.loading && (
+               <SameRoleEvidenceCard
+                 data={(analysisModal?.data as any)?.positionComparison
+                   ?? (analysisModal?.data as any)?.tacticalIntelligence?.positionCohort
+                   ?? (analysisModal?.pick as any)?.positionComparison}
+                 recommendation={modalRec}
+                 line={(analysisModal?.data as any)?.line ?? (analysisModal?.pick as any)?.line}
+               />
+             )}
 
             {/* Prop hit-rate history */}
             {!analysisModal?.loading && ((modalHR?.total ?? 0) > 0 || modalPropHist != null || modalLineDevHR != null) && (
@@ -1569,7 +1579,7 @@ export default function PicksScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                   <Ionicons name="bar-chart-outline" size={12} color={Colors.primary} />
                   <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>
-                    PROP HISTORY
+                     PLAYER PROP HISTORY
                   </Text>
                 </View>
                 {(modalHR?.total ?? 0) > 0 && (

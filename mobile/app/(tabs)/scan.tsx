@@ -24,6 +24,7 @@ import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
+import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
@@ -1551,6 +1552,9 @@ export default function ScanScreen() {
         gameScript: prediction.gameScript || undefined,
         analysisFactors: prediction.analysisFactors || undefined,
         modelInputSnapshot: prediction.modelInputSnapshot || undefined,
+         positionComparison: (prediction as any).positionComparison
+           || (prediction as any).tacticalIntelligence?.positionCohort
+           || undefined,
         moneyline: prediction.moneyline || undefined,
          homeTeam: (prediction as any).homeTeam || (prediction as any).matchupOverview?.homeTeam || undefined,
          awayTeam: (prediction as any).awayTeam || (prediction as any).matchupOverview?.awayTeam || undefined,
@@ -4060,6 +4064,12 @@ export default function ScanScreen() {
             <EventEvidenceCard
               data={(prediction as any).tacticalContext?.positionPassesReceived}
             />
+             <SameRoleEvidenceCard
+               data={(prediction as any).positionComparison
+                 || (prediction as any).tacticalIntelligence?.positionCohort}
+               recommendation={prediction.recommendation}
+               line={prediction.line}
+             />
             {(() => {
               const _hr = (prediction as any).playerGameLogs?.hitRates;
               const _propHist = (prediction as any).propHistoricalRate;
@@ -4071,7 +4081,7 @@ export default function ScanScreen() {
                 <View style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                     <Ionicons name="bar-chart-outline" size={12} color={Colors.primary} />
-                    <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>PROP HISTORY</Text>
+                    <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>PLAYER PROP HISTORY</Text>
                   </View>
                   {(_hr?.total ?? 0) > 0 && (
                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: _propHist != null || _lineDevHR != null ? 8 : 0 }}>

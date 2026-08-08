@@ -468,6 +468,13 @@ async def save_pick(req: SavePickRequest):
         "factorLedger": pick.get("factorLedger") or {},
         "factorLedgerVersion": pick.get("factorLedgerVersion") or None,
         "factorLedgerFingerprint": pick.get("factorLedgerFingerprint") or None,
+        # Exact-opponent same-position/role evidence is part of the saved
+        # analysis contract, not a live reconstruction from rotated caches.
+        "positionComparison": (
+            pick.get("positionComparison")
+            or (pick.get("tacticalIntelligence") or {}).get("positionCohort")
+            or {}
+        ),
     }
 
     # Persist the model's projected ball-possession split so we can compare
@@ -616,7 +623,27 @@ async def save_pick(req: SavePickRequest):
             )
         )
 
-    await db.picks.update_one({"pickId": pick_id, "email": req.email.lower()}, {"$set": doc}, upsert=True)
+    try:
+        await db.picks.update_one(
+            {"pickId": pick_id, "email": req.email.lower()},
+            {"$set": doc},
+            upsert=True,
+        )
+    except Exception as exc:
+        # A pick cannot be treated as saved unless this required write
+        # succeeds. Atlas storage exhaustion used to leak as an opaque 500.
+        # Return an actionable response instead of claiming success or
+        # silently falling back to process-local storage.
+        error_text = str(exc)
+        if "space quota" in error_text.lower() or "storage" in error_text.lower():
+            raise HTTPException(
+                status_code=507,
+                detail=(
+                    "Pick was not saved because database storage is full. "
+                    "Free Atlas storage or increase the cluster tier, then try again."
+                ),
+            ) from exc
+        raise
 
     # Automatic Community posting happens from the Picks screen after the
     # highest-confidence card has been rendered and captured. Do not create a
@@ -1946,12 +1973,12 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
          "moneyline": 1, "homeTeam": 1, "awayTeam": 1,
         "recentSamples": 1, "bayesianMetrics": 1,
         "playerGameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
-        "positionComparison": 1, "h2hPlayerStats": 1,
+         "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
           "tacticalContext": 1, "tacticalIntelligence": 1,
          "matchScript": 1, "positionalReality": 1,
         "analysisFactors": 1, "modelInputSnapshot": 1,
-        "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
+         "factorLedger": 1, "factorLedgerVersion": 1, "factorLedgerFingerprint": 1,
         "_created": 1,
     }
 
@@ -1997,6 +2024,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
                       "streakFlag", "propType", "line", "playerName", "opponentName",
                       "tacticalMetrics", "tacticalContext", "tacticalIntelligence",
+                       "positionComparison",
                       "matchScript", "positionalReality", "gameScript", "moneyline", "homeTeam", "awayTeam"):
             val = pick.get(field)
             if val is not None:
