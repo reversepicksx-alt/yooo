@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 import hashlib
+import math
 import asyncio as aio
 import statistics as stats_mod
 import traceback
@@ -35,6 +36,54 @@ from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
+
+
+def _json_safe_prediction(value, *, _active=None, _depth=0):
+    """Detach a prediction graph before MongoDB/HTTP serialization.
+
+    Diagnostic packets are assembled from several shared evidence objects. A
+    late snapshot must never be able to create a circular response graph and
+    turn an already-computed prediction into a 500. Repeated references are
+    copied normally; only an object encountered again on the current traversal
+    path is replaced with None.
+    """
+    if _depth > 80:
+        return None
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        active = _active if _active is not None else set()
+        marker = id(value)
+        if marker in active:
+            return None
+        active.add(marker)
+        try:
+            return {
+                str(key): _json_safe_prediction(item, _active=active, _depth=_depth + 1)
+                for key, item in value.items()
+            }
+        finally:
+            active.remove(marker)
+    if isinstance(value, (list, tuple, set)):
+        active = _active if _active is not None else set()
+        marker = id(value)
+        if marker in active:
+            return None
+        active.add(marker)
+        try:
+            return [
+                _json_safe_prediction(item, _active=active, _depth=_depth + 1)
+                for item in value
+            ]
+        finally:
+            active.remove(marker)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 # H2H history is intentionally broader than the current-season prediction
 # window. The player-specific pass still caps the displayed sample so older
@@ -10009,9 +10058,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["aiSource"] = "model"
             prediction["aiPending"] = False
 
-        prediction["_ts"] = datetime.now(timezone.utc)
+        prediction["_ts"] = datetime.now(timezone.utc).isoformat()
+        safe_prediction = _json_safe_prediction(prediction)
         try:
-            await db.predictions.insert_one(prediction)
+            await db.predictions.insert_one(safe_prediction)
         except Exception as _persist_err:
             # Atlas can hard-block writes when the free-tier cluster reaches
             # its storage limit. Persistence is useful for analytics, but it
@@ -10022,10 +10072,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 f"[PREDICTION PERSISTENCE] skipped; returning computed prediction: "
                 f"{type(_persist_err).__name__}: {_persist_err}"
             )
-        prediction.pop("_id", None)
+        safe_prediction.pop("_id", None)
 
-
-        return prediction
+        return safe_prediction
     except (json.JSONDecodeError, aio.TimeoutError):
         # Return a safe fallback deterministic model prediction
         return {
