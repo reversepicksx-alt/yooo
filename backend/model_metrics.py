@@ -50,6 +50,15 @@ def _is_scored_directional_row(row: dict) -> bool:
     return str(row.get("result") or "").lower() in {"hit", "miss"}
 
 
+def _direction_key(row: dict) -> str | None:
+    """Return the scored market direction for directional breakdowns."""
+    recommendation = str(row.get("recommendation") or "").lower()
+    if recommendation in {"over", "under"}:
+        return recommendation
+    pass_direction = str(row.get("passLeaning") or "").lower()
+    return pass_direction if pass_direction in {"over", "under"} else None
+
+
 def _pass_calibration_metrics(rows: list[dict]) -> dict:
     """Score avoided PASS directions without mixing them into wager metrics."""
     counts = {"hit": 0, "miss": 0, "push": 0}
@@ -378,6 +387,9 @@ def walk_forward_replay(rows: list[dict]) -> dict:
         "log_loss": 0.0, "brier": 0.0, "prob_n": 0,
         "abs": 0.0, "sq": 0.0, "signed": 0.0, "reg_n": 0,
     })
+    direction_acc: dict[str, dict] = defaultdict(lambda: {
+        "hits": 0, "misses": 0, "log_loss": 0.0, "brier": 0.0, "n": 0,
+    })
     # Per-(sport,prop) for regression breakdown
     prop_acc: dict[tuple, dict] = defaultdict(lambda: {
         "abs": 0.0, "sq": 0.0, "signed": 0.0, "n": 0,
@@ -409,6 +421,11 @@ def walk_forward_replay(rows: list[dict]) -> dict:
         if not _is_scored_directional_row(row):
             confidence = None
         outcome = 1 if row.get("result") == "hit" else 0
+        direction = _direction_key(row) if _is_scored_directional_row(row) else None
+        if direction:
+            direction_acc[direction]["hits"] += outcome
+            direction_acc[direction]["misses"] += 1 - outcome
+            direction_acc[direction]["n"] += 1
 
         if confidence is not None:
             prob = max(0.0001, min(0.9999, confidence / 100.0))
@@ -420,6 +437,9 @@ def walk_forward_replay(rows: list[dict]) -> dict:
             sport_acc[sport]["log_loss"] += ll
             sport_acc[sport]["brier"] += bs
             sport_acc[sport]["prob_n"] += 1
+            if direction:
+                direction_acc[direction]["log_loss"] += ll
+                direction_acc[direction]["brier"] += bs
 
             # Prospective calibration: find prior bin hit rate, then record
             label = _bin_label(confidence)
@@ -518,6 +538,18 @@ def walk_forward_replay(rows: list[dict]) -> dict:
             "meanError": round(acc["signed"] / acc["n"], 4),
         })
 
+    by_direction_output = {}
+    for direction, acc in sorted(direction_acc.items()):
+        n = acc["n"]
+        by_direction_output[direction] = {
+            "n": n,
+            "hits": acc["hits"],
+            "misses": acc["misses"],
+            "hitRate": round(acc["hits"] / n * 100, 1) if n else None,
+            "logLoss": round(acc["log_loss"] / n, 4) if n else None,
+            "brierScore": round(acc["brier"] / n, 4) if n else None,
+        }
+
     return {
         "description": (
             "True out-of-sample walk-forward replay. Each pick is evaluated against "
@@ -549,6 +581,7 @@ def walk_forward_replay(rows: list[dict]) -> dict:
         ),
         "bySport": by_sport_output,
         "byProp": by_prop_output,
+        "byDirection": by_direction_output,
     }
 
 def _walk_forward_projection(ordered: list[dict]) -> dict:

@@ -7970,7 +7970,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             except Exception as _cal_err:
                 print(f"[CAL ALERT SUP] error: {_cal_err}")
         # ─────────────────────────────────────────────────────────────────────────────
-
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
         prediction.setdefault("tacticalInsights", "")
@@ -9646,6 +9645,63 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         )
                         prediction["confidenceScore"] = _final_adj
                         prediction["confidenceLevel"] = "High" if _final_adj >= 70 else "Medium"
+
+            # Directional walk-forward guard must run after the final
+            # recommendation reassertion and final safety suppression above.
+            # The aggregate sport/prop Brier score hides the persistent
+            # OVER/UNDER split found in the production replay. This caps only
+            # weak OVER confidence; it never flips a side or changes UNDER.
+            if _final_rec_upper == "OVER":
+                try:
+                    from calibration_alerts import get_directional_calibration_alert
+                    _dir_alert = get_directional_calibration_alert(
+                        str(getattr(req, "sport", "") or ""),
+                        str(getattr(req, "propType", "") or ""),
+                        "OVER",
+                    )
+                    if _dir_alert:
+                        _dir_level = _dir_alert.get("alertLevel")
+                        _dir_conf = float(prediction.get("confidenceScore") or 50)
+                        _dir_rate = _dir_alert.get("hitRate")
+                        _dir_n = int(_dir_alert.get("n") or 0)
+                        if _dir_level == "AVOID" and _dir_conf > 60:
+                            prediction["confidenceScore"] = 60
+                            prediction["confidenceLevel"] = "Medium"
+                            prediction["directionalCalibrationApplied"] = {
+                                "direction": "OVER",
+                                "level": _dir_level,
+                                "sampleSize": _dir_n,
+                                "hitRate": _dir_rate,
+                                "capApplied": 60,
+                                "from": _dir_conf,
+                            }
+                            print(
+                                f"[DIRECTIONAL OVER AVOID] {_dir_rate:.1f}% ({_dir_n}n): "
+                                f"{_dir_conf:.0f}% → 60%"
+                            )
+                        elif _dir_level == "RISKY" and _dir_conf > 70:
+                            _dir_adj = max(60, _dir_conf - 5)
+                            if _dir_adj != _dir_conf:
+                                prediction["confidenceScore"] = _dir_adj
+                                prediction["confidenceLevel"] = (
+                                    "High" if _dir_adj >= 70 else "Medium"
+                                )
+                                prediction["directionalCalibrationApplied"] = {
+                                    "direction": "OVER",
+                                    "level": _dir_level,
+                                    "sampleSize": _dir_n,
+                                    "hitRate": _dir_rate,
+                                    "reduction": 5,
+                                    "from": _dir_conf,
+                                }
+                                print(
+                                    f"[DIRECTIONAL OVER RISKY] {_dir_rate:.1f}% ({_dir_n}n): "
+                                    f"{_dir_conf:.0f}% → {_dir_adj}%"
+                                )
+                except Exception as _dir_err:
+                    # Calibration is advisory; an unavailable refresh must
+                    # never make an otherwise valid prediction fail.
+                    print(f"[DIRECTIONAL CAL SUP] error: {_dir_err}")
 
             # Confidence is a separate control stream from projection. Keep it
             # explicit so the deterministic explanation can explain a PASS/RISKY/capped result without

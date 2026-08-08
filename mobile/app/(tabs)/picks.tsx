@@ -142,6 +142,39 @@ function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   return null;
 }
 
+function pickEventKey(p: Pick): string {
+  const direction = getRecDir(p) || String(p.recommendation || '').toUpperCase();
+  const base = [
+    p.sport || 'soccer',
+    p.fixtureId ?? p.fixtureDate ?? '',
+    p.playerName || '',
+    p.teamName || '',
+    p.opponentName || '',
+    p.propType || '',
+    p.line ?? '',
+    direction,
+  ];
+  if (base[1]) return base.join('|');
+  const created = p.createdAt || '';
+  return `${base.join('|')}|${created.slice(0, 16)}`;
+}
+
+function uniquePickEvents(picks: Pick[]): Pick[] {
+  const chosen = new Map<string, Pick>();
+  for (const pick of picks) {
+    const key = pickEventKey(pick);
+    const previous = chosen.get(key);
+    if (!previous) {
+      chosen.set(key, pick);
+      continue;
+    }
+    const previousTime = new Date(previous.createdAt || 0).getTime();
+    const currentTime = new Date(pick.createdAt || 0).getTime();
+    if (currentTime >= previousTime) chosen.set(key, pick);
+  }
+  return Array.from(chosen.values());
+}
+
 
 function PulsingDot() {
   const opacity = useSharedValue(1);
@@ -158,16 +191,17 @@ function PulsingDot() {
 
 function RecordBar({ picks }: { picks: Pick[] }) {
   const [expanded, setExpanded] = useState(false);
-  const hits = picks.filter(pickWon).length;
-  const misses = picks.filter(pickLost).length;
-  const dnps = picks.filter(pickDnp).length;
-  const pending = picks.filter(isLive).length;
-  const review = picks.filter(isPendingReview).length;
+  const uniquePicks = useMemo(() => uniquePickEvents(picks), [picks]);
+  const hits = uniquePicks.filter(pickWon).length;
+  const misses = uniquePicks.filter(pickLost).length;
+  const dnps = uniquePicks.filter(pickDnp).length;
+  const pending = uniquePicks.filter(isLive).length;
+  const review = uniquePicks.filter(isPendingReview).length;
   const settled = hits + misses;
   const winPct = settled > 0 ? Math.round((hits / settled) * 100) : null;
 
   let streak = 0;
-  const sorted = [...picks].sort((a, b) =>
+  const sorted = [...uniquePicks].sort((a, b) =>
     new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
   );
   for (const p of sorted) {
@@ -247,7 +281,7 @@ function RecordBar({ picks }: { picks: Pick[] }) {
               />
             </View>
             <Text style={styles.progressText}>
-              {settled}/{picks.length} settled
+              {settled}/{uniquePicks.length} unique events settled · {picks.length} saved rows
             </Text>
           </View>
         </View>

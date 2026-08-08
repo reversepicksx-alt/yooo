@@ -41,12 +41,19 @@ GAP_PP_WARN  = 10    # risky: ≥10pp over-confidence gap in some bin
 BRIER_MIN_N = 30     # sport-level
 GAP_MIN_BIN_N = 15   # per-bin minimum before its gap is counted
 PROP_MIN_N  = 30     # prop-level (same as sport-level for consistency)
+DIRECTION_MIN_N = 100
+OVER_DIRECTION_AVOID_RATE = 55.0
+OVER_DIRECTION_RISKY_RATE = 60.0
 
 # ── In-memory alert stores ─────────────────────────────────────────────────────
 # sport → { alertLevel, brierScore, maxOverGapPp, n, worstBin, updatedAt, calibrationBins }
 _SPORT_ALERTS: Dict[str, dict] = {}
 # (sport, propType) → same shape + sport/propType fields
 _PROP_ALERTS: Dict[Tuple[str, str], dict] = {}
+# Direction alerts are intentionally separate from generic confidence alerts:
+# the production audit found a strong OVER/UNDER split, so an aggregate Brier
+# score must not make a weak OVER bucket look healthy because UNDER is strong.
+_DIRECTION_ALERTS: Dict[Tuple[str, Optional[str], str], dict] = {}
 
 _ALERTS_LOCK = asyncio.Lock()
 _LAST_REFRESH: Optional[datetime] = None
@@ -130,6 +137,39 @@ def _build_alert(
     return record
 
 
+def _build_direction_alert(
+    *,
+    sport: str,
+    prop_type: Optional[str],
+    direction: str,
+    replay: dict,
+) -> dict:
+    """Build a conservative direction-specific alert from replay evidence."""
+    stats = (replay.get("byDirection") or {}).get(direction) or {}
+    n = int(stats.get("n") or 0)
+    hit_rate = stats.get("hitRate")
+    if n < DIRECTION_MIN_N or hit_rate is None:
+        level = "OK"
+    elif direction == "over" and hit_rate < OVER_DIRECTION_AVOID_RATE:
+        level = "AVOID"
+    elif direction == "over" and hit_rate < OVER_DIRECTION_RISKY_RATE:
+        level = "RISKY"
+    else:
+        level = "OK"
+    return {
+        "alertLevel": level,
+        "sport": sport,
+        "propType": prop_type,
+        "direction": direction,
+        "n": n,
+        "hits": stats.get("hits", 0),
+        "misses": stats.get("misses", 0),
+        "hitRate": hit_rate,
+        "brierScore": stats.get("brierScore"),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def refresh_calibration_alerts(db) -> dict:
     """Recompute calibration alerts from all settled picks.
 
@@ -169,12 +209,23 @@ async def refresh_calibration_alerts(db) -> dict:
 
     new_sport_alerts: Dict[str, dict] = {}
     new_prop_alerts: Dict[Tuple[str, str], dict] = {}
+    new_direction_alerts: Dict[Tuple[str, Optional[str], str], dict] = {}
 
     for sport, sport_rows in by_sport.items():
         # ── Sport-level alert ──────────────────────────────────────────────
         sport_replay = walk_forward_replay(sport_rows)
         sport_alert  = _build_alert(sport=sport, prop_type=None, replay=sport_replay, min_n=BRIER_MIN_N)
         new_sport_alerts[sport] = sport_alert
+        for direction in ("over", "under"):
+            direction_alert = _build_direction_alert(
+                sport=sport, prop_type=None, direction=direction,
+                replay=walk_forward_replay([
+                    row for row in sport_rows
+                    if str(row.get("recommendation") or "").lower() == direction
+                ]),
+            )
+            if direction_alert["alertLevel"] != "OK":
+                new_direction_alerts[(sport, None, direction)] = direction_alert
 
         # ── Per-prop alerts within this sport ──────────────────────────────
         by_prop: Dict[str, list] = defaultdict(list)
@@ -191,26 +242,44 @@ async def refresh_calibration_alerts(db) -> dict:
             # Only store non-OK alerts for props (keep the dict lean)
             if prop_alert["alertLevel"] != "OK":
                 new_prop_alerts[(sport, prop_type)] = prop_alert
+            for direction in ("over", "under"):
+                direction_rows = [
+                    row for row in prop_rows
+                    if str(row.get("recommendation") or "").lower() == direction
+                ]
+                if len(direction_rows) < DIRECTION_MIN_N:
+                    continue
+                direction_alert = _build_direction_alert(
+                    sport=sport, prop_type=prop_type, direction=direction,
+                    replay=walk_forward_replay(direction_rows),
+                )
+                if direction_alert["alertLevel"] != "OK":
+                    new_direction_alerts[(sport, prop_type, direction)] = direction_alert
 
     async with _ALERTS_LOCK:
         _SPORT_ALERTS.clear()
         _SPORT_ALERTS.update(new_sport_alerts)
         _PROP_ALERTS.clear()
         _PROP_ALERTS.update(new_prop_alerts)
+        _DIRECTION_ALERTS.clear()
+        _DIRECTION_ALERTS.update(new_direction_alerts)
         _LAST_REFRESH = datetime.now(timezone.utc)
 
     non_ok = sum(1 for v in new_sport_alerts.values() if v["alertLevel"] != "OK")
     non_ok += len(new_prop_alerts)
+    non_ok += len(new_direction_alerts)
 
     sport_summary = {
         s: f"Brier={v['brierScore']} gap={v['maxOverGapPp']}pp n={v['n']} → {v['alertLevel']}"
         for s, v in sorted(new_sport_alerts.items())
     }
     print(f"[CAL ALERTS] {len(new_sport_alerts)} sports, {len(new_prop_alerts)} prop alerts, "
+          f"{len(new_direction_alerts)} direction alerts, "
           f"{non_ok} non-OK: {sport_summary}")
     return {
         "sports":       len(new_sport_alerts),
         "propAlerts":   len(new_prop_alerts),
+        "directionAlerts": len(new_direction_alerts),
         "nonOkAlerts":  non_ok,
     }
 
@@ -249,6 +318,27 @@ def get_calibration_alert(
     return None
 
 
+def get_directional_calibration_alert(
+    sport: str,
+    prop_type: Optional[str],
+    direction: str,
+) -> Optional[dict]:
+    """Return a non-OK replay alert for a specific market direction."""
+    sport_key = (sport or "").lower()
+    prop_key = prop_type.lower() if prop_type else None
+    direction_key = (direction or "").lower()
+    if direction_key not in {"over", "under"}:
+        return None
+    for key in (
+        (sport_key, prop_key, direction_key),
+        (sport_key, None, direction_key),
+    ):
+        alert = _DIRECTION_ALERTS.get(key)
+        if alert and alert.get("alertLevel") in {"AVOID", "RISKY"}:
+            return {**alert, "source": "direction"}
+    return None
+
+
 def get_all_alerts() -> dict:
     """Return a full snapshot of all calibration alerts (for admin endpoints)."""
     return {
@@ -264,4 +354,11 @@ def get_all_alerts() -> dict:
         },
         "sports": {s: v for s, v in sorted(_SPORT_ALERTS.items())},
         "props":  {f"{s}|{p}": v for (s, p), v in sorted(_PROP_ALERTS.items())},
+        "directions": {
+            f"{s}|{p or '*'}|{d}": v
+            for (s, p, d), v in sorted(
+                _DIRECTION_ALERTS.items(),
+                key=lambda item: (item[0][0], item[0][1] or "", item[0][2]),
+            )
+        },
     }

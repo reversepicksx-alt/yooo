@@ -1799,6 +1799,14 @@ export interface ModelScorecard {
     classification: ProbabilityMetrics;
     projection: ProjectionMetrics;
   };
+  byDirection?: Record<string, {
+    n: number;
+    hits: number;
+    misses: number;
+    hitRate: number | null;
+    logLoss: number | null;
+    brierScore: number | null;
+  }>;
 }
 
 export interface AnalyticsData {
@@ -1838,6 +1846,19 @@ export interface AnalyticsData {
   brierN: number;
   confidenceTiers: ConfidenceTier[];
   scorecard: ModelScorecard;
+  walkForwardReplay?: {
+    eligibleSamples: number;
+    evaluatedSamples: number;
+    leakageViolations: number;
+    byDirection: Record<string, {
+      n: number;
+      hits: number;
+      misses: number;
+      hitRate: number | null;
+      logLoss: number | null;
+      brierScore: number | null;
+    }>;
+  };
   insights?: SystemInsights;
   scope?: {
     access: 'owner';

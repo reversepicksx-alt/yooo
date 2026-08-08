@@ -14,3 +14,9 @@ The current settled soccer ledger shows a persistent direction split: OVER picks
 **Why:** The production audit found roughly 52.7% on unique OVER events versus 66.4% on unique UNDER events across the deduplicated scored corpus; the account sample showed the same pattern (54.0% OVER vs 65.9% UNDER).
 
 **How to apply:** Treat direction as a first-class calibration dimension. Do not increase overall confidence or call the model healthy from aggregate hit rate while OVER confidence remains miscalibrated; validate any directional policy with a leakage-safe walk-forward replay.
+
+The live directional safeguard uses only unique, settled HIT/MISS events from the walk-forward alert cache. It caps weak OVER confidence at Medium or applies a small reduction, leaves UNDER unchanged, and does nothing below the minimum sample threshold.
+
+**Why:** Aggregate sport/prop calibration can hide a persistent directional split, while thin buckets are too noisy to justify changing user-facing recommendations.
+
+**How to apply:** Keep the safeguard after the final recommendation and safety/projection reconciliation, so the displayed confidence, saved ledger, and explanation all describe the same final control.

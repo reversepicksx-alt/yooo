@@ -49,6 +49,7 @@ class TestWalkForwardReplayStructure:
             "missingPriorDataEvents", "leakageViolations",
             "dateRange", "classification", "prospectiveCalibration",
             "projection", "bySport", "byProp",
+            "byDirection",
         ):
             assert key in result, f"Missing key: {key}"
 
@@ -62,6 +63,22 @@ class TestWalkForwardReplayStructure:
         assert cl["n"] == 10
         assert isinstance(cl["logLoss"], float)
         assert isinstance(cl["brierScore"], float)
+
+    def test_direction_breakdown_counts_only_scored_market_events(self):
+        rows = [
+            _make_row(i, hit=i < 3, confidence=70.0)
+            for i in range(5)
+        ]
+        rows[1]["recommendation"] = "under"
+        rows[2]["recommendation"] = "under"
+        rows[3]["result"] = "push"
+        result = walk_forward_replay(rows)
+
+        assert result["byDirection"]["over"]["n"] == 2
+        assert result["byDirection"]["over"]["hits"] == 1
+        assert result["byDirection"]["under"]["n"] == 2
+        assert result["byDirection"]["under"]["hits"] == 2
+        assert "push" not in result["byDirection"]
 
     def test_projection_keys(self):
         rows = [_make_row(i) for i in range(10)]

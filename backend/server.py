@@ -59,7 +59,7 @@ from routes.notifications import router as notifications_router
 from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from routes.sports_config import router as sports_config_router
 from cache import seed_cache, background_refresh_loop
-from model_metrics import build_scorecard, dedupe_prediction_rows
+from model_metrics import build_scorecard, dedupe_prediction_rows, walk_forward_replay
 
 app.include_router(auth_router)
 app.include_router(revenuecat_webhook_router)
@@ -893,6 +893,7 @@ async def owner_analytics(payload: dict = Body(...)):
     # Keep these metrics separate from the legacy hit-rate breakdown above.
     # Numeric errors are grouped by sport/prop because their units differ.
     scorecard = build_scorecard(deduped_rows)
+    walk_forward = walk_forward_replay(deduped_rows)
 
     def dashboard_groups(field: str, labeler=None):
         buckets: dict = defaultdict(lambda: {
@@ -1056,6 +1057,12 @@ async def owner_analytics(payload: dict = Body(...)):
         "brierN": brier_n,
         "confidenceTiers": confidence_tiers,
         "scorecard": scorecard,
+        "walkForwardReplay": {
+            "eligibleSamples": walk_forward.get("eligibleSamples", 0),
+            "evaluatedSamples": walk_forward.get("evaluatedSamples", 0),
+            "leakageViolations": walk_forward.get("leakageViolations", 0),
+            "byDirection": walk_forward.get("byDirection", {}),
+        },
         "insights": dashboard_insights,
         "scope": {
             "access": "owner",

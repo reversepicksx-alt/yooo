@@ -52,8 +52,40 @@ function filterByPeriod(picks: Pick[], period: Period) {
   return picks.filter(p => new Date(p.createdAt || p.settledAt || 0) >= cutoff);
 }
 
+function pickEventKey(p: Pick): string {
+  const direction = getRecDir(p) || String(p.recommendation || '').toUpperCase();
+  const base = [
+    p.sport || 'soccer',
+    p.fixtureId ?? p.fixtureDate ?? '',
+    p.playerName || '',
+    p.teamName || '',
+    p.opponentName || '',
+    p.propType || '',
+    p.line ?? '',
+    direction,
+  ];
+  if (base[1]) return base.join('|');
+  return `${base.join('|')}|${(p.createdAt || '').slice(0, 16)}`;
+}
+
+function uniquePickEvents(picks: Pick[]): Pick[] {
+  const chosen = new Map<string, Pick>();
+  for (const pick of picks) {
+    const key = pickEventKey(pick);
+    const previous = chosen.get(key);
+    if (!previous) {
+      chosen.set(key, pick);
+      continue;
+    }
+    const previousTime = new Date(previous.createdAt || 0).getTime();
+    const currentTime = new Date(pick.createdAt || 0).getTime();
+    if (currentTime >= previousTime) chosen.set(key, pick);
+  }
+  return Array.from(chosen.values());
+}
+
 export function computeAnalytics(picks: Pick[], period: Period) {
-  const filtered = filterByPeriod(picks, period);
+  const filtered = uniquePickEvents(filterByPeriod(picks, period));
   const settled = filtered.filter(p => ['hit', 'miss', 'push'].includes(p.result || ''));
   const decided = settled.filter(p => p.result === 'hit' || p.result === 'miss');
   const hits = decided.filter(p => p.result === 'hit').length;
@@ -596,6 +628,11 @@ export default function AnalyticsDashboard({
                 <Text style={s.ownerHealthMeta}>
                   Duplicate rows removed: {ownerData.scope?.duplicateRowsRemoved ?? ownerData.scorecard.duplicateRowsRemoved ?? 0} · Scorecard events: {ownerData.scorecard.n}
                 </Text>
+                {ownerData.walkForwardReplay?.byDirection && (
+                  <Text style={s.ownerHealthMeta}>
+                    Walk-forward direction: OVER {ownerData.walkForwardReplay.byDirection.over?.hitRate ?? '—'}% ({ownerData.walkForwardReplay.byDirection.over?.n ?? 0}) · UNDER {ownerData.walkForwardReplay.byDirection.under?.hitRate ?? '—'}% ({ownerData.walkForwardReplay.byDirection.under?.n ?? 0})
+                  </Text>
+                )}
                 {ownerData.overall.outcomeCounts?.unknown ? (
                   <Text style={s.ownerHealthMeta}>
                     Unclassified settled rows: {ownerData.overall.outcomeCounts.unknown} · excluded from win rate and probability metrics
