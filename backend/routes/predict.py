@@ -33,6 +33,7 @@ from tactical_evidence import (
     summarize_position_cohort,
 )
 from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
+from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -2138,16 +2139,39 @@ async def predict(req: PredictionRequest):
                 },
             )
         )
+        statsbomb_task = (
+            _fetch_statsbomb_enrichment(
+                db,
+                fixture_id=_sit_fixture_id,
+                league_id=_sit_fixture_league_id,
+                league_name=_sit_match_league or "",
+                team_name=_canonical_team_name or "",
+                opponent_name=_canonical_opponent_name or "",
+                match_date=_sit_match_date,
+                player_name=req.playerName,
+            )
+            if req.sport == "soccer"
+            else aio.sleep(
+                0,
+                result={
+                    "available": False,
+                    "status": "not_applicable",
+                    "provider": "statsbomb_open_data",
+                    "shadowOnly": True,
+                    "reason": "StatsBomb Open Data is football-only.",
+                },
+            )
+        )
 
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            situation_task, bzzoiro_task,
+            situation_task, bzzoiro_task, statsbomb_task,
             return_exceptions=True
         )
         try:
             results = await aio.wait_for(all_wave2, timeout=55)
         except aio.TimeoutError:
-            results = [None, None, None, None, None]
+            results = [None, None, None, None, None, None]
             print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 55s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
@@ -2165,11 +2189,30 @@ async def predict(req: PredictionRequest):
                 "reason": "Bzzoiro enrichment did not complete.",
             }
         )
+        statsbomb_enrichment = (
+            results[5]
+            if len(results) > 5 and not isinstance(results[5], (Exception, type(None)))
+            else {
+                "available": False,
+                "status": "unavailable",
+                "provider": "statsbomb_open_data",
+                "shadowOnly": True,
+                "reason": "StatsBomb enrichment did not complete.",
+            }
+        )
         if bzzoiro_enrichment.get("available"):
             print(
                 f"[BZZOIRO] covered event="
                 f"{(bzzoiro_enrichment.get('fixture') or {}).get('bzzoiroEventId')} "
                 f"press={(bzzoiro_enrichment.get('pressIntensity') or {}).get('label')}"
+            )
+        if statsbomb_enrichment.get("available"):
+            _sb_metrics = statsbomb_enrichment.get("eventMetrics") or {}
+            print(
+                f"[STATSBOMB] covered match="
+                f"{(statsbomb_enrichment.get('match') or {}).get('statsBombMatchId')} "
+                f"ppda={_sb_metrics.get('ppda')} "
+                f"pressures={_sb_metrics.get('pressureEvents')}"
             )
 
         # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
@@ -5518,6 +5561,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
         if bzzoiro_enrichment:
             wave2_supplement["bzzoiroEnrichment"] = bzzoiro_enrichment
+        if statsbomb_enrichment:
+            wave2_supplement["statsbombEnrichment"] = statsbomb_enrichment
 
         # GK PASS CONTEXT — injected for GK pass_attempts props
         gk_pass_context = ""
@@ -6175,6 +6220,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             },
             "pressureResponse": _pressure_response,
             "bzzoiroEnrichment": bzzoiro_enrichment,
+            "statsbombEnrichment": statsbomb_enrichment,
         }
 
         # Mirror condPossAdj into bayesianMetrics so the mobile structured-evidence
@@ -8622,6 +8668,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "playerOpponentHistory": (historical_data.get("h2hPlayerStats") or {}).get("opponentHitRate"),
             "positionCohort": position_comp_data,
             "bzzoiroEnrichment": bzzoiro_enrichment,
+            "statsbombEnrichment": statsbomb_enrichment,
         }
 
         # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────
@@ -9639,6 +9686,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "comparableGames": _af_comparable_n, "possessionObservations": len(_af_poss_obs),
                     "teamPassObservations": len(_af_team_passes), "shareJoins": len(_af_shares),
                     "bzzoiroFixtureCovered": bool((bzzoiro_enrichment or {}).get("available")),
+                    "statsbombFixtureCovered": bool((statsbomb_enrichment or {}).get("available")),
                 },
                 "final": {
                     "projectedValue": prediction.get("projectedValue"),
@@ -9652,6 +9700,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                     "pressureResponse": prediction.get("pressureResponse"),
                     "bzzoiroEnrichment": prediction.get("tacticalContext", {}).get("bzzoiroEnrichment"),
+                    "statsbombEnrichment": prediction.get("tacticalContext", {}).get("statsbombEnrichment"),
                     "tacticalIntelligence": prediction.get("tacticalIntelligence"),
                 },
             }

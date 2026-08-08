@@ -15,6 +15,8 @@ import os
 import sys
 
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://props-ai-predict.preview.emergentagent.com")
+REPLAY_EMAIL = os.environ.get("REPLAY_EMAIL", "")
+REPLAY_TOKEN = os.environ.get("REPLAY_TOKEN", "")
 
 MISSED_PICKS = [
     {
@@ -83,6 +85,8 @@ MISSED_PICKS = [
 async def run_prediction(client: httpx.AsyncClient, pick: dict) -> dict:
     """Call the /api/predict endpoint for a single pick."""
     payload = {
+        "email": REPLAY_EMAIL,
+        "token": REPLAY_TOKEN,
         "playerId": pick["playerId"],
         "playerName": pick["name"],
         "teamId": pick["teamId"],
@@ -204,7 +208,7 @@ async def main():
     print(f"\n  Flipped: {flipped_count}/4 | Would Hit: {hit_count}/4 | Errors: {error_count}/4")
 
     # Save results to file
-    with open("/app/test_reports/backtest_missed_picks.json", "w") as f:
+    with open("/tmp/backtest_missed_picks.json", "w") as f:
         sanitized = []
         for r in results:
             sanitized.append({
@@ -226,7 +230,7 @@ async def main():
             })
         json.dump(sanitized, f, indent=2)
 
-    print(f"\n  Full results saved to /app/test_reports/backtest_missed_picks.json")
+    print(f"\n  Full results saved to /tmp/backtest_missed_picks.json")
 
 
 if __name__ == "__main__":

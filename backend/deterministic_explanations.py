@@ -472,6 +472,37 @@ def build_deterministic_explanation(
             "enough qualifying low- and high-possession appearances to classify this player."
         )
 
+    # StatsBomb is a public, historical event-level ground-truth layer.  It is
+    # deliberately rendered as context only: the packet never changes the
+    # projection, calibration, or settlement result.
+    statsbomb = tactical_context.get("statsbombEnrichment") or result.get("statsbombEnrichment") or {}
+    if isinstance(statsbomb, dict) and statsbomb.get("available"):
+        sb_metrics = statsbomb.get("eventMetrics") or {}
+        sb_match = statsbomb.get("match") or {}
+        sb_ppda = sb_metrics.get("ppda")
+        sb_pressures = sb_metrics.get("pressureEvents")
+        sb_pass_pressure = (sb_metrics.get("passesUnderPressure") or {}).get("opponent")
+        sb_source = statsbomb.get("source") or "StatsBomb Open Data"
+        sb_bits = []
+        if sb_ppda is not None:
+            sb_bits.append(f"event-derived PPDA **{_fmt(sb_ppda, 2)}**")
+        if sb_pressures is not None:
+            sb_bits.append(f"**{sb_pressures}** pressure events")
+        if sb_pass_pressure is not None:
+            sb_bits.append(f"**{sb_pass_pressure}** opponent passes under pressure")
+        if sb_bits:
+            tactical_lines.append(
+                f"Public historical event evidence ({sb_source}) for "
+                f"{sb_match.get('homeTeam', 'home')} vs {sb_match.get('awayTeam', 'away')}: "
+                + ", ".join(sb_bits)
+                + ". This is shadow-only context and does not move the projection."
+            )
+        else:
+            tactical_lines.append(
+                f"{sb_source} covers this historical match, but the requested event metrics are unavailable; "
+                "no projection adjustment was applied."
+            )
+
     # Venue average
     if venue_avg is not None and prior_mean is not None:
         _venue_label = venue.capitalize() if venue in {"home", "away"} else "Venue"

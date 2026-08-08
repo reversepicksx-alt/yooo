@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config import db  # noqa: E402
 
 API_URL = os.environ.get("LOCAL_API_URL", "http://localhost:8000")
+REPLAY_EMAIL = os.environ.get("REPLAY_EMAIL", "")
+REPLAY_TOKEN = os.environ.get("REPLAY_TOKEN", "")
 
 
 async def fetch_missed_candidates(limit: int = 8) -> list:
@@ -70,6 +72,8 @@ async def fetch_missed_candidates(limit: int = 8) -> list:
 
 async def run_prediction(client: httpx.AsyncClient, pick: dict) -> dict:
     payload = {
+        "email":        REPLAY_EMAIL,
+        "token":        REPLAY_TOKEN,
         "playerId":     pick["playerId"],
         "playerName":   pick.get("playerName") or pick.get("name") or "Unknown",
         "teamId":       pick["teamId"],
