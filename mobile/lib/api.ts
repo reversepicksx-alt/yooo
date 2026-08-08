@@ -560,7 +560,13 @@ export interface PredictionResult {
     sampleStatus?: string;
     overHitRate?: number;
     underHitRate?: number;
-    players?: Record<string, unknown>[];
+    players?: Array<Record<string, unknown> & {
+      name?: string;
+      playerId?: number;
+      statValue?: number | null;
+      passAttempts?: number | null;
+      crossPropStats?: Record<string, number>;
+    }>;
     sourceScope?: string;
     verdict?: {
       verdict?: string;

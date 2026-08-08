@@ -3,9 +3,12 @@ import { Text, View } from 'react-native';
 import Colors from '@/constants/colors';
 
 type CohortPlayer = {
+  playerId?: number;
   name?: string;
   team?: string;
   statValue?: number | null;
+  passAttempts?: number | null;
+  crossPropStats?: Record<string, number>;
   minutes?: number | null;
   position?: string;
   role?: string;
@@ -80,6 +83,7 @@ export default function SameRoleEvidenceCard({
   const role = data.targetRole || 'same role';
   const position = data.targetPosition || data.positionShort || 'same position';
   const limited = sample < minimum;
+  const sourcePlayers = (data.players || []).slice(0, 10);
 
   return (
     <View style={{
@@ -115,6 +119,39 @@ export default function SameRoleEvidenceCard({
           {data.underHitRate != null ? `${data.underHitRate}% UNDER` : 'UNDER —'}
         </Text>
       )}
+      {sourcePlayers.length > 0 && (
+        <View style={{
+          marginTop: 8,
+          paddingTop: 7,
+          borderTopWidth: 1,
+          borderTopColor: 'rgba(255,255,255,0.08)',
+        }}>
+          <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8, marginBottom: 4 }}>
+            SOURCE PLAYERS · PASS ATTEMPTS
+          </Text>
+          {sourcePlayers.map((player, index) => {
+            const passAttempts = player.passAttempts
+              ?? player.crossPropStats?.pass_attempts
+              ?? (data.propType === 'pass_attempts' ? player.statValue : null);
+            return (
+              <View
+                key={`${player.playerId || player.name || 'player'}-${index}`}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3 }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{ flex: 1, fontSize: 10, color: Colors.text, lineHeight: 15 }}
+                >
+                  {index + 1}. {player.name || 'Unknown player'}
+                </Text>
+                <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '900', marginLeft: 8 }}>
+                  {passAttempts != null ? Number(passAttempts).toFixed(0) : '—'}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
       {Object.keys(data.crossPropAverages || {}).filter((key) => key !== data.propType).length > 0 && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 3 }}>
           Role profile:{' '}
@@ -126,7 +163,7 @@ export default function SameRoleEvidenceCard({
         </Text>
       )}
       <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 5 }}>
-        API-Football fixture player statistics · evidence only; it does not change the projection.
+        Evidence only; it does not change the projection.
       </Text>
     </View>
   );

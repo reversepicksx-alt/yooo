@@ -1927,6 +1927,7 @@ async def predict(req: PredictionRequest):
                                 "team": team_name,
                                 "minutes": minutes,
                                 "statValue": stat_val,
+                                "passAttempts": (pstats.get("passes") or {}).get("total"),
                                 "crossPropStats": cross_prop_stats,
                                 "rating": float(rating) if rating else None,
                                 "date": fix.get("date", "")[:10],
