@@ -206,9 +206,9 @@ async def nba_predict(req: NbaPredictRequest):
             "won":      g.get("won"),
         })
 
-    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
+    from deterministic_explanations import build_sport_deterministic_explanation
 
-    return {
+    response = {
         "sport":            "nba",
         "playerName":       req.playerName,
         "playerId":         player_id,
@@ -218,6 +218,8 @@ async def nba_predict(req: NbaPredictRequest):
         "line":             req.line,
         "venue":            venue,
         "opponentName":     req.opponentName or "",
+        "oppDefRating":     req.oppDefRating,
+        "restDays":         req.restDays,
         "projection":       result["projection"],
         "pOver":            result["pOver"],
         "pUnder":           result["pUnder"],
@@ -230,9 +232,11 @@ async def nba_predict(req: NbaPredictRequest):
         "streakFlag":       result["streakFlag"],
         "gameLogs":         game_log_tiles,
         "recentValues":     result.get("recentValues", []),
-        "sharpSummary":      ai_result.get("sharpSummary", ""),
-        "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
-        "reasoning":         ai_result.get("reasoning", ""),
-        "keyFactors":        ai_result.get("keyFactors", []),
-        "rawConfidence":     result["confidenceScore"],
+        "sharpSummary":     "",
+        "tacticalBreakdown": "",
+        "reasoning":        "",
+        "keyFactors":       [],
+        "rawConfidence":    result["confidenceScore"],
     }
+    build_sport_deterministic_explanation(response, "nba")
+    return response

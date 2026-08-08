@@ -613,15 +613,133 @@ def build_deterministic_explanation(
     result["explanationVersion"] = "reverse-picks-model-v2"
     return result
 
+def _basketball_tactical_lines(prediction: dict[str, Any], prop: str, sport: str = "nba") -> list[str]:
+    """Build evidence-gated tactical context lines for NBA/WNBA picks.
 
+    Thresholds are sport-specific:
+    - NBA league average defensive rating ≈ 113 pts/100 possessions
+    - WNBA league average defensive rating ≈ 100 pts/100 possessions
+    Both engines apply a rest boost at rest_days >= 3.
+    """
+    lines: list[str] = []
+    opp_def = _num(prediction.get("oppDefRating"))
+    rest_days = prediction.get("restDays")
+    venue = str(prediction.get("venue") or "").lower()
+    position = str(prediction.get("position") or "")
+    prop_type = str(prediction.get("propType") or "").lower()
+
+    # Opponent defensive rating: thresholds are relative to each league's average
+    # NBA avg ~113 pts/100 (engine constant); WNBA avg ~100 pts/100 (engine constant)
+    # Higher rating = worse defense (allows more points) = favorable for scorers.
+    # Tier boundaries use delta from league_avg so WNBA and NBA scale consistently.
+    if opp_def is not None:
+        league_avg = 100.0 if str(sport or "").lower() == "wnba" else 113.0
+        delta_pct = round((opp_def - league_avg) / league_avg * 100, 1)
+        # delta_pct < 0 → defense is better than average (suppresses scoring)
+        # delta_pct > 0 → defense is worse than average (lifts scoring)
+        if delta_pct <= -4.5:
+            tier = "elite"
+            direction = "significantly suppresses"
+        elif delta_pct <= -1.5:
+            tier = "strong"
+            direction = "suppresses"
+        elif delta_pct < 1.5:
+            tier = "average"
+            direction = "does not materially adjust"
+        elif delta_pct < 4.5:
+            tier = "below-average"
+            direction = "lifts"
+        else:
+            tier = "weak"
+            direction = "significantly lifts"
+        # Which props each engine adjusts with opp_def_mult:
+        # NBA: points/scoring combos, assists, rebounds, steals, blocks
+        # WNBA: points/scoring combos, assists only (not rebounds — no WNBA engine adjustment)
+        is_wnba = str(sport or "").lower() == "wnba"
+        _scoring_props = {
+            "points", "three_pointers", "field_goals", "free_throws",
+            "pts_reb_ast", "pts_reb", "pts_ast", "fantasy_points",
+        }
+        if prop_type in _scoring_props:
+            lines.append(
+                f"Opponent defense: **{opp_def:.0f} pts/100 possessions** ({tier}, {delta_pct:+.1f}% vs "
+                f"league average) — this defense {direction} scoring opportunities."
+            )
+        elif prop_type in {"rebounds", "reb_ast"} and not is_wnba:
+            # NBA engine adjusts rebounds: weak defense (positive delta) = more pace = more rebounds
+            rebound_note = (
+                "weaker defenses generate more pace and missed-shot opportunities, lifting rebounding volume"
+                if delta_pct >= 1.5 else
+                "stronger defenses limit transition pace, moderately reducing rebounding opportunities"
+                if delta_pct <= -1.5 else
+                "this defense is near league average for rebounding context"
+            )
+            lines.append(
+                f"Opponent defense: **{opp_def:.0f} pts/100** ({tier}) — {rebound_note}."
+            )
+        elif prop_type in {"assists", "pts_ast"}:
+            # Both NBA and WNBA engines adjust assists: tight defense reduces assisted buckets
+            assist_note = (
+                "tight defenses pressure ball-handlers and reduce clean assisted opportunities"
+                if delta_pct <= -1.5 else
+                "permissive defenses allow more clean catch-and-shoot and drive-and-kick plays"
+                if delta_pct >= 1.5 else
+                "average defensive pressure — no material assist adjustment"
+            )
+            lines.append(
+                f"Opponent defense: **{opp_def:.0f} pts/100** ({tier}) — {assist_note}."
+            )
+        elif prop_type in {"steals", "blocks"} and not is_wnba:
+            # NBA engine adjusts steals/blocks; WNBA does not
+            lines.append(
+                f"Opponent defensive rating: **{opp_def:.0f} pts/100** ({tier}, {delta_pct:+.1f}% vs "
+                f"league average) — factored into the engine's {prop_type} adjustment."
+            )
+        elif not is_wnba or prop_type in _scoring_props | {"assists"}:
+            # Show context for NBA props not listed above; skip for WNBA props with no engine adjustment
+            lines.append(
+                f"Opponent defensive rating: **{opp_def:.0f} pts/100 possessions** "
+                f"({tier}, {delta_pct:+.1f}% vs league average)."
+            )
+
+    # Rest days — both NBA and WNBA engines apply the boost at rest_days >= 3
+    if rest_days is not None:
+        try:
+            rest_int = int(rest_days)
+            if rest_int == 0:
+                lines.append(
+                    "Rest: **back-to-back game** — the engine applies a fatigue discount "
+                    "because same-day fatigue measurably reduces output."
+                )
+            elif rest_int == 1:
+                lines.append("Rest: **1 day** — standard single-day rest, no significant fatigue effect.")
+            elif rest_int >= 3:
+                lines.append(
+                    f"Rest: **{rest_int} days** — well-rested; the engine applies a modest "
+                    f"performance boost for most props."
+                )
+        except (TypeError, ValueError):
+            pass
+
+    # Venue context
+    if venue in {"home", "away"}:
+        lines.append(
+            f"Venue: **{venue.capitalize()}** — home court carries a small but consistent "
+            f"advantage for scoring and efficiency props."
+            if venue == "home" else
+            f"Venue: **Away** — road games carry a modest performance discount, particularly "
+            f"for scoring props."
+        )
+
+    return lines
 def build_sport_deterministic_explanation(
     prediction: dict[str, Any],
     sport: str,
 ) -> dict[str, Any]:
     """Describe non-soccer projections from their recorded model inputs.
 
-    MLB and NFL do not have soccer's possession/tactical packet.  They still
-    need a useful explanation, but it must stay honest: every sentence is
+    Each sport gets a Tactical Context block drawn from data already computed
+    in the prediction pipeline — no new provider calls.  Every sentence is
     derived from the projection, baseline, recent form, matchup fields, or
     explicitly available engine factors.
     """
@@ -637,12 +755,13 @@ def build_sport_deterministic_explanation(
     confidence = _num(prediction.get("confidenceScore"))
     rec = _direction(prediction.get("recommendation"))
     prior = _num(prediction.get("priorMean"))
-    momentum = _num(prediction.get("momentum"))
+    momentum = _num(prediction.get("momentum") or prediction.get("momentumMean"))
     logs = prediction.get("gameLogs") or []
     history_count = prediction.get("historyGameCount") or len(logs)
     factors = prediction.get("bayesianMetrics") or {}
     notes: list[str] = []
 
+    # ── Verdict / projection baseline ─────────────────────────────────────────
     if projection is not None and line is not None:
         gap = projection - line
         notes.append(
@@ -657,43 +776,35 @@ def build_sport_deterministic_explanation(
             f"by {abs(momentum):.1f} {prop} per game."
         )
 
-    if sport == "mlb":
-        park_pct = _num(factors.get("parkFactorPct"))
-        if park_pct is not None and abs(park_pct) >= 2:
-            notes.append(
-                f"The park factor is {park_pct:+.1f}%, so the venue "
-                f"{'supports' if park_pct > 0 else 'suppresses'} {prop} production."
-            )
-        platoon = _num(factors.get("platoonSplitMult"))
-        if platoon is not None and abs(platoon - 1) >= 0.03:
-            notes.append(
-                f"The handedness matchup applies a {(platoon - 1) * 100:+.1f}% "
-                f"platoon adjustment to the projection."
-            )
-        era = _num(factors.get("eraFactor"))
-        if era is not None and abs(era - 1) >= 0.03:
-            notes.append(
-                f"The opposing pitcher context applies a {(era - 1) * 100:+.1f}% "
-                f"ERA adjustment."
-            )
-        matchup = f"{team} vs {opponent}"
-    else:
-        total = _num(prediction.get("gameTotal"))
-        matchup = f"{team} vs {opponent}"
-        if total is not None:
-            notes.append(f"The game-total input is {total:g}, used as scoring environment context.")
+    matchup = f"{team} vs {opponent}"
 
-    if not notes:
-        notes.append("No optional matchup adjustment was available; the result is based on player logs.")
     notes.append(
         f"Evidence: {history_count} game log{'s' if history_count != 1 else ''} "
         f"across the seasons returned by the provider."
     )
+
+    # ── Sport-specific tactical context ───────────────────────────────────────
+    tactical_lines: list[str] = []
+    if sport in {"nba", "wnba"}:
+        tactical_lines = _basketball_tactical_lines(prediction, prop, sport=sport)
+    elif sport == "cs2":
+        tactical_lines = _cs2_tactical_lines(prediction, prop)
+    elif sport == "mlb":
+        tactical_lines = _mlb_tactical_lines(prediction, prop)
+    else:
+        # Generic: game total when available
+        total = _num(prediction.get("gameTotal"))
+        if total is not None:
+            tactical_lines.append(
+                f"Game-total input: {total:g}, used as scoring environment context."
+            )
+
     summary = (
         f"{matchup}: {rec} {prop} at {line:g} with "
         f"{max(p_over or 0, p_under or 0):.0f}% modeled probability."
         if line is not None else f"{matchup}: {rec} recommendation for {prop}."
     )
+
     # ── Safety / AVOID evidence ───────────────────────────────────────────────
     sport_safety = str(prediction.get("safetyRating") or "RISKY").upper()
     sport_hist_rate = _num(prediction.get("propHistoricalRate"))
@@ -722,17 +833,235 @@ def build_sport_deterministic_explanation(
                 f"treat as informational only."
             )
 
-    prediction["sharpSummary"] = summary
-    prediction["tacticalBreakdown"] = (
-        f"**{sport.upper()} matchup context**\n" + "\n".join(f"- {n}" for n in notes) +
-        f"\n\n**Decision**\n- {rec} is supported by "
+    # ── Assemble sections ─────────────────────────────────────────────────────
+    tactical_block = (
+        "**Tactical context**\n" + "\n".join(f"- {ln}" for ln in tactical_lines)
+        if tactical_lines else ""
+    )
+
+    baseline_block = (
+        f"**{sport.upper()} matchup context**\n" + "\n".join(f"- {n}" for n in notes)
+    )
+
+    decision_block = (
+        f"**Decision**\n- {rec} is supported by "
         f"{max(p_over or 0, p_under or 0):.0f}% modeled probability"
         + (f" and {confidence:.0f}% displayed confidence." if confidence is not None else ".")
         + avoid_note
     )
+
+    sections = [baseline_block, tactical_block, decision_block]
+    prediction["sharpSummary"] = summary
+    prediction["tacticalBreakdown"] = "\n\n".join(s for s in sections if s)
     prediction["reasoning"] = prediction["tacticalBreakdown"]
     prediction["keyFactors"] = notes[:6]
     prediction["aiSource"] = "deterministic_model"
     prediction["explanationSource"] = "deterministic_model"
-    prediction["explanationVersion"] = "reverse-picks-sport-v1"
+    prediction["explanationVersion"] = "reverse-picks-sport-v2"
     return prediction
+
+def _mlb_tactical_lines(prediction: dict[str, Any], prop: str) -> list[str]:
+    """Build evidence-gated tactical context lines for MLB picks."""
+    lines: list[str] = []
+    bm = prediction.get("bayesianMetrics") or {}
+    prop_type = str(prediction.get("propType") or "").lower()
+    player_role = str(prediction.get("playerRole") or "").lower()
+    team = str(prediction.get("teamName") or "the player's team")
+    opponent = str(prediction.get("opponentName") or "the opponent")
+    venue = str(prediction.get("venue") or "").lower()
+    game_total = _num(prediction.get("gameTotalUsed") or prediction.get("gameTotal"))
+    game_total_source = str(prediction.get("gameTotalSource") or "")
+
+    # Platoon split
+    platoon = _num(bm.get("platoonSplitMult"))
+    batter_hand = str(bm.get("batterHandedness") or bm.get("batterHand") or "")
+    pitcher_hand = str(bm.get("pitcherHandedness") or bm.get("pitcherHand") or "")
+    if platoon is not None and abs(platoon - 1) >= 0.03:
+        pct = round((platoon - 1) * 100, 1)
+        if batter_hand and pitcher_hand:
+            matchup_str = f"{batter_hand}HB vs {pitcher_hand}HP"
+            hand_note = (
+                "opposite-hand advantage" if (
+                    (batter_hand.upper() == "L" and pitcher_hand.upper() == "R") or
+                    (batter_hand.upper() == "R" and pitcher_hand.upper() == "L")
+                ) else "same-hand disadvantage"
+            )
+            lines.append(
+                f"Platoon split ({matchup_str}): **{pct:+.1f}%** — "
+                f"{hand_note} applied to the projection."
+            )
+        else:
+            direction = "favourable" if pct > 0 else "unfavourable"
+            lines.append(
+                f"Platoon split: **{pct:+.1f}%** {direction} handedness matchup."
+            )
+
+    # Park factor
+    park_pct = _num(bm.get("parkFactorPct"))
+    park_name = str(bm.get("parkName") or bm.get("park_name") or "")
+    if park_pct is not None and abs(park_pct) >= 1.5:
+        park_label = park_name if park_name else (f"{team}'s park" if venue == "home" else f"{opponent}'s park")
+        direction_word = "hitter-friendly" if park_pct > 0 else "pitcher-friendly"
+        lines.append(
+            f"Ballpark factor: **{park_pct:+.1f}%** — {park_label} is {direction_word} "
+            f"for {prop.lower()} ({'+' if park_pct > 0 else ''}{park_pct:.1f}% vs neutral)."
+        )
+
+    # ERA / opposing pitcher quality
+    era = _num(bm.get("eraFactor"))
+    opp_era = _num(bm.get("pitcherEra") or prediction.get("pitcherEra"))
+    if era is not None and abs(era - 1) >= 0.03:
+        pct_era = round((era - 1) * 100, 1)
+        if opp_era is not None:
+            if player_role == "pitcher":
+                # For pitcher props, ERA describes this pitcher's own quality
+                quality = "dominant" if opp_era < 2.75 else "solid" if opp_era < 3.75 else "average" if opp_era < 4.75 else "weak"
+                lines.append(
+                    f"Pitcher quality: ERA {opp_era:.2f} ({quality}) — "
+                    f"applies a {pct_era:+.1f}% adjustment to the {prop.lower()} projection."
+                )
+            else:
+                # For batter props, ERA describes the opposing pitcher's quality
+                quality = "elite ace" if opp_era < 2.75 else "solid starter" if opp_era < 3.75 else "average" if opp_era < 4.75 else "hittable"
+                lines.append(
+                    f"Opposing pitcher: ERA {opp_era:.2f} ({quality}) — "
+                    f"applies a {pct_era:+.1f}% adjustment to the {prop.lower()} projection."
+                )
+        else:
+            lines.append(
+                f"Opposing pitcher quality: **{pct_era:+.1f}%** ERA-based adjustment to the {prop.lower()} projection."
+            )
+
+    # Game total — note: the engine applies this as a scoring-environment signal for batter props;
+    # pitcher props use it as a run-environment indicator only (not a direct prop multiplier for K/IP).
+    if game_total is not None:
+        total_context = (
+            "high-scoring environment" if game_total >= 10
+            else "pitcher's duel" if game_total <= 7
+            else "balanced game environment"
+        )
+        source_note = f" (from {game_total_source})" if game_total_source and game_total_source != "unavailable" else ""
+        if player_role == "pitcher":
+            lines.append(
+                f"Game total: **{game_total:g}** — {total_context}{source_note}. "
+                f"Used as a run-environment context; the engine applies it as a scoring-environment signal."
+            )
+        else:
+            lines.append(
+                f"Game total: **{game_total:g}** — {total_context}{source_note}. "
+                f"Applied as a scoring-environment anchor for the {prop.lower()} projection."
+            )
+
+    return lines
+
+def _cs2_tactical_lines(prediction: dict[str, Any], prop: str) -> list[str]:
+    """Build evidence-gated tactical context lines for CS2 picks."""
+    lines: list[str] = []
+    bm = prediction.get("bayesianMetrics") or {}
+    tm = bm.get("tacticalMetrics") or {}
+    prop_type = str(prediction.get("propType") or "").lower()
+    map_name = str(prediction.get("mapName") or tm.get("mapAwareness") or "").strip()
+    player_team_rank = _num(prediction.get("playerTeamRank") or tm.get("playerTeamRank"))
+    opp_rank = _num(prediction.get("opponentRank") or tm.get("opponentRank"))
+    player_starts_ct = prediction.get("playerTeamStartsCt")
+    if player_starts_ct is None:
+        player_starts_ct = tm.get("playerTeamStartsCt")
+
+    _kills_props = {
+        "kills", "map1_kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills",
+    }
+
+    # Map context
+    if map_name:
+        clean_map = map_name.lower().replace("de_", "").strip()
+        map_display = clean_map.capitalize()
+        expected_rounds = _num(tm.get("mapExpectedRounds"))
+        map_kpr = _num(tm.get("mapKprFactor"))
+        ct_win_rate = _num(tm.get("mapCtWinRate"))
+
+        rounds_note = ""
+        if expected_rounds is not None:
+            rounds_note = f" Expected rounds: ~{expected_rounds:.0f}."
+        kpr_note = ""
+        if map_kpr is not None and prop_type in _kills_props:
+            if map_kpr < 0.97:
+                kpr_note = f" This map's structure produces fewer duels per round (KPR factor {map_kpr:.2f})."
+            elif map_kpr > 1.03:
+                kpr_note = f" This map's open layout creates more duels per round (KPR factor {map_kpr:.2f})."
+        lines.append(f"Map: **{map_display}**.{rounds_note}{kpr_note}")
+
+        # CT/T side bias
+        if ct_win_rate is not None and prop_type in _kills_props:
+            ct_pct = round(ct_win_rate * 100, 1)
+            t_pct = round((1 - ct_win_rate) * 100, 1)
+            if ct_pct >= 53:
+                bias_label = f"CT-favoured ({ct_pct}% CT win rate)"
+                bias_note = "CT-side rounds tend to be shorter and more controlled, which can reduce per-round kill opportunities"
+            elif ct_pct <= 48:
+                bias_label = f"T-favoured ({t_pct}% T win rate)"
+                bias_note = "T-side aggression creates more duel opportunities, generally supporting kill volume"
+            else:
+                bias_label = f"near-balanced ({ct_pct}% CT)"
+                bias_note = "balanced side dynamic with no strong kill-volume bias"
+
+            if player_starts_ct is not None:
+                starting_side = "CT" if player_starts_ct else "T"
+                advantage_half = "CT" if ct_win_rate >= 0.50 else "T"
+                aligned = starting_side == advantage_half
+                side_note = (
+                    f" Player's team **starts {starting_side}** — "
+                    f"{'aligned with the map\'s stronger half' if aligned else 'starting on the map\'s weaker half'}."
+                )
+            else:
+                side_note = ""
+            lines.append(
+                f"Side bias: **{bias_label}** — {bias_note}.{side_note}"
+            )
+
+    # Opponent rank
+    if opp_rank is not None:
+        rank_int = int(opp_rank)
+        if rank_int <= 10:
+            tier = "world-elite"
+            kill_note = "significantly suppresses kill output (structured CT, disciplined utility usage)"
+        elif rank_int <= 20:
+            tier = "top-20"
+            kill_note = "meaningfully suppresses kill totals compared to mid-tier opponents"
+        elif rank_int <= 50:
+            tier = "top-50"
+            kill_note = "applies a moderate kill suppression at baseline range"
+        elif rank_int <= 100:
+            tier = "ranked 51–100"
+            kill_note = "has a slight positive effect on kill volume compared to stronger opponents"
+        else:
+            tier = f"ranked #{rank_int}"
+            kill_note = "generally supports higher kill ceilings due to lower opposition quality"
+
+        if prop_type in _kills_props or prop_type in {"adr", "maps_1_2_adr", "map3_adr"}:
+            lines.append(
+                f"Opponent: **#{rank_int} ({tier})** — opponent rank {kill_note}."
+            )
+        else:
+            lines.append(f"Opponent: **#{rank_int} ({tier})**.")
+
+    # Player/team rank for relative matchup
+    if player_team_rank is not None and opp_rank is not None:
+        pt_rank = int(player_team_rank)
+        op_rank = int(opp_rank)
+        if op_rank > pt_rank * 2 and op_rank > 50:
+            lines.append(
+                f"Matchup: player's team (#{pt_rank}) faces a notably weaker opponent (#{op_rank}) — "
+                f"blowout risk may compress total rounds and cap kill ceiling."
+            )
+        elif pt_rank > op_rank * 2 and pt_rank > 50:
+            lines.append(
+                f"Matchup: underdog scenario (#{pt_rank} vs #{op_rank}) — "
+                f"underdog compression is applied; elite opponents structurally reduce kill opportunities."
+            )
+
+    # Role context
+    role_label = str(tm.get("roleClassification") or "")
+    if role_label and role_label != "unknown":
+        lines.append(f"Player role: **{role_label}** — affects projected kill ceiling and variance.")
+
+    return lines

@@ -190,9 +190,9 @@ async def wnba_predict(req: WnbaPredictRequest):
             "ast":      g.get("ast"),
         })
 
-    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+    from deterministic_explanations import build_sport_deterministic_explanation
 
-    return {
+    response = {
         "sport":            "wnba",
         "playerName":       req.playerName,
         "playerId":         player_id,
@@ -202,6 +202,8 @@ async def wnba_predict(req: WnbaPredictRequest):
         "line":             req.line,
         "venue":            venue,
         "opponentName":     req.opponentName or "",
+        "oppDefRating":     req.oppDefRating,
+        "restDays":         req.restDays,
         "projection":       result["projection"],
         "pOver":            result["pOver"],
         "pUnder":           result["pUnder"],
@@ -214,8 +216,10 @@ async def wnba_predict(req: WnbaPredictRequest):
         "streakFlag":       result["streakFlag"],
         "gameLogs":         game_log_tiles,
         "recentValues":     result.get("recentValues", []),
-        "sharpSummary":     ai_result.get("sharpSummary", ""),
-        "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
-        "reasoning":        ai_result.get("reasoning", ""),
+        "sharpSummary":     "",
+        "tacticalBreakdown": "",
+        "reasoning":        "",
         "rawConfidence":    result["confidenceScore"],
     }
+    build_sport_deterministic_explanation(response, "wnba")
+    return response

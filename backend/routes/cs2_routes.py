@@ -238,9 +238,11 @@ async def cs2_predict(req: Cs2PredictRequest):
 
     ai = {"sharpSummary": "", "reasoning": "", "tacticalBreakdown": ""}
 
+    from deterministic_explanations import build_sport_deterministic_explanation
+
     prop_label = CS2_PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
 
-    return {
+    response = {
         "sport":               "cs2",
         "playerName":          nickname,
         "playerId":            player_id,
@@ -264,9 +266,9 @@ async def cs2_predict(req: Cs2PredictRequest):
         "momentumMean":        result["momentumMean"],
         "sampleSize":          result["sampleSize"],
         "streakFlag":          result.get("streakFlag", ""),
-        "sharpSummary":        ai.get("sharpSummary", ""),
-        "reasoning":           ai.get("reasoning", ""),
-        "tacticalBreakdown":   ai.get("tacticalBreakdown", ""),
+        "sharpSummary":        "",
+        "reasoning":           "",
+        "tacticalBreakdown":   "",
         "gameLogs":            map_logs[:15],
         "bayesianMetrics": {
             "priorMean":        result["priorMean"],
@@ -275,3 +277,5 @@ async def cs2_predict(req: Cs2PredictRequest):
             "tacticalMetrics":  tactical_metrics,
         },
     }
+    build_sport_deterministic_explanation(response, "cs2")
+    return response
