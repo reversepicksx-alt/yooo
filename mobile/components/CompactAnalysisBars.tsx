@@ -26,7 +26,7 @@ export function getTacticalRead(prediction: Record<string, any> | null | undefin
     prediction.explanation,
     prediction.keyEvidence,
   ]
-    .map((value) => String(value || '').replace(/\s+/g, ' ').trim())
+    .map((value) => String(value || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim())
     .filter((value) => (
       value.length >= 40
       && !/^structured analysis loading\b/i.test(value)
@@ -211,9 +211,12 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]} />
                       <Text style={styles.date}>{date}</Text>
                       <Text style={[styles.opponent, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
-                        {shortOpponent(opponentName(game))} · {venueMark(game.venue)}
+                        {shortOpponent(opponentName(game))}
                       </Text>
                       <Text style={styles.possessionLabel}>{possession}</Text>
+                      <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
+                        {venueMark(rowVenue(game))}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -290,9 +293,12 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       </View>
                       <Text style={styles.date}>{date}</Text>
                       <Text style={[styles.opponent, { color: row.teamOnly ? '#4A6CFF' : Colors.textSecondary }]}>
-                        {shortOpponent(opponentName(row))} · {venueMark(row.venue)}
+                        {shortOpponent(opponentName(row))}
                       </Text>
                       <Text style={styles.possessionLabel}>{possession.replace('POSS ', 'P')}</Text>
+                      <Text style={[styles.venueLabel, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}>
+                        {venueMark(rowVenue(row))}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -348,6 +354,7 @@ const styles = {
   bar: { width: 28, minHeight: 10, borderRadius: 3, justifyContent: 'flex-end' as const, alignItems: 'center' as const, position: 'relative' as const },
   possession: { position: 'absolute' as const, bottom: 4, color: '#FFF', fontSize: 6.5, fontWeight: '900' as const },
   possessionLabel: { fontSize: 6.5, color: '#7D8796', lineHeight: 9, fontWeight: '800' as const },
+  venueLabel: { fontSize: 7, lineHeight: 9, fontWeight: '900' as const, letterSpacing: 0.5 },
   date: { fontSize: 7, color: '#555', lineHeight: 10, marginTop: 4 },
   opponent: { fontSize: 7, fontWeight: '700' as const, lineHeight: 10 },
   detail: { paddingHorizontal: 2, paddingTop: 4, paddingBottom: 2, color: '#9CA3AF', fontSize: 8, lineHeight: 12 },

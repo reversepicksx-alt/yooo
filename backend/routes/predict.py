@@ -10281,8 +10281,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["factorLedgerVersion"] = "projection-ledger-v1"
             prediction["factorLedgerFingerprint"] = _ledger_fingerprint
 
-            # The ledger is now complete. Gemini may only write the short
-            # customer paragraph from this final snapshot; it cannot alter
+            # The ledger is now complete. Gemini may only write the long-form
+            # customer report from this final snapshot; it cannot alter
             # projection, direction, confidence, or any evidence field.
             if str(req.sport or "soccer").lower() == "soccer":
                 try:
@@ -10300,7 +10300,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     prediction["sharpSummary"] = _compact_text
                     prediction["aiSource"] = _compact_source
                     prediction["explanationSource"] = _compact_source
-                    prediction["explanationVersion"] = "compact-match-context-v1"
+                    prediction["explanationVersion"] = "compact-match-context-v2-longform"
                     prediction["aiExplanationCacheKey"] = _compact_cache_key
                     prediction["aiPending"] = False
                     print(
@@ -10319,7 +10319,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     prediction["sharpSummary"] = prediction["tacticalBreakdown"]
                     prediction["aiSource"] = "compact_deterministic"
                     prediction["explanationSource"] = "compact_deterministic"
-                    prediction["explanationVersion"] = "compact-match-context-v1"
+                    prediction["explanationVersion"] = "compact-match-context-v2-longform"
                     prediction["aiPending"] = False
 
             # Rebuild the authoritative math footer after all late calibration

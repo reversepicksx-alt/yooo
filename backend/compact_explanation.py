@@ -1,8 +1,8 @@
-"""Bounded customer-facing match explanations.
+"""Detailed customer-facing tactical match reports.
 
-The projection ledger remains deterministic.  Gemini is used only to turn a
-small, finalized evidence packet into one short paragraph.  This module has
-no background entry point and never changes a prediction value.
+The projection ledger remains deterministic. Gemini is used only to turn a
+finalized evidence packet into a long, evidence-gated tactical report. This
+module has no background entry point and never changes a prediction value.
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ from config import db
 
 
 _MODEL = os.environ.get("GEMINI_EXPLANATION_MODEL", "gemini-2.5-flash")
-_MAX_WORDS = 90
+_MIN_WORDS = 800
+_MAX_WORDS = 1100
+_CACHE_VERSION = "compact-v2-longform"
 _DAILY_LIMIT = max(1, int(os.environ.get("GEMINI_EXPLANATION_DAILY_LIMIT", "200")))
 _memory_cache: dict[str, str] = {}
 _generation_locks: dict[str, aio.Lock] = {}
@@ -45,9 +47,10 @@ def _fmt(value: Any) -> str:
 
 
 def _clean_text(value: Any) -> str:
-    text = str(value or "").replace("\r", " ").replace("\n", " ")
+    text = str(value or "").replace("\r", "")
     text = re.sub(r"\*\*|[`#]", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
     # Do not allow a provider, model, or error string into the customer card.
     if re.search(r"\b(api[- ]?football|gemini|provider|llm error|model ledger)\b", text, re.I):
         return ""
@@ -55,6 +58,18 @@ def _clean_text(value: Any) -> str:
     if len(words) > _MAX_WORDS:
         text = " ".join(words[:_MAX_WORDS]).rstrip(" ,;:") + "."
     return text
+
+
+def _word_count(value: Any) -> int:
+    return len(str(value or "").split())
+
+
+def _longform_usable(value: Any) -> bool:
+    text = str(value or "").strip()
+    return (
+        _word_count(text) >= _MIN_WORDS
+        and not re.match(r"^(for the|structured analysis loading|analysis is pending)\b", text, re.I)
+    )
 
 
 def _h2h_packet(prediction: dict[str, Any]) -> dict[str, Any]:
@@ -83,8 +98,55 @@ def _h2h_packet(prediction: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _recent_packet(prediction: dict[str, Any]) -> dict[str, Any]:
+    player_logs = prediction.get("playerGameLogs") or {}
+    source = prediction.get("gameLogs") or player_logs.get("games") or []
+    prop_fields = {
+        "pass_attempts": "passes_total", "passes": "passes_total",
+        "shots": "shots_total", "shots_on_target": "shots_on",
+        "key_passes": "passes_key", "tackles": "tackles_total",
+        "clearances": "clearances", "interceptions": "interceptions",
+        "dribbles": "dribbles_attempts", "crosses": "crosses",
+        "saves": "goals_saves", "goalie_saves": "goals_saves",
+    }
+    target_field = prop_fields.get(str(prediction.get("propType") or ""))
+    rows = []
+    for row in source[:20] if isinstance(source, list) else []:
+        if not isinstance(row, dict):
+            continue
+        rows.append({
+            "date": str(row.get("date") or row.get("gameDate") or "")[:10],
+            "opponent": row.get("opponent") or row.get("opponentName"),
+            "venue": row.get("venue") or (
+                "home" if row.get("isHome") is True else "away" if row.get("isHome") is False else None
+            ),
+            "value": (
+                row.get("value")
+                if row.get("value") is not None
+                else row.get("targetStat")
+                if row.get("targetStat") is not None
+                else row.get(target_field) if target_field else None
+            ),
+            "minutes": row.get("minutes"),
+            "teamPossession": row.get("teamPossession"),
+            "opponentPossession": row.get("opponentPossession"),
+            "score": row.get("score") or row.get("matchScore"),
+        })
+    home_count = sum(1 for row in rows if row.get("venue") == "home")
+    away_count = sum(1 for row in rows if row.get("venue") == "away")
+    return {
+        "sampleSize": len(rows),
+        "homeCount": home_count,
+        "awayCount": away_count,
+        "homeAverage": prediction.get("homeAvg", player_logs.get("homeAvg")),
+        "awayAverage": prediction.get("awayAvg", player_logs.get("awayAvg")),
+        "hitRates": prediction.get("hitRates") or player_logs.get("hitRates") or {},
+        "matches": rows,
+    }
+
+
 def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
-    """Keep the generation input small, final, and auditable."""
+    """Keep the long-form generation input final, rich, and auditable."""
     bm = prediction.get("bayesianMetrics") or {}
     ti = prediction.get("tacticalIntelligence") or {}
     player = ti.get("player") or {}
@@ -101,6 +163,10 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
     for item in (ti.get("limitations") or []):
         if item and item not in limitations:
             limitations.append(str(item))
+    opponent_profile = prediction.get("opponentDefensiveProfile") or prediction.get("opponentProfile") or {}
+    quality = prediction.get("evidenceQuality") or {}
+    ledger = prediction.get("factorLedger") or {}
+    ledger_steps = ledger.get("steps") if isinstance(ledger, dict) else []
     packet = {
         "match": {
             "player": prediction.get("playerName"),
@@ -113,11 +179,22 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
         "pick": {
             "prop": prediction.get("propType"),
             "line": prediction.get("line"),
-            "projection": prediction.get("projectedValue"),
+            "projection": (
+                prediction.get("projectedValue")
+                if prediction.get("projectedValue") is not None
+                else prediction.get("projection")
+                if prediction.get("projection") is not None
+                else prediction.get("bayesianProjection")
+            ),
             "recommendation": str(prediction.get("recommendation") or "").upper(),
             "pOver": bm.get("pOver"),
             "pUnder": bm.get("pUnder"),
             "confidence": prediction.get("confidenceScore"),
+            "confidenceLevel": prediction.get("confidenceLevel"),
+            "edgeRating": prediction.get("edgeRating"),
+            "safetyRating": prediction.get("safetyRating"),
+            "historicalRate": prediction.get("propHistoricalRate"),
+            "historicalSample": prediction.get("propHistoricalN"),
         },
         "context": {
             "position": player.get("position") or prediction.get("playerPosition"),
@@ -128,8 +205,39 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "opponentPossession": expected.get("opponent"),
             "matchScript": (ti.get("matchScript") or {}).get("label")
                 or (ti.get("matchScript") or {}).get("classification"),
+            "lineupStatus": (ti.get("lineup") or {}).get("status") or prediction.get("lineupStatus"),
+            "playerPosition": prediction.get("playerPosition"),
+            "playerRole": prediction.get("playerRole"),
+            "opponentTier": prediction.get("currentOppTier"),
+            "moneyline": prediction.get("moneyline"),
+            "gameScript": prediction.get("gameScript") or prediction.get("matchScript"),
         },
         "h2h": _h2h_packet(prediction),
+        "recentForm": _recent_packet(prediction),
+        "opponentProfile": {
+            "opponent": opponent_profile.get("opponent"),
+            "position": opponent_profile.get("position"),
+            "allowedAverage": opponent_profile.get("avgAllowed") or opponent_profile.get("allowedAvg"),
+            "sampleSize": opponent_profile.get("sampleSize"),
+            "vsPlayerSeasonAvg": opponent_profile.get("vsPlayerSeasonAvg"),
+            "isFavorable": opponent_profile.get("isFavorable"),
+        },
+        "modelSignals": {
+            "priorMean": bm.get("priorMean") or prediction.get("priorMean"),
+            "momentumMean": bm.get("momentumMean") or prediction.get("momentumMean"),
+            "momentumLabel": bm.get("momentumLabel") or prediction.get("momentumLabel"),
+            "volatility": bm.get("volatility") or prediction.get("volatility"),
+            "priorSamples": bm.get("priorSamples") or prediction.get("priorSamples"),
+            "covariateAdjustment": bm.get("covariateAdjustment") or prediction.get("covariateAdjustment"),
+            "reversalFlag": bm.get("reversalFlag") or prediction.get("reversalFlag"),
+            "ledgerSteps": ledger_steps[-12:] if isinstance(ledger_steps, list) else [],
+        },
+        "evidenceQuality": {
+            "level": quality.get("level") or quality.get("qualityLevel"),
+            "score": quality.get("score"),
+            "realPlayerLogCount": quality.get("realPlayerLogCount"),
+            "capReasons": (quality.get("capReasons") or [])[:5],
+        },
         "limitations": limitations[:3],
     }
     return packet
@@ -143,26 +251,114 @@ def _fallback(packet: dict[str, Any]) -> str:
     player = match.get("player") or "The player"
     matchup = f"{match.get('team') or 'The team'} vs {match.get('opponent') or 'the opponent'}"
     rec = pick.get("recommendation") or "PASS"
-    paragraph = (
-        f"{player is not None and player or 'The player'} is projected for "
-        f"{_fmt(pick.get('projection'))} {str(pick.get('prop') or 'prop').replace('_', ' ')} "
-        f"against a {_fmt(pick.get('line'))} line in {matchup}; the model leans {rec}. "
-    )
-    poss = context.get("playerTeamPossession")
-    opp_poss = context.get("opponentPossession")
-    if poss is not None and opp_poss is not None:
-        paragraph += f"The expected possession split is {_fmt(poss)}%–{_fmt(opp_poss)}%. "
-    if context.get("role"):
-        paragraph += f"The relevant role is {context['role']}. "
-    if h2h.get("playerAppearances"):
-        paragraph += (
-            f"Player H2H: {h2h['playerAppearances']} appearances, "
-            f"{_fmt(h2h.get('playerAverage'))} average. "
-        )
-    elif h2h.get("teamMeetings"):
-        paragraph += f"The teams have met {h2h['teamMeetings']} times, but player H2H is unavailable. "
-    else:
-        paragraph += "No player H2H sample is available. "
+    recent = packet.get("recentForm") or {}
+    opponent = packet.get("opponentProfile") or {}
+    signals = packet.get("modelSignals") or {}
+    quality = packet.get("evidenceQuality") or {}
+    context_bits = packet.get("context") or {}
+    prop = str(pick.get("prop") or "prop").replace("_", " ")
+    projection = _fmt(pick.get("projection"))
+    line = _fmt(pick.get("line"))
+    venue = match.get("venue") or "the listed venue"
+    paragraphs = [
+        (
+            f"{player} enters this {prop} matchup on the {venue} side for {matchup}. "
+            f"The finalized projection is {projection} against a {line} line, producing a {rec} "
+            f"recommendation at {pick.get('confidence') or 'unavailable'}% displayed confidence. "
+            f"This is not a recommendation based on one recent box score. The decision is the "
+            f"result of the player's baseline, recent form, venue context, opponent profile, "
+            f"and the way those signals interact with the posted number. The line is the market "
+            f"reference; the projection is the model's estimate of the player's expected workload "
+            f"before the match begins."
+        ),
+        (
+            f"The recent sample contains {recent.get('sampleSize') or 0} usable matches, including "
+            f"{recent.get('homeCount') or 0} home and {recent.get('awayCount') or 0} away appearances. "
+            f"The venue split is important because a player's responsibilities can change when the "
+            f"team controls territory, protects a lead, absorbs pressure, or plays through a more "
+            f"direct transition plan. The recorded home average is {_fmt(recent.get('homeAverage'))} "
+            f"and the away average is {_fmt(recent.get('awayAverage'))}. The recent hit-rate record "
+            f"is {json.dumps(recent.get('hitRates') or {}, separators=(',', ':'))}; it is supporting "
+            f"context rather than a guarantee. The model also accounts for sample quality, minutes, "
+            f"and whether a result represents a normal role rather than a short cameo."
+        ),
+        (
+            f"The tactical environment is anchored by the player's resolved position "
+            f"({context_bits.get('playerPosition') or 'unavailable'}) and role "
+            f"({context_bits.get('playerRole') or 'unavailable'}). That matters because {prop} "
+            f"production is created by repeatable actions: where the player receives the ball, "
+            f"whether they are asked to progress or recycle possession, how often they defend in "
+            f"their own half, and whether the match script gives them time to complete the relevant "
+            f"action. The expected possession split is "
+            f"{_fmt(context.get('playerTeamPossession'))}% for the player's team and "
+            f"{_fmt(context.get('opponentPossession'))}% for the opponent. The recorded match script "
+            f"is {context_bits.get('matchScript') or context_bits.get('gameScript') or 'unavailable'}, "
+            f"so no unverified game-state claim is being added."
+        ),
+        (
+            f"The opponent-specific evidence shows an allowed average of {_fmt(opponent.get('allowedAverage'))} "
+            f"for the relevant comparison group across {opponent.get('sampleSize') or 'an unavailable'} "
+            f"sample. Relative to the player's season baseline, that opponent signal is "
+            f"{_fmt(opponent.get('vsPlayerSeasonAvg'))}% different when available, and the model labels "
+            f"the matchup as {'favorable' if opponent.get('isFavorable') else 'not favorable' if opponent.get('isFavorable') is False else 'unresolved'}. "
+            f"This is the tactical distinction between a generic season average and an opponent-aware "
+            f"projection: the same player can have a different workload when the opposing team "
+            f"presses aggressively, concedes the relevant zone, closes passing lanes, or forces "
+            f"play into a different channel. If the comparison sample is thin, its influence is kept "
+            f"small rather than treated as a full scouting truth."
+        ),
+        (
+            f"The direct H2H record contains {h2h.get('playerAppearances') or 0} player appearances "
+            f"with an average of {_fmt(h2h.get('playerAverage'))}, while the teams have "
+            f"{h2h.get('teamMeetings') or 0} verified meetings in the broader fixture history. "
+            f"Player appearances and team-only meetings are kept separate: a match can reveal the "
+            f"opponent's possession and tactical shape without proving that this player was on the "
+            f"pitch. H2H therefore acts as a matchup-specific adjustment only when the identity, "
+            f"fixture, venue, and player participation are verified. Missing H2H is not silently "
+            f"converted into a zero or a fabricated neutral average."
+        ),
+        (
+            f"The model's internal signals describe the baseline as {_fmt(signals.get('priorMean'))}, "
+            f"recent momentum as {_fmt(signals.get('momentumMean'))} with a "
+            f"{signals.get('momentumLabel') or 'unavailable'} label, and volatility as "
+            f"{signals.get('volatility') or 'unavailable'}. The evidence uses "
+            f"{signals.get('priorSamples') or recent.get('sampleSize') or 0} prior observations, "
+            f"with a context adjustment of {_fmt(signals.get('covariateAdjustment'))}. These numbers "
+            f"explain why the projection can differ from both the season average and the line. A "
+            f"small gap should not be described as a dominant tactical mismatch; conversely, a "
+            f"larger gap still needs to survive venue, role, opponent, and evidence-quality checks "
+            f"before the recommendation earns strong confidence."
+        ),
+        (
+            f"The evidence-quality status is {quality.get('level') or 'unavailable'} at "
+            f"{quality.get('score') or 'unavailable'}/100 with {quality.get('realPlayerLogCount') or recent.get('sampleSize') or 0} "
+            f"real player logs. Any confidence cap or limitation is reported as "
+            f"{'; '.join(quality.get('capReasons') or packet.get('limitations') or ['no additional limitation recorded'])}. "
+            f"The final read is therefore specific but bounded: the model leans {rec} because the "
+            f"final projection sits on that side of the line after the deterministic adjustments, "
+            f"not because the narrative is trying to manufacture certainty. The most important "
+            f"question for this pick is whether the expected venue, role, and match script actually "
+            f"appear after kickoff. If they do, the tactical pathway supports the call; if they do "
+            f"not, the pre-match projection should be treated as a measured estimate rather than a "
+            f"promise."
+        ),
+        (
+            f"There are also practical conditions that would make this read less reliable. A late "
+            f"lineup change, an unexpected position, a shortened workload, or a tactical instruction "
+            f"that moves {player} away from the relevant zone can reduce the number of opportunities "
+            f"available for {prop}. The same is true if the player's team loses the expected "
+            f"territorial balance and spends the match defending, or if an early score creates a "
+            f"script that is materially different from the pre-match expectation. Those are not "
+            f"reasons to rewrite the projection after the fact; they are the boundaries of a "
+            f"pre-match estimate. The responsible interpretation is to check whether the observed "
+            f"role and venue match the verified inputs, then judge the result against the original "
+            f"line rather than against an invented narrative. With that limitation stated clearly, "
+            f"the {rec} direction is the deterministic conclusion supported by the available "
+            f"evidence, while the confidence level communicates how much of that evidence is "
+            f"actually verified."
+        ),
+    ]
+    paragraph = "\n\n".join(paragraphs)
     return _clean_text(paragraph)
 
 
@@ -175,7 +371,7 @@ async def _cached_text(cache_key: str) -> str:
             timeout=1.2,
         )
         text = _clean_text((doc or {}).get("text"))
-        if text:
+        if _longform_usable(text):
             _memory_cache[cache_key] = text
             return text
     except Exception as exc:
@@ -218,10 +414,10 @@ async def _generate(prompt: str) -> str:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2,
-                    max_output_tokens=140,
+                    max_output_tokens=1800,
                 ),
             ),
-            timeout=12,
+            timeout=18,
         )
         return _clean_text(getattr(response, "text", ""))
     except Exception as exc:
@@ -243,7 +439,7 @@ async def build_compact_explanation(
         "line": prediction.get("line"),
         "ledger": ledger_fingerprint,
     }
-    cache_key = "compact-v1-" + hashlib.sha256(
+    cache_key = _CACHE_VERSION + "-" + hashlib.sha256(
         json.dumps(raw_identity, sort_keys=True, default=str).encode()
     ).hexdigest()[:32]
     fallback = _fallback(packet)
@@ -263,16 +459,23 @@ async def build_compact_explanation(
             return fallback, "compact_budget_fallback", cache_key
 
         prompt = (
-            "Write one concise customer-facing paragraph (55-90 words) explaining this "
-            "sports pick. Use only the JSON evidence below. Mention the matchup, line, "
-            "projection/recommendation, and the most relevant role, possession, or H2H "
-            "context. If H2H is unavailable, say so briefly. Do not invent facts or "
-            "numbers. Do not use headings, bullets, markdown, provider names, model "
-            "names, or betting guarantees. Do not change the recommendation.\n\n"
+            "Write a detailed customer-facing tactical scouting report of 900-1100 words "
+            "about this sports pick. Use only the JSON evidence below. Write 6-9 connected "
+            "paragraphs with substantial tactical reasoning, not filler. Explain the exact "
+            "matchup, line, projection, recommendation, recent-form pattern, home/away split, "
+            "possession environment, resolved position and role, formation or match-script "
+            "implications, opponent-specific evidence, H2H evidence, and evidence limitations. "
+            "Explain mechanisms: where the player is likely to receive or lose opportunities, "
+            "how pressure/territory/game state can change the prop, and why the evidence supports "
+            "or limits the final direction. Use exact numbers only when present in the JSON. If a "
+            "feed is unavailable, say it is unavailable rather than inventing it. Player H2H and "
+            "team-only meetings must remain distinct. Do not use headings, bullets, markdown, "
+            "provider names, model names, guarantees, or the word Bayesian. Say Reverse Formula "
+            "instead. Do not change the deterministic recommendation.\n\n"
             f"EVIDENCE JSON:\n{json.dumps(packet, separators=(',', ':'), default=str)}"
         )
         text = await _generate(prompt)
-        if not text:
+        if not _longform_usable(text):
             return fallback, "compact_deterministic", cache_key
         _memory_cache[cache_key] = text
         try:
