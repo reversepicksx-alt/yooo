@@ -498,6 +498,21 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
     : Colors.textSecondary;
   const signalLabel = String(signal.shadowDirection ?? 'neutral').replace(/_/g, ' ');
   const confidencePct = matchScript.confidence != null ? `${Math.round(Number(matchScript.confidence) * 100)}%` : '—';
+  const opponentHistory = ti?.playerOpponentHistory ?? (data as any)?.h2hPlayerStats?.opponentHitRate;
+  const positionCohort = ti?.positionCohort ?? (data as any)?.positionComparison;
+  const roleSource = String(player.roleSource ?? (data as any)?.tacticalContext?.roleSource ?? '');
+  const roleSourceLabel = roleSource === 'fixture_lineup_observation'
+    ? 'confirmed fixture lineup'
+    : roleSource === 'h2h_fixture_position_history'
+    ? 'observed H2H lineup history'
+    : roleSource === 'cached_role_resolver'
+    ? 'cached role resolver'
+    : roleSource.replace(/_/g, ' ') || 'role resolver';
+  const cohortAverage = positionCohort?.average ?? positionCohort?.avgStatValue;
+  const cohortSample = Number(positionCohort?.sampleSize ?? 0);
+  const cohortMinimum = Number(positionCohort?.minimumRecommendedSample ?? 10);
+  const hasOpponentHistory = Number(opponentHistory?.sampleSize ?? 0) > 0;
+  const hasCohort = cohortSample > 0;
 
   return (
     <View style={[aStyles.proCard, { borderColor: accent + '55' }]}>
@@ -524,6 +539,11 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
           <Text style={aStyles.proCardMetricLabel}>{shapeLabel}</Text>
         </View>
       </View>
+      <Text style={aStyles.proCardNote}>
+        Role evidence: <Text style={{ fontWeight: '800' }}>{roleSourceLabel}</Text>
+        {player.roleSampleSize ? ` · n=${player.roleSampleSize}` : ''}
+        {player.roleConfidence ? ` · ${player.roleConfidence} confidence` : ''}
+      </Text>
 
       {(matchScript.label || matchScript.classification) && (
         <View style={aStyles.intelSection}>
@@ -607,6 +627,41 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
           Opponent role mix: {opponentShape}. {comparison.comparison}
         </Text>
       ) : null}
+      {(hasOpponentHistory || hasCohort || ti?.tacticalConclusion) && (
+        <View style={aStyles.intelSection}>
+          <View style={aStyles.intelSectionHeader}>
+            <Text style={aStyles.intelSectionTitle}>PLAYER · OPPONENT EVIDENCE</Text>
+          </View>
+          {hasOpponentHistory ? (
+            <Text style={aStyles.proCardNote}>
+              {opponentHistory?.opponent || 'This opponent'}: {opponentHistory?.overPct ?? '—'}% OVER
+              {opponentHistory?.underPct != null ? ` · ${opponentHistory.underPct}% UNDER` : ''}
+              {' '}from n={opponentHistory?.sampleSize} verified player appearances
+              {opponentHistory?.evidenceStatus === 'thin' ? ' · thin sample' : ''}.
+            </Text>
+          ) : (
+            <Text style={aStyles.proCardNote}>
+              No verified player-level appearance history against this opponent was found.
+            </Text>
+          )}
+          {hasCohort ? (
+            <Text style={aStyles.proCardNote}>
+              Same-position cohort: n={cohortSample} · average {cohortAverage ?? '—'}
+              {positionCohort?.overHitRate != null ? ` · ${positionCohort.overHitRate}% OVER` : ''}
+              {cohortSample < cohortMinimum ? ` · limited (target n≥${cohortMinimum})` : ' · sufficient sample'}.
+            </Text>
+          ) : (
+            <Text style={aStyles.proCardNote}>
+              No valid same-position opponent cohort was available.
+            </Text>
+          )}
+          {ti?.tacticalConclusion ? (
+            <Text style={[aStyles.proCardNote, { color: Colors.text }]}>
+              {ti.tacticalConclusion}
+            </Text>
+          ) : null}
+        </View>
+      )}
       <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
         {comparison.directMarkingVerified
           ? 'Direct marking assignment verified.'

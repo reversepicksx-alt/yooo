@@ -24,6 +24,13 @@ from prop_safety_cache import (
     get_recent_prop_safety as _get_recent_prop_safety,
 )
 import soccer_bdl_client as _bdl_soc
+from tactical_evidence import (
+    build_tactical_conclusion,
+    resolve_observed_role,
+    summarize_observed_positions,
+    summarize_player_opponent_history,
+    summarize_position_cohort,
+)
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -1733,8 +1740,15 @@ async def predict(req: PredictionRequest):
                             spec_pos = (cached_pr or {}).get("specificPosition", "")
                             spec_role = (cached_pr or {}).get("role", "")
 
-                            # Filter by specific position if target has one
-                            if target_specific_pos and spec_pos and spec_pos != target_specific_pos:
+                            # Prefer the actual position recorded in this match
+                            # over a stale cache row. If neither exists, retain
+                            # the broad provider category rather than inventing
+                            # an exact position.
+                            observed_pos = str(pos or "").strip().upper().replace(" ", "")
+                            if target_specific_pos and (
+                                (spec_pos and spec_pos != target_specific_pos)
+                                or (not spec_pos and observed_pos and observed_pos != target_specific_pos)
+                            ):
                                 continue  # Skip — cached position doesn't match target
 
                             # GK-specific: capture goals conceded for per-game save rate.
@@ -1760,6 +1774,7 @@ async def predict(req: PredictionRequest):
                                 "per90": round((stat_val / minutes) * 90, 2) if minutes > 0 else 0,
                                 "venue": comp_team_venue,
                                 "position": spec_pos or pos,
+                                "observedPosition": pos or None,
                                 "role": spec_role,
                                 "teamPossession": team_poss,
                                 "oppPossession": opp_poss,
@@ -1775,21 +1790,17 @@ async def predict(req: PredictionRequest):
             for r in raw_results:
                 if isinstance(r, list):
                     all_players.extend(r)
-            # Sort by stat value descending, max 1 per team for diversity, take top 7
+            # One row per player, with enough recent fixtures to reach the
+            # requested cohort size when the provider has the evidence.
             seen_names = set()
-            seen_teams = {}
             unique = []
             for p in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
                 team = p.get("team", "")
                 if p["name"] in seen_names:
                     continue
-                if team and seen_teams.get(team, 0) >= 1:
-                    continue  # Max 1 player per team
                 seen_names.add(p["name"])
-                if team:
-                    seen_teams[team] = seen_teams.get(team, 0) + 1
                 unique.append(p)
-                if len(unique) >= 7:
+                if len(unique) >= 10:
                     break
             return unique
 
@@ -4799,6 +4810,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # =============================================
         # For each H2H fixture, fetch the player's individual stats in THAT match
         h2h_player_stats = []
+        h2h_summary = {}
         if h2h_data:
             h2h_fixture_ids = []
             for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
@@ -4878,6 +4890,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                     "opponent": opponent_name,
                                     "venue": venue_in_match,
                                     "minutesPlayed": minutes_played,
+                                    "observedPosition": (stats.get("games") or {}).get("position"),
                                     "statValues": {k: v for k, v in stat_key_map_h2h.items() if v is not None},
                                     "targetStat": stat_key_map_h2h.get(req.propType),
                                     "targetStatPer90": round((stat_key_map_h2h.get(req.propType, 0) or 0) / minutes_played * 90, 2) if minutes_played > 0 and stat_key_map_h2h.get(req.propType) else None,
@@ -4920,6 +4933,16 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 h2h_summary["avgVsOpponent"] = round(sum(h2h_values) / len(h2h_values), 2)
                 h2h_summary["minVsOpponent"] = min(h2h_values)
                 h2h_summary["maxVsOpponent"] = max(h2h_values)
+                _h2h_evidence = summarize_player_opponent_history(h2h_values, req.line)
+                h2h_summary["opponentHitRate"] = {
+                    "overHits": _h2h_evidence["overHits"],
+                    "underHits": _h2h_evidence["underHits"],
+                    "overPct": _h2h_evidence["overHitRate"],
+                    "underPct": _h2h_evidence["underHitRate"],
+                    "sampleSize": _h2h_evidence["sampleSize"],
+                    "evidenceStatus": _h2h_evidence["evidenceStatus"],
+                    "opponent": req.opponentName,
+                }
 
             # ── Enriched H2H metadata for the pro analysis display ──────────
             # Total team meetings found (not just ones the player appeared in)
@@ -5008,6 +5031,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # =============================================
         specific_position = ""
         player_role = ""
+        cached_pos = None
+        _role_override_active = bool(req.positionOverride)
         GENERIC_POSITIONS = {"Goalkeeper", "Defender", "Midfielder", "Attacker", ""}
 
         # Position-to-role compatibility: ensures roles match positions
@@ -5028,6 +5053,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             "CF": {"Complete Forward", "False 9", "Target Man", "Pressing Forward"},
             "ST": {"Poacher", "Target Man", "Complete Forward", "Pressing Forward"},
             "SS": {"Shadow Striker", "False 9"},
+            "FWD": {"False 9", "Creative Forward", "Complete Forward", "Pressing Forward"},
         }
 
         # Constrain valid positions by API-Sports generic category
@@ -5114,7 +5140,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         "Goalkeeper": ("GK", "Shot-Stopper"),
                         "Defender": ("CB", "Stopper"),
                         "Midfielder": ("CM", "Box-to-Box"),
-                        "Attacker": ("ST", "Pressing Forward"),
+                        # Do not manufacture a pressing role from a generic
+                        # attacker category. A verified lineup/fingerprint
+                        # role can replace this conservative fallback below.
+                        "Attacker": ("ST", "Complete Forward"),
                     }
                     specific_position, player_role = category_defaults[player_position]
                     await db.player_positions.update_one(
@@ -5141,6 +5170,108 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # Use specific position if available, otherwise fall back to generic
         display_position = specific_position or player_position
         display_role = player_role
+
+        # ── OBSERVED ROLE EVIDENCE ─────────────────────────────────────────
+        # A current confirmed lineup is the strongest provider observation.
+        # H2H fixture player rows provide a multi-match fallback when today's
+        # lineup is projected or unavailable. This is explanation context only.
+        _role_stats = {}
+        if best_entry:
+            _role_stats = {
+                "appearances": best_entry.get("games", {}).get("appearences"),
+                "passes_total": best_entry.get("passes", {}).get("total"),
+                "key_passes": best_entry.get("passes", {}).get("key"),
+                "tackles_total": best_entry.get("tackles", {}).get("total"),
+                "dribbles_attempts": best_entry.get("dribbles", {}).get("attempts"),
+                "shots_total": best_entry.get("shots", {}).get("total"),
+                "goals_total": best_entry.get("goals", {}).get("total"),
+            }
+        # Prefer the same verified player-game logs used by the projection
+        # when resolving a generic provider position.  A single aggregate
+        # provider row can be stale or omit the creative profile that is
+        # visible across the current season's fixture logs.
+        def _role_number(value):
+            try:
+                if value is None or str(value).strip() == "":
+                    return None
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        _role_logs = [
+            game for game in (player_game_logs or [])
+            if isinstance(game, dict) and (_role_number(game.get("minutes")) or 0) > 0
+        ]
+        if _role_logs:
+            def _role_total(key):
+                values = [_role_number(game.get(key)) for game in _role_logs]
+                values = [value for value in values if value is not None]
+                return sum(values) if values else None
+
+            _log_profile = {
+                "appearances": len(_role_logs),
+                "passes_total": _role_total("passes_total"),
+                "key_passes": _role_total("passes_key"),
+                "tackles_total": _role_total("tackles_total"),
+                "dribbles_attempts": _role_total("dribbles_attempts"),
+                "shots_total": _role_total("shots_total"),
+                "goals_total": _role_total("goals_total"),
+            }
+            _role_stats = {
+                key: value for key, value in _log_profile.items()
+                if value is not None
+            }
+        _observed_target = next(
+            (item for item in ((_pitch_lineup or {}).get("players") or []) if item.get("isTarget")),
+            None,
+        )
+        _observed_role = None
+        if (_pitch_lineup or {}).get("status") == "confirmed" and _observed_target:
+            _observed_role = resolve_observed_role(_observed_target.get("pos"), _role_stats)
+        _historical_position_summary = summarize_observed_positions(
+            [{"position": item.get("observedPosition")} for item in h2h_player_stats]
+        )
+        if not _observed_role or not _observed_role.get("role"):
+            _historical_position = _historical_position_summary.get("dominantPosition")
+            if _historical_position:
+                _observed_role = resolve_observed_role(_historical_position, _role_stats)
+                _observed_role["sampleSize"] = _historical_position_summary.get("sampleSize", 0)
+                _observed_role["positionCounts"] = _historical_position_summary.get("positionCounts", {})
+                _observed_role["source"] = "h2h_fixture_position_history"
+        if _observed_role and _observed_role.get("role"):
+            if not _role_override_active and not (cached_pos and cached_pos.get("source") == "manual_override"):
+                specific_position = _observed_role.get("position") or specific_position
+                player_role = _observed_role["role"]
+                display_position = specific_position or player_position
+                display_role = player_role
+                try:
+                    await db.player_positions.update_one(
+                        {"playerId": req.playerId},
+                        {"$set": {
+                            "playerId": req.playerId,
+                            "playerName": req.playerName,
+                            "team": corrected_team_name,
+                            "genericPosition": player_position,
+                            "specificPosition": specific_position,
+                            "role": player_role,
+                            "roleSource": _observed_role.get("source"),
+                            "roleEvidence": _observed_role.get("evidence", []),
+                            "roleSampleSize": _observed_role.get("sampleSize", 1),
+                            "observedPositionCounts": _observed_role.get("positionCounts", {}),
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }},
+                        upsert=True,
+                    )
+                except Exception as _role_persist_err:
+                    print(f"[ROLE EVIDENCE] persistence skipped: {_role_persist_err}")
+        else:
+            _observed_role = {
+                "position": display_position or None,
+                "role": display_role or None,
+                "source": "cached_role_resolver" if display_role else "unavailable",
+                "confidence": "low",
+                "evidence": ["no confirmed lineup or positive-minutes position history"],
+            }
 
         # ── POSITION-CORRECTED BASELINE RE-SQUEEZE ────────────────────────────
         # The positional baseline ran at line ~2866 using _bayes_position from
@@ -5642,34 +5773,41 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 position_context += f" — Role: {player_role}"
             if specific_position and player_position:
                 position_context += f" (API category: {player_position})"
-            if position_comparison:
-                comp_values = [
-                    p.get("statValue") for p in position_comparison
-                    if p.get("statValue") is not None
-                ]
-                comp_per90 = [
-                    p.get("per90") for p in position_comparison
-                    if p.get("per90") is not None
-                ]
-                comp_poss = [
-                    p.get("teamPossession") for p in position_comparison
-                    if p.get("teamPossession") is not None
-                ]
-                comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else 0
-                comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else 0
-                comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
-                position_comp_data = {
-                    "position": display_position,
-                    "positionShort": pos_short,
-                    "players": position_comparison,
-                    "avgStatValue": comp_avg,
-                    "avgPer90": comp_per90_avg,
-                    "avgPossession": comp_poss_avg,
-                    "sampleSize": len(comp_values),
-                    "propType": req.propType,
-                    "opponent": req.opponentName,
-                    "venue": player_venue,
-                }
+            _cohort_evidence = summarize_position_cohort(position_comparison, req.line)
+            comp_values = [
+                p.get("statValue") for p in position_comparison
+                if p.get("statValue") is not None
+            ]
+            comp_per90 = [
+                p.get("per90") for p in position_comparison
+                if p.get("per90") is not None
+            ]
+            comp_poss = [
+                p.get("teamPossession") for p in position_comparison
+                if p.get("teamPossession") is not None
+            ]
+            comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else None
+            comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else None
+            comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
+            position_comp_data = {
+                "position": display_position,
+                "positionShort": pos_short,
+                "players": position_comparison,
+                "avgStatValue": comp_avg,
+                "avgPer90": comp_per90_avg,
+                "avgPossession": comp_poss_avg,
+                "sampleSize": _cohort_evidence["sampleSize"],
+                "minimumRecommendedSample": _cohort_evidence["minimumRecommendedSample"],
+                "sampleStatus": _cohort_evidence["sampleStatus"],
+                "overHits": _cohort_evidence["overHits"],
+                "underHits": _cohort_evidence["underHits"],
+                "overHitRate": _cohort_evidence["overHitRate"],
+                "underHitRate": _cohort_evidence["underHitRate"],
+                "propType": req.propType,
+                "opponent": req.opponentName,
+                "venue": player_venue,
+                "source": "api_football_fixture_player_stats",
+            }
 
         # ── CATEGORY SAFETY VALVE ──────────────────────────────────────────────
         # Hard override: API-Football generic category is the ground truth.  If a
@@ -5678,7 +5816,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # narrative NEVER says "playing as a Poacher" for a centre-back.
         _ATTACKING_ROLES = {
             "Poacher", "Target Man", "False 9", "Shadow Striker",
-            "Complete Forward", "Pressing Forward",
+            "Complete Forward", "Creative Forward", "Pressing Forward",
         }
         _ATTACKER_POSITIONS = {"ST", "CF", "SS"}
         if player_position == "Defender" and (
@@ -8331,7 +8469,13 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "available": bool(_tc_position or _tc_role or _tc_poss_player is not None),
             "position": _tc_position or None,
             "role": _tc_role or None,
-            "roleSource": "position-and-role-resolver" if (_tc_position or _tc_role) else None,
+            "roleSource": _observed_role.get("source") if _observed_role else (
+                "position-and-role-resolver" if (_tc_position or _tc_role) else None
+            ),
+            "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
+            "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
+            "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
+            "observedPositionHistory": _historical_position_summary,
             "propType": req.propType,
             "playerTeam": player_team_display,
             "opponent": req.opponentName,
@@ -8366,6 +8510,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "lineupFormation": _tc_lineup.get("formation"),
             "opponentFormation": _tc_lineup.get("opponentFormation"),
             "targetLineupPosition": (_tc_target_lineup[0] or {}).get("pos") if _tc_target_lineup else None,
+            "playerOpponentHistory": (historical_data.get("h2hPlayerStats") or {}).get("opponentHitRate"),
+            "positionCohort": position_comp_data,
         }
 
         # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────
@@ -8676,6 +8822,27 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             )
             prediction["matchScript"] = prediction["tacticalIntelligence"].get("matchScript")
             prediction["positionalReality"] = prediction["tacticalIntelligence"].get("positionalReality")
+            prediction["tacticalIntelligence"]["tacticalConclusion"] = build_tactical_conclusion(
+                player_name=req.playerName,
+                role=display_role or player_role,
+                prop_type=req.propType,
+                opponent=req.opponentName,
+                player_history=(historical_data.get("h2hPlayerStats") or {}).get("opponentHitRate") or {},
+                cohort=position_comp_data or {},
+            )
+            prediction["tacticalIntelligence"]["playerOpponentHistory"] = (
+                historical_data.get("h2hPlayerStats") or {}
+            ).get("opponentHitRate")
+            prediction["tacticalIntelligence"]["positionCohort"] = position_comp_data
+            prediction["tacticalIntelligence"].setdefault("player", {}).update({
+                "position": display_position or None,
+                "role": display_role or player_role or None,
+                "positionSource": _observed_role.get("source") if _observed_role else None,
+                "roleSource": _observed_role.get("source") if _observed_role else None,
+                "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
+                "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
+                "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
+            })
         except Exception as _tactical_refresh_err:
             print(f"[TACTICAL INTELLIGENCE] scenario refresh failed: {_tactical_refresh_err}")
 
@@ -8696,6 +8863,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["opponentMatchStats"] = opponent_fixture_stats
         if historical_data.get("h2hPlayerStats"):
             prediction["h2hPlayerStats"] = historical_data["h2hPlayerStats"]
+        if position_comp_data:
+            prediction["positionComparison"] = position_comp_data
         if historical_data.get("playerGameLogs"):
             prediction["playerGameLogs"] = historical_data["playerGameLogs"]
         elif player_game_logs:

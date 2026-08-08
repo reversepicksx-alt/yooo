@@ -840,6 +840,9 @@ export interface TacticalIntelligence {
     providerGridPosition?: { x?: number | null; y?: number | null };
     positionSource?: string;
     roleSource?: string;
+    roleConfidence?: string;
+    roleEvidence?: string[];
+    roleSampleSize?: number;
   };
   lineup?: {
     status?: string;
@@ -895,6 +898,30 @@ export interface TacticalIntelligence {
     marketData?: string;
     possessionData?: string;
   };
+  tacticalConclusion?: string;
+  playerOpponentHistory?: {
+    overHits?: number;
+    underHits?: number;
+    overPct?: number | null;
+    underPct?: number | null;
+    sampleSize?: number;
+    evidenceStatus?: string;
+    opponent?: string;
+  } | null;
+  positionCohort?: {
+    positionShort?: string;
+    opponent?: string;
+    venue?: string;
+    average?: number | null;
+    avgStatValue?: number | null;
+    sampleSize?: number;
+    minimumRecommendedSample?: number;
+    sampleStatus?: string;
+    overHits?: number;
+    underHits?: number;
+    overHitRate?: number | null;
+    underHitRate?: number | null;
+  } | null;
   limitations?: string[];
 }
 
