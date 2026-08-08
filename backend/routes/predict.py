@@ -6251,11 +6251,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "underHitRate": _cohort_evidence["underHitRate"],
                 "crossPropAverages": cross_prop_averages,
                 "crossPropSampleSizes": cross_prop_samples,
-                "verdict": position_cohort_verdict(
-                    _cohort_evidence,
-                    prediction.get("recommendation"),
-                    req.line,
-                ),
                 "propType": req.propType,
                 "opponent": req.opponentName,
                 "venue": player_venue,
