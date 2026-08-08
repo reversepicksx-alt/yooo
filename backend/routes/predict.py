@@ -31,6 +31,7 @@ from tactical_evidence import (
     summarize_player_opponent_history,
     summarize_position_cohort,
 )
+from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -2062,22 +2063,65 @@ async def predict(req: PredictionRequest):
             player_team_id=_canonical_team_id or req.teamId,
             opponent_id=_canonical_opponent_id,
         )
+        # Optional secondary provider.  It is deliberately fetched in the
+        # evidence wave and never passed into the Bayesian projection.
+        bzzoiro_task = (
+            _fetch_bzzoiro_enrichment(
+                db,
+                fixture_id=_sit_fixture_id,
+                team_id=_canonical_team_id,
+                team_name=_canonical_team_name or "",
+                opponent_id=_canonical_opponent_id,
+                opponent_name=_canonical_opponent_name or "",
+                match_date=_sit_match_date,
+                player_id=req.playerId,
+                player_name=req.playerName,
+            )
+            if req.sport == "soccer"
+            else aio.sleep(
+                0,
+                result={
+                    "available": False,
+                    "status": "not_applicable",
+                    "provider": "bzzoiro",
+                    "shadowOnly": True,
+                    "reason": "Bzzoiro enrichment is football-only.",
+                },
+            )
+        )
 
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            situation_task,
+            situation_task, bzzoiro_task,
             return_exceptions=True
         )
         try:
             results = await aio.wait_for(all_wave2, timeout=55)
         except aio.TimeoutError:
-            results = [None, None, None, None]
+            results = [None, None, None, None, None]
             print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 55s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
         game_situation = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else {}
+        bzzoiro_enrichment = (
+            results[4]
+            if len(results) > 4 and not isinstance(results[4], (Exception, type(None)))
+            else {
+                "available": False,
+                "status": "unavailable",
+                "provider": "bzzoiro",
+                "shadowOnly": True,
+                "reason": "Bzzoiro enrichment did not complete.",
+            }
+        )
+        if bzzoiro_enrichment.get("available"):
+            print(
+                f"[BZZOIRO] covered event="
+                f"{(bzzoiro_enrichment.get('fixture') or {}).get('bzzoiroEventId')} "
+                f"press={(bzzoiro_enrichment.get('pressIntensity') or {}).get('label')}"
+            )
 
         # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
         _manager_ctx = {}
@@ -4656,6 +4700,19 @@ Possession Pressure Index: {_pi_label} | Opponent avg {_pi_poss}% ball possessio
 High opponent possession = the subject player's team has less time on the ball → subject player makes fewer pass attempts.
 Mathematical possession penalty already applied: ×{_pi_mult} reduction to pass projection.
 CRITICAL: This opponent dominates ball possession. Do NOT project pass totals near season average — the subject player's team will have significantly reduced time with the ball."""
+                _bz_press = (bzzoiro_enrichment or {}).get("pressIntensity") or {}
+                if (
+                    (bzzoiro_enrichment or {}).get("available")
+                    and _bz_press
+                    and req.propType in {"pass_attempts", "passes"}
+                ):
+                    bayesian_prompt_anchor += f"""
+[BZZOIRO OBSERVED MATCH PRESSURE — SHADOW EVIDENCE ONLY]
+Bzzoiro covered this exact fixture and observed the opponent at {_bz_press.get('label', 'unknown')} proxy intensity:
+{_bz_press.get('defensiveActions', '?')} defensive actions ({_bz_press.get('tackles', '?')} tackles + {_bz_press.get('interceptions', '?')} interceptions),
+{_bz_press.get('possession', '?')}% possession, {_bz_press.get('passesPerDefensiveAction', '?')} passes per defensive action.
+This is a one-match Bzzoiro defensive-actions proxy, not true PPDA or direct pressure-event tracking.
+Use it to explain the matchup only. Do not change the mathematical projection or treat one match as a stable team baseline."""
                 if (
                     req.propType in {"pass_attempts", "passes"}
                     and _pressure_response.get("status") == "classified"
@@ -5410,6 +5467,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             wave2_supplement["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
+        if bzzoiro_enrichment:
+            wave2_supplement["bzzoiroEnrichment"] = bzzoiro_enrichment
 
         # GK PASS CONTEXT — injected for GK pass_attempts props
         gk_pass_context = ""
@@ -6066,6 +6125,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "line": req.line,
             },
             "pressureResponse": _pressure_response,
+            "bzzoiroEnrichment": bzzoiro_enrichment,
         }
 
         # Mirror condPossAdj into bayesianMetrics so the mobile structured-evidence
@@ -8512,6 +8572,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "targetLineupPosition": (_tc_target_lineup[0] or {}).get("pos") if _tc_target_lineup else None,
             "playerOpponentHistory": (historical_data.get("h2hPlayerStats") or {}).get("opponentHitRate"),
             "positionCohort": position_comp_data,
+            "bzzoiroEnrichment": bzzoiro_enrichment,
         }
 
         # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────
@@ -9528,6 +9589,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "opponentFixtures": len(_af_opp_stats), "h2hPlayerGames": _af_opponent_n,
                     "comparableGames": _af_comparable_n, "possessionObservations": len(_af_poss_obs),
                     "teamPassObservations": len(_af_team_passes), "shareJoins": len(_af_shares),
+                    "bzzoiroFixtureCovered": bool((bzzoiro_enrichment or {}).get("available")),
                 },
                 "final": {
                     "projectedValue": prediction.get("projectedValue"),
@@ -9540,6 +9602,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "gameScript": _af_game_script or None,
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                     "pressureResponse": prediction.get("pressureResponse"),
+                    "bzzoiroEnrichment": prediction.get("tacticalContext", {}).get("bzzoiroEnrichment"),
                     "tacticalIntelligence": prediction.get("tacticalIntelligence"),
                 },
             }
