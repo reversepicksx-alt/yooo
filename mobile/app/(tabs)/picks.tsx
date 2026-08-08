@@ -31,11 +31,7 @@ import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  renderH2HIntelligence,
-  renderTacticalIntelligence,
-  renderTacticalVerdict,
-} from '@/components/AnalysisCards';
+import { CompactAnalysisBars } from '@/components/CompactAnalysisBars';
 
 type Tab = 'live' | 'history';
 
@@ -1545,107 +1541,15 @@ export default function PicksScreen() {
               return null;
             })()}
 
-            {/* ── EVIDENCE SUMMARY ── */}
-            {!analysisModal?.loading && renderEvidenceSummary(analysisModal?.data as Record<string, unknown> | null)}
-
-            {/* ── RECENT GAME DATA ── */}
-            {!analysisModal?.loading && renderRecentGameData(
-              analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick ?? null,
+            {/* ── RECENT + H2H BAR HISTORY ── */}
+            {!analysisModal?.loading && analysisModal?.data && (
+              <CompactAnalysisBars
+                prediction={{
+                  ...(analysisModal.pick as any),
+                  ...(analysisModal.data as any),
+                }}
+              />
             )}
-            {!analysisModal?.loading && renderH2HIntelligence(
-              analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick as any,
-            )}
-
-            {/* ── OPPONENT DEFENSIVE PROFILE ── */}
-            {!analysisModal?.loading && renderOpponentDefProfile(
-              analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick as any,
-            )}
-
-            {/* ── MATCHUP & POSSESSION ── */}
-            {!analysisModal?.loading && renderMatchupPossession(
-              analysisModal?.data as Record<string, unknown> | null,
-              analysisModal?.pick as any,
-            )}
-
-            {!analysisModal?.loading && renderTacticalVerdict(
-              analysisModal?.data as Record<string, unknown> | null,
-              { ...(analysisModal?.pick as any), ...(analysisModal?.data as any) },
-            )}
-
-            {/* ── TACTICAL INTELLIGENCE ── */}
-            {!analysisModal?.loading && renderTacticalIntelligence(
-              analysisModal?.data as Record<string, unknown> | null,
-            )}
-
-            {/* ── MANAGER / TACTICAL SHIFT CONTEXT ── */}
-            <View onLayout={(e) => { managerLayoutY.current = e.nativeEvent.layout.y; }}>
-              {!analysisModal?.loading && renderManagerContext(
-                analysisModal?.data as Record<string, unknown> | null,
-              )}
-            </View>
-
-            {/* ── STRUCTURED ANALYSIS BREAKDOWN ── */}
-            {!analysisModal?.loading && modalText && (() => {
-              const pick = analysisModal?.pick as any;
-              const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
-              return (
-                <View>
-                  {isSettled && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
-                      <Text style={{ fontSize: 9, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.2 }}>PRE-MATCH INTEL</Text>
-                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
-                    </View>
-                  )}
-                  <View style={mStyles.aiBlocks}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                      <Ionicons
-                        name="calculator-outline"
-                        size={13}
-                        color={Colors.textTertiary}
-                      />
-                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 1.1, color: Colors.textTertiary }}>
-                        COMPACT MATCH CONTEXT
-                      </Text>
-                    </View>
-                    {renderAnalysisBlocks(modalText, modalRec)}
-                  </View>
-                </View>
-              );
-            })()}
-
-            {/* ── SIGNAL ALERTS ── */}
-            {!analysisModal?.loading && modalAlerts.length > 0 && (
-              <View style={{ gap: 8, marginTop: 4 }}>
-                {modalAlerts.slice(0, 5).map((alert, i) => {
-                  const lower = alert.toLowerCase();
-                  const isLineDeviation = lower.includes('line deviation') || lower.includes('edgegap') || lower.includes('deviation');
-                  const isRisk = lower.includes('risk') || lower.includes('dismissal') || lower.includes('invalid') || lower.includes('flip') || lower.includes('void') || lower.includes('red card');
-                  const isBoost = lower.includes('boost') || lower.includes('infl') || lower.includes('rise') || lower.includes('high');
-                  const alertColor = isRisk ? '#FF6B35' : isLineDeviation ? '#60A5FA' : isBoost ? Colors.primary : '#60A5FA';
-                  const iconName: any = isRisk ? 'warning' : isLineDeviation ? 'stats-chart' : isBoost ? 'trending-up' : 'information-circle';
-                  const label = isLineDeviation ? 'LINE INTEL' : isRisk ? 'RISK SIGNAL' : 'SIGNAL';
-                  return (
-                    <View key={i} style={{
-                      backgroundColor: alertColor + '0D', borderRadius: 8, padding: 10,
-                      borderWidth: 1, borderColor: alertColor + '33', borderLeftWidth: 3, borderLeftColor: alertColor,
-                    }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-                        <Ionicons name={iconName} size={11} color={alertColor} />
-                        <Text style={{ fontSize: 9, fontWeight: '800', color: alertColor, letterSpacing: 1.1 }}>{label}</Text>
-                      </View>
-                      <Text style={{ fontSize: 12.5, color: Colors.text, lineHeight: 18 }}>{alert}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-
-            {/* ── MODEL FACTORS ── */}
-            {!analysisModal?.loading && modalFactors.length > 0 && renderModelFactors(modalFactors)}
 
             {/* No analysis yet */}
             {!analysisModal?.loading && !modalText && modalAlerts.length === 0 && (() => {
