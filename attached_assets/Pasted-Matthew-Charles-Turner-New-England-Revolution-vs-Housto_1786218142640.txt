@@ -1,0 +1,188 @@
+Matthew Charles Turner
+New England Revolution · vs Houston Dynamo
+ELITE
+HOME · Pass Attempts  ·  GK (Shot-Stopper)
+Major League Soccer · Regular Season - 3 · 2026-08-08
+UNDER
+PLAYER READ
+TACTICAL VERDICT
+Matthew Charles Turner is being used as a Shot-Stopper player, so pass attempts come mainly from first-phase circulation: receiving the ball from the goalkeeper, recycling possession across the back line, and finding the next outlet. This is not a final-third volume role.
+The team is projected for 53% possession against 48% for Houston Dynamo, which points to more settled possessions and recycle sequences. That conflicts with the UNDER read, so this is a key uncertainty.
+The projected shape is 4-2-3-1 vs 4-2-3-1. It supports the role context, but it does not prove a direct marking assignment or exact in-possession zone.
+Pre-match environment: low-event / compressed. This is a scenario estimate, not a guaranteed game state.
+No direct player history is available against this opponent. The same-position comparison has only 3 observations, so it is a limited context signal rather than a decisive edge.
+Bottom line: the model lands at 27.0 against 29.5. The UNDER is based on the role mechanism plus the evidence above—not on a generic recent-form sentence.
+Limits: no player pressure-response classification · no verified direct marking assignment · tactical signal is context-only, not an extra projection adjustment.
+EDGE  
+NO EDGE
+HIST  
+56% (50)
+Pass Attempts UNDER hits 56% from 50 picks — near coin flip, the margin alone can't save it
+Line
+29.5
+SET
+Projection
+27.0
+REVERSE FORMULA
+Confidence
+65%
+MEDIUM
+50%
+65% · MEDIUM
+100%
+GAME SCRIPT
+43%
+LOW-SCORING MATCH
+Low Scoring
+43%
+High Scoring
+29%
+Open Close
+21%
+Expected 3.18 total goals
+41% home
+ / 
+33% away
+80% RANGE
+20.0 — 33.2
+MONEYLINE
+REVOL
++128
+DRAW
++260
+DYNAM
++182
+Indicative · verify with your sportsbook
+GAME TYPE
+HIGH-TEMPO
+Balanced possession expected (52% vs 48%) — high-tempo game
+EXPECTED POSSESSION
+REVOLU  52%
+48%  DYNAMO
+Season avg: 54% vs 52%
+PRESSURE DYNAMICS
+Possession is projected to be closely contested. Both teams are expected to have spells of control — game flow will depend on which midfield wins the second balls and sets the tempo.
+New England Revolution
+⚔ THE AGGRESSORS
+52% poss
+Houston Dynamo
+🛡 THE DEFENDERS
+48% poss
+ANALYSIS BREAKDOWN
+Pass Attempts
+31.1
+HOME AVG
+Venue Samples
+13
+HOME
+Opponent Profile
+—
+OPP AVG
+GAME LOG  ·  22 GAMES
+vs Houston Dynamo
+ELITE
+· auto-filtered
+OPP POSS
+52%
+No H2H history available for this opponent
+REVERSE FORMULA
+12 GAMES ANALYZED
+SEASON
+48%
+30.9
+MOMENTUM
+27%
+28.2
+CONTEXT
+25%
++0.60
+COLD -2.72
+UNDER 29.5
+Math Projection
+27.0
+P(UNDER) 70.7%
+MODEL EXPLANATION
+DETERMINISTIC · FULL ANALYSIS
+Verdict — Reverse Picks projects 27, below the 29.5 line: UNDER at 71% modeled probability.
+MATCHUP
+Matthew Charles Turner is evaluated for pass attempts for New England Revolution against Houston Dynamo. Verified expected possession: 53% (vs 48% for Houston Dynamo).
+TACTICAL CONTEXT
+• Role anchor: GK · Shot-Stopper — As the goalkeeper, the pass volume is primarily a build-up and restart signal: it rises when the team recycles possession through the back line and falls when the team plays longer or spends more time defending.
+• Shape evidence: the available predicted lineup data shows 4-2-3-1 vs 4-2-3-1; no additional zone or matchup claim is made without event-level data.
+• Game-state context: the team model classifies the match as normal tempo (3.2 expected total goals), which affects the number of available sequences but does not replace the player's role evidence.
+• Pre-match game script: balanced market from the fixture market. It is read together with possession and role evidence, not counted twice.
+• Possession game script: possession balanced at 53% expected player-team possession based on the verified match context.
+• Position comparison has 3 comparable observations.
+• Goalkeeper workload is compared with the opponent's attacking personnel, not a direct marker.
+• Direct marking, exact operating zones, and average positions are not verified; the tactical comparison remains nominal.
+• Pressure-response profile unavailable: there are not enough qualifying low- and high-possession appearances to classify this player.
+• Venue average: 31.1 pass attempts (in line with season average of 30.9).
+• Recent-form momentum: Cold (-2.7 per game) — recent games are trending below the seasonal baseline, pulling the projection accordingly.
+APPLIED MODEL FACTORS
+• Model factor (30.9 → 26.6): Season prior: 30.9 across 12 logs; momentum Cold (-2.7); match-context covariate +0.6.
+• Model factor (26.6 → 27.1): Compared the opponent's recent output allowed to same-position players, pair-calibrated to this player's baseline.
+• Model factor (27.1 → 27): Captures any late guard or calibration change before the result is returned.
+• Model factor (70 → 65): Displayed confidence includes empirical, sample-size, market-distance, and safety controls.
+CONFIDENCE AND RISK
+Displayed confidence is 65% (Medium). Edge: 2.5 (NO EDGE); safety: RISKY.
+LIMITATIONS
+• head-to-head player games: unavailable
+---
+FINAL MATH LEDGER
+Projection: 27 | Line: 29.5 | Recommendation: UNDER | Edge: 2.5
+P(OVER): 29.3% | P(UNDER): 70.7% | Confidence: 65% (Medium)
+Ledger: 6efe1f878106a636eb55 | Factors recorded: 4
+95
+EV SCORE
+22
+GAME LOGS
+3
+COMP GAMES
+5
+POSS OBS
+6/9
+APPLIED
+MATCHUP
+HIGH-TEMPO
+52%
+REVOLUTION
+48%
+DYNAMO
+Balanced possession expected (52% vs 48%) — high-tempo game
+Reverse Picks model: 27 UNDER 29.5 with 71% modeled probability and 2.5 edge. Confidence is 65% (Medium); safety is RISKY.
+TACTICAL INTELLIGENCE
+SHADOW · NOT LIVE
+GK · Shot-Stopper
+PLAYER ROLE
+4-2-3-1 Vs 4-2-3-1
+PROJECTED SHAPE
+Role evidence: cached role resolver · low confidence
+MATCH SCRIPT
+95% HIGH
+Low-Event / Compressed
+Classified from verified fixture moneyline + verified possession + score-scenario model. This is a pre-match scenario, not a guaranteed game state.
+POSITIONAL REALITY
+88% ZONE
+Own Third Central
+PROVIDER COORDINATES
+Lower Volume
+PROP SHADOW SIGNAL
+A deeper or reactive script can replace short settled circulation with longer, lower-frequency actions.
+Shadow read: lower volume · ×0.975 potential movement. Not applied to the displayed projection.
+Robust history: n=22 · weighted avg 30.2 · 2 outliers down-weighted
+Market script: balanced market · 44% player-team implied win probability · verified fixture odds
+Possession script: 53% · possession balanced · verified data
+Position comparison has 3 comparable observations.
+Opponent role mix: goalkeeper 1 · unknown 10. Goalkeeper workload is compared with the opponent's attacking personnel, not a direct marker.
+PLAYER · OPPONENT EVIDENCE
+No verified player-level appearance history against this opponent was found.
+Same-position cohort: n=3 · average 33.67 · 67% OVER · limited (target n≥10).
+Matthew Charles Turner is treated as Shot-Stopper; the pass attempts pathway is role-specific, not a generic forward assumption. There is no verified player-level history against Houston Dynamo in the searched fixtures. The same-position opponent cohort is n=3 with a None average (limited sample).
+No direct one-to-one marking assignment is claimed.
+Limits: pre-match classification; an early goal, red card, or substitution can change the script · nominal lineup coordinates are not a verified in-possession heat map · direct marking is not verified.
+Comparable role sample: 3 observations.
+New England Revolution
+4-2-3-1
+PROJECTED XI
+Houston Dynamo
+4-2-3-1
