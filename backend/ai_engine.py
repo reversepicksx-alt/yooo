@@ -729,6 +729,7 @@ async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
     from utils import api_football_request, is_quota_exhausted
     from config import CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON
+    from routes.picks import _settle_soccer_pick
 
     if is_quota_exhausted():
         return  # Don't burn quota on settlement checks when there's nothing left
@@ -736,6 +737,136 @@ async def _run_auto_settlement():
     # pending_review records were previously invisible to this bot, leaving
     # large legacy backlogs dependent on the owner's six-item UI refresh.
     await _repair_pending_review_soccer_batch()
+
+    # A finished fixture can briefly expose an empty player row immediately
+    # after FT. The old live path then permanently stamped the pick DNP, and
+    # the normal live/pending query below never revisited it. Recheck recent
+    # soccer DNPs with an exact fixture anchor for a bounded recovery window.
+    # A verified positive stat is conclusive participation evidence and is
+    # re-settled normally; legitimate DNPs simply receive a cooldown marker.
+    _dnp_retry_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    _dnp_retry_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    _dnp_recheck_candidates = await db.picks.find(
+        {
+            "sport": "soccer",
+            "status": "settled",
+            "result": "dnp",
+            "fixtureId": {"$exists": True, "$ne": None},
+            "settledAt": {"$gte": _dnp_retry_cutoff},
+            "$or": [
+                {"actualValue": {"$gt": 0}},
+                {
+                    "voidReason": {
+                        "$regex": "not in matchday squad|missing|unpopulated|min \\(min",
+                        "$options": "i",
+                    }
+                },
+            ],
+            "$and": [{
+                "$or": [
+                    {"settlementDnpRetryAt": {"$exists": False}},
+                    {"settlementDnpRetryAt": {"$lt": _dnp_retry_before}},
+                ],
+            }],
+        },
+        {"_id": 0},
+    ).sort("settledAt", 1).to_list(24)
+
+    for _dnp_pick in _dnp_recheck_candidates:
+        _dnp_pick_id = _dnp_pick.get("pickId")
+        if not _dnp_pick_id or not _dnp_pick.get("playerId"):
+            continue
+        _dnp_retry_at = datetime.now(timezone.utc).isoformat()
+        try:
+            _dnp_result = await _settle_soccer_pick(
+                {
+                    **_dnp_pick,
+                    "id": _dnp_pick_id,
+                    "status": "live",
+                    "_settlement_repair": True,
+                },
+                _dnp_pick.get("teamId") or 0,
+                _dnp_pick.get("playerId") or 0,
+                _dnp_pick.get("opponentName", ""),
+                _dnp_pick.get("propType", ""),
+                _dnp_pick.get("leagueId") or 0,
+            )
+            _dnp_actual = (_dnp_result or {}).get("actualValue")
+            _dnp_source = (_dnp_result or {}).get("settlementSource") or {}
+            if (
+                _dnp_result
+                and _dnp_source.get("verified") is True
+                and isinstance(_dnp_actual, (int, float))
+                and _dnp_actual > 0
+                and (_dnp_result.get("result") or "") != "dnp"
+            ):
+                _dnp_now = datetime.now(timezone.utc).isoformat()
+                _dnp_update = {
+                    "status": "settled",
+                    "result": _dnp_result.get("result"),
+                    "actualValue": _dnp_actual,
+                    "minutesPlayed": _dnp_result.get("minutesPlayed"),
+                    "hitPct": (
+                        100 if _dnp_result.get("result") == "hit"
+                        else 0 if _dnp_result.get("result") == "miss"
+                        else 50
+                    ),
+                    "settledAt": _dnp_now,
+                    "settlementSource": _dnp_source,
+                    "settlementDnpRetryAt": _dnp_retry_at,
+                    "settlementCorrection": {
+                        "reason": "post-FT player-stat recovery overrode premature DNP",
+                        "previousResult": "dnp",
+                        "previousActualValue": _dnp_pick.get("actualValue"),
+                        "actualValue": _dnp_actual,
+                        "correctedBy": "auto_dnp_recheck",
+                        "correctedAt": _dnp_now,
+                    },
+                }
+                for _field in (
+                    "fixtureId", "fixtureDate", "matchScore", "homeTeam",
+                    "awayTeam", "finalHomeGoals", "finalAwayGoals",
+                    "homePoss", "awayPoss", "passOutcome",
+                ):
+                    if _dnp_result.get(_field) is not None:
+                        _dnp_update[_field] = _dnp_result[_field]
+                await db.picks.update_one(
+                    {"pickId": _dnp_pick_id, "status": "settled", "result": "dnp"},
+                    {"$set": _dnp_update, "$unset": {"voidReason": ""}},
+                )
+                print(
+                    f"[DNP RECHECK] Recovered {_dnp_pick.get('playerName', '?')} "
+                    f"{_dnp_pick.get('propType', '?')} actual={_dnp_actual} "
+                    f"→ {_dnp_result.get('result')}"
+                )
+                try:
+                    await _notify_pick_settled(_dnp_pick, _dnp_result.get("result"))
+                except Exception as _dnp_push_err:
+                    print(f"[DNP RECHECK] push error: {_dnp_push_err}")
+            else:
+                await db.picks.update_one(
+                    {"pickId": _dnp_pick_id},
+                    {"$set": {
+                        "settlementDnpRetryAt": _dnp_retry_at,
+                        "settlementDnpRetryReason": (
+                            "No verified positive stat yet"
+                            if not _dnp_result
+                            else "Verified fixture still has no positive stat"
+                        ),
+                    }},
+                )
+        except Exception as _dnp_retry_err:
+            print(f"[DNP RECHECK] {_dnp_pick.get('playerName', '?')} failed: {_dnp_retry_err}")
+            try:
+                await db.picks.update_one(
+                    {"pickId": _dnp_pick_id},
+                    {"$set": {
+                        "settlementDnpRetryAt": _dnp_retry_at,
+                        "settlementDnpRetryReason": str(_dnp_retry_err)[:300],
+                    }},
+                )
+            except Exception:
+                pass
 
     # Settle "live" picks AND soccer "pending" picks older than 90 min (match duration).
     # MLB pending picks are intentionally excluded from the timestamp-cutoff path —
@@ -1569,7 +1700,13 @@ async def _try_settle_wc_api_only(pick: dict) -> bool:
                 if actual_value == 0 and prop_type in _WC_COUNT_PROPS and _wc_mp >= 30:
                     print(f"[WC SETTLE DEFER] {player_name} {prop_type} — stat=0 with {_wc_mp} min; API not populated yet, deferring")
                     return False
-                if minutes_played is not None and minutes_played < 30:
+                # A positive provider stat proves participation even when the
+                # minutes field is missing or stale.
+                if (
+                    minutes_played is not None
+                    and minutes_played < 30
+                    and not (actual_value is not None and actual_value > 0)
+                ):
                     void_set = {
                         "status": "settled", "result": "dnp",
                         "actualValue": actual_value, "minutesPlayed": minutes_played,

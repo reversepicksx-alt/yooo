@@ -45,6 +45,28 @@ def _has_soccer_stat_evidence(pick: dict) -> bool:
     value = pick.get("actualValue")
     return isinstance(value, (int, float)) and value > 0
 
+
+def _soccer_dnp_guard_fires(
+    actual_value: object,
+    minutes_played: object,
+    threshold: int = 30,
+) -> bool:
+    """Return whether missing/low participation evidence warrants DNP.
+
+    API-Football can return minutes=None/0 after a player completed a match.
+    A positive provider count stat is stronger evidence than that minutes
+    field and must always prevent a DNP classification.
+    """
+    try:
+        minutes = float(minutes_played or 0)
+    except (TypeError, ValueError):
+        minutes = 0.0
+    has_positive_stat = (
+        isinstance(actual_value, (int, float))
+        and actual_value > 0
+    )
+    return minutes < threshold and not has_positive_stat
+
 def _bdl_live_lock(pick_id: str) -> aio.Lock:
     if pick_id not in _bdl_live_locks:
         _bdl_live_locks[pick_id] = aio.Lock()
@@ -3915,7 +3937,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
 
         # DNP / early-sub void guard — industry standard: < 30 min = DNP
         _DNP_THRESHOLD = 30
-        if minutes_played < _DNP_THRESHOLD:
+        if _soccer_dnp_guard_fires(current_value, minutes_played, _DNP_THRESHOLD):
             # Some leagues (e.g. NWSL) return minutes=None for players who played
             # the full game.  The `or 0` above converts that to 0, which would
             # incorrectly trip this DNP guard.  A non-zero stat value is definitive
@@ -4423,13 +4445,13 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         else await _get_team_avg_possession(_settle_opp_id, pick.get("leagueId"), CURRENT_SEASON)
     )
 
-    # DNP / early-sub void guard — players with < 30 min get DNP, not hit/miss
+    # DNP / early-sub void guard — players with < 30 min get DNP, not hit/miss.
+    # A positive verified stat always wins over the minutes field, including
+    # minutes=None/0 returned by API-Football after a full match.
     _DNP_THRESHOLD = 30
-    if minutes_played < _DNP_THRESHOLD and actual_value is not None and actual_value > 0:
-        # A populated positive stat proves the player participated even if the
-        # provider omitted minutes.
-        pass
-    elif minutes_played < _DNP_THRESHOLD and (minutes_played > 0 or actual_value is not None):
+    if _soccer_dnp_guard_fires(actual_value, minutes_played, _DNP_THRESHOLD) and (
+        minutes_played > 0 or actual_value is not None
+    ):
         return {
             "pickId": pick.get("id"),
                 "fixtureId": fixture_id,

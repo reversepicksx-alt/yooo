@@ -14,6 +14,7 @@ from routes.picks import (
     SOCCER_STAT_MAP,
     SOCCER_STAT_PATHS,
     _has_soccer_stat_evidence,
+    _soccer_dnp_guard_fires,
     _settle_pick_result,
     _soccer_settlement_provenance,
     _pass_lean,
@@ -81,6 +82,15 @@ def test_positive_pass_stat_overrides_stale_minutes_for_dnp_guard():
     }
     assert _has_soccer_stat_evidence(pick) is True
     assert _settle_pick_result(65, 56.5, {"recommendation": "under"}) == ("miss", None)
+
+
+def test_full_match_pass_stat_with_missing_minutes_is_not_dnp():
+    """Delgado-style provider response: real pass volume, unreliable minutes."""
+    assert _soccer_dnp_guard_fires(33, 0) is False
+    assert _soccer_dnp_guard_fires(33, None) is False
+    assert _soccer_dnp_guard_fires(33, 90) is False
+    assert _soccer_dnp_guard_fires(0, 0) is True
+    assert _soccer_dnp_guard_fires(None, 0) is True
 
 
 def test_zero_stat_does_not_prove_soccer_participation():

@@ -14,5 +14,6 @@ description: minutes=None from API-Football gets coerced to 0, tripping the DNP 
 - Whenever modifying settlement logic, preserve the `stat > 0 → skip DNP guard` check. It must come BEFORE any `minutes < 30` comparison.
 - If adding new prop types to settlement, they inherit this guard automatically since it's on the general stat value, not prop-type specific.
 - To backfill wrongly-voided picks: use `POST /api/admin/regrade-dnp-picks?dry_run=false` — re-grades picks where voidReason contains "min (min" and actualValue > 0.
+- A transient empty `fixtures/players` response immediately after FT can also create a false DNP. Recent DNPs with an exact fixture anchor and an incomplete/missing-stat reason need a bounded, quota-aware recheck before being treated as final.
 
 **Why:** The bug caused paying customers' correct UNDER hits to be settled as push/DNP, generating complaints. The root fix is stat-evidence beats minutes-field.
