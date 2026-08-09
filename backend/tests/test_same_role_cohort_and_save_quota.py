@@ -50,6 +50,16 @@ def test_possession_context_uses_independent_team_schedules():
     assert "player appearances not required" in PREDICT_SOURCE or "player" in PREDICT_SOURCE
 
 
+def test_opponent_cohort_live_fill_handles_empty_fixture_cache():
+    assert "opponent_recent_raw = []" in PREDICT_SOURCE
+    assert "len(opponent_recent_raw) < _cohort_fixture_lookback" in PREDICT_SOURCE
+
+
+def test_exact_position_cohort_searches_four_prior_seasons_when_thin():
+    assert "range(CURRENT_SEASON - 1, CURRENT_SEASON - 8, -1)" in PREDICT_SOURCE
+    assert "same opponent, venue, minutes, and exact-position" in PREDICT_SOURCE
+
+
 def test_wide_exact_positions_allow_broad_provider_midfielder_rows():
     assert '"LW": {"F", "FWD", "M", "MID"}' in PREDICT_SOURCE
     assert '"RW": {"F", "FWD", "M", "MID"}' in PREDICT_SOURCE

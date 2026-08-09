@@ -2735,7 +2735,7 @@ async def predict(req: PredictionRequest):
         # Keep a broad enough API-backed pool to reach the 15-player cohort
         # target; the cohort itself still refuses to pad missing evidence.
         _cohort_fixture_lookback = 40
-        opponent_recent_raw = None
+        opponent_recent_raw = []
         if safe_opp_id:
             try:
                 from cache import get_cached_team_fixtures as _get_opp_fixtures
@@ -2745,10 +2745,51 @@ async def predict(req: PredictionRequest):
                     print(f"[LOCAL] Opponent fixtures from DB: {len(opponent_recent_raw)} games")
             except Exception:
                 pass
-            if not opponent_recent_raw and not _is_bdl_league:
-                opponent_recent_raw = await api_football_request(
-                    "fixtures", {"team": safe_opp_id, "last": _cohort_fixture_lookback}
-                )
+            # A cache generated with the older 20-fixture sync must not make
+            # the newer 40-fixture cohort lookback silently behave like 20.
+            # Fill only the missing tail from the provider, then deduplicate by
+            # fixture ID so cached rows remain the primary source.
+            if (
+                len(opponent_recent_raw) < _cohort_fixture_lookback
+                and not _is_bdl_league
+            ):
+                try:
+                    _opp_live = await api_football_request(
+                        "fixtures",
+                        {"team": safe_opp_id, "last": _cohort_fixture_lookback},
+                    )
+                    _seen_opp_fixture_ids = {
+                        row.get("fixture", {}).get("id")
+                        for row in (_opp_live or [])
+                        if row.get("fixture", {}).get("id")
+                    }
+                    _cached_opp_ids = {
+                        row.get("fixtureId")
+                        or (row.get("fixture", {}) or {}).get("id")
+                        for row in (opponent_recent_raw or [])
+                        if (
+                            row.get("fixtureId")
+                            or (row.get("fixture", {}) or {}).get("id")
+                        )
+                    }
+                    _live_only = [
+                        row for row in (_opp_live or [])
+                        if row.get("fixture", {}).get("id") not in _cached_opp_ids
+                    ]
+                    if _live_only:
+                        opponent_recent_raw = (
+                            list(opponent_recent_raw) + _live_only
+                        )[:_cohort_fixture_lookback]
+                    print(
+                        f"[COHORT FIXTURES] opponent={safe_opp_id} "
+                        f"cache={len(_cached_opp_ids)} live={len(_seen_opp_fixture_ids)} "
+                        f"merged={len(opponent_recent_raw)}"
+                    )
+                except Exception as _opp_live_err:
+                    print(
+                        f"[COHORT FIXTURES] live fill skipped: "
+                        f"{type(_opp_live_err).__name__}"
+                    )
         def _normalize_opponent_fixtures(raw_fixtures):
             normalized = []
             for f in raw_fixtures or []:
@@ -7176,7 +7217,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # season window broadens.
         if len(position_comparison) < 15 and safe_opp_id and not _is_bdl_league:
             _prior_season_rows = []
-            for _prior_season in (CURRENT_SEASON - 1, CURRENT_SEASON - 2):
+            # A single or two-season lookback can still leave rare exact
+            # side-position cohorts thin (especially for LW/RW). Broaden the
+            # historical window before declaring the evidence limited, while
+            # preserving the same opponent, venue, minutes, and exact-position
+            # admission rules.
+            for _prior_season in range(CURRENT_SEASON - 1, CURRENT_SEASON - 8, -1):
                 try:
                     _prior_raw = await api_football_request(
                         "fixtures",
