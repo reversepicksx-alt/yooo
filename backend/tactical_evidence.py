@@ -41,6 +41,46 @@ _POSITION_ALIASES = {
 
 _WIDE_POSITIONS = {"LW", "RW", "LM", "RM", "LWB", "RWB"}
 _CREATIVE_PROPS = {"pass_attempts", "passes", "key_passes", "shots_assisted", "dribbles"}
+_EXACT_POSITIONS = {
+    "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+    "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+}
+
+
+def infer_grid_position(
+    grid: Any,
+    formation: Any,
+    provider_position: Any = None,
+) -> str:
+    """Infer a conservative exact position from API-Football's lineup grid.
+
+    API-Football's ``grid`` is ``row:column`` from the team's defensive end.
+    The grid is more informative than the broad D/M/F category, but we only
+    infer a side when the formation gives us an unambiguous back line.
+    """
+    raw = str(grid or "").strip()
+    try:
+        row, column = (int(part) for part in raw.split(":", 1))
+    except (TypeError, ValueError):
+        return normalize_observed_position(provider_position)
+
+    shape = [int(part) for part in str(formation or "").split("-") if part.isdigit()]
+    if row == 1:
+        return "GK"
+    if not shape or row != 2:
+        return normalize_observed_position(provider_position)
+
+    defenders = shape[0]
+    if defenders == 4 and column in {1, 2, 3, 4}:
+        return {1: "LB", 2: "CB", 3: "CB", 4: "RB"}[column]
+    if defenders == 3 and column in {1, 2, 3}:
+        return "CB"
+    if defenders == 5 and column in {1, 2, 3, 4, 5}:
+        return {
+            1: "LWB", 2: "CB", 3: "CB", 4: "CB", 5: "RWB",
+        }[column]
+
+    return normalize_observed_position(provider_position)
 
 
 def _number(value: Any) -> float | None:
@@ -152,9 +192,21 @@ def resolve_observed_role(
     elif observed in {"CDM", "DM"}:
         role = "Deep-Lying Playmaker" if passes >= 50 and tackles < 4.5 else "Ball Winner"
         evidence = [f"observed {observed} lineup position"]
-    elif observed in {"CB", "DEF", "LB", "RB", "LWB", "RWB"}:
-        role = "Ball-Playing CB" if observed in {"CB", "DEF"} and passes >= 50 else "Fullback"
+    elif observed == "CB":
+        role = "Ball-Playing CB" if passes >= 50 else "Stopper"
         evidence = [f"observed {observed} lineup position"]
+    elif observed in {"LB", "RB", "LWB", "RWB"}:
+        role = "Fullback" if observed in {"LB", "RB"} else "Wing-Back"
+        evidence = [f"observed {observed} lineup position"]
+    elif observed == "DEF":
+        # API-Football's broad D/DEF label does not identify centre-back,
+        # fullback, or wing-back.  Do not let aggregate stats manufacture an
+        # exact side-specific role from a generic fixture observation.
+        role = None
+        evidence = [
+            "observed generic defender lineup category",
+            "exact CB/LB/RB role not independently verified",
+        ]
     elif observed == "GK":
         role = "Shot-Stopper"
         evidence = ["observed goalkeeper lineup position"]
@@ -163,7 +215,14 @@ def resolve_observed_role(
         "position": observed or None,
         "role": role,
         "source": "fixture_lineup_observation" if observed else "unavailable",
-        "confidence": "high" if observed and role else "low",
+        "confidence": (
+            "high"
+            if observed and role and (
+                observed in _EXACT_POSITIONS
+                or observed in {"FWD", "MID", "DEF"}
+            )
+            else "low"
+        ),
         "evidence": evidence,
     }
 

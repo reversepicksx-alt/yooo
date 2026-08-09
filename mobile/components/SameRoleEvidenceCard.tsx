@@ -35,6 +35,8 @@ export type SameRoleEvidence = {
   avgOpponentPossession?: number | null;
   expectedPlayerPossession?: number | null;
   possessionSampleSize?: number;
+  possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
+  possessionSource?: string | null;
   possessionComparison?: string;
   sampleSize?: number;
   minimumRecommendedSample?: number;
@@ -137,9 +139,13 @@ export default function SameRoleEvidenceCard({
   const avgOpponentPossession = Number(data.avgOpponentPossession);
   const expectedPlayerPossession = Number(data.expectedPlayerPossession);
   const possessionSampleSize = Number(data.possessionSampleSize || 0);
+  const possessionStatus = String(data.possessionStatus || (
+    possessionSampleSize > 0 ? 'verified' : 'unavailable'
+  )).toLowerCase();
   const hasPossessionComparison =
     Number.isFinite(avgPossession) &&
-    Number.isFinite(avgOpponentPossession);
+    Number.isFinite(avgOpponentPossession) &&
+    possessionStatus !== 'unavailable';
 
   return (
     <View style={{
@@ -189,9 +195,9 @@ export default function SameRoleEvidenceCard({
               : ''}
           </Text>
           <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
-            {possessionSampleSize > 0
+            {possessionStatus === 'verified'
               ? `${possessionSampleSize} sampled matches with verified possession · context only`
-              : 'Verified possession context · context only'}
+              : 'Estimated possession context · context only'}
           </Text>
         </View>
       )}

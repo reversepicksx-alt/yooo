@@ -1,4 +1,5 @@
 from tactical_evidence import (
+    infer_grid_position,
     resolve_observed_role,
     summarize_observed_positions,
     summarize_player_opponent_history,
@@ -50,6 +51,51 @@ def test_generic_forward_link_play_profile_is_creative_forward():
     )
     assert result["role"] == "Creative Forward"
     assert "creative link-play and carry fingerprint" in result["evidence"]
+
+
+def test_generic_defender_does_not_invent_fullback_or_center_back_role():
+    result = resolve_observed_role(
+        "D",
+        {
+            "appearances": 12,
+            "passes_total": 900,
+            "tackles_total": 45,
+            "dribbles_attempts": 14,
+            "shots_total": 4,
+        },
+    )
+    assert result["position"] == "DEF"
+    assert result["role"] is None
+    assert result["confidence"] == "low"
+    assert "exact CB/LB/RB role not independently verified" in result["evidence"]
+
+
+def test_verified_center_back_observation_cannot_become_fullback():
+    result = resolve_observed_role(
+        "CB",
+        {
+            "appearances": 12,
+            "passes_total": 900,
+            "tackles_total": 45,
+            "dribbles_attempts": 14,
+            "shots_total": 4,
+        },
+    )
+    assert result["position"] == "CB"
+    assert result["role"] == "Ball-Playing CB"
+    assert result["role"] != "Fullback"
+
+
+def test_lineup_grid_resolves_four_defender_back_line():
+    assert infer_grid_position("2:1", "4-3-3", "D") == "LB"
+    assert infer_grid_position("2:2", "4-3-3", "D") == "CB"
+    assert infer_grid_position("2:3", "4-3-3", "D") == "CB"
+    assert infer_grid_position("2:4", "4-3-3", "D") == "RB"
+
+
+def test_lineup_grid_stays_conservative_when_shape_is_ambiguous():
+    assert infer_grid_position("3:2", "4-3-3", "D") == "DEF"
+    assert infer_grid_position(None, "4-3-3", "D") == "DEF"
 
 
 def test_player_opponent_history_reports_hit_rate_from_valid_values():

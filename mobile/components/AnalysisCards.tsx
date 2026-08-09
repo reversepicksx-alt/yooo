@@ -148,13 +148,20 @@ export function renderMatchupPossession(
   if (!data) return null;
   const mo = (data as any)?.matchupOverview;
   const ep = (data as any)?.expectedPossession;
+  const possessionStatus = String(
+    (data as any)?.possessionStatus
+      ?? mo?.possessionStatus
+      ?? ((data as any)?.possessionSource || mo?.possessionSource
+        ? 'estimated'
+        : 'unavailable'),
+  ).toLowerCase();
   const gt = (data as any)?.expectedGameType ?? mo?.expectedGameType;
   const kmf = (data as any)?.keyMatchupFactor ?? mo?.keyMatchupFactor;
   const ss = (data as any)?.sharpSummary;
   const isHome = pick?.venue !== 'away';
   const teamPoss: number | null = ep ? (isHome ? ep.home : ep.away) : null;
   const oppPoss: number | null = ep ? (isHome ? ep.away : ep.home) : null;
-  const hasPoss = teamPoss != null;
+  const hasPoss = teamPoss != null && oppPoss != null && possessionStatus !== 'unavailable';
   if (!hasPoss && !gt && !kmf && !ss) return null;
   const possColor =
     teamPoss != null && oppPoss != null
@@ -201,6 +208,13 @@ export function renderMatchupPossession(
             </Text>
           </View>
         </View>
+      )}
+      {possessionStatus !== 'verified' && (
+        <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
+          {possessionStatus === 'estimated'
+            ? 'Possession shown as an estimate from available matchup signals, not verified match statistics.'
+            : 'Verified possession unavailable for this fixture.'}
+        </Text>
       )}
       {kmf ? <Text style={aStyles.proCardNote}>{kmf}</Text> : null}
       {ss ? (
@@ -249,7 +263,16 @@ export function renderTacticalVerdict(
   const line = Number(pick?.line ?? (data as any)?.line);
   const playerPoss = Number(possession.expectedPlayerTeamPossession ?? tc.expectedPossession);
   const opponentPoss = Number(tc.opponentExpectedPossession ?? (100 - playerPoss));
-  const hasPossession = Number.isFinite(playerPoss) && Number.isFinite(opponentPoss);
+  const possessionStatus = String(
+    tc.possessionStatus
+      ?? (data as any)?.possessionStatus
+      ?? tc.possessionSource
+      ?? 'unavailable',
+  ).toLowerCase();
+  const hasPossession =
+    Number.isFinite(playerPoss) &&
+    Number.isFinite(opponentPoss) &&
+    possessionStatus !== 'unavailable';
   const roleLower = String(role ?? '').toLowerCase();
   const isPass = ['pass_attempts', 'passes', 'key_passes', 'crosses'].includes(propType);
   const isDefender = ['defender', 'cb', 'def', 'fullback', 'wingback', 'stopper'].some((x) => roleLower.includes(x));
@@ -272,9 +295,9 @@ export function renderTacticalVerdict(
       : 'more settled possessions and recycle sequences';
     const supports = (playerPoss < 50 && recommendation === 'UNDER')
       || (playerPoss >= 50 && recommendation === 'OVER');
-    possessionRead = `The team is projected for ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for ${pick?.opponentName ?? (data as any)?.opponentName ?? 'the opponent'}, which points to ${direction}. ${supports ? `That supports the ${recommendation} read.` : `That conflicts with the ${recommendation} read, so this is a key uncertainty.`}`;
+    possessionRead = `The team is ${possessionStatus === 'verified' ? 'projected' : 'estimated'} at ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for ${pick?.opponentName ?? (data as any)?.opponentName ?? 'the opponent'}, which points to ${direction}. ${supports ? `That supports the ${recommendation} read.` : `That conflicts with the ${recommendation} read, so this is a key uncertainty.`}`;
   } else if (hasPossession) {
-    possessionRead = `The team is projected for ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for the opponent; the effect on ${prop.toLowerCase()} depends on whether the relevant actions are attacking or defensive.`;
+    possessionRead = `The team is ${possessionStatus === 'verified' ? 'projected' : 'estimated'} at ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for the opponent; the effect on ${prop.toLowerCase()} depends on whether the relevant actions are attacking or defensive.`;
   }
 
   const shape = lineup.formation && lineup.opponentFormation

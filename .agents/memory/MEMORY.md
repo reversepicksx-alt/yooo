@@ -49,6 +49,7 @@
 - [Positional baseline squeeze — priorSamples bug](pos-baseline-priorsamples.md) — apply_positional_squeeze must use early_bayes.get("priorSamples") not len(_bayes_logs); raw log count can be 10 while priorSamples=0 (all filtered by 30-min threshold).
 - [xAI search API deprecated](xai-search-deprecated.md) — xAI live search returns 410 as of 2026-06. Press intensity fetch_ai_press_intensity now uses knowledge-only _ai_call. Prompt reframed as "tactical identity" (year-stable) with hard-coded anchors for 14 clubs; null escape removed.
 - [Position accuracy system](position-accuracy-system.md) — 5-defect fix: version bump forces re-resolve; early lookup prefers playerId; re-squeeze fires when position changes; ai_positions.py prompt upgraded to full role vocab; admin clear endpoint added.
+- [Lineup grid positions](lineup-grid-positions.md) — API-Football fixture lineups include grid + formation; infer exact CB/LB/RB/LWB/RWB from confirmed grid before trusting generic D/DEF or stale profile cache.
 - [Props cheat sheet findings](props-cheat-sheet.md) — shots UNDER #1 (80.9%), clearances OVER 0%, GK poss inverted vs outfield, UNDER at 65-74% conf = trap.
 - [Autoscale MongoDB timeout](autoscale-mongodb-timeout.md) — Motor default 30s timeout causes "Request timed out" in prod; set serverSelectionTimeoutMS=3000; reviewer endpoints must bypass MongoDB; dotenv needs override=True.
 - [Web splash race condition](web-splash-race.md) — never gate Stack render behind React state that also controls the HTML overlay; overlay and React are independent z-layers.

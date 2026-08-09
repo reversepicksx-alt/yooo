@@ -27,6 +27,7 @@ from prop_safety_cache import (
 import soccer_bdl_client as _bdl_soc
 from tactical_evidence import (
     build_tactical_conclusion,
+    infer_grid_position,
     normalize_observed_position,
     position_cohort_verdict,
     resolve_observed_role,
@@ -1931,8 +1932,17 @@ async def predict(req: PredictionRequest):
                                 }
                                 and bool(spec_pos)
                             )
+                            # Generic D/M/F observations are category evidence,
+                            # not exact-position evidence.  They may support a
+                            # broad cohort, but can never satisfy an exact CB,
+                            # LB, or role-specific target.
+                            _exact_target_requested = target_specific_pos in {
+                                "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
+                                "CM", "CAM", "LM", "RM", "LW", "RW", "CF",
+                                "ST", "SS",
+                            }
                             observed_exact_target = bool(
-                                target_specific_pos
+                                _exact_target_requested
                                 and observed_normalized == target_specific_pos
                             )
                             cached_exact_target = bool(
@@ -1950,11 +1960,24 @@ async def predict(req: PredictionRequest):
                                 "clearances": (pstats.get("tackles") or {}).get("clearances"),
                             }
                             observed_role = resolve_observed_role(pos, role_stats)
-                            candidate_role = (
-                                spec_role
-                                if trusted_cached_position
-                                else observed_role.get("role") or ""
-                            )
+                            # A match row is the strongest evidence for the
+                            # player's actual position in that appearance.
+                            # Never let a stale grounded profile replace an
+                            # observed CB/LB/RB role, and never attach a
+                            # cached exact role to a broad D/DEF row.
+                            if observed_normalized == "DEF":
+                                candidate_role = ""
+                            elif observed_normalized in {
+                                "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
+                                "CM", "CAM", "LM", "RM", "LW", "RW", "CF",
+                                "ST", "SS",
+                            }:
+                                candidate_role = observed_role.get("role") or ""
+                            else:
+                                candidate_role = (
+                                    spec_role if trusted_cached_position
+                                    else observed_role.get("role") or ""
+                                )
 
                             # Prefer the actual position recorded in this match
                             # over a stale cache row. If neither exists, retain
@@ -1970,7 +1993,7 @@ async def predict(req: PredictionRequest):
                                 "LW": "FWD", "RW": "FWD", "CF": "FWD",
                                 "ST": "FWD", "SS": "FWD",
                             }.get(target_specific_pos, fixture_pos)
-                            if target_specific_pos and not (
+                            if _exact_target_requested and not (
                                 observed_exact_target or cached_exact_target
                             ):
                                 # Broad provider categories (DEF/MID/FWD) are
@@ -2024,7 +2047,11 @@ async def predict(req: PredictionRequest):
                                 "positionSource": position_source,
                                 "observedPosition": observed_normalized or pos or None,
                                 "role": candidate_role,
-                                "roleSource": "cached_role" if spec_role else observed_role.get("source"),
+                                "roleSource": (
+                                    "cached_role"
+                                    if spec_role and trusted_cached_position
+                                    else observed_role.get("source")
+                                ),
                                 "teamPossession": team_poss,
                                 "oppPossession": opp_poss,
                                 "goalsConceded": _gk_conceded,
@@ -4879,6 +4906,7 @@ async def predict(req: PredictionRequest):
                         "id": pl.get("id"),
                         "name": pl.get("name"),
                         "pos": pl.get("pos"),
+                        "grid": pl.get("grid"),
                         "number": pl.get("number"),
                         "x": x, "y": y,
                         "isTarget": bool(target_id) and pl.get("id") == target_id,
@@ -5882,25 +5910,76 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         )
         _observed_role = None
         if (_pitch_lineup or {}).get("status") == "confirmed" and _observed_target:
-            _observed_role = resolve_observed_role(_observed_target.get("pos"), _role_stats)
+            _observed_position = infer_grid_position(
+                _observed_target.get("grid"),
+                (_pitch_lineup or {}).get("formation"),
+                _observed_target.get("pos"),
+            )
+            _observed_role = resolve_observed_role(_observed_position, _role_stats)
+            if _observed_position == "DEF":
+                # A confirmed generic D row is stronger than a stale cached
+                # exact position, but it is still only broad defender evidence.
+                # Preserve that uncertainty instead of displaying a guessed
+                # CB/fullback role.
+                specific_position = "DEF"
+                player_role = ""
+                display_position = "DEF"
+                display_role = ""
+                _position_resolution_source = "fixture_lineup_category"
+                _observed_role["position"] = "DEF"
+                _observed_role["role"] = None
+                _observed_role["source"] = "fixture_lineup_category"
+                _observed_role["confidence"] = "low"
+            elif _observed_position in {
+                "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+                "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+            }:
+                # Exact current-fixture evidence outranks grounded profile
+                # evidence.  This prevents a stale Fullback cache from
+                # surviving a verified CB/LB/RB lineup observation.
+                specific_position = _observed_position
+                player_role = _observed_role.get("role") or ""
+                display_position = specific_position
+                display_role = player_role
+                _position_resolution_source = "fixture_lineup_observation"
         _historical_position_summary = summarize_observed_positions(
             [{"position": item.get("observedPosition")} for item in h2h_player_stats]
         )
-        if not _observed_role or not _observed_role.get("role"):
+        # A confirmed generic D/DEF row is meaningful broad evidence, but it
+        # cannot be upgraded by an older H2H/cache role into CB or Fullback.
+        # Keep the current fixture's uncertainty visible instead of allowing
+        # a stale exact-position label to win.
+        _current_lineup_position_is_generic = (
+            (_pitch_lineup or {}).get("status") == "confirmed"
+            and _observed_target is not None
+            and infer_grid_position(
+                _observed_target.get("grid"),
+                (_pitch_lineup or {}).get("formation"),
+                _observed_target.get("pos"),
+            ) == "DEF"
+        )
+        if (
+            (not _observed_role or not _observed_role.get("role"))
+            and not _current_lineup_position_is_generic
+        ):
             _historical_position = _historical_position_summary.get("dominantPosition")
             if _historical_position:
                 _observed_role = resolve_observed_role(_historical_position, _role_stats)
                 _observed_role["sampleSize"] = _historical_position_summary.get("sampleSize", 0)
                 _observed_role["positionCounts"] = _historical_position_summary.get("positionCounts", {})
                 _observed_role["source"] = "h2h_fixture_position_history"
-        if _observed_role and _observed_role.get("role"):
+        if _observed_role and (
+            _observed_role.get("role")
+            or _observed_role.get("position") == "DEF"
+        ):
             if (
                 not _role_override_active
-                and _position_resolution_source not in {"gemini_web_grounded", "cache"}
-                and not (cached_pos and cached_pos.get("source") == "gemini_web_grounded")
+                and _position_resolution_source not in {
+                    "gemini_web_grounded", "cache", "fixture_lineup_observation",
+                }
             ):
                 specific_position = _observed_role.get("position") or specific_position
-                player_role = _observed_role["role"]
+                player_role = _observed_role.get("role") or ""
                 display_position = specific_position or player_position
                 display_role = player_role
                 try:
@@ -6606,6 +6685,15 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 round(sum(comp_opp_poss) / len(comp_opp_poss), 1)
                 if comp_opp_poss else None
             )
+            _paired_comp_poss = [
+                (
+                    float(row["teamPossession"]),
+                    float(row["oppPossession"]),
+                )
+                for row in position_comparison
+                if isinstance(row.get("teamPossession"), (int, float))
+                and isinstance(row.get("oppPossession"), (int, float))
+            ]
             # This is the possession expectation for the selected player's
             # team in the current fixture. It is comparison context only:
             # same-role evidence must never alter the deterministic projection.
@@ -6638,6 +6726,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "avgOpponentPossession": comp_opp_poss_avg,
                 "expectedPlayerPossession": current_expected_player_poss,
                 "possessionSampleSize": len(comp_poss),
+                "possessionStatus": "verified" if _paired_comp_poss else "unavailable",
+                "possessionSource": (
+                    "fixture_statistics" if _paired_comp_poss else None
+                ),
                 "possessionComparison": (
                     "sampled teams averaged "
                     f"{comp_poss_avg:.1f}% possession vs {comp_opp_poss_avg:.1f}% for "
@@ -9053,6 +9145,15 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             elif fb_away_avg is not None:
                 fb_away_poss = round(min(75, max(30, fb_away_avg - 2.5)))
                 real_matchup["expectedPossession"] = {"home": 100 - fb_away_poss, "away": fb_away_poss}
+        _poss_source = match_dominance.get("possessionSource") or "unavailable"
+        real_matchup["possessionSource"] = _poss_source
+        real_matchup["possessionStatus"] = (
+            "verified"
+            if _poss_source in {"fixture_stats", "h2h_fixture_stats"}
+            else "estimated"
+            if _poss_source != "unavailable"
+            else "unavailable"
+        )
         # 2. Moneyline + favorite from real odds data.
         # API-Football's home/away odds and the verified matchup team labels
         # are both fixture-oriented. Never swap these based on the player's
@@ -9135,6 +9236,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         prediction["homeTeam"]     = real_matchup["homeTeam"]
         prediction["awayTeam"]     = real_matchup["awayTeam"]
         prediction["isHome"]       = _is_home
+        prediction["possessionSource"] = _poss_source
+        prediction["possessionStatus"] = real_matchup["possessionStatus"]
         if match_odds and match_odds.get("fixtureId"):
             prediction["fixtureId"] = match_odds["fixtureId"]
             prediction["fixtureDate"] = match_odds.get("matchDate", "")
@@ -10664,28 +10767,42 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             _final_market_dist = _final_gap_pct >= 35
             if _final_rec_upper == "PASS" or prediction.get("coinFlip") or _final_safety == "AVOID":
                 _final_edge_rating = "NO EDGE"
+                if _final_rec_upper == "PASS":
+                    _final_edge_reason = "Evidence-quality control converted a thin or unsupported edge to PASS."
+                elif prediction.get("coinFlip"):
+                    _final_edge_reason = "Projection probabilities are too close to call."
+                else:
+                    _final_edge_reason = (
+                        f"Historical {_final_rec_upper} safety is AVOID"
+                        + (f" ({_final_hist_rate:.0f}% over {_final_hist_n} settled events)." if _final_hist_rate is not None else ".")
+                    )
             elif _final_safety == "SAFE":
                 _final_edge_rating = (
                     "SHARP EDGE" if _final_margin >= 5 and _final_conf_pre_safety >= 60
                     else "EDGE" if _final_margin >= 3 and _final_conf_pre_safety >= 55
                     else "MARGINAL" if _final_margin >= 2 else "NO EDGE"
                 )
+                _final_edge_reason = "Final projection gap and confidence clear the SAFE threshold." if _final_edge_rating != "NO EDGE" else "Final projection gap is below the SAFE threshold."
             elif _final_safety == "MODERATE":
                 _final_edge_rating = (
                     "SHARP EDGE" if _final_margin >= 8 and _final_conf_pre_safety >= 65
                     else "EDGE" if _final_margin >= 5 and _final_conf_pre_safety >= 58
                     else "MARGINAL" if _final_margin >= 3 else "NO EDGE"
                 )
+                _final_edge_reason = "Final projection gap and confidence clear the MODERATE threshold." if _final_edge_rating != "NO EDGE" else "Final projection gap is below the MODERATE threshold."
             else:
                 _final_edge_rating = (
                     "MARGINAL"
                     if (_final_margin >= 10 and _final_conf_pre_safety >= 70) or _final_market_dist
                     else "NO EDGE"
                 )
+                _final_edge_reason = "Large mathematical gap retained as a marginal read, but safety is not strong enough for an actionable edge." if _final_edge_rating == "MARGINAL" else "Risk and confidence controls do not support an actionable edge."
             if _final_market_dist and _final_edge_rating == "NO EDGE":
                 _final_edge_rating = "MARGINAL"
+                _final_edge_reason = "Large mathematical gap is retained as MARGINAL because the safety profile is not actionable."
 
             prediction["edgeRating"] = _final_edge_rating
+            prediction["edgeRatingReason"] = _final_edge_reason
             prediction["safetyRating"] = _final_safety
             prediction["propHistoricalRate"] = _final_hist_rate
             prediction["propHistoricalN"] = _final_hist_n
@@ -10803,6 +10920,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "edge": _ledger_num(abs(float(_final_projection) - float(req.line)))
                 if _final_projection is not None and req.line is not None else None,
                 "edgeRating": prediction.get("edgeRating"),
+                "edgeRatingReason": prediction.get("edgeRatingReason"),
                 "safetyRating": prediction.get("safetyRating"),
                 "propHistoricalRate": _final_hist_rate,
                 "propHistoricalN": _final_hist_n if _final_hist_n else None,

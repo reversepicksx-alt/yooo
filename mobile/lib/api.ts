@@ -625,6 +625,8 @@ export interface PredictionResult {
     };
   };
   expectedPossession?: { home: number; away: number };
+  possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
+  possessionSource?: string | null;
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
   possessionOppAvg?: number;
@@ -703,12 +705,14 @@ export interface PredictionResult {
       confidenceLevel?: string;
       edge?: number | null;
       edgeRating?: string;
+      edgeRatingReason?: string;
       safetyRating?: string;
     };
   };
   factorLedgerVersion?: string;
   factorLedgerFingerprint?: string;
   edgeRating?: 'SHARP EDGE' | 'EDGE' | 'MARGINAL' | 'NO EDGE';
+  edgeRatingReason?: string;
   safetyRating?: 'SAFE' | 'MODERATE' | 'RISKY' | 'AVOID';
   propHistoricalRate?: number;
   propHistoricalN?: number;
@@ -765,6 +769,11 @@ interface RawPrediction {
   isCalibrationOnly?: boolean;
   confidenceScore?: number;
   confidenceLevel?: string;
+  edgeRating?: string;
+  edgeRatingReason?: string;
+  safetyRating?: string;
+  possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
+  possessionSource?: string | null;
   confidenceInterval?: [number, number];
   playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   reasoning?: string;
@@ -889,6 +898,8 @@ interface RawPrediction {
   };
   matchupOverview?: {
     expectedPossession?: { home: number; away: number };
+    possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
+    possessionSource?: string | null;
     homeTeam?: string;
     awayTeam?: string;
     playerIsHome?: boolean;
@@ -916,8 +927,6 @@ interface RawPrediction {
     goalkeeperSaveSample?: number | null;
     opponentShotsOnTarget?: number | null;
   };
-  edgeRating?: string;
-  safetyRating?: string;
   coinFlip?: boolean;
   rawConfidence?: number;
   lineDeviationBand?: string;
@@ -1227,6 +1236,14 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
       ?? (raw.matchDominance?.expectedPoss != null && raw.matchDominance.expectedPoss !== 50
         ? { home: raw.matchDominance.expectedPoss, away: 100 - raw.matchDominance.expectedPoss }
         : undefined),
+    possessionStatus: raw.possessionStatus
+      ?? raw.matchupOverview?.possessionStatus
+      ?? (raw.possessionSource || raw.matchupOverview?.possessionSource
+        ? 'estimated'
+        : 'unavailable'),
+    possessionSource: raw.possessionSource
+      ?? raw.matchupOverview?.possessionSource
+      ?? undefined,
     possessionMultiplier: raw.matchDominance?.multiplier,
     possessionTeamAvg: raw.matchDominance?.teamSeasonAvg ?? undefined,
     possessionOppAvg: raw.matchDominance?.oppSeasonAvg ?? undefined,
@@ -1290,6 +1307,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     aiProjection: raw.aiProjection || undefined,
     bayesianComponent: raw.bayesianComponent || undefined,
     edgeRating: raw.edgeRating as PredictionResult['edgeRating'] ?? undefined,
+    edgeRatingReason: raw.edgeRatingReason ?? undefined,
     safetyRating: raw.safetyRating as PredictionResult['safetyRating'] ?? undefined,
     propHistoricalRate: (raw as any).propHistoricalRate ?? undefined,
     propHistoricalN: (raw as any).propHistoricalN ?? undefined,

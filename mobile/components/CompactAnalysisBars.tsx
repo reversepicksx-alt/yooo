@@ -45,6 +45,12 @@ export function getTacticalRead(prediction: Record<string, any> | null | undefin
     .join(' vs ');
   const venue = prediction.venue === 'away' || prediction.playerIsHome === false ? 'away' : 'home';
   const expectedPossession = prediction.expectedPossession;
+  const possessionStatus = String(
+    prediction.possessionStatus
+      ?? (prediction as any).matchupOverview?.possessionStatus
+      ?? (prediction as any).possessionSource
+      ?? 'unavailable',
+  ).toLowerCase();
   const possessionText = expectedPossession && Number.isFinite(Number(expectedPossession[venue]))
     ? ` Expected possession is ${Math.round(Number(expectedPossession[venue]))}% on the ${venue} side.`
     : '';
@@ -178,12 +184,19 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const detailPossession = detailRow?.teamPossession ?? detailRow?.possession;
   const detailOpponentPossession = detailRow?.opponentPossession;
   const expectedPossession = prediction.expectedPossession;
+  const possessionStatus = String(
+    prediction.possessionStatus
+      ?? (prediction as any).matchupOverview?.possessionStatus
+      ?? (prediction as any).possessionSource
+      ?? 'unavailable',
+  ).toLowerCase();
   const expectedHome = Number(expectedPossession?.home);
   const expectedAway = Number(expectedPossession?.away);
   const hasExpectedPossession = Number.isFinite(expectedHome)
     && Number.isFinite(expectedAway)
     && expectedHome >= 0
-    && expectedAway >= 0;
+    && expectedAway >= 0
+    && possessionStatus !== 'unavailable';
   const expectedVenue = preferredVenue ?? 'home';
   // The possession bar is fixture-oriented, not player-oriented: home is
   // always the left segment and away is always the right segment. The player
@@ -209,7 +222,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               <Ionicons name="football-outline" size={11} color={Colors.primary} />
               <Text style={styles.title}>EXPECTED POSSESSION</Text>
             </View>
-            <Text style={styles.meta}>{expectedVenue.toUpperCase()} SIDE</Text>
+            <Text style={styles.meta}>
+              {possessionStatus === 'verified' ? `${expectedVenue.toUpperCase()} SIDE` : 'ESTIMATE'}
+            </Text>
           </View>
           <View style={styles.expectedPossessionBar}>
             <View style={[styles.expectedPossessionPlayer, { flex: Math.max(expectedHome, 0.1) }]} />

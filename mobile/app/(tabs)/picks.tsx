@@ -657,13 +657,20 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
   if (!data) return null;
   const mo = (data as any)?.matchupOverview;
   const ep = (data as any)?.expectedPossession;
+  const possessionStatus = String(
+    (data as any)?.possessionStatus
+      ?? mo?.possessionStatus
+      ?? ((data as any)?.possessionSource || mo?.possessionSource
+        ? 'estimated'
+        : 'unavailable'),
+  ).toLowerCase();
   const gt = (data as any)?.expectedGameType ?? mo?.expectedGameType;
   const kmf = (data as any)?.keyMatchupFactor ?? mo?.keyMatchupFactor;
   const ss = (data as any)?.sharpSummary;
   const isHome = pick?.venue !== 'away';
   const teamPoss: number | null = ep ? (isHome ? ep.home : ep.away) : null;
   const oppPoss: number | null = ep ? (isHome ? ep.away : ep.home) : null;
-  const hasPoss = teamPoss != null;
+  const hasPoss = teamPoss != null && oppPoss != null && possessionStatus !== 'unavailable';
   if (!hasPoss && !gt && !kmf && !ss) return null;
   const possColor = teamPoss != null && oppPoss != null
     ? teamPoss > oppPoss + 5 ? Colors.success : teamPoss < oppPoss - 5 ? '#F59E0B' : Colors.textSecondary
@@ -690,6 +697,13 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
             <Text style={mStyles.possLabel} numberOfLines={1}>{(pick?.opponentName ?? 'AWAY').split(' ').pop()?.toUpperCase()}</Text>
           </View>
         </View>
+      )}
+      {possessionStatus !== 'verified' && (
+        <Text style={[mStyles.proCardNote, { color: Colors.textTertiary }]}>
+          {possessionStatus === 'estimated'
+            ? 'Possession shown as an estimate from available matchup signals, not verified match statistics.'
+            : 'Verified possession unavailable for this fixture.'}
+        </Text>
       )}
       {kmf ? <Text style={mStyles.proCardNote}>{kmf}</Text> : null}
       {ss ? <Text style={[mStyles.proCardNote, { color: Colors.textSecondary, marginTop: 4 }]}>{ss}</Text> : null}
