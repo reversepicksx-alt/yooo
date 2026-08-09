@@ -6887,44 +6887,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             else "exact_opponent_same_role_same_venue_plus_prior_seasons"
                         )
 
-        # If the exact venue remains sparse, use verified appearances against
-        # the same opponent from either venue. This is still opponent-specific
-        # and role-specific, but must be labeled as mixed-venue evidence so the
-        # UI does not imply an away-only sample.
-        if len(position_comparison) < 15 and opponent_fixture_list:
-            try:
-                _mixed_comparison = await aio.wait_for(
-                    fetch_position_comparison(
-                        opponent_fixture_list,
-                        player_position,
-                        req.propType,
-                        req.opponentId,
-                        "any",
-                        len(opponent_fixture_list),
-                        target_specific_pos=specific_position,
-                        target_role=display_role or player_role,
-                    ) if player_position else _empty_list(),
-                    timeout=15,
-                )
-            except Exception as _mixed_comp_err:
-                print(f"[POS COMP] Mixed-venue comparison failed: {_mixed_comp_err}")
-                _mixed_comparison = []
-            if _mixed_comparison:
-                by_player = {
-                    row.get("playerId") or str(row.get("name") or "").strip().lower(): row
-                    for row in position_comparison
-                }
-                for row in _mixed_comparison:
-                    key = row.get("playerId") or str(row.get("name") or "").strip().lower()
-                    if key and key not in by_player:
-                        by_player[key] = row
-                position_comparison = list(by_player.values())[:15]
-                if len(position_comparison) > 3:
-                    position_comparison_scope = (
-                        "exact_opponent_same_position_mixed_venue_plus_prior_seasons"
-                        if _defender_position_cohort
-                        else "exact_opponent_same_role_mixed_venue_plus_prior_seasons"
-                    )
         print(
             f"[POS COMP] target={req.playerName} position={specific_position or display_position} "
             f"mode={'same-position' if _defender_position_cohort else 'same-role'} "

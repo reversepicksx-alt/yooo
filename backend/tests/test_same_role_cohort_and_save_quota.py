@@ -49,6 +49,17 @@ def test_position_cohort_lineup_enrichment_cannot_drop_player_stats():
     assert "if not lineups_task.done():" in PREDICT_SOURCE
 
 
+def test_same_role_opponent_evidence_stays_venue_filtered():
+    assert 'player_venue,' in PREDICT_SOURCE
+    assert 'comp_venue = player_venue_filter' in PREDICT_SOURCE
+    assert 'if comp_venue != "any" and comp_team_venue != comp_venue:' in PREDICT_SOURCE
+    assert "mixed_venue" not in PREDICT_SOURCE
+    assert '"exact_opponent_same_role_same_venue"' in PREDICT_SOURCE
+    assert '"exact_opponent_same_role_same_venue_plus_prior_seasons"' in PREDICT_SOURCE
+    assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE
+    assert '"exact_opponent_same_position_same_venue_plus_prior_seasons"' in PREDICT_SOURCE
+
+
 def test_soccer_player_history_requires_exact_tp_and_minutes():
     assert "async def _fetch_fixture_possession(" in PREDICT_SOURCE
     assert '"tp": gl["teamPossession"]' not in PREDICT_SOURCE
