@@ -9,7 +9,7 @@ from config import (
 )
 from models import AdminSettingsRequest, AdminTestKeyRequest
 from pass_projection_calibration import walk_forward_validate
-from model_metrics import build_scorecard, walk_forward_replay
+from model_metrics import build_scorecard, walk_forward_replay, validate_weighted_opponent_evidence
 from routes.stripe_pay import checkout_idempotency_key, find_open_stripe_subscriptions
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -1172,6 +1172,180 @@ async def admin_model_replay(req: ModelReplayRequest):
             **scorecard,
         },
         "walkForwardReplay": replay,
+    }
+
+
+# ── Weighted Opponent Evidence Replay ────────────────────────────────────────
+
+class OpponentEvidenceReplayRequest(BaseModel):
+    email: str
+    token: str
+    sport: str = "soccer"   # opponent cohort evidence exists only for soccer today
+    limit: int = 20000      # rows fetched; server-enforced between 1 and 50 000
+
+    model_config = {"extra": "forbid"}
+
+    def model_post_init(self, __context: object) -> None:  # type: ignore[override]
+        if self.limit < 1:
+            object.__setattr__(self, "limit", 1)
+        elif self.limit > 50_000:
+            object.__setattr__(self, "limit", 50_000)
+
+
+@router.post("/opponent-evidence-replay")
+async def admin_opponent_evidence_replay(req: OpponentEvidenceReplayRequest):
+    """Leakage-safe replay comparing weighted vs unweighted same-role opponent evidence.
+
+    Fetches settled soccer picks that were saved with ``positionComparison``
+    cohort evidence and evaluates whether the minutes-weighted average
+    improves calibration and projection error compared with the legacy
+    unweighted average.
+
+    The weighted method is intentionally shadow-only until this replay confirms
+    out-of-sample improvement.  The promotion decision and all metrics are
+    persisted to the ``model_audit`` collection so the result is auditable.
+
+    Owner-only.
+    """
+    await verify_owner(req.email, req.token)
+
+    sport_filter = req.sport.lower().strip() or "soccer"
+
+    # Fetch settled picks that carry positionComparison cohort data.
+    # We project every field the validator needs including positionComparison.
+    query: dict = {
+        "status": "settled",
+        "result": {"$in": ["hit", "miss"]},
+        "settledAt": {"$ne": None},
+        "voidReason": {"$exists": False},
+        "sport": sport_filter,
+        "positionComparison": {"$exists": True, "$ne": None},
+    }
+    projection = {
+        "_id": 0,
+        "trackingId": 1,
+        "playerName": 1,
+        "sport": 1,
+        "propType": 1,
+        "line": 1,
+        "recommendation": 1,
+        "venue": 1,
+        "fixtureId": 1,
+        "fixtureDate": 1,
+        "matchDate": 1,
+        "teamId": 1,
+        "opponentId": 1,
+        "playerId": 1,
+        "timestamp": 1,
+        "settledAt": 1,
+        "result": 1,
+        "actualValue": 1,
+        "projectedValue": 1,
+        "confidenceScore": 1,
+        "positionComparison": 1,
+    }
+
+    cursor = db.picks.find(query, projection).sort("settledAt", 1).limit(req.limit)
+    rows = await cursor.to_list(length=req.limit)
+
+    import datetime as _dt
+
+    generated_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    if not rows:
+        result = {
+            "success": True,
+            "n": 0,
+            "sport": sport_filter,
+            "generatedAt": generated_at,
+            "message": (
+                "No eligible settled picks found with positionComparison cohort evidence. "
+                "Picks require the same-role opponent cohort stored at prediction time."
+            ),
+            "validation": None,
+        }
+        # Persist even the empty result so the audit trail shows the check ran.
+        await db.model_audit.insert_one({
+            "auditType": "weighted_opponent_evidence_replay",
+            "sport": sport_filter,
+            "generatedAt": generated_at,
+            "eligibleSamples": 0,
+            "promotionVerdict": "CAUTION",
+            "result": None,
+        })
+        return result
+
+    validation = validate_weighted_opponent_evidence(rows)
+
+    # Persist to model_audit collection for the long-term audit trail.
+    audit_doc = {
+        "auditType": "weighted_opponent_evidence_replay",
+        "sport": sport_filter,
+        "generatedAt": generated_at,
+        "eligibleSamples": validation.get("eligibleSamples", 0),
+        "promotionVerdict": (
+            (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
+        ),
+        "weightedMAE": (
+            (validation.get("weighted") or {}).get("projection", {}).get("mae")
+        ),
+        "unweightedMAE": (
+            (validation.get("unweighted") or {}).get("projection", {}).get("mae")
+        ),
+        "churnPct": validation.get("churnPct"),
+        "result": validation,
+    }
+    try:
+        await db.model_audit.insert_one(audit_doc)
+    except Exception as _audit_err:
+        # Audit persistence must not block the response.
+        print(f"[OPPONENT EVIDENCE REPLAY] audit write failed: {_audit_err}")
+
+    verdict = (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
+    observations = []
+    n_eligible = validation.get("eligibleSamples", 0)
+    total_rows = validation.get("totalRows", len(rows))
+    observations.append(
+        f"ℹ️  {n_eligible} eligible picks (out of {total_rows} settled) carry "
+        "same-role opponent cohort evidence."
+    )
+
+    w_mae = (validation.get("weighted") or {}).get("projection", {}).get("mae")
+    u_mae = (validation.get("unweighted") or {}).get("projection", {}).get("mae")
+    if w_mae is not None and u_mae is not None:
+        if w_mae < u_mae:
+            observations.append(
+                f"✅ Weighted MAE ({w_mae}) < Unweighted MAE ({u_mae}) — projection improved."
+            )
+        elif w_mae == u_mae:
+            observations.append(
+                f"➡️  Weighted MAE ({w_mae}) == Unweighted MAE ({u_mae}) — neutral."
+            )
+        else:
+            observations.append(
+                f"⚠️  Weighted MAE ({w_mae}) > Unweighted MAE ({u_mae}) — projection degraded."
+            )
+
+    churn_pct = validation.get("churnPct")
+    if churn_pct is not None:
+        symbol = "✅" if churn_pct < 15 else "⚠️"
+        observations.append(
+            f"{symbol} Recommendation churn: {churn_pct}% of picks would differ between methods."
+        )
+
+    verdict_emoji = {"GO": "✅", "CAUTION": "⚠️", "NO_GO": "❌"}.get(verdict, "ℹ️")
+    observations.append(
+        f"{verdict_emoji} Promotion verdict: {verdict} — "
+        + (validation.get("promotionDecision") or {}).get("summary", "")
+    )
+
+    return {
+        "success": True,
+        "n": n_eligible,
+        "sport": sport_filter,
+        "generatedAt": generated_at,
+        "observations": observations,
+        "validation": validation,
     }
 
 

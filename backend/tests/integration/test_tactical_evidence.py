@@ -5,7 +5,9 @@ from tactical_evidence import (
     summarize_player_opponent_history,
     summarize_position_cohort,
     build_position_cohort_statement,
+    position_cohort_verdict,
 )
+from model_metrics import validate_weighted_opponent_evidence
 
 
 def test_wide_creator_is_not_classified_as_pressing_forward():
@@ -164,6 +166,80 @@ def test_observed_position_summary_exposes_sample_and_dominant_position():
     assert result["sampleSize"] == 3
     assert result["dominantPosition"] == "RW"
     assert result["positionCounts"] == {"RW": 2, "ST": 1}
+
+
+def test_position_cohort_verdict_verifies_when_average_aligns_with_direction():
+    cohort = {"sampleSize": 10, "average": 6.0, "avgStatValue": 6.0}
+    result = position_cohort_verdict(cohort, "over", 5.0)
+    assert result["verdict"] == "verifies"
+    assert result["average"] == 6.0
+    assert result["sampleSize"] == 10
+
+
+def test_position_cohort_verdict_contradicts_when_average_opposes_direction():
+    cohort = {"sampleSize": 8, "average": 3.5}
+    result = position_cohort_verdict(cohort, "over", 5.0)
+    assert result["verdict"] == "contradicts"
+
+
+def test_position_cohort_verdict_is_unavailable_when_sample_is_empty():
+    result = position_cohort_verdict({}, "over", 5.0)
+    assert result["verdict"] == "unavailable"
+
+
+def test_validate_weighted_opponent_evidence_returns_caution_with_no_cohort_data():
+    """Picks without positionComparison should yield 0 eligible samples."""
+    rows = [
+        {
+            "trackingId": f"p{i}",
+            "sport": "soccer",
+            "propType": "passes",
+            "line": 40.0,
+            "recommendation": "over",
+            "actualValue": 45.0,
+            "projectedValue": 42.0,
+            "result": "hit",
+            "settledAt": f"2026-01-{i:02d}T12:00:00Z",
+        }
+        for i in range(1, 6)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 0
+    assert result["promotionDecision"]["verdict"] == "CAUTION"
+
+
+def test_validate_weighted_opponent_evidence_compares_mae_per_method():
+    """Weighted average closer to actual should produce lower MAE."""
+    def _row(i, weighted_avg, unweighted_avg, actual, line=40.0, rec="over"):
+        outcome = "hit" if (rec == "over" and actual > line) else "miss"
+        return {
+            "trackingId": f"te-{i}",
+            # Unique player identity per row so _event_key does not collapse all rows.
+            "playerName": f"Player {i}",
+            "playerId": i,
+            "sport": "soccer",
+            "propType": "passes",
+            "line": line,
+            "recommendation": rec,
+            "actualValue": actual,
+            "projectedValue": line,
+            "confidenceScore": 70,
+            "result": outcome,
+            "settledAt": f"2026-0{(i % 9) + 1}-{(i % 28) + 1:02d}T12:00:00Z",
+            "positionComparison": {
+                "weightedAverage": weighted_avg,
+                "unweightedAverage": unweighted_avg,
+                "sampleSize": 10,
+            },
+        }
+
+    # weighted_avg close to actual (41), unweighted far (55)
+    rows = [_row(i, weighted_avg=41.0, unweighted_avg=55.0, actual=41.5) for i in range(1, 16)]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 15
+    w_mae = result["weighted"]["projection"]["mae"]
+    u_mae = result["unweighted"]["projection"]["mae"]
+    assert w_mae < u_mae, "weighted method should have lower MAE when it's closer to actual"
 
 
 def test_position_cohort_statement_uses_player_event_language_for_all_prop_families():

@@ -901,6 +901,314 @@ def walk_forward_replay(rows: list[dict]) -> dict:
         ),
     }
 
+def validate_weighted_opponent_evidence(rows: list[dict]) -> dict:
+    """Leakage-safe replay comparing weighted vs unweighted opponent cohort evidence.
+
+    Processes settled picks in strict chronological order. For each row, ONLY
+    the cohort evidence stored at prediction time is used — the weighted and
+    unweighted averages are read from ``positionComparison`` on the row itself,
+    never recomputed. This guarantees no future information leaks into the
+    evaluation.
+
+    Eligible rows must carry all of:
+      - positionComparison.weightedAverage  (from summarize_position_cohort)
+      - positionComparison.unweightedAverage or positionComparison.avgStatValue
+      - line                                (the saved prop line)
+      - actualValue                         (the post-settlement stat)
+      - result in {"hit", "miss"}           (scored directional events only)
+
+    Metrics returned per method (weighted / unweighted):
+      - projection     — MAE, RMSE, meanError vs actualValue
+      - agreesWithRecommendationN — picks where the method's implied direction
+                                    matches the saved recommendation
+      - hitRateWhenAgrees         — empirical hit rate for those picks
+
+    Plus:
+      - churnN / churnPct — how often the two methods imply a different direction
+      - promotionDecision — GO / CAUTION / NO_GO with per-criterion pass/fail
+
+    Promotion criteria (all must pass for GO):
+      1. Weighted MAE ≤ Unweighted MAE  (projection is not worse)
+      2. Weighted hit-rate ≥ Unweighted hit-rate − 2 pp  (calibration not regressed)
+      3. Recommendation churn < 15 %  (changes are bounded)
+    """
+    deduped = dedupe_prediction_rows(rows)
+    ordered = _sorted_rows(deduped)
+
+    eligible: list[dict] = []
+    for row in ordered:
+        if not _is_scored_directional_row(row):
+            continue
+        pc = row.get("positionComparison") or {}
+        weighted_avg = _number(pc.get("weightedAverage") or pc.get("average"))
+        unweighted_avg = _number(
+            pc.get("unweightedAverage") or pc.get("avgStatValue")
+        )
+        actual = _number(row.get("actualValue"))
+        line = _number(row.get("line"))
+        if weighted_avg is None or unweighted_avg is None or actual is None or line is None:
+            continue
+        eligible.append({
+            "row": row,
+            "weightedAvg": weighted_avg,
+            "unweightedAvg": unweighted_avg,
+            "actual": actual,
+            "line": line,
+            "outcome": 1 if row.get("result") == "hit" else 0,
+            "recommendation": str(row.get("recommendation") or "").lower(),
+        })
+
+    if not eligible:
+        return {
+            "eligibleSamples": 0,
+            "leakagePolicy": (
+                "Each pick is evaluated using ONLY the weighted/unweighted averages "
+                "stored at prediction time. No recomputation of cohort evidence is performed."
+            ),
+            "message": (
+                "No eligible picks found. Picks need positionComparison.weightedAverage, "
+                "positionComparison.unweightedAverage (or avgStatValue), actualValue, "
+                "line, and a scored directional result."
+            ),
+            "weighted": None,
+            "unweighted": None,
+            "churnN": 0,
+            "churnPct": None,
+            "promotionDecision": {
+                "verdict": "CAUTION",
+                "summary": "Insufficient data — no eligible picks with cohort evidence found.",
+                "issues": [],
+                "passed": [],
+                "criteria": [],
+            },
+        }
+
+    n = len(eligible)
+
+    # ── Projection error (MAE/RMSE/meanError vs actualValue) ─────────────────
+    def _proj_summary(errors: list[float]) -> dict:
+        if not errors:
+            return {"n": 0, "mae": None, "rmse": None, "meanError": None}
+        mae = sum(abs(e) for e in errors) / len(errors)
+        rmse = math.sqrt(sum(e * e for e in errors) / len(errors))
+        return {
+            "n": len(errors),
+            "mae": round(mae, 4),
+            "rmse": round(rmse, 4),
+            "meanError": round(sum(errors) / len(errors), 4),
+        }
+
+    w_errors = [e["actual"] - e["weightedAvg"] for e in eligible]
+    u_errors = [e["actual"] - e["unweightedAvg"] for e in eligible]
+    w_proj = _proj_summary(w_errors)
+    u_proj = _proj_summary(u_errors)
+
+    # ── Counterfactual directional accuracy (same cohort for both methods) ──────
+    # For each eligible pick, determine the direction each method implies and
+    # compare it against the actual outcome direction.  Both methods are scored
+    # on the *same* set of picks so the comparison is apples-to-apples.
+    # Ties (actualValue == line) carry no directional signal and are excluded.
+    def _implied_dir(avg: float, line: float) -> str:
+        if avg > line:
+            return "over"
+        if avg < line:
+            return "under"
+        return "tie"
+
+    w_correct = 0
+    u_correct = 0
+    dir_n = 0        # picks where actual direction is non-tie
+    churn_count = 0  # picks where the two methods imply different directions
+
+    for e in eligible:
+        w_dir = _implied_dir(e["weightedAvg"], e["line"])
+        u_dir = _implied_dir(e["unweightedAvg"], e["line"])
+        actual_dir = _implied_dir(e["actual"], e["line"])
+
+        if w_dir != u_dir:
+            churn_count += 1
+
+        if actual_dir == "tie":
+            continue  # push — no directional signal
+        dir_n += 1
+        if w_dir == actual_dir:
+            w_correct += 1
+        if u_dir == actual_dir:
+            u_correct += 1
+
+    w_dir_hit_rate = round(w_correct / dir_n * 100, 1) if dir_n else None
+    u_dir_hit_rate = round(u_correct / dir_n * 100, 1) if dir_n else None
+    churn_pct = round(churn_count / n * 100, 1) if n else None
+
+    # ── Promotion criteria ─────────────────────────────────────────────────────
+    criteria: list[dict] = []
+    issues: list[str] = []
+    passed: list[str] = []
+
+    # 1. Projection error
+    w_mae = w_proj.get("mae")
+    u_mae = u_proj.get("mae")
+    if w_mae is not None and u_mae is not None:
+        if w_mae <= u_mae:
+            passed.append(
+                f"Weighted MAE ({w_mae}) ≤ Unweighted MAE ({u_mae}) — projection not degraded"
+            )
+            criteria.append({"check": "projection_error", "result": "pass",
+                              "weighted": w_mae, "unweighted": u_mae})
+        else:
+            issues.append(
+                f"Weighted MAE ({w_mae}) > Unweighted MAE ({u_mae}) — weighting worsens projection error"
+            )
+            criteria.append({"check": "projection_error", "result": "fail",
+                              "weighted": w_mae, "unweighted": u_mae})
+    else:
+        criteria.append({"check": "projection_error", "result": "insufficient_data",
+                          "weighted": w_mae, "unweighted": u_mae})
+
+    # 2. Counterfactual directional accuracy: weighted not materially worse than unweighted.
+    # Both rates are computed on the same cohort (full eligible set, excluding pushes).
+    _MIN_DIR_N = 10
+    if w_dir_hit_rate is not None and u_dir_hit_rate is not None and dir_n >= _MIN_DIR_N:
+        gap = round(w_dir_hit_rate - u_dir_hit_rate, 1)
+        if gap >= -2.0:
+            passed.append(
+                f"Weighted directional hit rate ({w_dir_hit_rate}%) within 2 pp of "
+                f"unweighted ({u_dir_hit_rate}%) over {dir_n} picks — accuracy not regressed"
+            )
+            criteria.append({"check": "directional_accuracy", "result": "pass",
+                              "weightedHitRate": w_dir_hit_rate, "unweightedHitRate": u_dir_hit_rate,
+                              "directionalN": dir_n, "gapPp": gap,
+                              "note": "Rates compare implied direction to actual outcome, same cohort"})
+        else:
+            issues.append(
+                f"Weighted directional hit rate ({w_dir_hit_rate}%) is {abs(gap):.1f} pp below "
+                f"unweighted ({u_dir_hit_rate}%) over {dir_n} picks — accuracy regressed"
+            )
+            criteria.append({"check": "directional_accuracy", "result": "fail",
+                              "weightedHitRate": w_dir_hit_rate, "unweightedHitRate": u_dir_hit_rate,
+                              "directionalN": dir_n, "gapPp": gap,
+                              "note": "Rates compare implied direction to actual outcome, same cohort"})
+    else:
+        note = (
+            f"Need ≥{_MIN_DIR_N} picks with a non-tie actual outcome; have {dir_n}"
+        )
+        criteria.append({"check": "directional_accuracy", "result": "insufficient_data",
+                          "weightedHitRate": w_dir_hit_rate, "unweightedHitRate": u_dir_hit_rate,
+                          "directionalN": dir_n, "note": note})
+
+    # 3. Recommendation churn is bounded
+    _CHURN_THRESHOLD = 15.0
+    if churn_pct is not None:
+        if churn_pct < _CHURN_THRESHOLD:
+            passed.append(
+                f"Recommendation churn {churn_pct}% is below {_CHURN_THRESHOLD}% threshold"
+            )
+            criteria.append({"check": "churn", "result": "pass",
+                              "churnPct": churn_pct, "threshold": _CHURN_THRESHOLD})
+        else:
+            issues.append(
+                f"Recommendation churn {churn_pct}% ({churn_count}/{n} picks) exceeds "
+                f"{_CHURN_THRESHOLD}% — weighted method changes too many saved picks"
+            )
+            criteria.append({"check": "churn", "result": "fail",
+                              "churnPct": churn_pct, "threshold": _CHURN_THRESHOLD})
+    else:
+        criteria.append({"check": "churn", "result": "insufficient_data",
+                          "churnPct": None, "threshold": _CHURN_THRESHOLD})
+
+    # ── Verdict ────────────────────────────────────────────────────────────────
+    # Promotion to GO requires:
+    #   a) at least _MIN_ELIGIBLE_FOR_PROMOTION settled picks with cohort evidence
+    #   b) every criterion must be "pass" — insufficient_data is treated as CAUTION
+    #   c) no criterion can be "fail"
+    _MIN_ELIGIBLE_FOR_PROMOTION = 30
+    has_insufficient = any(c["result"] == "insufficient_data" for c in criteria)
+    has_failures = any(c["result"] == "fail" for c in criteria)
+    all_pass = (
+        not has_failures
+        and not has_insufficient
+        and all(c["result"] == "pass" for c in criteria)
+        and bool(criteria)
+    )
+
+    if n < _MIN_ELIGIBLE_FOR_PROMOTION:
+        verdict = "CAUTION"
+        summary = (
+            f"Insufficient data — only {n} eligible pick(s) carry cohort evidence "
+            f"(minimum {_MIN_ELIGIBLE_FOR_PROMOTION} required for a GO verdict). "
+            "Accumulate more settled soccer picks with same-role opponent cohort data before promoting."
+        )
+    elif has_insufficient:
+        verdict = "CAUTION"
+        summary = (
+            "One or more promotion criteria could not be evaluated (insufficient agreeing picks "
+            "in at least one method). All criteria must fully pass before promoting."
+        )
+    elif has_failures:
+        verdict = "NO_GO"
+        summary = (
+            "Weighted opponent evidence fails key promotion criteria. "
+            "Keep shadow-only and investigate the flagged issues before promoting."
+        )
+    elif all_pass:
+        verdict = "GO"
+        summary = (
+            "Weighted opponent evidence passes all out-of-sample promotion criteria. "
+            "Safe to promote from shadow-only to live mode by setting "
+            "WEIGHTED_OPPONENT_EVIDENCE_MODE=live in the backend environment."
+        )
+    else:
+        verdict = "CAUTION"
+        summary = (
+            "Mixed results — some criteria pass, others do not. "
+            "Keep shadow-only; investigate flagged issues before promoting."
+        )
+
+    dates = _date_range(ordered)
+    return {
+        "eligibleSamples": n,
+        "totalRows": len(ordered),
+        "dateRange": dates,
+        "leakagePolicy": (
+            "Each pick is evaluated using ONLY the weighted/unweighted averages "
+            "stored at prediction time. No recomputation of cohort evidence is performed."
+        ),
+        "directionalN": dir_n,
+        "directionalNote": (
+            "Directional hit rates are computed on the same cohort for both methods. "
+            "Each method's implied direction (avg vs line) is compared against the actual "
+            "outcome direction (actualValue vs line). Ties are excluded."
+        ),
+        "weighted": {
+            "projection": w_proj,
+            "directionalHitRate": w_dir_hit_rate,
+            "directionalCorrect": w_correct,
+        },
+        "unweighted": {
+            "projection": u_proj,
+            "directionalHitRate": u_dir_hit_rate,
+            "directionalCorrect": u_correct,
+        },
+        "churnN": churn_count,
+        "churnPct": churn_pct,
+        "promotionDecision": {
+            "verdict": verdict,
+            "summary": summary,
+            "issues": issues,
+            "passed": passed,
+            "criteria": criteria,
+            "promotionEnvVar": "WEIGHTED_OPPONENT_EVIDENCE_MODE",
+            "promotionValues": {"shadow": "shadow_only_evidence_card_only", "live": "apply_weighted_average_to_projection"},
+            "promotionCommand": "Set WEIGHTED_OPPONENT_EVIDENCE_MODE=live in the backend environment, then redeploy.",
+            "note": (
+                "GO = all criteria pass; "
+                "CAUTION = mixed or insufficient evidence; "
+                "NO_GO = one or more criteria fail"
+            ),
+        },
+    }
+
+
 def _walk_forward_projection(ordered: list[dict]) -> dict:
     errors: list[float] = []
     for row in ordered:

@@ -1,4 +1,9 @@
-from model_metrics import build_scorecard, dedupe_prediction_rows, _event_key
+from model_metrics import (
+    build_scorecard,
+    dedupe_prediction_rows,
+    _event_key,
+    validate_weighted_opponent_evidence,
+)
 
 
 def _row(i, confidence=70, actual=10, projected=8, result="hit"):
@@ -333,3 +338,199 @@ def test_event_key_is_stable_regardless_of_tracking_id():
         "_event_key must be identical for two saves of the same prediction; "
         "trackingId must not influence the canonical key"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# validate_weighted_opponent_evidence
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _cohort_row(
+    i,
+    weighted_avg,
+    unweighted_avg,
+    actual,
+    line=4.0,
+    recommendation="over",
+    result=None,
+):
+    """Return a minimal settled pick row with positionComparison cohort evidence."""
+    if result is None:
+        result = "hit" if (
+            (recommendation == "over" and actual > line)
+            or (recommendation == "under" and actual < line)
+        ) else "miss"
+    return {
+        "trackingId": f"cohort-{i}",
+        "playerName": f"Player {i}",
+        "sport": "soccer",
+        "propType": "passes",
+        "line": line,
+        "recommendation": recommendation,
+        "actualValue": actual,
+        "projectedValue": line,
+        "confidenceScore": 70,
+        "result": result,
+        "settledAt": f"2026-0{(i % 9) + 1}-{(i % 28) + 1:02d}T12:00:00+00:00",
+        "positionComparison": {
+            "weightedAverage": weighted_avg,
+            "unweightedAverage": unweighted_avg,
+            "sampleSize": 8,
+        },
+    }
+
+
+def test_validate_weighted_returns_caution_when_no_eligible_picks():
+    # Rows without positionComparison should yield 0 eligible picks.
+    rows = [_row(i) for i in range(1, 6)]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 0
+    assert result["promotionDecision"]["verdict"] == "CAUTION"
+    assert result["weighted"] is None
+    assert result["unweighted"] is None
+
+
+def test_validate_weighted_reports_projection_error_per_method():
+    # Weighted average is closer to actual than unweighted.
+    rows = [
+        _cohort_row(i, weighted_avg=5.0, unweighted_avg=8.0, actual=5.2)
+        for i in range(1, 11)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 10
+    w_mae = result["weighted"]["projection"]["mae"]
+    u_mae = result["unweighted"]["projection"]["mae"]
+    assert w_mae is not None and u_mae is not None
+    # weighted is much closer to actual (5.2) than unweighted (8.0)
+    assert w_mae < u_mae
+
+
+def test_validate_weighted_detects_churn_between_methods():
+    # Weighted says OVER (avg > line), unweighted says UNDER (avg < line).
+    rows = [
+        _cohort_row(i, weighted_avg=5.0, unweighted_avg=3.0, actual=5.0, line=4.0)
+        for i in range(1, 11)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    # Every row has opposite directions → 100 % churn
+    assert result["churnPct"] == 100.0
+    assert result["churnN"] == 10
+
+
+def test_validate_weighted_reports_go_when_all_criteria_pass_and_sample_is_sufficient():
+    # Need ≥ 30 eligible picks with MAE ≤ unweighted, churn < 15 %, and ≥ 5 agrees per method.
+    rows = [
+        _cohort_row(i, weighted_avg=5.0, unweighted_avg=5.1, actual=5.0, line=4.0)
+        for i in range(1, 41)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 40
+    verdict = result["promotionDecision"]["verdict"]
+    assert verdict == "GO", f"Expected GO but got {verdict}: {result['promotionDecision']['summary']}"
+
+
+def test_validate_weighted_cannot_return_go_with_insufficient_eligible_picks():
+    # Even if all observable criteria pass, fewer than 30 picks must force CAUTION.
+    rows = [
+        _cohort_row(i, weighted_avg=5.0, unweighted_avg=5.1, actual=5.0, line=4.0)
+        for i in range(1, 10)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] < 30
+    assert result["promotionDecision"]["verdict"] == "CAUTION"
+    assert "minimum" in result["promotionDecision"]["summary"].lower()
+
+
+def test_validate_weighted_cannot_return_go_when_directional_accuracy_is_insufficient_data():
+    # directional_accuracy requires dir_n >= 10 non-tie actuals.
+    # If all actualValues equal the line (ties), dir_n == 0 → insufficient_data → CAUTION.
+    rows = [
+        _cohort_row(
+            i,
+            weighted_avg=5.0,
+            unweighted_avg=5.1,
+            actual=4.0,   # == line → tie, excluded from directional count
+            line=4.0,
+            recommendation="over",
+            result="miss",   # explicit result because actual == line is ambiguous
+        )
+        for i in range(1, 41)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 40
+    assert result["directionalN"] == 0
+    dir_criterion = next(
+        c for c in result["promotionDecision"]["criteria"] if c["check"] == "directional_accuracy"
+    )
+    assert dir_criterion["result"] == "insufficient_data"
+    assert result["promotionDecision"]["verdict"] == "CAUTION"
+
+
+def test_validate_weighted_directional_accuracy_fails_when_weighted_is_much_worse():
+    # Reviewer regression: weighted implies wrong direction on 5/40; unweighted correct on all.
+    # weighted_avg < line (implies UNDER) but actual > line (OVER) on 5 rows.
+    rows = []
+    for i in range(1, 36):
+        # Both methods correct: weighted and unweighted both imply OVER, actual is OVER.
+        rows.append(_cohort_row(i, weighted_avg=5.0, unweighted_avg=5.0, actual=5.0, line=4.0))
+    for i in range(36, 41):
+        # Weighted wrong (implies UNDER), unweighted correct (implies OVER), actual is OVER.
+        rows.append(_cohort_row(
+            i,
+            weighted_avg=3.0,   # implies UNDER
+            unweighted_avg=5.0, # implies OVER
+            actual=5.0,         # actual OVER
+            line=4.0,
+            recommendation="over",
+            result="hit",
+        ))
+    result = validate_weighted_opponent_evidence(rows)
+    assert result["eligibleSamples"] == 40
+    w_hr = result["weighted"]["directionalHitRate"]
+    u_hr = result["unweighted"]["directionalHitRate"]
+    assert w_hr is not None and u_hr is not None
+    assert u_hr > w_hr, "unweighted should have higher directional hit rate"
+    dir_criterion = next(
+        c for c in result["promotionDecision"]["criteria"] if c["check"] == "directional_accuracy"
+    )
+    # 5 rows where weighted is wrong vs 0 for unweighted → gap > 2 pp → fail
+    assert dir_criterion["result"] == "fail"
+    assert result["promotionDecision"]["verdict"] in {"NO_GO", "CAUTION"}
+
+
+def test_validate_weighted_reports_nogo_when_projection_is_worse():
+    # Weighted average is far from actual; unweighted is much closer.
+    rows = [
+        _cohort_row(i, weighted_avg=10.0, unweighted_avg=5.0, actual=5.2, line=4.5)
+        for i in range(1, 21)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    w_mae = result["weighted"]["projection"]["mae"]
+    u_mae = result["unweighted"]["projection"]["mae"]
+    assert w_mae > u_mae, "weighted should be worse when it is far from actual"
+    # The projection_error criterion should fail
+    proj_criterion = next(
+        c for c in result["promotionDecision"]["criteria"] if c["check"] == "projection_error"
+    )
+    assert proj_criterion["result"] == "fail"
+
+
+def test_validate_weighted_leakage_policy_is_documented_in_output():
+    rows = [
+        _cohort_row(i, weighted_avg=5.0, unweighted_avg=5.0, actual=5.0)
+        for i in range(1, 4)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    assert "leakagePolicy" in result
+    assert "stored at prediction time" in result["leakagePolicy"].lower()
+
+
+def test_validate_weighted_promotion_env_var_documented_in_decision():
+    rows = [
+        _cohort_row(i, weighted_avg=5.0, unweighted_avg=5.2, actual=5.0)
+        for i in range(1, 6)
+    ]
+    result = validate_weighted_opponent_evidence(rows)
+    decision = result["promotionDecision"]
+    assert decision.get("promotionEnvVar") == "WEIGHTED_OPPONENT_EVIDENCE_MODE"
+    assert "shadow" in (decision.get("promotionValues") or {})
+    assert "live" in (decision.get("promotionValues") or {})
