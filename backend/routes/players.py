@@ -423,6 +423,57 @@ async def search_players(req: PlayerSearchRequest):
         }
 
     quota_gone = is_quota_exhausted()
+    is_owner_search = False
+    if req.email and req.token:
+        try:
+            session = await db.sessions.find_one(
+                {
+                    "email": req.email.lower().strip(),
+                    "session_token": req.token,
+                    "access_type": "Owner",
+                },
+                {"_id": 1},
+            )
+            is_owner_search = bool(session)
+        except Exception:
+            is_owner_search = False
+
+    async def _attach_owner_media(player_list: list[dict]) -> list[dict]:
+        """Add search media only to a currently authenticated owner response."""
+        if not is_owner_search or not player_list:
+            return player_list
+        try:
+            from cache import COL_PLAYERS
+            player_ids = {p.get("id") or p.get("playerId") for p in player_list if p.get("id") or p.get("playerId")}
+            team_ids = {p.get("teamId") for p in player_list if p.get("teamId")}
+            photos: dict[int, str] = {}
+            logos: dict[int, str] = {}
+            if player_ids:
+                async for doc in db[COL_PLAYERS].find(
+                    {"playerId": {"$in": list(player_ids)}},
+                    {"_id": 0, "playerId": 1, "photo": 1},
+                ):
+                    if doc.get("photo"):
+                        photos[doc.get("playerId")] = doc["photo"]
+            if team_ids:
+                async for doc in db["cache_teams"].find(
+                    {"teamId": {"$in": list(team_ids)}},
+                    {"_id": 0, "teamId": 1, "logo": 1},
+                ):
+                    if doc.get("logo"):
+                        logos[doc.get("teamId")] = doc["logo"]
+            for player in player_list:
+                pid = player.get("id") or player.get("playerId")
+                tid = player.get("teamId")
+                photo = player.get("photo") or photos.get(pid, "")
+                logo = logos.get(tid, "")
+                if photo:
+                    player["ownerPlayerPhoto"] = photo
+                if logo:
+                    player["ownerTeamLogo"] = logo
+        except Exception as exc:
+            print(f"[PLAYER SEARCH] owner media skipped: {exc}")
+        return player_list
     # This endpoint is called directly while a user is typing. Background
     # maintenance may consume the local soft budget, but that must not make an
     # uncached player look like a genuine no-result. Priority bypasses only the
@@ -931,7 +982,7 @@ async def search_players(req: PlayerSearchRequest):
                                 print(f"[BG-CLUB-STALE] pid={p.get('id')} err={_e}")
                     aio.ensure_future(_bg_refresh_stale(stale_club_hits))
 
-            return {"players": sorted_results}
+            return {"players": await _attach_owner_media(sorted_results)}
     except (aio.TimeoutError, TimeoutError):
         print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")
     except Exception as exc:
@@ -946,7 +997,8 @@ async def search_players(req: PlayerSearchRequest):
                 try:
                     fallback = await _search_players_cache(last_word, req.league_id, relaxed=True)
                     if fallback:
-                        return {"players": _mask_unverified_team(_apply_sort_and_quality(fallback))}
+                        fallback_players = _apply_sort_and_quality(fallback)
+                        return {"players": _mask_unverified_team(await _attach_owner_media(fallback_players))}
                 except Exception:
                     pass
         # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
@@ -956,7 +1008,8 @@ async def search_players(req: PlayerSearchRequest):
             from soccer_bdl_client import search_bdl_players
             bdl_hits = await aio.wait_for(search_bdl_players(req.query), timeout=1.25)
             if bdl_hits:
-                return {"players": _mask_unverified_team(_apply_sort_and_quality(bdl_hits))}
+                bdl_players = _apply_sort_and_quality(bdl_hits)
+                return {"players": _mask_unverified_team(await _attach_owner_media(bdl_players))}
         except (aio.TimeoutError, TimeoutError):
             print(f"[PLAYER SEARCH] BDL lookup exceeded 1250ms for {req.query!r}")
         except Exception:
@@ -1048,7 +1101,8 @@ async def search_players(req: PlayerSearchRequest):
         except Exception as exc:
             print(f"[PLAYER SEARCH] exact context lookup failed for {req.query!r}: {exc}")
 
-    return {"players": _mask_unverified_team(_apply_sort_and_quality(live_players))}
+    live_players = _apply_sort_and_quality(live_players)
+    return {"players": _mask_unverified_team(await _attach_owner_media(live_players))}
 
     all_players = []
 

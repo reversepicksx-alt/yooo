@@ -133,6 +133,37 @@ def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> 
         prediction["leagueName"] = match_context["league"]
     return prediction
 
+
+async def _attach_owner_prediction_media(prediction: dict, requester_email: str) -> None:
+    """Attach cached player/team media to the owner response only."""
+    try:
+        from config import OWNER_EMAILS
+        if (requester_email or "").lower().strip() not in OWNER_EMAILS:
+            return
+        player_id = prediction.get("playerId") or (prediction.get("player") or {}).get("id")
+        team_id = prediction.get("fixtureTeamId") or prediction.get("teamId")
+        opponent_id = prediction.get("fixtureOpponentId") or prediction.get("opponentId")
+        if player_id:
+            player = await db["cache_players"].find_one(
+                {"playerId": player_id}, {"_id": 0, "photo": 1}
+            )
+            if player and player.get("photo"):
+                prediction["ownerPlayerPhoto"] = player["photo"]
+        team_ids = [tid for tid in (team_id, opponent_id) if tid]
+        if team_ids:
+            logos = {}
+            async for team in db["cache_teams"].find(
+                {"teamId": {"$in": team_ids}}, {"_id": 0, "teamId": 1, "logo": 1}
+            ):
+                if team.get("logo"):
+                    logos[team.get("teamId")] = team["logo"]
+            if logos.get(team_id):
+                prediction["ownerTeamLogo"] = logos[team_id]
+            if logos.get(opponent_id):
+                prediction["ownerOpponentLogo"] = logos[opponent_id]
+    except Exception as exc:
+        print(f"[PREDICTION] owner media skipped: {exc}")
+
 # H2H history is intentionally broader than the current-season prediction
 # window. The player-specific pass still caps the displayed sample so older
 # meetings cannot dominate the model, but it must inspect enough real fixtures
@@ -10850,6 +10881,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 f"{type(_persist_err).__name__}: {_persist_err}"
             )
         safe_prediction.pop("_id", None)
+        if access == "Owner":
+            await _attach_owner_prediction_media(safe_prediction, req.email)
 
         return safe_prediction
     except (json.JSONDecodeError, aio.TimeoutError):

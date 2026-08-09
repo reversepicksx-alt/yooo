@@ -143,3 +143,4 @@
 - [Goalkeeper pool prior](gk-pool-prior-shadow.md) — keeper pass-volume pool evidence is goalkeeper-only, sample-shrunk, auditable, and shadow-only until settled-pick replay validates live influence.
  - [Universal search contract](universal-search-contract.md) — combined soccer/MLB/NFL search must preserve each provider's payload contract; absent new flags can silently remove one sport.
  - [Prediction latency boundaries](prediction-latency-boundaries.md) — keep verified fixture/player math synchronous; cache-first and independently bound optional historical, grounded, and shadow enrichment.
+- [Owner-only player media](owner-only-media-gating.md) — photos and team crests require server-side owner authorization and stay out of persisted prediction records.

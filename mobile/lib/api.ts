@@ -408,6 +408,9 @@ export interface PredictionResult {
   fixtureId?: number;
   fixtureOpponentId?: number;
   fixtureTeamId?: number;
+  ownerPlayerPhoto?: string;
+  ownerTeamLogo?: string;
+  ownerOpponentLogo?: string;
   isHome?: boolean;
   confidenceLevel?: string;
   historyGameCount?: number;
@@ -786,6 +789,9 @@ interface RawPrediction {
   fixtureDate?: string;
   fixtureOpponentId?: number;
   fixtureTeamId?: number;
+  ownerPlayerPhoto?: string;
+  ownerTeamLogo?: string;
+  ownerOpponentLogo?: string;
   _request?: {
     teamId?: number;
     opponentId?: number;
@@ -1291,7 +1297,10 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     playerCandidates: raw.playerCandidates ?? undefined,
     prizePicksContext: (raw as any).prizePicksContext ?? undefined,
     aiPending: (raw as any).aiPending ?? undefined,
-    managerContext: (raw as any).managerContext ?? undefined,
+     managerContext: (raw as any).managerContext ?? undefined,
+     ownerPlayerPhoto: raw.ownerPlayerPhoto || undefined,
+     ownerTeamLogo: raw.ownerTeamLogo || undefined,
+     ownerOpponentLogo: raw.ownerOpponentLogo || undefined,
   };
 }
 
@@ -1673,12 +1682,22 @@ export interface PlayerSearchResult {
   teamName: string;
   leagueId: number;
   position?: string;
+  ownerPlayerPhoto?: string;
+  ownerTeamLogo?: string;
 }
 
-export async function searchPlayersQuick(query: string, leagueId?: number): Promise<{ players: PlayerSearchResult[] }> {
+export async function searchPlayersQuick(
+  query: string,
+  leagueId?: number,
+  session?: { email: string; token: string },
+): Promise<{ players: PlayerSearchResult[] }> {
   return apiCall('/api/players/search', {
     method: 'POST',
-    body: JSON.stringify({ query, league_id: leagueId }),
+    body: JSON.stringify({
+      query,
+      league_id: leagueId,
+      ...(session ? { email: session.email, token: session.token } : {}),
+    }),
   });
 }
 

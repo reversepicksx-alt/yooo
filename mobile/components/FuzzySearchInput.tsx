@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity,
+  View, Text, TextInput, TouchableOpacity, Image,
   StyleSheet, ActivityIndicator, Platform, ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +32,8 @@ export interface FuzzyPlayerResult {
   teamName: string;
   leagueId: number;
   position?: string;
+  ownerPlayerPhoto?: string;
+  ownerTeamLogo?: string;
 }
 
 export interface UniversalPlayerResult extends FuzzyPlayerResult {
@@ -66,6 +68,7 @@ interface FuzzySearchInputProps {
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   confirmed?: boolean;
   staticItems?: StaticItem[];
+  ownerSession?: { email: string; token: string };
 
   onSelectTeam?: (result: FuzzyTeamResult) => void;
   onSelectPlayer?: (result: FuzzyPlayerResult) => void;
@@ -126,6 +129,7 @@ export default function FuzzySearchInput({
   autoCapitalize = 'words',
   confirmed = false,
   staticItems,
+  ownerSession,
   onSelectTeam,
   onSelectPlayer,
   onSelectAllPlayer,
@@ -200,7 +204,7 @@ export default function FuzzySearchInput({
         const data = await searchLeagues(q);
         r = data.leagues || [];
       } else if (searchType === 'players') {
-        const data = await searchPlayersQuick(q, leagueId);
+        const data = await searchPlayersQuick(q, leagueId, ownerSession);
         r = (data.players || []).map((p: any) => ({
           playerId: (p.id as number) || 0,
           playerName: (p.name as string) || '',
@@ -208,13 +212,15 @@ export default function FuzzySearchInput({
           teamName: (p.teamName as string) || (p.team as string) || '',
           leagueId: (p.leagueId as number) || 0,
           position: (p.position as string) || '',
+          ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || '',
+          ownerTeamLogo: (p.ownerTeamLogo as string) || '',
         }));
       } else if (searchType === 'all_players') {
         // Search the three supported player providers in parallel. A single
         // provider being unavailable must not hide valid results from the
         // other sports.
         const [soccerResult, mlbResult, nflResult] = await Promise.allSettled([
-          searchPlayersQuick(q, leagueId),
+          searchPlayersQuick(q, leagueId, ownerSession),
           searchMlbPlayers(q),
           searchNflPlayers(q),
         ]);
@@ -232,6 +238,8 @@ export default function FuzzySearchInput({
             teamName: p.teamName || p.team || '',
             leagueId: p.leagueId || 0,
             position: p.position || '',
+            ownerPlayerPhoto: p.ownerPlayerPhoto || '',
+            ownerTeamLogo: p.ownerTeamLogo || '',
             raw: p,
           })),
           ...mlbRows.map((p: MlbPlayer) => ({
@@ -292,7 +300,7 @@ export default function FuzzySearchInput({
       }
       if (searchIdRef.current === myId) setLoading(false);
     }
-  }, [searchType, leagueId, staticItems]);
+  }, [searchType, leagueId, staticItems, ownerSession?.email, ownerSession?.token]);
 
   const handleChange = (text: string) => {
     onChangeText(text);
@@ -438,11 +446,16 @@ export default function FuzzySearchInput({
       const sub = [item.teamName, item.position].filter(Boolean).join(' · ');
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectPlayer(item)} activeOpacity={0.7}>
-          <Ionicons name="person-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          {item.ownerPlayerPhoto ? (
+            <Image source={{ uri: item.ownerPlayerPhoto }} style={styles.playerPhoto} />
+          ) : (
+            <Ionicons name="person-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          )}
           <View style={styles.dropdownTextWrap}>
             <Text style={styles.dropdownMain} numberOfLines={1}>{item.playerName}</Text>
             {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
           </View>
+          {item.ownerTeamLogo ? <Image source={{ uri: item.ownerTeamLogo }} style={styles.teamLogo} /> : null}
         </TouchableOpacity>
       );
     }
@@ -456,11 +469,16 @@ export default function FuzzySearchInput({
       const sub = [sportLabel, item.teamName, item.position].filter(Boolean).join(' · ');
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectAllPlayer(item)} activeOpacity={0.7}>
-          <Ionicons name={icon as any} size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          {item.sport === 'soccer' && item.ownerPlayerPhoto ? (
+            <Image source={{ uri: item.ownerPlayerPhoto }} style={styles.playerPhoto} />
+          ) : (
+            <Ionicons name={icon as any} size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          )}
           <View style={styles.dropdownTextWrap}>
             <Text style={styles.dropdownMain} numberOfLines={1}>{item.playerName}</Text>
             {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
           </View>
+          {item.sport === 'soccer' && item.ownerTeamLogo ? <Image source={{ uri: item.ownerTeamLogo }} style={styles.teamLogo} /> : null}
         </TouchableOpacity>
       );
     }
@@ -657,6 +675,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingVertical: 10, paddingHorizontal: 12,
     borderBottomWidth: 1, borderBottomColor: '#1e1e1e',
+  },
+  playerPhoto: {
+    width: 28, height: 28, borderRadius: 14, marginRight: 8,
+    backgroundColor: '#202020',
+  },
+  teamLogo: {
+    width: 22, height: 22, marginLeft: 8,
+    resizeMode: 'contain' as const,
   },
   dropdownIcon: { marginRight: 8 },
   dropdownTextWrap: { flex: 1 },

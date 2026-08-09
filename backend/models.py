@@ -31,6 +31,10 @@ class PlayerSearchRequest(BaseModel):
     query: str
     league_id: Optional[int] = None
     season: Optional[int] = None
+    # Optional session context is used only for owner-only search media.
+    # Search remains usable for logged-out/legacy clients without these fields.
+    email: Optional[str] = None
+    token: Optional[str] = None
 
 
 class PlayerRoleResolveRequest(BaseModel):

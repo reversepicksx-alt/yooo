@@ -1869,6 +1869,7 @@ export default function ScanScreen() {
               }}
               searchType="all_players"
               placeholder="Search any player — soccer, MLB, or NFL"
+               ownerSession={session?.email && session?.token ? { email: session.email, token: session.token } : undefined}
                confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
               style={{ marginBottom: 2 }}
               onSelectAllPlayer={handleUniversalPlayerSelect}
@@ -2886,6 +2887,28 @@ export default function ScanScreen() {
               }]} />
               {/* Header */}
               <View style={styles.analysisHeader}>
+                 {(prediction.ownerPlayerPhoto || prediction.ownerTeamLogo || prediction.ownerOpponentLogo) && (
+                   <View style={styles.ownerMediaStrip}>
+                     {prediction.ownerPlayerPhoto ? (
+                       <Image
+                         source={{ uri: prediction.ownerPlayerPhoto }}
+                         style={styles.analysisPlayerPhoto}
+                       />
+                     ) : null}
+                     {prediction.ownerTeamLogo ? (
+                       <Image
+                         source={{ uri: prediction.ownerTeamLogo }}
+                         style={styles.analysisTeamLogo}
+                       />
+                     ) : null}
+                     {prediction.ownerOpponentLogo ? (
+                       <Image
+                         source={{ uri: prediction.ownerOpponentLogo }}
+                         style={styles.analysisTeamLogo}
+                       />
+                     ) : null}
+                   </View>
+                 )}
                 <View style={styles.analysisPlayerInfo}>
                   <Text style={styles.analysisPlayer} numberOfLines={1}>
                     {prediction.playerName}
@@ -6340,6 +6363,15 @@ const styles = StyleSheet.create({
   analysisHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'flex-start', padding: 18,
+  },
+  ownerMediaStrip: {
+    width: 54, marginRight: 10, alignItems: 'center', gap: 5,
+  },
+  analysisPlayerPhoto: {
+    width: 48, height: 48, borderRadius: 24, backgroundColor: '#202020',
+  },
+  analysisTeamLogo: {
+    width: 22, height: 22, resizeMode: 'contain' as const,
   },
   analysisPlayerInfo: { flex: 1, marginRight: 12 },
   analysisPlayer: { fontSize: 20, fontWeight: '800', color: Colors.text },
