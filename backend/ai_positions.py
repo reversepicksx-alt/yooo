@@ -214,35 +214,18 @@ Canonical roles: {_ROLE_LIST}
                     tools=[types.Tool(googleSearch=types.GoogleSearch())],
                 ),
             ),
-            timeout=20,
+            # Position grounding is optional identity enrichment. Keep the
+            # first attempt short so a slow/unavailable Gemini proxy cannot
+            # hold the customer's deterministic prediction hostage.
+            timeout=5,
         )
         sources = _grounding_sources(response)
-        if not sources and await _position_ai_budget_available():
-            # The managed Gemini proxy can occasionally answer from model
-            # memory without invoking its Search tool. Retry once with an
-            # explicit live-search instruction; an ungrounded answer remains
-            # unusable.
-            retry_prompt = prompt + """
-IMPORTANT: Do not answer until Google Search has returned web results. The
-answer is invalid unless your response contains grounding citations from those
-results. Search the exact player name plus soccer position now.
-"""
-            response = await aio.wait_for(
-                aio.to_thread(
-                    client.models.generate_content,
-                    model=_POSITION_AI_MODEL,
-                    contents=retry_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        maxOutputTokens=500,
-                        tools=[types.Tool(googleSearch=types.GoogleSearch())],
-                    ),
-                ),
-                timeout=20,
-            )
-            sources = _grounding_sources(response)
+        # Do not retry an ungrounded response in the interactive prediction
+        # path. The retry used to add another 20 seconds before falling back
+        # to the provider category, while the projection itself was already
+        # fully computable from the verified player/fixture data.
         if not sources:
-            print(f"[POSITION GEMINI] rejected ungrounded response for {player_name}")
+            print(f"[POSITION GEMINI] no grounded result for {player_name}; using provider fallback")
             return None
         raw = str(getattr(response, "text", "") or "").strip()
         if raw.startswith("```"):

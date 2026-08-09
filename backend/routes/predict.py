@@ -1445,19 +1445,28 @@ async def predict(req: PredictionRequest):
                     _pressure_possession_count = sum(
                         1 for g in collected if g.get("teamPossession") is not None
                     )
-                    _pressure_cache_ready = (
-                        req.sport != "soccer"
-                        or req.propType not in {"pass_attempts", "passes"}
-                        or _pressure_possession_count >= 12
-                    )
-                    if len(collected) >= 15 and len(good) >= len(collected) // 2 and _saves_ok and _pressure_cache_ready:
-                        print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
+                    # Historical possession is optional context, not a
+                    # prerequisite for the player's stat prior. Requiring 12
+                    # possession rows here made an otherwise complete cache
+                    # fall through to 40 fixture/player API calls and then
+                    # time out, replacing real logs with synthetic season
+                    # averages. Passing safeguards already keep absent
+                    # possession neutral and expose its provenance.
+                    if len(collected) >= 15 and len(good) >= len(collected) // 2 and _saves_ok:
+                        _poss_note = (
+                            f"; historical possession={_pressure_possession_count}"
+                            if req.sport == "soccer" else ""
+                        )
+                        print(
+                            f"[CACHE-STAGE0] Returning {len(collected)} real (cached) "
+                            f"game logs — skipping API{_poss_note}"
+                        )
                         return collected
                     elif collected:
                         print(
                             f"[CACHE-STAGE0] Only {len(collected)} games "
                             f"(venue ok: {len(good)}, saves_ok={_saves_ok}, "
-                            f"pressure_poss={_pressure_possession_count}) — "
+                            f"historical_poss={_pressure_possession_count}) — "
                             "falling through to Stage 1 for more data"
                         )
             except Exception as _ce:
@@ -1993,7 +2002,16 @@ async def predict(req: PredictionRequest):
                 except Exception:
                     return []
 
-            tasks = [fetch_pos_from_fixture(f) for f in opp_fixtures[:limit]]
+            async def _bounded_fixture(fix):
+                try:
+                    # A single rate-limited fixture must not make the entire
+                    # opponent cohort wait. Keep every fast, verified fixture
+                    # result and omit only the one that exceeds this bound.
+                    return await aio.wait_for(fetch_pos_from_fixture(fix), timeout=2.5)
+                except Exception as _fixture_err:
+                    return []
+
+            tasks = [_bounded_fixture(f) for f in opp_fixtures[:limit]]
             raw_results = await aio.gather(*tasks, return_exceptions=True)
             all_players = []
             for r in raw_results:
@@ -2427,24 +2445,54 @@ async def predict(req: PredictionRequest):
             )
         )
 
-        all_wave2 = aio.gather(
-            team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            situation_task, bzzoiro_task, statsbomb_task,
-            return_exceptions=True
+        # Required projection inputs and optional shadow providers have
+        # different latency contracts. Keep API-Football player logs, team
+        # stats, and the situation engine together so the deterministic
+        # projection sees the same evidence as before. Bzzoiro and StatsBomb
+        # are explanation-only and must not be allowed to hold that result
+        # hostage when their external services are slow.
+        async def _bounded_required(coro, label: str, timeout: float):
+            try:
+                return await aio.wait_for(coro, timeout=timeout)
+            except Exception as exc:
+                print(
+                    f"[WAVE2 SOURCE] {label} unavailable after {timeout:.0f}s: "
+                    f"{type(exc).__name__}"
+                )
+                return None
+
+        # Bound sources independently. A slow team-level enrichment must not
+        # cancel the player's game logs, which are the primary Bayesian prior.
+        required_wave2 = aio.gather(
+            _bounded_required(team_fixture_stats_task, "team fixture stats", 18),
+            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 18),
+            _bounded_required(player_game_logs_task, "player game logs", 25),
+            _bounded_required(situation_task, "match situation", 10),
+            return_exceptions=True,
+        )
+        optional_wave2 = aio.gather(
+            bzzoiro_task, statsbomb_task,
+            return_exceptions=True,
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=55)
+            required_results = await aio.wait_for(required_wave2, timeout=27)
         except aio.TimeoutError:
-            results = [None, None, None, None, None, None]
-            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 55s for {req.playerName}")
+            required_results = [None, None, None, None]
+            print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 27s for {req.playerName}")
 
-        team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
-        opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
-        player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
-        game_situation = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else {}
+        try:
+            optional_results = await aio.wait_for(optional_wave2, timeout=3)
+        except aio.TimeoutError:
+            optional_results = [None, None]
+            print(f"[WAVE2 OPTIONAL TIMEOUT] shadow enrichment exceeded 3s for {req.playerName}")
+
+        team_fixture_stats = required_results[0] if not isinstance(required_results[0], (Exception, type(None))) else []
+        opponent_fixture_stats = required_results[1] if not isinstance(required_results[1], (Exception, type(None))) else []
+        player_game_logs = required_results[2] if not isinstance(required_results[2], (Exception, type(None))) else []
+        game_situation = required_results[3] if len(required_results) > 3 and not isinstance(required_results[3], (Exception, type(None))) else {}
         bzzoiro_enrichment = (
-            results[4]
-            if len(results) > 4 and not isinstance(results[4], (Exception, type(None)))
+            optional_results[0]
+            if len(optional_results) > 0 and not isinstance(optional_results[0], (Exception, type(None)))
             else {
                 "available": False,
                 "status": "unavailable",
@@ -2454,8 +2502,8 @@ async def predict(req: PredictionRequest):
             }
         )
         statsbomb_enrichment = (
-            results[5]
-            if len(results) > 5 and not isinstance(results[5], (Exception, type(None)))
+            optional_results[1]
+            if len(optional_results) > 1 and not isinstance(optional_results[1], (Exception, type(None)))
             else {
                 "available": False,
                 "status": "unavailable",
@@ -5692,13 +5740,28 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 {"playerId": req.playerId},
                 {"_id": 0, "source": 1, "specificPosition": 1},
             )
-            specific_position, player_role, _position_resolution_source = await resolve_player_role(
-                player_name=req.playerName,
-                team_name=corrected_team_name or req.teamName or "",
-                generic_position=player_position,
-                player_id=req.playerId or 0,
-                stats=_role_stats if "_role_stats" in locals() else None,
-            )
+            try:
+                # Grounded position is explanation enrichment only. Keep the
+                # provider category fallback available when the Gemini proxy
+                # is slow or unavailable; it must not delay the deterministic
+                # projection.
+                specific_position, player_role, _position_resolution_source = await aio.wait_for(
+                    resolve_player_role(
+                        player_name=req.playerName,
+                        team_name=corrected_team_name or req.teamName or "",
+                        generic_position=player_position,
+                        player_id=req.playerId or 0,
+                        stats=_role_stats if "_role_stats" in locals() else None,
+                    ),
+                    timeout=1.5,
+                )
+            except Exception as _position_resolve_err:
+                print(
+                    f"[POSITION RESOLVE] bounded fallback for {req.playerName}: "
+                    f"{type(_position_resolve_err).__name__}"
+                )
+                specific_position, player_role = category_defaults[player_position]
+                _position_resolution_source = "category_fallback"
             if not specific_position:
                 specific_position, player_role = category_defaults[player_position]
                 _position_resolution_source = "category_fallback"
@@ -6407,30 +6470,48 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 if not _pid:
                     return
                 _enrich_lid = req.leagueId or league_id or 39
-                # Fetch both seasons in parallel and use whichever returns data
-                async def _try_season(_s):
-                    try:
-                        return await aio.wait_for(
-                            api_football_request("players", {"id": _pid, "season": _s, "league": _enrich_lid}),
-                            timeout=5
-                        )
-                    except Exception:
-                        return None
+
+                # The cache refresher already stores API-Football season
+                # records in the same API-shaped form used by get_player_data.
+                # Read those records first; the old path made two live
+                # provider calls for every comparison player, even when the
+                # values were already available locally.
                 try:
-                    _results = await aio.wait_for(
-                        aio.gather(_try_season(CURRENT_SEASON), _try_season(CURRENT_SEASON - 1)),
-                        timeout=6
-                    )
-                    _sdata = next((r for r in _results if r), None)
-                    if not _sdata:
-                        return
-                    _stats = (_sdata[0].get("statistics") or [{}])[0]
-                    _apps       = (_stats.get("games") or {}).get("appearences") or 0
-                    _pass_total = (_stats.get("passes") or {}).get("total") or 0
-                    if _apps > 0 and _pass_total > 0:
-                        p_entry["seasonAvgStat"] = round(_pass_total / _apps, 1)
-                except Exception as _e:
-                    print(f"[POS ENRICH] {p_entry.get('name')} pass avg skip: {type(_e).__name__}: {str(_e)[:80]}")
+                    _cached_seasons = await db.player_season_stats.find(
+                        {
+                            "playerId": _pid,
+                            "season": {"$in": [CURRENT_SEASON, CURRENT_SEASON - 1]},
+                        },
+                        {"_id": 0, "statistics": 1},
+                    ).to_list(4)
+                    _cached_stats = [
+                        stat
+                        for doc in _cached_seasons
+                        for stat in (doc.get("statistics") or [])
+                        if isinstance(stat, dict)
+                    ]
+                    if _cached_stats:
+                        _apps = sum(
+                            (stat.get("games") or {}).get("appearences") or 0
+                            for stat in _cached_stats
+                        )
+                        _pass_total = sum(
+                            (stat.get("passes") or {}).get("total") or 0
+                            for stat in _cached_stats
+                        )
+                        if _apps > 0 and _pass_total > 0:
+                            p_entry["seasonAvgStat"] = round(_pass_total / _apps, 1)
+                            return
+                except Exception:
+                    pass
+
+                # Do not make a live provider call here. A mixed sample of
+                # cached and newly-fetched season averages can change the
+                # pair-calibration uplift based on whichever requests happen
+                # to beat the timeout. The comparison row remains valid
+                # opponent evidence without this optional season baseline;
+                # background cache refresh will make it available next time.
+                return
 
             # Run enrichment for all comparison players in parallel
             _enrich_tasks = [_fetch_comp_player_stats(p) for p in position_comparison]
