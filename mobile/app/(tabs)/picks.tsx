@@ -907,7 +907,10 @@ export default function PicksScreen() {
     enabled: !!session,
     staleTime: 10000,
     refetchInterval: 15000,
-    refetchIntervalInBackground: false,
+    // Safari/iOS can suspend the tab, but allowing the interval to remain
+    // eligible means the next browser wake/focus gets a fresh fixture status
+    // instead of waiting for a manual pull-to-refresh.
+    refetchIntervalInBackground: true,
     retry: 1,
     retryDelay: 3000,
   });
@@ -920,6 +923,14 @@ export default function PicksScreen() {
       // on every 15s boundary → list flicker and navigation glitches.
     }, [refetch])
   );
+
+  const liveTrackerLatestPick = useMemo(() => {
+    if (!liveTrackerPick) return null;
+    const id = liveTrackerPick.pickId || liveTrackerPick._id || liveTrackerPick.id;
+    return picks.find((p) => (
+      (p.pickId || p._id || p.id) === id
+    )) || liveTrackerPick;
+  }, [liveTrackerPick, picks]);
 
   const deleteMutation = useMutation({
     mutationFn: (pickId: string) => {
@@ -1651,8 +1662,8 @@ export default function PicksScreen() {
       </Modal>
 
       {/* ── Live Match Tracker ── */}
-      {liveTrackerPick && (
-        <LiveMatchTracker pick={liveTrackerPick} visible={!!liveTrackerPick} onClose={() => setLiveTrackerPick(null)} />
+      {liveTrackerLatestPick && (
+        <LiveMatchTracker pick={liveTrackerLatestPick} visible={!!liveTrackerLatestPick} onClose={() => setLiveTrackerPick(null)} />
       )}
 
       {/* ── Streaks & Achievements ── */}

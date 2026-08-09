@@ -53,6 +53,10 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
   useEffect(() => {
     if (visible) {
       loadEvents();
+      // Keep the event timeline moving while the modal is open.  The pick
+      // itself is refreshed by the parent list query and arrives as a new prop.
+      const timer = setInterval(loadEvents, 30000);
+      return () => clearInterval(timer);
     } else {
       setEvents([]);
       setEventsError(null);

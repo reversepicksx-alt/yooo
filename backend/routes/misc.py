@@ -29,21 +29,35 @@ _CLUB_LEAGUE_EXCLUDES = {
 
 
 def _dedupe_contexts(contexts: list) -> list:
-    """Keep one context per team, preferring verified/current evidence."""
+    """Keep one context per canonical team ID, preferring current club evidence.
+
+    A provider/cache row cannot be both a club and a national team when the
+    team ID is identical.  Older cached records did contain that contradiction
+    (the same club ID was marked national), which rendered duplicate context
+    buttons.  Team ID is the identity key; ``isNational`` is only metadata.
+    """
     selected = {}
     for context in contexts or []:
-        key = (context.get("teamId"), bool(context.get("isNational")))
+        team_id = context.get("teamId")
+        if not team_id:
+            continue
+        try:
+            key = int(team_id)
+        except (TypeError, ValueError):
+            key = str(team_id)
         previous = selected.get(key)
         if previous is None:
             selected[key] = context
             continue
         previous_rank = (
             bool(previous.get("verified")),
+            not bool(previous.get("isNational")),
             not bool(previous.get("lastKnown")),
             bool(previous.get("teamName")),
         )
         current_rank = (
             bool(context.get("verified")),
+            not bool(context.get("isNational")),
             not bool(context.get("lastKnown")),
             bool(context.get("teamName")),
         )
@@ -498,7 +512,17 @@ async def team_next_match(team_id: int):
                 # A cached active matchup is safe only while its fixture is
                 # still future/live.  Old cache records without a status are
                 # intentionally rejected once their kickoff has passed.
-                if _cached_match_is_active(cached_result, now):
+                # Older cache entries predate canonical fixture-side fields.
+                # Re-fetch those once so the UI never has to reconstruct
+                # home/away labels from the player's effective venue.
+                _has_fixture_sides = (
+                    not cached_result.get("found")
+                    or (
+                        isinstance(cached_result.get("homeTeam"), dict)
+                        and isinstance(cached_result.get("awayTeam"), dict)
+                    )
+                )
+                if _has_fixture_sides and _cached_match_is_active(cached_result, now):
                     return cached_result
     except Exception:
         pass
@@ -616,7 +640,11 @@ async def team_next_match(team_id: int):
         result = {
             "found":      True,
             "isHome":     effective_is_home,
+            "rawIsHome":  raw_is_home,
+            "playerTeam": {"id": team_id, "name": (home_team if raw_is_home else away_team).get("name", "")},
             "opponent":   {"id": opponent.get("id", 0), "name": opponent.get("name", "")},
+            "homeTeam":   {"id": home_team.get("id", 0), "name": home_team.get("name", "")},
+            "awayTeam":   {"id": away_team.get("id", 0), "name": away_team.get("name", "")},
             "leagueId":   league_id,
             "leagueName": league.get("name", ""),
             "date":       fx.get("fixture", {}).get("date", ""),

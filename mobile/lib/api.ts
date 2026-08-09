@@ -1692,7 +1692,11 @@ export interface PlayerContext {
 export interface NextMatchData {
   found: boolean;
   isHome?: boolean;
+  rawIsHome?: boolean;
+  playerTeam?: { id: number; name: string };
   opponent?: { id: number; name: string };
+  homeTeam?: { id: number; name: string };
+  awayTeam?: { id: number; name: string };
   leagueId?: number;
   leagueName?: string;
   date?: string;

@@ -1398,6 +1398,22 @@ async def list_picks(req: GetPicksRequest):
                         p["awayPoss"] = upd.get("awayPoss")
                     if upd.get("oppAvgPoss") is not None:
                         p["oppAvgPoss"] = upd.get("oppAvgPoss")
+                    # A pick can be saved before kickoff.  Once the exact
+                    # fixture reports an in-progress status, persist the
+                    # transition so future live-update calls (which query
+                    # live picks) and background settlement both see it.
+                    if (
+                        upd.get("matchStatus") == "live"
+                        and p.get("status") == "pending"
+                    ):
+                        p["status"] = "live"
+                        try:
+                            await db.picks.update_one(
+                                {"pickId": p["pickId"], "email": req.email.lower(), "status": "pending"},
+                                {"$set": {"status": "live", "matchStatus": "live"}}
+                            )
+                        except Exception:
+                            pass
                     if upd.get("result") and upd["result"] != "pending":
                         p["status"] = "settled"
                         p["result"] = upd["result"]
@@ -2232,7 +2248,14 @@ async def live_update_picks(req: LiveUpdateRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    live_picks = await db.picks.find({"email": req.email.lower(), "status": "live"}, {"_id": 0}).to_list(50)
+    live_picks = await db.picks.find(
+        {
+            "email": req.email.lower(),
+            "status": {"$in": ["live", "pending"]},
+            "sport": {"$nin": ["mlb", "cs2", "wta"]},
+        },
+        {"_id": 0},
+    ).to_list(50)
     if not live_picks:
         return {"updates": []}
 

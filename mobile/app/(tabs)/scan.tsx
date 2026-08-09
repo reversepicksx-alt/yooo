@@ -1917,13 +1917,19 @@ export default function ScanScreen() {
               // Cristiano → Portugal) even when the club is the useful
               // default for next-match lookup.
               const currentClub = playerContexts.find(c => !c.isNational && c.verified === true);
-              const displayCtxs = playerContexts.filter(
-                c => c.isNational || (
-                  currentClub
-                  && c.teamId === currentClub.teamId
-                  && c.verified === true
-                )
-              );
+               const displayCtxs = Array.from(
+                 new Map(
+                   playerContexts
+                     .filter(
+                       c => c.isNational || (
+                         currentClub
+                         && c.teamId === currentClub.teamId
+                         && c.verified === true
+                       )
+                     )
+                     .map(c => [String(c.teamId), c] as const)
+                 ).values()
+               );
               // Show the national context even when the current club could not
               // be verified. Never hide the only safe, explicit alternative.
               if (displayCtxs.length === 0 || !displayCtxs.some(c => c.isNational)) return null;
@@ -2009,7 +2015,9 @@ export default function ScanScreen() {
                   <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT MATCH AUTO-FILLED</Text>
                 </View>
                 <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>
-                  vs {autoMatch.opponent?.name}
+                  {autoMatch.homeTeam?.name || (autoMatch.isHome ? selectedContext?.teamName : autoMatch.opponent?.name)}
+                  {'  vs  '}
+                  {autoMatch.awayTeam?.name || (!autoMatch.isHome ? selectedContext?.teamName : autoMatch.opponent?.name)}
                 </Text>
                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
                    {(autoMatch.isHome ? 'HOME' : 'AWAY')}{autoMatch.leagueName ? ` · ${autoMatch.leagueName}` : ''}{autoMatch.date ? ` · ${new Date(autoMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
