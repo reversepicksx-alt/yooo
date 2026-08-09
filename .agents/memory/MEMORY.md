@@ -143,6 +143,7 @@
 - [Gemini position grounding](gemini-position-grounding.md) — accept identity verification only with actual Search citations; proxy responses without grounding must remain conservative fallback data.
 - [Goalkeeper pool prior](gk-pool-prior-shadow.md) — keeper pass-volume pool evidence is goalkeeper-only, sample-shrunk, auditable, and shadow-only until settled-pick replay validates live influence.
  - [Universal search contract](universal-search-contract.md) — combined soccer/MLB/NFL search must preserve each provider's payload contract; absent new flags can silently remove one sport.
+- [Player search exact-word cap](player-search-exact-word-cap.md) — bounded substring cache results can hide standalone names; merge a bounded exact-word query before ranking.
  - [Prediction latency boundaries](prediction-latency-boundaries.md) — keep verified fixture/player math synchronous; cache-first and independently bound optional historical, grounded, and shadow enrichment.
 - [Owner-only player media](owner-only-media-gating.md) — photos and team crests require server-side owner authorization and stay out of persisted prediction records.
 - [Owner API status indicator](owner-api-status-indicator.md) — quota health is a compact owner-only header dot; regular users see no provider details.

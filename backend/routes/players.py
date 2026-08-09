@@ -113,6 +113,35 @@ async def _search_players_cache(
     if not docs and effective_league_id:
         docs = await db[COL_PLAYERS].find(name_filt, {"_id": 0}).limit(20).to_list(20)
 
+    if fast and len(parts) == 1:
+        # A substring query capped at 20 can hide a short, exact player name
+        # behind longer names that happen to contain the same token. For
+        # example, "Ronaldo" was returning Cristiano Ronaldo and other
+        # compound names before the standalone Bahia goalkeeper. Merge a
+        # bounded exact-word query so ranking sees the complete set of direct
+        # matches without opening a broad unbounded cache scan.
+        exact_pattern = rf"(^| ){re.escape(parts[0])}( |$)"
+        exact_filt: dict = {"nameClean": {"$regex": exact_pattern}}
+        if effective_league_id:
+            exact_filt["leagueId"] = effective_league_id
+        exact_docs = await db[COL_PLAYERS].find(
+            exact_filt, {"_id": 0}
+        ).limit(50).to_list(50)
+        if not exact_docs and effective_league_id:
+            exact_docs = await db[COL_PLAYERS].find(
+                {"nameClean": {"$regex": exact_pattern}}, {"_id": 0}
+            ).limit(50).to_list(50)
+        if exact_docs:
+            seen_doc_keys = {
+                (d.get("playerId"), d.get("teamId"), d.get("leagueId"))
+                for d in docs
+            }
+            docs.extend(
+                d for d in exact_docs
+                if (d.get("playerId"), d.get("teamId"), d.get("leagueId"))
+                not in seen_doc_keys
+            )
+
     if fast and docs:
         # Interactive typing only needs a direct name match. The full fallback
         # tree below is valuable for maintenance/search repair, but it is too
