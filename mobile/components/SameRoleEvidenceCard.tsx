@@ -17,6 +17,8 @@ type CohortPlayer = {
   observedPosition?: string | null;
   role?: string;
   date?: string;
+  positionVerified?: boolean;
+  positionSource?: string;
 };
 
 export type SameRoleEvidence = {
@@ -57,6 +59,32 @@ export type SameRoleEvidence = {
 
 function label(value: unknown) {
   return String(value || 'prop').replace(/_/g, ' ').toUpperCase();
+}
+
+function positionLabel(value: unknown) {
+  const labels: Record<string, string> = {
+    GK: 'Goalkeeper',
+    CB: 'Centre back',
+    LB: 'Left back',
+    RB: 'Right back',
+    LWB: 'Left wing-back',
+    RWB: 'Right wing-back',
+    CDM: 'Defensive midfielder',
+    CM: 'Central midfielder',
+    CAM: 'Attacking midfielder',
+    LM: 'Left midfielder',
+    RM: 'Right midfielder',
+    LW: 'Left winger',
+    RW: 'Right winger',
+    CF: 'Centre forward',
+    ST: 'Striker',
+    SS: 'Second striker',
+    DEF: 'Defender',
+    MID: 'Midfielder',
+    FWD: 'Attacker',
+  };
+  const normalized = String(value || '').trim().toUpperCase();
+  return labels[normalized] || String(value || 'Position unavailable');
 }
 
 /**
@@ -182,34 +210,52 @@ export default function SameRoleEvidenceCard({
             SOURCE PLAYERS · PROP / MATCH POSS
           </Text>
           {sourcePlayers.map((player, index) => {
-            const passAttempts = player.passAttempts
-              ?? player.crossPropStats?.pass_attempts
-              ?? (data.propType === 'pass_attempts' ? player.statValue : null);
+            const statValue = player.statValue
+              ?? player.passAttempts
+              ?? player.crossPropStats?.[data.propType || ''];
+            const position = positionLabel(
+              player.position || player.matchPosition || player.observedPosition,
+            );
+            const verifiedPosition = Boolean(player.positionVerified);
             return (
               <View
                 key={`${player.playerId || player.name || 'player'}-${index}`}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3 }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  paddingVertical: 5,
+                  borderBottomWidth: index < sourcePlayers.length - 1 ? 1 : 0,
+                  borderBottomColor: 'rgba(255,255,255,0.05)',
+                }}
               >
-                <Text
-                  numberOfLines={1}
-                  style={{ flex: 1, fontSize: 10, color: Colors.text, lineHeight: 15 }}
-                >
-                  {index + 1}. {player.name || 'Unknown player'}
-                  {' · '}
-                  {player.matchPosition || player.observedPosition || player.position || 'Position unavailable'}
-                </Text>
-                <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '900', marginLeft: 8 }}>
-                  {passAttempts != null ? Number(passAttempts).toFixed(0) : '—'}
-                </Text>
-                <Text style={{ width: 94, textAlign: 'right', fontSize: 8.5, color: Colors.textSecondary, fontWeight: '800', marginLeft: 7 }}>
-                  {player.teamPossession != null
-                    ? `P ${Number(player.teamPossession).toFixed(0)}%`
-                    : 'P —'}
-                  {' · '}
-                  {player.oppPossession != null
-                    ? `OPP ${Number(player.oppPossession).toFixed(0)}%`
-                    : 'OPP —'}
-                </Text>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text
+                    numberOfLines={2}
+                    style={{ fontSize: 10.5, color: Colors.text, lineHeight: 15, fontWeight: '800' }}
+                  >
+                    {index + 1}. {player.name || 'Unknown player'}
+                  </Text>
+                  <Text
+                    numberOfLines={2}
+                    style={{ fontSize: 9, color: Colors.textSecondary, lineHeight: 13, marginTop: 1 }}
+                  >
+                    {player.team || 'Team unavailable'} · {verifiedPosition ? `Confirmed ${position}` : `${position} · position not verified`}
+                  </Text>
+                </View>
+                <View style={{ width: 132, alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '900', lineHeight: 15 }}>
+                    {label(data.propType)} {statValue != null ? Number(statValue).toFixed(0) : '—'}
+                  </Text>
+                  <Text style={{ fontSize: 8.5, color: Colors.textSecondary, fontWeight: '800', lineHeight: 13, marginTop: 1 }}>
+                    {player.teamPossession != null
+                      ? `TEAM ${Number(player.teamPossession).toFixed(0)}%`
+                      : 'TEAM —'}
+                    {' · '}
+                    {player.oppPossession != null
+                      ? `OPP ${Number(player.oppPossession).toFixed(0)}%`
+                      : 'OPP —'}
+                  </Text>
+                </View>
               </View>
             );
           })}

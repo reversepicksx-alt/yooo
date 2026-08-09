@@ -24,7 +24,7 @@ def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
     assert '"targetRole": display_role or player_role' in PREDICT_SOURCE
     assert '"targetPosition": specific_position or display_position' in PREDICT_SOURCE
     assert '"passAttempts": (pstats.get("passes") or {}).get("total")' in PREDICT_SOURCE
-    assert '"matchPosition": pos or None' in PREDICT_SOURCE
+    assert '"matchPosition": observed_normalized or pos or None' in PREDICT_SOURCE
     assert '"weightMethod": _cohort_evidence.get("weightMethod")' in PREDICT_SOURCE
     assert '"avgStatValue": comp_avg' in PREDICT_SOURCE
     assert '"teamPossession": team_poss' in PREDICT_SOURCE
@@ -33,6 +33,9 @@ def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
     assert '"expectedPlayerPossession": current_expected_player_poss' in PREDICT_SOURCE
     assert '"weightedAverage": _cohort_evidence.get("average")' in PREDICT_SOURCE
     assert '"_legacyModelAverage"' in PREDICT_SOURCE
+    assert '"positionVerified": position_verified' in PREDICT_SOURCE
+    assert '"positionSource": position_source' in PREDICT_SOURCE
+    assert "Broad provider categories (DEF/MID/FWD)" in PREDICT_SOURCE
     assert "legacy_unique" in PREDICT_SOURCE
 
 

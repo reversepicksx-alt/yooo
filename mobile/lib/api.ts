@@ -570,6 +570,8 @@ export interface PredictionResult {
       matchPosition?: string | null;
       observedPosition?: string | null;
       position?: string | null;
+       positionVerified?: boolean;
+       positionSource?: string;
     }>;
     sourceScope?: string;
     verdict?: {

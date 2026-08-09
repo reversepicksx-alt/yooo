@@ -1863,11 +1863,43 @@ async def predict(req: PredictionRequest):
                             # write-blocked, so a missing cache row is expected; in
                             # that case infer the role from this API fixture row.
                             cached_pr = await db.player_positions.find_one(
-                                {"playerId": p_id}, {"_id": 0, "specificPosition": 1, "role": 1}
+                                {"playerId": p_id},
+                                {
+                                    "_id": 0,
+                                    "specificPosition": 1,
+                                    "role": 1,
+                                    "source": 1,
+                                    "roleSource": 1,
+                                    "confidence": 1,
+                                },
                             ) if p_id else None
                             spec_pos = (cached_pr or {}).get("specificPosition", "")
                             spec_role = (cached_pr or {}).get("role", "")
                             observed_normalized = normalize_observed_position(pos)
+                            # A cache row is only an exact-position claim when it
+                            # came from grounded/manual evidence. Category
+                            # fallbacks can contain a made-up CB/CM/etc. and must
+                            # never turn a broad fixture label (D/M/F) into LB,
+                            # CM, or another customer-facing natural position.
+                            cached_position_source = (cached_pr or {}).get("source") or (
+                                cached_pr or {}
+                            ).get("roleSource")
+                            trusted_cached_position = (
+                                str(cached_position_source or "") in {
+                                    "gemini_web_grounded",
+                                    "manual_override",
+                                }
+                                and bool(spec_pos)
+                            )
+                            observed_exact_target = bool(
+                                target_specific_pos
+                                and observed_normalized == target_specific_pos
+                            )
+                            cached_exact_target = bool(
+                                target_specific_pos
+                                and trusted_cached_position
+                                and spec_pos == target_specific_pos
+                            )
                             role_stats = {
                                 "appearances": 1,
                                 "passes_total": (pstats.get("passes") or {}).get("total"),
@@ -1878,13 +1910,17 @@ async def predict(req: PredictionRequest):
                                 "clearances": (pstats.get("tackles") or {}).get("clearances"),
                             }
                             observed_role = resolve_observed_role(pos, role_stats)
-                            candidate_role = spec_role or observed_role.get("role") or ""
+                            candidate_role = (
+                                spec_role
+                                if trusted_cached_position
+                                else observed_role.get("role") or ""
+                            )
 
                             # Prefer the actual position recorded in this match
                             # over a stale cache row. If neither exists, retain
                             # the broad provider category rather than inventing
                             # an exact position.
-                            observed_pos = str(pos or "").strip().upper().replace(" ", "")
+                            observed_pos = observed_normalized
                             target_generic_category = {
                                 "GK": "GK",
                                 "CB": "DEF", "LB": "DEF", "RB": "DEF",
@@ -1894,20 +1930,28 @@ async def predict(req: PredictionRequest):
                                 "LW": "FWD", "RW": "FWD", "CF": "FWD",
                                 "ST": "FWD", "SS": "FWD",
                             }.get(target_specific_pos, fixture_pos)
-                            if target_specific_pos and (
-                                (spec_pos and spec_pos != target_specific_pos)
-                                or (
-                                    not spec_pos
-                                    and observed_pos
-                                    and observed_normalized not in {
-                                        target_specific_pos,
-                                        target_generic_category,
-                                    }
-                                )
+                            if target_specific_pos and not (
+                                observed_exact_target or cached_exact_target
                             ):
-                                continue  # Skip — cached position doesn't match target
+                                # Broad provider categories (DEF/MID/FWD) are
+                                # useful for broad cohorts, but are not proof of
+                                # the target's natural side-specific position.
+                                continue
                             if target_role and candidate_role != target_role:
                                 continue  # Same position is not enough; role must match too.
+
+                            position_verified = bool(
+                                observed_exact_target or cached_exact_target
+                            )
+                            if observed_exact_target:
+                                position_value = target_specific_pos
+                                position_source = "fixture_observed"
+                            elif cached_exact_target:
+                                position_value = spec_pos
+                                position_source = "grounded_profile"
+                            else:
+                                position_value = observed_normalized or fixture_pos
+                                position_source = "provider_category"
 
                             # GK-specific: capture goals conceded for per-game save rate.
                             # For saves prop: stat_cat="goals", stat_sub="saves" per PROP_STAT_KEYS.
@@ -1933,10 +1977,12 @@ async def predict(req: PredictionRequest):
                                 "date": fix.get("date", "")[:10],
                                 "per90": round((stat_val / minutes) * 90, 2) if minutes > 0 else 0,
                                 "venue": comp_team_venue,
-                                "position": spec_pos or pos,
-                                "matchPosition": pos or None,
-                                "positionMatch": "specific" if spec_pos else "provider_category",
-                                "observedPosition": pos or None,
+                                "position": position_value or None,
+                                "matchPosition": observed_normalized or pos or None,
+                                "positionMatch": "specific" if position_verified else "provider_category",
+                                "positionVerified": position_verified,
+                                "positionSource": position_source,
+                                "observedPosition": observed_normalized or pos or None,
                                 "role": candidate_role,
                                 "roleSource": "cached_role" if spec_role else observed_role.get("source"),
                                 "teamPossession": team_poss,
