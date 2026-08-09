@@ -130,12 +130,15 @@ async def get_calibration_stats(sport: str = "soccer", force_refresh: bool = Fal
         "by_game_context": {},
         "by_prop_context": {},
         "by_confidence_band": {},
+        "by_confidence_band_rec": {},  # direction-aware: "high_70+|over", "high_70+|under", etc.
         "by_line_range": {},
         "blowout_misses": [],
         "close_game_results": {"hit": 0, "miss": 0},
         "overall_hit_rate": 0,
         "over_hit_rate": 0,
         "under_hit_rate": 0,
+        "over_total": 0,
+        "under_total": 0,
     }
 
     total_h, total_m = 0, 0
@@ -177,9 +180,12 @@ async def get_calibration_stats(sport: str = "soccer", force_refresh: bool = Fal
         _bucket(stats["by_game_context"], context, res)
         _bucket(stats["by_prop_context"], f"{pt}|{context}", res, error)
 
-        # Confidence band
+        # Confidence band (direction-blind and direction-aware)
         band = "high_70+" if conf >= 70 else "medium_55-69" if conf >= 55 else "low_<55"
         _bucket(stats["by_confidence_band"], band, res)
+        # direction-aware: track OVER and UNDER separately per confidence band
+        if rec in ("over", "under"):
+            _bucket(stats["by_confidence_band_rec"], f"{band}|{rec}", res)
 
         # Line range
         if line <= 0.5:
@@ -192,12 +198,12 @@ async def get_calibration_stats(sport: str = "soccer", force_refresh: bool = Fal
             lr = "high_30+"
         _bucket(stats["by_line_range"], lr, res)
 
-        # Over/Under
-        if rec == "over":
+        # Over/Under (track settled scored picks only)
+        if rec == "over" and res in ("hit", "miss"):
             over_t += 1
             if res == "hit":
                 over_h += 1
-        elif rec == "under":
+        elif rec == "under" and res in ("hit", "miss"):
             under_t += 1
             if res == "hit":
                 under_h += 1
@@ -215,6 +221,8 @@ async def get_calibration_stats(sport: str = "soccer", force_refresh: bool = Fal
     stats["overall_hit_rate"] = _hit_rate(total_h, total_m)
     stats["over_hit_rate"] = _hit_rate(over_h, over_t - over_h) if over_t else 0
     stats["under_hit_rate"] = _hit_rate(under_h, under_t - under_h) if under_t else 0
+    stats["over_total"] = over_t
+    stats["under_total"] = under_t
 
     _cache[sport] = {"stats": stats, "updated": now}
     return stats
@@ -260,12 +268,25 @@ def generate_calibration_prompt(
     lines.append(f"System accuracy: {stats['overall_hit_rate']}% ({stats['total']} settled picks)")
     if stats.get("over_hit_rate") or stats.get("under_hit_rate"):
         over_r, under_r = stats["over_hit_rate"], stats["under_hit_rate"]
+        over_n, under_n = stats.get("over_total", 0), stats.get("under_total", 0)
         if over_r > under_r + 10:
-            lines.append(f"OVER: {over_r}% vs UNDER: {under_r}% — system historically better at OVER picks")
+            lines.append(f"OVER: {over_r}% (n={over_n}) vs UNDER: {under_r}% (n={under_n}) — system historically better at OVER picks")
         elif under_r > over_r + 10:
-            lines.append(f"OVER: {over_r}% vs UNDER: {under_r}% — system historically better at UNDER picks")
+            lines.append(f"OVER: {over_r}% (n={over_n}) vs UNDER: {under_r}% (n={under_n}) — system historically better at UNDER picks")
         else:
-            lines.append(f"OVER: {over_r}% | UNDER: {under_r}%")
+            lines.append(f"OVER: {over_r}% (n={over_n}) | UNDER: {under_r}% (n={under_n})")
+
+    # Direction-specific warning: if this pick is OVER and OVER is historically weak
+    if recommendation == "over":
+        over_rate = stats.get("over_hit_rate", 0)
+        over_n = stats.get("over_total", 0)
+        if over_n >= _OVER_MIN_SAMPLES and over_rate < _OVER_WEAK_THRESHOLD:
+            gap = round(stats.get("under_hit_rate", 0) - over_rate, 1)
+            lines.append(
+                f"DIRECTION ALERT: This is an OVER pick. OVER picks hit only {over_rate}% historically "
+                f"({gap}pp below UNDER hit rate of {stats.get('under_hit_rate', 0)}%). "
+                f"Require stronger evidence before recommending OVER with high confidence."
+            )
 
     # Prop-specific accuracy + error direction
     prop_data = stats["by_prop"].get(prop_type)
@@ -386,14 +407,30 @@ def generate_calibration_prompt(
                 "Losing GK concedes goals not saves (shots go in, not saved)."
             )
 
-    # Confidence band calibration
+    # Confidence band calibration — show direction-specific rate when available
     for band_key, band_data in stats.get("by_confidence_band", {}).items():
         h, m = band_data.get("hit", 0), band_data.get("miss", 0)
         total = h + m
         if total >= 3:
             rate = _hit_rate(h, m)
             if band_key == "high_70+" and rate < 65:
-                lines.append(f"OVERCONFIDENCE: High-confidence picks ({band_key}) only hit {rate}% ({h}/{total}) — system is overconfident.")
+                # Try to show direction-specific rate for stronger guidance
+                dir_key = f"{band_key}|{recommendation}" if recommendation in ("over", "under") else None
+                dir_data = stats.get("by_confidence_band_rec", {}).get(dir_key) if dir_key else None
+                if dir_data:
+                    dh, dm = dir_data.get("hit", 0), dir_data.get("miss", 0)
+                    dt = dh + dm
+                    if dt >= 5:
+                        dir_rate = _hit_rate(dh, dm)
+                        dir_label = recommendation.upper()
+                        lines.append(
+                            f"OVERCONFIDENCE: High-confidence {dir_label} picks only hit {dir_rate}% ({dh}/{dt}) "
+                            f"[all high-conf: {rate}% ({h}/{total})] — {dir_label} specifically is overconfident at this band."
+                        )
+                    else:
+                        lines.append(f"OVERCONFIDENCE: High-confidence picks ({band_key}) only hit {rate}% ({h}/{total}) — system is overconfident.")
+                else:
+                    lines.append(f"OVERCONFIDENCE: High-confidence picks ({band_key}) only hit {rate}% ({h}/{total}) — system is overconfident.")
             elif band_key == "low_<55" and rate >= 55:
                 lines.append(f"HIDDEN VALUE: Low-confidence picks hit {rate}% ({h}/{total}) — system may be undervaluing these.")
 
@@ -673,15 +710,14 @@ def _check_recommendation_flip(stats: dict, prop_type: str, recommendation: str)
     return False, ""
 
 
-def _recalibrate_confidence(stats: dict, confidence: int) -> tuple:
+def _recalibrate_confidence(stats: dict, confidence: int, recommendation: str = "") -> tuple:
     """
-    Correction 4: Confidence Recalibration.
-    Map AI's confidence score to actual historical accuracy for that band.
-    If 70%+ confidence picks historically only hit 55%, set confidence to 55%.
+    Correction 4: Direction-aware Confidence Recalibration.
+    Map AI's confidence score to actual historical accuracy for that band,
+    preferring the direction-specific bucket (OVER or UNDER) when available.
+    If 70%+ OVER confidence picks historically only hit 48%, set confidence lower.
     Returns (recalibrated_confidence, recal_note).
     """
-    bands = stats.get("by_confidence_band", {})
-
     # Determine which band this confidence falls into
     if confidence >= 70:
         band_key = "high_70+"
@@ -690,16 +726,33 @@ def _recalibrate_confidence(stats: dict, confidence: int) -> tuple:
     else:
         band_key = "low_<55"
 
-    band_data = bands.get(band_key)
-    if not band_data:
-        return confidence, ""
+    rec = (recommendation or "").lower()
+    actual_rate = None
+    total = 0
+    source_label = band_key
 
-    h, m = band_data.get("hit", 0), band_data.get("miss", 0)
-    total = h + m
-    if total < 10:
-        return confidence, ""
+    # Prefer direction-specific band when available and large enough
+    if rec in ("over", "under"):
+        dir_key = f"{band_key}|{rec}"
+        dir_data = stats.get("by_confidence_band_rec", {}).get(dir_key)
+        if dir_data:
+            h, m = dir_data.get("hit", 0), dir_data.get("miss", 0)
+            t = h + m
+            if t >= 10:
+                actual_rate = round(h / t * 100)
+                total = t
+                source_label = f"{band_key}|{rec.upper()}"
 
-    actual_rate = round(h / total * 100)
+    # Fall back to direction-blind band
+    if actual_rate is None:
+        band_data = stats.get("by_confidence_band", {}).get(band_key)
+        if not band_data:
+            return confidence, ""
+        h, m = band_data.get("hit", 0), band_data.get("miss", 0)
+        total = h + m
+        if total < 10:
+            return confidence, ""
+        actual_rate = round(h / total * 100)
 
     # If AI is overconfident by more than 8 points, pull down
     if confidence > actual_rate + 8:
@@ -707,15 +760,82 @@ def _recalibrate_confidence(stats: dict, confidence: int) -> tuple:
         gap = confidence - actual_rate
         adjustment = int(gap * 0.6)
         new_conf = max(45, confidence - adjustment)
-        note = f"Confidence recal: {band_key} historically hits {actual_rate}%, AI said {confidence}% → {new_conf}%"
+        note = f"Confidence recal: {source_label} historically hits {actual_rate}% (n={total}), AI said {confidence}% → {new_conf}%"
         print(f"[ELITE CAL] {note}")
         return new_conf, note
 
-    # If AI is underconfident, nudge up slightly
+    # If AI is underconfident, nudge up slightly (only when direction-blind or UNDER)
     if actual_rate > confidence + 10 and total >= 20:
         bump = min(5, int((actual_rate - confidence) * 0.3))
         new_conf = min(85, confidence + bump)
-        note = f"Confidence bump: {band_key} historically hits {actual_rate}%, AI said {confidence}% → {new_conf}%"
+        note = f"Confidence bump: {source_label} historically hits {actual_rate}% (n={total}), AI said {confidence}% → {new_conf}%"
+        print(f"[ELITE CAL] {note}")
+        return new_conf, note
+
+    return confidence, ""
+
+
+# Constants for direction-aware OVER cap
+_OVER_HIGH_CONF_MAX = 64   # Hard ceiling for OVER picks when OVER is historically weak
+#   Medium confidence band is 55–69; cap at 62 to prevent near-High ratings
+#   when OVER hit rate is very weak (< _OVER_VERY_WEAK).  Must be < 65
+#   (the "High" threshold) to have any real effect.
+_OVER_MED_CONF_MAX  = 62   # Ceiling for medium-confidence OVER picks (< 65 so it fires)
+_OVER_WEAK_THRESHOLD = 57  # Global OVER hit rate below this triggers the high-conf cap
+_OVER_VERY_WEAK = 50       # Below this, also cap medium-confidence OVER picks
+_OVER_MIN_SAMPLES = 20     # Minimum OVER settled picks before cap activates
+
+
+def _apply_over_direction_cap(stats: dict, confidence: int, recommendation: str) -> tuple:
+    """
+    Additional guard for high-confidence OVER picks that are historically weak.
+    When the global OVER hit rate is below _OVER_WEAK_THRESHOLD and there are
+    enough samples, cap confidence for OVER picks so they are never shown as
+    Very High / High when the empirical evidence doesn't support it.
+
+    This runs AFTER _recalibrate_confidence and acts as a hard ceiling, not
+    a replacement — the direction-aware recalibration above handles the
+    proportional adjustment; this prevents corner-cases where the band still
+    has too few direction-specific picks to trigger the recalibration.
+
+    Returns (new_confidence, note) or (confidence, "") when inactive.
+    """
+    rec = (recommendation or "").lower()
+    if rec != "over":
+        return confidence, ""
+
+    over_rate = stats.get("over_hit_rate", 0)
+    over_n = stats.get("over_total", 0)
+
+    if over_n < _OVER_MIN_SAMPLES:
+        return confidence, ""  # not enough data to apply cap
+
+    if over_rate >= _OVER_WEAK_THRESHOLD:
+        return confidence, ""  # OVER is performing acceptably
+
+    # OVER is historically weak — apply ceiling based on severity
+    notes = []
+    new_conf = confidence
+
+    if confidence >= 70:
+        # Hard cap: 70%+ OVER claims are unsupported when global OVER rate < threshold
+        if new_conf > _OVER_HIGH_CONF_MAX:
+            notes.append(
+                f"OVER high-conf cap: global OVER hit rate {over_rate}% (n={over_n}) "
+                f"< {_OVER_WEAK_THRESHOLD}% threshold → capped {new_conf}%→{_OVER_HIGH_CONF_MAX}%"
+            )
+            new_conf = _OVER_HIGH_CONF_MAX
+    elif confidence >= 55 and over_rate < _OVER_VERY_WEAK:
+        # Very weak OVER (< 50%): also moderate medium confidence
+        if new_conf > _OVER_MED_CONF_MAX:
+            notes.append(
+                f"OVER med-conf cap: global OVER hit rate {over_rate}% (n={over_n}) "
+                f"< {_OVER_VERY_WEAK}% → capped {new_conf}%→{_OVER_MED_CONF_MAX}%"
+            )
+            new_conf = _OVER_MED_CONF_MAX
+
+    if notes and new_conf != confidence:
+        note = "; ".join(notes)
         print(f"[ELITE CAL] {note}")
         return new_conf, note
 
@@ -812,10 +932,17 @@ async def apply_elite_calibration(
         new_rec = "under" if new_rec == "over" else "over"
         corrections.append(flip_note)
 
-    # --- Correction 4: Confidence Recalibration ---
-    new_conf, recal_note = _recalibrate_confidence(cal_stats, original_conf)
+    # --- Correction 4: Direction-aware Confidence Recalibration ---
+    # Use new_rec (final direction after projection correction + flip guard), not original_rec.
+    # An UNDER that becomes a final OVER must be calibrated from OVER history, not UNDER history.
+    new_conf, recal_note = _recalibrate_confidence(cal_stats, original_conf, new_rec)
     if recal_note:
         corrections.append(recal_note)
+
+    # --- Correction 4b: OVER Direction Cap (hard ceiling for weak OVER picks) ---
+    new_conf, over_cap_note = _apply_over_direction_cap(cal_stats, new_conf, new_rec)
+    if over_cap_note:
+        corrections.append(over_cap_note)
 
     # --- Correction 5: Edge Threshold ---
     edge_label, edge_note = _apply_edge_threshold(final_proj, line, new_conf)
