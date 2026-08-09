@@ -79,8 +79,11 @@ function positionLabel(value: unknown) {
     CF: 'Centre forward',
     ST: 'Striker',
     SS: 'Second striker',
+    D: 'Defender',
     DEF: 'Defender',
+    M: 'Midfielder',
     MID: 'Midfielder',
+    F: 'Attacker',
     FWD: 'Attacker',
   };
   const normalized = String(value || '').trim().toUpperCase();
@@ -121,7 +124,7 @@ export default function SameRoleEvidenceCard({
     : verdict === 'CONTRADICTS' ? Colors.error : '#F59E0B';
   const prop = label(data.propType);
   const role = data.targetRole || 'same role';
-  const position = data.targetPosition || data.positionShort || 'same position';
+  const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
   const sourcePlayers = (data.players || []).slice(0, 15);
   const scope = String(data.sourceScope || '');
@@ -206,8 +209,8 @@ export default function SameRoleEvidenceCard({
           borderTopWidth: 1,
           borderTopColor: 'rgba(255,255,255,0.08)',
         }}>
-          <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8, marginBottom: 4 }}>
-            SOURCE PLAYERS · PROP / MATCH POSS
+           <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8, marginBottom: 5 }}>
+             SOURCE PLAYERS · {prop} / POSSESSION
           </Text>
           {sourcePlayers.map((player, index) => {
             const statValue = player.statValue
@@ -216,7 +219,7 @@ export default function SameRoleEvidenceCard({
             const position = positionLabel(
               player.position || player.matchPosition || player.observedPosition,
             );
-            const verifiedPosition = Boolean(player.positionVerified);
+            const roleText = String(player.role || '').trim();
             return (
               <View
                 key={`${player.playerId || player.name || 'player'}-${index}`}
@@ -231,22 +234,22 @@ export default function SameRoleEvidenceCard({
                 <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text
                     numberOfLines={2}
-                    style={{ fontSize: 10.5, color: Colors.text, lineHeight: 15, fontWeight: '800' }}
+                    style={{ fontSize: 12, color: Colors.text, lineHeight: 17, fontWeight: '800' }}
                   >
                     {index + 1}. {player.name || 'Unknown player'}
                   </Text>
                   <Text
                     numberOfLines={2}
-                    style={{ fontSize: 9, color: Colors.textSecondary, lineHeight: 13, marginTop: 1 }}
+                    style={{ fontSize: 10.5, color: Colors.textSecondary, lineHeight: 15, marginTop: 1 }}
                   >
-                    {player.team || 'Team unavailable'} · {verifiedPosition ? `Confirmed ${position}` : `${position} · position not verified`}
+                    {player.team || 'Team unavailable'} · {position}{roleText ? ` · ${roleText}` : ''}
                   </Text>
                 </View>
-                <View style={{ width: 132, alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '900', lineHeight: 15 }}>
+                <View style={{ width: 142, alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 11, color: Colors.primary, fontWeight: '900', lineHeight: 17 }}>
                     {label(data.propType)} {statValue != null ? Number(statValue).toFixed(0) : '—'}
                   </Text>
-                  <Text style={{ fontSize: 8.5, color: Colors.textSecondary, fontWeight: '800', lineHeight: 13, marginTop: 1 }}>
+                  <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '800', lineHeight: 15, marginTop: 1 }}>
                     {player.teamPossession != null
                       ? `TEAM ${Number(player.teamPossession).toFixed(0)}%`
                       : 'TEAM —'}

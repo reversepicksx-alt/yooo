@@ -313,7 +313,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         </View>
         {h2hRows.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
-            <View style={{ width: h2hRows.length * 39 + 10 }}>
+            <View style={{ width: h2hRows.length * 46 + 10 }}>
               <View style={styles.h2hChart}>
                 {h2hRows.map((row: any, index: number) => {
                   const value = typeof row.displayValue === 'number' ? row.displayValue : null;
@@ -425,15 +425,18 @@ const styles = {
     textAlign: 'right' as const,
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
-  h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 5 },
+  h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
   chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
   barColumn: { width: 34, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
-  h2hChart: { height: 43, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
-  h2hBarColumn: { width: 38, height: 43, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 1 },
-  h2hValue: { fontSize: 9, fontWeight: '800' as const, lineHeight: 10, marginBottom: 1 },
-  h2hBar: { width: 24, minHeight: 4, borderRadius: 2 },
-  h2hDate: { fontSize: 7.5, color: '#777', lineHeight: 9, marginTop: 2 },
-  h2hMeta: { fontSize: 7.5, lineHeight: 9, fontWeight: '800' as const },
+  // H2H is intentionally a little taller than the old strip. Each column has
+  // reserved rows for value → bar → date → possession/venue, so the bar can
+  // never cover the customer-facing numbers.
+  h2hChart: { height: 78, flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: 5 },
+  h2hBarColumn: { width: 43, height: 74, alignItems: 'center' as const, justifyContent: 'flex-start' as const, borderRadius: 5, paddingTop: 1 },
+  h2hValue: { fontSize: 11, fontWeight: '900' as const, lineHeight: 14, height: 14, marginBottom: 2 },
+  h2hBar: { width: 26, minHeight: 4, borderRadius: 2 },
+  h2hDate: { fontSize: 9, color: '#888', lineHeight: 11, height: 11, marginTop: 3 },
+  h2hMeta: { fontSize: 9, lineHeight: 11, height: 11, fontWeight: '900' as const, marginTop: 1 },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
   value: { fontSize: 8, fontWeight: '800' as const, marginBottom: 2 },
