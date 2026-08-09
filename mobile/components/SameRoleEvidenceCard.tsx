@@ -26,6 +26,7 @@ export type SameRoleEvidence = {
   propType?: string;
   avgStatValue?: number | null;
   average?: number | null;
+  weightedAverage?: number | null;
   sampleSize?: number;
   minimumRecommendedSample?: number;
   sampleStatus?: string;
@@ -43,6 +44,8 @@ export type SameRoleEvidence = {
   };
   crossPropAverages?: Record<string, number>;
   crossPropSampleSizes?: Record<string, number>;
+  weightMethod?: string;
+  unweightedAverage?: number | null;
 };
 
 function label(value: unknown) {
@@ -65,7 +68,7 @@ export default function SameRoleEvidenceCard({
   if (!data || !(Number(data.sampleSize) > 0)) return null;
 
   const sample = Number(data.sampleSize);
-  const minimum = Number(data.minimumRecommendedSample || 10);
+  const minimum = Number(data.minimumRecommendedSample || 15);
   const average = data.average ?? data.avgStatValue;
   const rec = String(recommendation || '').toUpperCase();
   const numericLine = Number(line);
@@ -85,7 +88,7 @@ export default function SameRoleEvidenceCard({
   const role = data.targetRole || 'same role';
   const position = data.targetPosition || data.positionShort || 'same position';
   const limited = sample < minimum;
-  const sourcePlayers = (data.players || []).slice(0, 10);
+  const sourcePlayers = (data.players || []).slice(0, 15);
 
   return (
     <View style={{
@@ -113,6 +116,9 @@ export default function SameRoleEvidenceCard({
         {sample} distinct same-role player{sample === 1 ? '' : 's'} in matching {data.venue || 'venue'} fixtures
         {hasVerdict ? ` · line ${numericLine.toFixed(1)} · pick ${rec}` : ''}
         {limited ? ` · limited sample (target n≥${minimum})` : ' · target sample reached'}
+      </Text>
+      <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 3 }}>
+        Weighted evidence average · minutes and repeated verified meetings count more
       </Text>
       {(data.overHitRate != null || data.underHitRate != null) && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 3 }}>

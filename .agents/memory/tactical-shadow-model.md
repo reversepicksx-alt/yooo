@@ -7,4 +7,4 @@ Tactical lineup, role, opponent-shape, moneyline, and possession signals must re
 
 **Why:** These inputs are correlated and provider lineups are often projected. Activating them immediately can double-count the same game script and create confident but unvalidated projection movement.
 
-**How to apply:** Keep tactical packets auditable with source/status/sample/limitation fields, persist them with saved picks, render them in live and saved analysis, and only enable bounded numeric adjustments after leakage-safe settled-pick replay demonstrates improvement.
+**How to apply:** Keep tactical packets auditable with source/status/sample/limitation fields, persist them with saved picks, render them in live and saved analysis, and only enable bounded numeric adjustments after leakage-safe settled-pick replay demonstrates improvement. Same-role cohort weighting remains evidence/shadow-only until replay validates it.

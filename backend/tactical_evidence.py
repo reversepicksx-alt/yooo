@@ -191,9 +191,15 @@ def summarize_player_opponent_history(
 def summarize_position_cohort(
     players: list[dict[str, Any]] | None,
     line: Any,
-    minimum_sample: int = 10,
+    minimum_sample: int = 15,
 ) -> dict[str, Any]:
-    """Aggregate a same-position opponent cohort without padding its sample."""
+    """Aggregate a same-position opponent cohort without padding its sample.
+
+    The weight is scoped to this evidence packet. It rewards a meaningful
+    number of minutes and repeat verified appearances, while the square-root
+    cap prevents one repeatedly observed player from dominating the cohort.
+    It must not be reused as a projection or calibration weight.
+    """
     rows = [
         row for row in (players or [])
         if _number((row or {}).get("statValue")) is not None
@@ -201,10 +207,35 @@ def summarize_position_cohort(
     ]
     values = [_number(row.get("statValue")) for row in rows]
     values = [value for value in values if value is not None]
+    weights = [
+        max(
+            0.25,
+            _number(row.get("evidenceWeight"))
+            or min(1.0, max(30.0, _number(row.get("minutes")) or 0.0) / 90.0),
+        )
+        for row in rows
+    ]
+    weight_total = sum(weights)
+    weighted_average = (
+        sum(value * weight for value, weight in zip(values, weights)) / weight_total
+        if values and weight_total > 0
+        else None
+    )
     threshold = _number(line)
-    over_hits = sum(1 for value in values if threshold is not None and value > threshold)
-    under_hits = sum(1 for value in values if threshold is not None and value < threshold)
+    over_hits = sum(
+        weight for value, weight in zip(values, weights)
+        if threshold is not None and value > threshold
+    )
+    under_hits = sum(
+        weight for value, weight in zip(values, weights)
+        if threshold is not None and value < threshold
+    )
     size = len(values)
+    effective_sample_size = (
+        round((weight_total * weight_total) / sum(weight * weight for weight in weights), 2)
+        if weights and sum(weight * weight for weight in weights) > 0
+        else 0
+    )
     return {
         "sampleSize": size,
         "minimumRecommendedSample": minimum_sample,
@@ -213,11 +244,14 @@ def summarize_position_cohort(
             else "limited" if size
             else "unavailable"
         ),
-        "average": round(sum(values) / size, 2) if values else None,
-        "overHits": over_hits,
-        "underHits": under_hits,
-        "overHitRate": round(over_hits / size * 100) if values else None,
-        "underHitRate": round(under_hits / size * 100) if values else None,
+        "average": round(weighted_average, 2) if weighted_average is not None else None,
+        "unweightedAverage": round(sum(values) / size, 2) if values else None,
+        "overHits": round(over_hits, 2),
+        "underHits": round(under_hits, 2),
+        "overHitRate": round(over_hits / weight_total * 100) if values and weight_total else None,
+        "underHitRate": round(under_hits / weight_total * 100) if values and weight_total else None,
+        "effectiveSampleSize": effective_sample_size,
+        "weightMethod": "minutes_and_repeat_appearance_evidence_only",
         "position": next((row.get("position") for row in rows if row.get("position")), None),
         "venue": next((row.get("venue") for row in rows if row.get("venue")), None),
     }

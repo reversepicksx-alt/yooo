@@ -81,6 +81,20 @@ def test_position_cohort_does_not_pad_thin_sample():
     assert result["overHitRate"] == 50
 
 
+def test_position_cohort_weights_evidence_without_changing_distinct_sample_count():
+    result = summarize_position_cohort(
+        [
+            {"playerId": 1, "minutes": 90, "statValue": 40, "evidenceWeight": 1.5},
+            {"playerId": 2, "minutes": 30, "statValue": 20, "evidenceWeight": 0.5},
+        ],
+        30,
+    )
+    assert result["sampleSize"] == 2
+    assert result["average"] == 35
+    assert result["unweightedAverage"] == 30
+    assert result["weightMethod"] == "minutes_and_repeat_appearance_evidence_only"
+
+
 def test_observed_position_summary_exposes_sample_and_dominant_position():
     result = summarize_observed_positions(
         [{"position": "RW"}, {"position": "RW"}, {"position": "ST"}, {"position": None}]

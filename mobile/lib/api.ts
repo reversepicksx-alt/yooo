@@ -555,6 +555,7 @@ export interface PredictionResult {
     propType?: string;
     avgStatValue?: number;
     average?: number;
+    weightedAverage?: number | null;
     sampleSize?: number;
     minimumRecommendedSample?: number;
     sampleStatus?: string;
@@ -581,6 +582,9 @@ export interface PredictionResult {
     };
     crossPropAverages?: Record<string, number>;
     crossPropSampleSizes?: Record<string, number>;
+    weightMethod?: string;
+    unweightedAverage?: number | null;
+    effectiveSampleSize?: number;
   };
   opponentDefensiveProfile?: {
     opponent: string;

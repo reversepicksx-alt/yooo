@@ -1775,7 +1775,7 @@ async def predict(req: PredictionRequest):
             prop_type,
             opponent_id,
             player_venue_filter,
-            limit=15,
+            limit=20,
             target_specific_pos=None,
             target_role=None,
         ):
@@ -1953,18 +1953,110 @@ async def predict(req: PredictionRequest):
             for r in raw_results:
                 if isinstance(r, list):
                     all_players.extend(r)
-            # One row per player, with enough recent fixtures to reach the
-            # requested cohort size when the provider has the evidence.
-            seen_names = set()
-            unique = []
-            for p in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
-                if p["name"] in seen_names:
+            # Preserve the exact pre-expansion average for the existing
+            # deterministic opponent-profile adjustment. The larger cohort
+            # below is evidence/shadow-only until replay validates it.
+            legacy_unique = []
+            legacy_seen_names = set()
+            for row in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
+                name_key = str(row.get("name") or "").strip().lower()
+                if not name_key or name_key in legacy_seen_names:
                     continue
-                seen_names.add(p["name"])
-                unique.append(p)
-                if len(unique) >= 10:
+                legacy_seen_names.add(name_key)
+                legacy_unique.append(row)
+                if len(legacy_unique) >= 10:
                     break
-            return unique
+            legacy_values = [
+                float(row["statValue"])
+                for row in legacy_unique
+                if isinstance(row.get("statValue"), (int, float))
+            ]
+            legacy_model_average = (
+                round(sum(legacy_values) / len(legacy_values), 2)
+                if legacy_values else None
+            )
+            # Collapse repeat opponent appearances into one row per player.
+            # The old implementation kept the highest raw game for each name,
+            # which biased the cohort toward outliers. Repeated appearances now
+            # contribute through a capped reliability weight, while each player
+            # remains one distinct cohort observation.
+            by_player = {}
+            for row in all_players:
+                key = row.get("playerId") or str(row.get("name") or "").strip().lower()
+                if not key:
+                    continue
+                by_player.setdefault(key, []).append(row)
+
+            unique = []
+            for rows in by_player.values():
+                if not rows:
+                    continue
+                newest = max(rows, key=lambda x: str(x.get("date") or ""))
+                stat_rows = [
+                    row for row in rows
+                    if isinstance(row.get("statValue"), (int, float))
+                ]
+                if not stat_rows:
+                    continue
+                row_weights = [
+                    max(0.25, min(1.0, (float(row.get("minutes") or 0) / 90.0)))
+                    for row in stat_rows
+                ]
+                weight_total = sum(row_weights)
+
+                def _weighted_value(field):
+                    pairs = [
+                        (float(row[field]), weight)
+                        for row, weight in zip(stat_rows, row_weights)
+                        if isinstance(row.get(field), (int, float))
+                    ]
+                    total = sum(weight for _, weight in pairs)
+                    return round(sum(value * weight for value, weight in pairs) / total, 2) if total else None
+
+                collapsed = dict(newest)
+                collapsed["statValue"] = _weighted_value("statValue")
+                collapsed["passAttempts"] = _weighted_value("passAttempts")
+                collapsed["per90"] = _weighted_value("per90")
+                collapsed["minutes"] = round(
+                    sum(float(row.get("minutes") or 0) for row in stat_rows) / len(stat_rows), 1
+                )
+                collapsed["appearanceCount"] = len(stat_rows)
+                collapsed["evidenceWeight"] = round(
+                    min(1.75, (weight_total ** 0.5) * (0.75 + 0.25 * min(1.0, collapsed["minutes"] / 90.0))),
+                    3,
+                )
+                collapsed["crossPropStats"] = {}
+                cross_keys = {
+                    key
+                    for row in stat_rows
+                    for key in (row.get("crossPropStats") or {}).keys()
+                }
+                for cross_key in cross_keys:
+                    cross_pairs = [
+                        (float(row["crossPropStats"][cross_key]), weight)
+                        for row, weight in zip(stat_rows, row_weights)
+                        if isinstance((row.get("crossPropStats") or {}).get(cross_key), (int, float))
+                    ]
+                    cross_total = sum(weight for _, weight in cross_pairs)
+                    if cross_total:
+                        collapsed["crossPropStats"][cross_key] = round(
+                            sum(value * weight for value, weight in cross_pairs) / cross_total,
+                            2,
+                        )
+                unique.append(collapsed)
+
+            # Prefer recent verified players, then stronger observation
+            # reliability. Never pad the result with unverified rows.
+            unique.sort(
+                key=lambda x: (
+                    str(x.get("date") or ""),
+                    float(x.get("evidenceWeight") or 0),
+                ),
+                reverse=True,
+            )
+            if unique and legacy_model_average is not None:
+                unique[0]["_legacyModelAverage"] = legacy_model_average
+            return unique[:15]
 
         # =============================================
         # VENUE-FILTERED DATA: Everything is venue-based
@@ -2023,23 +2115,26 @@ async def predict(req: PredictionRequest):
         all_team_fixtures = recent_fixtures
 
         # Get opponent's recent fixtures — local DB first, API fallback.
-        # Keep a broad enough API-backed pool to reach the 10-player cohort
+        # Keep a broad enough API-backed pool to reach the 15-player cohort
         # target; the cohort itself still refuses to pad missing evidence.
+        _cohort_fixture_lookback = 20
         opponent_recent_raw = None
         if safe_opp_id:
             try:
                 from cache import get_cached_team_fixtures as _get_opp_fixtures
                 _opp_local = await _get_opp_fixtures(safe_opp_id)
                 if _opp_local:
-                    opponent_recent_raw = _opp_local[:15]
+                    opponent_recent_raw = _opp_local[:_cohort_fixture_lookback]
                     print(f"[LOCAL] Opponent fixtures from DB: {len(opponent_recent_raw)} games")
             except Exception:
                 pass
             if not opponent_recent_raw and not _is_bdl_league:
-                opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 15})
+                opponent_recent_raw = await api_football_request(
+                    "fixtures", {"team": safe_opp_id, "last": _cohort_fixture_lookback}
+                )
         opponent_fixture_list = []
         if opponent_recent_raw:
-            for f in opponent_recent_raw[:15]:
+            for f in opponent_recent_raw[:_cohort_fixture_lookback]:
                 opp_home_id = f.get("teams", {}).get("home", {}).get("id")
                 opp_venue = "home" if opp_home_id == req.opponentId else "away"
                 opponent_fixture_list.append({
@@ -6131,7 +6226,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 fetch_position_comparison(
                     opponent_fixture_list, player_position, req.propType, req.opponentId,
                     player_venue,
-                    15,
+                    _cohort_fixture_lookback,
                     target_specific_pos=specific_position,
                     target_role=display_role or player_role,
                 ) if player_position else _empty_list(),
@@ -6224,7 +6319,23 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 p.get("teamPossession") for p in position_comparison
                 if p.get("teamPossession") is not None
             ]
-            comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else None
+            # Keep the existing deterministic model-facing opponent average
+            # unchanged until the weighted evidence has passed settled-pick
+            # replay. The new weighted value is exposed separately for the
+            # evidence card and final evidence verdict.
+            legacy_model_average = next(
+                (
+                    p.pop("_legacyModelAverage")
+                    for p in position_comparison
+                    if p.get("_legacyModelAverage") is not None
+                ),
+                None,
+            )
+            comp_avg = (
+                legacy_model_average
+                if legacy_model_average is not None
+                else round(sum(comp_values) / len(comp_values), 2) if comp_values else None
+            )
             comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else None
             comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
             cross_prop_values = {}
@@ -6242,6 +6353,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "positionShort": pos_short,
                 "players": position_comparison,
                 "avgStatValue": comp_avg,
+                "average": _cohort_evidence.get("average"),
+                "weightedAverage": _cohort_evidence.get("average"),
                 "avgPer90": comp_per90_avg,
                 "avgPossession": comp_poss_avg,
                 "sampleSize": _cohort_evidence["sampleSize"],
@@ -6251,6 +6364,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "underHits": _cohort_evidence["underHits"],
                 "overHitRate": _cohort_evidence["overHitRate"],
                 "underHitRate": _cohort_evidence["underHitRate"],
+                "unweightedAverage": _cohort_evidence.get("unweightedAverage"),
+                "effectiveSampleSize": _cohort_evidence.get("effectiveSampleSize"),
+                "weightMethod": _cohort_evidence.get("weightMethod"),
                 "crossPropAverages": cross_prop_averages,
                 "crossPropSampleSizes": cross_prop_samples,
                 "propType": req.propType,
@@ -6738,7 +6854,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # e.g., PSG's press suppresses opposing CB pass volume league-wide,
             # or a low-block team inflates opposition shot attempts.
             # Data source: fetch_position_comparison — same position, same venue,
-            # opponent's last 10 fixtures (already computed above for AI context).
+            # opponent's recent fixture-player sample (already computed above
+            # for the evidence/model context).
             # Weight: 2.5% per comparison player, max 15%.
             # Requires at least 3 sampled players to fire (noise guard).
             # Applied AFTER personal H2H blend, BEFORE situational multiplier.

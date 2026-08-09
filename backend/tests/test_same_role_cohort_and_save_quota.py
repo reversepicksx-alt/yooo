@@ -13,9 +13,10 @@ def test_position_cohort_requires_same_role_and_has_broad_api_pool():
     assert "target_role=None" in PREDICT_SOURCE
     assert "if target_role and candidate_role != target_role:" in PREDICT_SOURCE
     assert "target_role=display_role or player_role" in PREDICT_SOURCE
-    assert 'api_football_request("fixtures", {"team": safe_opp_id, "last": 15})' in PREDICT_SOURCE
+    assert '"last": _cohort_fixture_lookback' in PREDICT_SOURCE
     assert "fetch_position_comparison(" in PREDICT_SOURCE
-    assert "15," in PREDICT_SOURCE
+    assert "return unique[:15]" in PREDICT_SOURCE
+    assert '"evidenceWeight"' in PREDICT_SOURCE
 
 
 def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
@@ -24,6 +25,11 @@ def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
     assert '"targetPosition": specific_position or display_position' in PREDICT_SOURCE
     assert '"passAttempts": (pstats.get("passes") or {}).get("total")' in PREDICT_SOURCE
     assert '"matchPosition": pos or None' in PREDICT_SOURCE
+    assert '"weightMethod": _cohort_evidence.get("weightMethod")' in PREDICT_SOURCE
+    assert '"avgStatValue": comp_avg' in PREDICT_SOURCE
+    assert '"weightedAverage": _cohort_evidence.get("average")' in PREDICT_SOURCE
+    assert '"_legacyModelAverage"' in PREDICT_SOURCE
+    assert "legacy_unique" in PREDICT_SOURCE
 
 
 def test_cohort_verdict_is_not_evaluated_before_prediction_exists():
