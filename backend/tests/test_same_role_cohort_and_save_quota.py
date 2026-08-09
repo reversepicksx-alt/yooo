@@ -64,12 +64,20 @@ def test_soccer_player_history_requires_exact_tp_and_minutes():
     assert "async def _fetch_fixture_possession(" in PREDICT_SOURCE
     assert '"tp": gl["teamPossession"]' not in PREDICT_SOURCE
     assert "_tp_complete" in PREDICT_SOURCE
-    assert "_missing_tp_logs" in PREDICT_SOURCE
+    assert "_verified_player_logs" in PREDICT_SOURCE
     assert "status_code=424" in PREDICT_SOURCE
     assert '"tpHomeAvg"' in PREDICT_SOURCE
     assert '"tpAwayAvg"' in PREDICT_SOURCE
     assert '"minutesPlayed": minutes' in PREDICT_SOURCE
     assert "async def _direct_fixture_possession(" in PREDICT_SOURCE
+
+
+def test_soccer_history_drops_incomplete_rows_without_poisoning_verified_history():
+    assert "_verified_player_logs" in PREDICT_SOURCE
+    assert "_dropped_incomplete_logs" in PREDICT_SOURCE
+    assert "retained {len(_verified_player_logs)} verified rows" in PREDICT_SOURCE
+    assert "if req.sport == \"soccer\":" in PREDICT_SOURCE
+    assert "no soccer " in PREDICT_SOURCE
 
 
 def test_comparison_rows_require_verified_possession_and_exact_minutes():

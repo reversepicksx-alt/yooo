@@ -1655,6 +1655,13 @@ async def predict(req: PredictionRequest):
                                 ):
                                     gl["opponentShotsOnTarget"] = sot_docs[fid_str]
                         else:
+                            if req.sport == "soccer":
+                                # Without permanent fixture metadata we cannot
+                                # verify club identity, venue, or possession for
+                                # this cached row. Do not let a stale/partial
+                                # season-transition cache entry poison the
+                                # verified history gate below.
+                                continue
                             gl["venue"] = ""
                             gl["opponent"] = ""
 
@@ -3281,21 +3288,32 @@ async def predict(req: PredictionRequest):
 
         # Stage 2: Season aggregate fallback — only if API direct also returned nothing
         if req.sport == "soccer":
-            _missing_tp_logs = [
+            # A provider/cache response can contain a mixture of complete
+            # appearances and rows missing minutes or fixture possession,
+            # especially when a new competition season has just started.
+            # Keep the evidence-quality rule, but discard only the unusable
+            # rows instead of rejecting an otherwise valid prior-season sample.
+            _verified_player_logs = [
                 g for g in (player_game_logs or [])
                 if not g.get("synthetic")
-                and (
-                    g.get("minutes") in (None, 0)
-                    or g.get("teamPossession") is None
-                    or g.get("opponentPossession") is None
-                )
+                and (g.get("minutes") or 0) > 0
+                and g.get("teamPossession") is not None
+                and g.get("opponentPossession") is not None
             ]
-            if not player_game_logs or _missing_tp_logs:
+            _dropped_incomplete_logs = len(player_game_logs or []) - len(_verified_player_logs)
+            if _dropped_incomplete_logs:
+                print(
+                    f"[PLAYER HISTORY QUALITY] {req.playerName}: dropped "
+                    f"{_dropped_incomplete_logs} incomplete appearance(s); "
+                    f"retained {len(_verified_player_logs)} verified rows"
+                )
+            player_game_logs = _verified_player_logs
+            if not player_game_logs:
                 raise HTTPException(
                     status_code=424,
                     detail=(
-                        "Verified player game data is incomplete: every soccer "
-                        "appearance requires exact minutes and fetched team "
+                        "Verified player game data is unavailable: no soccer "
+                        "appearance currently has exact minutes and fetched team "
                         "possession (TP). Please retry shortly."
                     ),
                 )
