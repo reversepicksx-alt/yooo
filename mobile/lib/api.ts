@@ -2907,7 +2907,14 @@ export interface MlbNextMatch {
 
 export async function getMlbNextMatch(playerId: number): Promise<MlbNextMatch> {
   try {
-    return await apiCall<MlbNextMatch>(`/api/mlb/next-match?player_id=${playerId}`);
+    const result = await apiCall<MlbNextMatch>(`/api/mlb/next-match?player_id=${playerId}`);
+    // Defense-in-depth for stale deployed/cache responses: a past MLB game
+    // must never be shown as the auto-filled next matchup.
+    if (result.found && result.date) {
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      if (result.date.slice(0, 10) < todayUtc) return { found: false };
+    }
+    return result;
   } catch {
     return { found: false };
   }

@@ -3,7 +3,7 @@ MLB prediction routes — /api/mlb/*
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
@@ -99,6 +99,28 @@ async def mlb_next_match(player_id: int = Query(...)):
     """Return the next upcoming MLB game for a player's team (for auto-fill)."""
     try:
         result = await mlb_client.get_player_next_match(player_id)
+        # Never let a stale provider/cache response populate the prediction form.
+        # MLB dates are calendar dates, so compare them against the UTC date used
+        # by the backend rather than allowing yesterday's game to appear as next.
+        if result.get("found"):
+            game_date = str(result.get("date") or "")[:10]
+            if not game_date:
+                return {"found": False}
+            try:
+                if date.fromisoformat(game_date) < datetime.now(timezone.utc).date():
+                    log.warning(
+                        "[MLB NEXT MATCH] rejecting stale game player_id=%s date=%s",
+                        player_id,
+                        game_date,
+                    )
+                    return {"found": False}
+            except ValueError:
+                log.warning(
+                    "[MLB NEXT MATCH] rejecting invalid game date player_id=%s date=%s",
+                    player_id,
+                    game_date,
+                )
+                return {"found": False}
         return result
     except Exception as e:
         log.warning(f"[MLB NEXT MATCH ROUTE] player_id={player_id}: {e}")
