@@ -96,6 +96,12 @@ function averageForVenue(rows: Array<Record<string, any>>, venue: 'home' | 'away
     : null;
 }
 
+function compactTeamName(value: unknown, fallback: string) {
+  const name = String(value || '').trim();
+  if (!name) return fallback;
+  return name.length > 16 ? `${name.slice(0, 15)}…` : name;
+}
+
 export function CompactAnalysisBars({ prediction }: { prediction: CompactPrediction }) {
   const logs = (prediction.gameLogs ?? [])
     .filter((game) => !game.synthetic && game.value != null)
@@ -172,9 +178,45 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const detailRow = selectedGame || selectedH2H;
   const detailPossession = detailRow?.teamPossession ?? detailRow?.possession;
   const detailOpponentPossession = detailRow?.opponentPossession;
+  const expectedPossession = prediction.expectedPossession;
+  const expectedHome = Number(expectedPossession?.home);
+  const expectedAway = Number(expectedPossession?.away);
+  const hasExpectedPossession = Number.isFinite(expectedHome)
+    && Number.isFinite(expectedAway)
+    && expectedHome >= 0
+    && expectedAway >= 0;
+  const expectedVenue = preferredVenue ?? 'home';
+  const expectedPlayerTeamPossession = expectedVenue === 'home' ? expectedHome : expectedAway;
+  const expectedOpponentPossession = expectedVenue === 'home' ? expectedAway : expectedHome;
+  const expectedPlayerTeam = compactTeamName(prediction.teamName, 'PLAYER TEAM');
+  const expectedOpponentTeam = compactTeamName(prediction.opponentName || prediction.opponent, 'OPPONENT');
 
   return (
     <>
+      {hasExpectedPossession && (
+        <View style={styles.possessionCard}>
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Ionicons name="football-outline" size={11} color={Colors.primary} />
+              <Text style={styles.title}>EXPECTED POSSESSION</Text>
+            </View>
+            <Text style={styles.meta}>{expectedVenue.toUpperCase()} SIDE</Text>
+          </View>
+          <View style={styles.expectedPossessionBar}>
+            <View style={[styles.expectedPossessionPlayer, { flex: Math.max(expectedPlayerTeamPossession, 0.1) }]} />
+            <View style={[styles.expectedPossessionOpponent, { flex: Math.max(expectedOpponentPossession, 0.1) }]} />
+          </View>
+          <View style={styles.expectedPossessionLabels}>
+            <Text style={styles.expectedPossessionPlayerText} numberOfLines={1}>
+              {expectedPlayerTeam} {Math.round(expectedPlayerTeamPossession)}%
+            </Text>
+            <Text style={styles.expectedPossessionOpponentText} numberOfLines={1}>
+              {Math.round(expectedOpponentPossession)}% {expectedOpponentTeam}
+            </Text>
+          </View>
+        </View>
+      )}
+
       {logs.length > 0 && (
         <View style={styles.card}>
           <View style={styles.header}>
@@ -327,6 +369,15 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
 }
 
 const styles = {
+  possessionCard: {
+    marginTop: 8,
+    backgroundColor: '#0A0A0A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.16)',
+    paddingBottom: 11,
+    overflow: 'hidden' as const,
+  },
   card: {
     marginTop: 8,
     backgroundColor: '#0A0A0A',
@@ -345,6 +396,37 @@ const styles = {
   headerLeft: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
   title: { fontSize: 9, color: Colors.textSecondary, fontWeight: '800' as const, letterSpacing: 1 },
   meta: { marginLeft: 'auto' as const, fontSize: 9, color: Colors.textTertiary, fontFamily: 'JetBrainsMono_700Bold' },
+  expectedPossessionBar: {
+    height: 7,
+    marginHorizontal: 14,
+    flexDirection: 'row' as const,
+    borderRadius: 4,
+    overflow: 'hidden' as const,
+    backgroundColor: 'rgba(96,165,250,0.45)',
+  },
+  expectedPossessionPlayer: { backgroundColor: Colors.success },
+  expectedPossessionOpponent: { backgroundColor: '#60A5FA' },
+  expectedPossessionLabels: {
+    marginHorizontal: 14,
+    marginTop: 5,
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    gap: 12,
+  },
+  expectedPossessionPlayerText: {
+    flex: 1,
+    color: Colors.success,
+    fontSize: 8,
+    fontWeight: '900' as const,
+  },
+  expectedPossessionOpponentText: {
+    flex: 1,
+    color: '#60A5FA',
+    fontSize: 8,
+    fontWeight: '900' as const,
+    textAlign: 'right' as const,
+  },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
   barColumn: { width: 34, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },

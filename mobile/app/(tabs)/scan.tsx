@@ -4106,7 +4106,7 @@ export default function ScanScreen() {
                   )}
                   {_lineDevHR != null && (
                     <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15 }}>
-                      This deviation band: {_lineDevHR}% historical hit rate
+                      {_rec === 'OVER' || _rec === 'UNDER' ? `${_rec} hit rate in this deviation band` : 'Pick hit rate in this deviation band'}: {_lineDevHR}% historical
                     </Text>
                   )}
                 </View>

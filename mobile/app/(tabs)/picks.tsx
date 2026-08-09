@@ -1605,7 +1605,7 @@ export default function PicksScreen() {
                 )}
                 {modalLineDevHR != null && (
                   <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15 }}>
-                    This deviation band: {modalLineDevHR}% historical hit rate
+                    {modalRec === 'OVER' || modalRec === 'UNDER' ? `${modalRec} hit rate in this deviation band` : 'Pick hit rate in this deviation band'}: {modalLineDevHR}% historical
                   </Text>
                 )}
               </View>
