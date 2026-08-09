@@ -1673,9 +1673,6 @@ export interface PlayerSearchResult {
   teamName: string;
   leagueId: number;
   position?: string;
-  positionVerified?: boolean;
-  positionSource?: string;
-  teamConfirmed?: boolean;
 }
 
 export async function searchPlayersQuick(query: string, leagueId?: number): Promise<{ players: PlayerSearchResult[] }> {

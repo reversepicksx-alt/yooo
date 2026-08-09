@@ -141,3 +141,4 @@
 - [Player context write fail-open](player-context-write-fail-open.md) — verified club identity must survive Atlas/cache write failures; persistence outages must not force manual matchup setup.
 - [Gemini position grounding](gemini-position-grounding.md) — accept identity verification only with actual Search citations; proxy responses without grounding must remain conservative fallback data.
 - [Goalkeeper pool prior](gk-pool-prior-shadow.md) — keeper pass-volume pool evidence is goalkeeper-only, sample-shrunk, auditable, and shadow-only until settled-pick replay validates live influence.
+- [Universal search contract](universal-search-contract.md) — combined soccer/MLB/NFL search must preserve each provider's payload contract; absent new flags can silently remove one sport.
