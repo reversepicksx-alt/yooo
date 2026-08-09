@@ -423,6 +423,284 @@ def validate_position_data(enrichment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ── Press-signal comparison and promotion gate ──────────────────────────────
+
+# Ordered tier list used by compare_press_signals() to measure label distance.
+_PRESS_TIERS: list[str] = ["Low", "Moderate", "High", "Elite"]
+
+# Promotion-gate thresholds.  All three must be met (on pass props only)
+# before ``evaluate_bzzoiro_pressure_evidence`` may recommend promotion.
+# The gate is deliberately conservative: a single contested season is not
+# enough evidence to trust a one-match Bzzoiro proxy over API-Football's
+# multi-game baseline.
+PROMOTION_MIN_COVERED_FIXTURES: int = 30
+PROMOTION_MIN_PASS_PROP_OUTCOMES: int = 20
+PROMOTION_MIN_SIGNAL_AGREEMENT_RATE: float = 0.60
+PROMOTION_MIN_DIRECTION_IMPROVEMENT: float = 0.03   # 3 percentage-point lift
+
+
+def compare_press_signals(
+    bzzoiro_press: dict[str, Any] | None,
+    apifootball_press_intensity: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compare a Bzzoiro one-match press proxy against an API-Football press
+    intensity signal and return a structured agreement report.
+
+    Agreement categories:
+      "agree"       — both signals report the same tier label.
+      "adjacent"    — labels differ by exactly one tier.
+      "contradict"  — labels differ by two or more tiers.
+      "unavailable" — one or both signals are missing/unknown.
+
+    This report is purely informational and never influences projections.
+    The Bzzoiro signal remains shadow-only regardless of agreement status
+    until ``evaluate_bzzoiro_pressure_evidence`` confirms sufficient
+    out-of-sample evidence for promotion.
+    """
+    def _label(d: dict[str, Any] | None) -> str | None:
+        if not isinstance(d, dict):
+            return None
+        lbl = str(d.get("label") or "").strip()
+        return lbl if lbl and lbl != "Unknown" else None
+
+    bz_label = _label(bzzoiro_press)
+    af_label = _label(apifootball_press_intensity)
+
+    if bz_label is None or af_label is None:
+        missing = []
+        if bz_label is None:
+            missing.append("bzzoiro")
+        if af_label is None:
+            missing.append("apifootball")
+        return {
+            "agreement": "unavailable",
+            "bzzoiroLabel": bz_label,
+            "apiFootballLabel": af_label,
+            "tierDistance": None,
+            "shadowOnly": True,
+            "reason": f"Signal missing from: {', '.join(missing)}.",
+        }
+
+    bz_idx = _PRESS_TIERS.index(bz_label) if bz_label in _PRESS_TIERS else -1
+    af_idx = _PRESS_TIERS.index(af_label) if af_label in _PRESS_TIERS else -1
+
+    if bz_idx == -1 or af_idx == -1:
+        unknown = []
+        if bz_idx == -1:
+            unknown.append(f"bzzoiro='{bz_label}'")
+        if af_idx == -1:
+            unknown.append(f"apifootball='{af_label}'")
+        return {
+            "agreement": "unavailable",
+            "bzzoiroLabel": bz_label,
+            "apiFootballLabel": af_label,
+            "tierDistance": None,
+            "shadowOnly": True,
+            "reason": f"Unrecognised label: {'; '.join(unknown)}.",
+        }
+
+    distance = abs(bz_idx - af_idx)
+    if distance == 0:
+        agreement = "agree"
+    elif distance == 1:
+        agreement = "adjacent"
+    else:
+        agreement = "contradict"
+
+    return {
+        "agreement": agreement,
+        "bzzoiroLabel": bz_label,
+        "apiFootballLabel": af_label,
+        "tierDistance": distance,
+        "shadowOnly": True,
+        "reason": (
+            "Both signals agree."
+            if agreement == "agree"
+            else f"Labels differ by {distance} tier(s)."
+        ),
+    }
+
+
+def _is_eligible_row(row: Any) -> bool:
+    """Return True only when a settled-outcome row has usable Bzzoiro evidence.
+
+    An eligible row requires ALL of:
+      - A recognised Bzzoiro press label (one of _PRESS_TIERS).
+      - A recognised API-Football press label (one of _PRESS_TIERS, not "Unknown").
+      - A valid settled outcome ("HIT" or "MISS").
+
+    Rows that fail any condition are excluded from every count and calculation
+    so that missing or unrecognised Bzzoiro labels cannot inflate coverage,
+    pass-prop sample size, or direction accuracy.
+    """
+    if not isinstance(row, dict):
+        return False
+    bz_label = str(row.get("bzzoiro_label") or "").strip()
+    af_label = str(row.get("apifootball_label") or "").strip()
+    outcome = str(row.get("outcome") or "").strip().upper()
+    return (
+        bz_label in _PRESS_TIERS
+        and af_label in _PRESS_TIERS
+        and outcome in {"HIT", "MISS"}
+    )
+
+
+def evaluate_bzzoiro_pressure_evidence(
+    covered_outcomes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Evaluate whether Bzzoiro pressure proxy improves pass-prop direction
+    accuracy on a set of settled fixture outcomes.
+
+    Each element of ``covered_outcomes`` must contain:
+      bzzoiro_label     (str)   — Bzzoiro press label for that fixture
+      apifootball_label (str)   — API-Football press label (or "Unknown")
+      prop_type         (str)   — e.g. "passes", "pass_attempts"
+      direction         (str)   — predicted direction: "OVER" or "UNDER"
+      outcome           (str)   — settled result: "HIT" or "MISS"
+
+    Only rows that pass ``_is_eligible_row()`` (recognised Bzzoiro label,
+    recognised API-Football label, and valid settled outcome) contribute to
+    any count or calculation.  Rows with missing or unrecognised Bzzoiro labels
+    are silently excluded and tallied in ``nSupplied`` so callers can see the
+    coverage gap.
+
+    The function computes on eligible rows:
+      - Signal agreement rate between Bzzoiro and API-Football.
+      - Direction accuracy on pass props where Bzzoiro was available.
+      - Comparison against a baseline direction accuracy (``baseline_correct``
+        field, if supplied per row; defaults to the actual outcome so no
+        phantom improvement is ever invented).
+      - Whether all promotion-gate thresholds are met.
+
+    The return value always carries ``promotionStatus: "shadow_only"`` because
+    promotion requires explicit human review; this function only documents
+    whether the thresholds were met, never enables the signal.
+    """
+    n_supplied = len(covered_outcomes) if isinstance(covered_outcomes, list) else 0
+    _empty_result = {
+        "nSupplied": n_supplied,
+        "nCovered": 0,
+        "nPassProps": 0,
+        "signalAgreementRate": None,
+        "directionAccuracyWithBzzoiro": None,
+        "directionAccuracyBaseline": None,
+        "directionImprovement": None,
+        "gatePassed": False,
+        "gateFailures": ["No eligible covered-outcome records (recognised Bzzoiro label + settled outcome required)."],
+        "promotionStatus": "shadow_only",
+        "promotionStatusReason": "No eligible covered-outcome records provided.",
+        "promotionMinCoveredFixtures": PROMOTION_MIN_COVERED_FIXTURES,
+        "promotionMinPassPropOutcomes": PROMOTION_MIN_PASS_PROP_OUTCOMES,
+        "promotionMinSignalAgreementRate": PROMOTION_MIN_SIGNAL_AGREEMENT_RATE,
+        "promotionMinDirectionImprovement": PROMOTION_MIN_DIRECTION_IMPROVEMENT,
+    }
+    if not covered_outcomes or not isinstance(covered_outcomes, list):
+        return _empty_result
+
+    # Filter to eligible rows FIRST — the same set is used for every metric.
+    eligible = [r for r in covered_outcomes if _is_eligible_row(r)]
+    if not eligible:
+        return {**_empty_result, "nSupplied": n_supplied}
+
+    n_covered = len(eligible)
+
+    # ── 1. Signal agreement across eligible fixtures ─────────────────────────
+    agreement_decisions: list[bool] = []
+    for row in eligible:
+        cmp = compare_press_signals(
+            {"label": row.get("bzzoiro_label")},
+            {"label": row.get("apifootball_label")},
+        )
+        if cmp["agreement"] in {"agree", "adjacent"}:
+            agreement_decisions.append(True)
+        elif cmp["agreement"] == "contradict":
+            agreement_decisions.append(False)
+        # "unavailable" cannot occur here because _is_eligible_row already
+        # required both labels to be in _PRESS_TIERS, but guard defensively.
+
+    agreement_rate = (
+        sum(agreement_decisions) / len(agreement_decisions)
+        if agreement_decisions
+        else None
+    )
+
+    # ── 2. Direction accuracy on eligible pass props ──────────────────────────
+    PASS_PROPS = {"pass_attempts", "passes"}
+    pass_rows = [r for r in eligible if r.get("prop_type") in PASS_PROPS]
+    n_pass_props = len(pass_rows)
+
+    correct_with_bz: list[bool] = []
+    correct_baseline: list[bool] = []
+    for row in pass_rows:
+        outcome = str(row.get("outcome") or "").strip().upper()
+        # "HIT" means the direction prediction was correct; "MISS" means wrong.
+        # HIT/MISS already encodes whether the predicted direction was right.
+        correct_prediction = (outcome == "HIT")
+        correct_with_bz.append(correct_prediction)
+        # baseline_correct optionally represents accuracy without the Bzzoiro
+        # signal.  When absent, both figures are the same — no phantom lift.
+        baseline_val = row.get("baseline_correct")
+        correct_baseline.append(
+            bool(baseline_val) if baseline_val is not None else correct_prediction
+        )
+
+    acc_with_bz = (
+        sum(correct_with_bz) / len(correct_with_bz) if correct_with_bz else None
+    )
+    acc_baseline = (
+        sum(correct_baseline) / len(correct_baseline) if correct_baseline else None
+    )
+    improvement = (
+        round(acc_with_bz - acc_baseline, 4)
+        if acc_with_bz is not None and acc_baseline is not None
+        else None
+    )
+
+    # ── 3. Promotion gate ─────────────────────────────────────────────────────
+    gate_failures: list[str] = []
+    if n_covered < PROMOTION_MIN_COVERED_FIXTURES:
+        gate_failures.append(
+            f"Too few covered fixtures ({n_covered} < {PROMOTION_MIN_COVERED_FIXTURES})."
+        )
+    if n_pass_props < PROMOTION_MIN_PASS_PROP_OUTCOMES:
+        gate_failures.append(
+            f"Too few pass-prop outcomes ({n_pass_props} < {PROMOTION_MIN_PASS_PROP_OUTCOMES})."
+        )
+    if agreement_rate is None or agreement_rate < PROMOTION_MIN_SIGNAL_AGREEMENT_RATE:
+        rate_str = f"{agreement_rate:.0%}" if agreement_rate is not None else "N/A"
+        gate_failures.append(
+            f"Signal agreement rate too low ({rate_str} < {PROMOTION_MIN_SIGNAL_AGREEMENT_RATE:.0%})."
+        )
+    if improvement is None or improvement < PROMOTION_MIN_DIRECTION_IMPROVEMENT:
+        imp_str = f"{improvement:+.1%}" if improvement is not None else "N/A"
+        gate_failures.append(
+            f"Insufficient direction improvement ({imp_str} < +{PROMOTION_MIN_DIRECTION_IMPROVEMENT:.0%})."
+        )
+
+    gate_passed = len(gate_failures) == 0
+    return {
+        "nSupplied": n_supplied,
+        "nCovered": n_covered,
+        "nPassProps": n_pass_props,
+        "signalAgreementRate": round(agreement_rate, 4) if agreement_rate is not None else None,
+        "directionAccuracyWithBzzoiro": round(acc_with_bz, 4) if acc_with_bz is not None else None,
+        "directionAccuracyBaseline": round(acc_baseline, 4) if acc_baseline is not None else None,
+        "directionImprovement": improvement,
+        "gatePassed": gate_passed,
+        "gateFailures": gate_failures,
+        "promotionStatus": "shadow_only",
+        "promotionStatusReason": (
+            "All promotion-gate thresholds met — human review required before enabling live influence."
+            if gate_passed
+            else "Promotion gate not met: " + " | ".join(gate_failures)
+        ),
+        "promotionMinCoveredFixtures": PROMOTION_MIN_COVERED_FIXTURES,
+        "promotionMinPassPropOutcomes": PROMOTION_MIN_PASS_PROP_OUTCOMES,
+        "promotionMinSignalAgreementRate": PROMOTION_MIN_SIGNAL_AGREEMENT_RATE,
+        "promotionMinDirectionImprovement": PROMOTION_MIN_DIRECTION_IMPROVEMENT,
+    }
+
+
 async def _request(client: httpx.AsyncClient, path: str, params: dict[str, Any] | None = None) -> Any:
     response = await client.get(f"{BASE_URL}{path}", params=params or {})
     response.raise_for_status()
