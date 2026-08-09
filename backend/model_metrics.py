@@ -383,6 +383,219 @@ def _bin_label(confidence: float) -> str | None:
             return label
     return None
 
+def _go_no_go_recommendation(
+    classification: dict,
+    prospective_calibration: list[dict],
+    projection: dict,
+    by_direction: dict,
+    eligible_samples: int,
+) -> dict:
+    """Synthesise a go/no-go verdict from walk-forward replay results.
+
+    Criteria evaluated (each flags an issue or positive):
+
+    1. Classification quality — log-loss vs the coin-flip baseline (ln 2 ≈ 0.693).
+       A model that cannot beat a coin flip on confidence-weighted scoring
+       should not be trusted for high-stakes picks.
+
+    2. Calibration quality — mean absolute gap between the prior-predicted hit
+       rate and the observed hit rate across prospective calibration bins.
+       Bins with fewer than 5 prospective observations are skipped.
+
+    3. Direction asymmetry — absolute gap between OVER and UNDER hit rates.
+       A gap > 20 pp with at least 5 samples in each direction is a concern.
+
+    4. Projection bias — signed meanError relative to MAE.  A ratio > 0.4
+       indicates the model systematically over- or under-projects.
+
+    Verdict:
+      GO      — no issues detected; model passes all key checks.
+      CAUTION — one or more moderate concerns that should be monitored.
+      NO_GO   — fundamental classification or calibration failure.
+    """
+    issues: list[str] = []
+    positives: list[str] = []
+
+    # Minimum-evidence thresholds for each check.  If fewer samples exist than
+    # each threshold the check is skipped, which is correct — but if EVERY
+    # check is skipped the function has no basis for any verdict.  Track how
+    # many checks actually ran so the verdict correctly reflects the gap.
+    _MIN_CLS = 10     # minimum scored events for classification check
+    _MIN_CAL = 5      # minimum prospective observations per calibration bin
+    _MIN_DIR = 5      # minimum samples in each direction for asymmetry check
+    _MIN_PROJ = 10    # minimum regression samples for bias check
+    checks_run = 0    # incremented once per check that fires
+
+    # 1. Classification quality
+    log_loss = classification.get("logLoss")
+    n_cls = classification.get("n", 0)
+    _COIN_FLIP_LL = 0.6931  # ln(2)
+    if log_loss is not None and n_cls >= _MIN_CLS:
+        checks_run += 1
+        if log_loss < _COIN_FLIP_LL * 0.95:
+            positives.append(
+                f"Log-loss {log_loss:.4f} beats coin-flip baseline ({_COIN_FLIP_LL:.4f})"
+            )
+        elif log_loss >= _COIN_FLIP_LL:
+            issues.append(
+                f"Log-loss {log_loss:.4f} is at or above coin-flip baseline "
+                f"({_COIN_FLIP_LL:.4f}) — model is not beating random on classification"
+            )
+        else:
+            issues.append(
+                f"Log-loss {log_loss:.4f} only marginally below coin-flip baseline "
+                f"({_COIN_FLIP_LL:.4f}) — gains are weak"
+            )
+
+    # 2. Prospective calibration quality
+    calibration_gaps = [
+        abs(b["gapPp"])
+        for b in prospective_calibration
+        if b.get("gapPp") is not None and (b.get("prospectiveN") or 0) >= _MIN_CAL
+    ]
+    if calibration_gaps:
+        checks_run += 1
+        mean_gap = sum(calibration_gaps) / len(calibration_gaps)
+        if mean_gap > 15:
+            issues.append(
+                f"Mean prospective calibration gap {mean_gap:.1f} pp — "
+                f"confidence scores are poorly calibrated out-of-sample"
+            )
+        elif mean_gap > 7:
+            issues.append(
+                f"Mean prospective calibration gap {mean_gap:.1f} pp — "
+                f"moderate miscalibration; monitor for overconfidence"
+            )
+        else:
+            positives.append(
+                f"Mean prospective calibration gap {mean_gap:.1f} pp — "
+                f"confidence scores are well calibrated"
+            )
+
+    # 3. OVER / UNDER direction asymmetry
+    over_data = by_direction.get("over", {})
+    under_data = by_direction.get("under", {})
+    over_hr = over_data.get("hitRate")
+    under_hr = under_data.get("hitRate")
+    over_n = over_data.get("n", 0)
+    under_n = under_data.get("n", 0)
+    if over_hr is not None and under_hr is not None and over_n >= _MIN_DIR and under_n >= _MIN_DIR:
+        checks_run += 1
+        gap = abs(over_hr - under_hr)
+        if gap > 20:
+            worse = "UNDER" if over_hr > under_hr else "OVER"
+            issues.append(
+                f"Direction asymmetry {gap:.1f} pp: "
+                f"OVER {over_hr:.1f}% (n={over_n}) vs UNDER {under_hr:.1f}% (n={under_n}) — "
+                f"{worse} picks significantly underperform"
+            )
+        elif gap <= 8:
+            positives.append(
+                f"OVER/UNDER hit rates balanced: "
+                f"OVER {over_hr:.1f}% (n={over_n}) vs UNDER {under_hr:.1f}% (n={under_n})"
+            )
+        else:
+            issues.append(
+                f"Moderate direction asymmetry {gap:.1f} pp: "
+                f"OVER {over_hr:.1f}% (n={over_n}) vs UNDER {under_hr:.1f}% (n={under_n})"
+            )
+
+    # 4. Systematic projection bias
+    mean_error = projection.get("meanError")
+    mae = projection.get("mae")
+    proj_n = projection.get("n", 0)
+    if mean_error is not None and mae is not None and proj_n >= _MIN_PROJ and mae > 0:
+        checks_run += 1
+        bias_ratio = abs(mean_error) / mae
+        direction_label = "over-projecting" if mean_error < 0 else "under-projecting"
+        if bias_ratio > 0.4:
+            issues.append(
+                f"Systematic projection bias: meanError={mean_error:.3f}, MAE={mae:.3f} "
+                f"(bias ratio {bias_ratio:.2f}) — model is {direction_label}"
+            )
+        else:
+            positives.append(
+                f"Projection bias acceptable: meanError={mean_error:.3f}, MAE={mae:.3f} "
+                f"(bias ratio {bias_ratio:.2f})"
+            )
+
+    # Determine verdict
+    # Guard: if no check ran there is no evidence basis for any verdict.
+    # This happens for empty corpora or corpora that fall below every
+    # minimum-sample threshold.  A spurious GO is actively misleading, so
+    # force CAUTION and explain which evidence is missing.
+    if checks_run == 0:
+        missing = []
+        if n_cls < _MIN_CLS:
+            missing.append(f"classification (need ≥{_MIN_CLS} scored events, have {n_cls})")
+        cal_prosp = sum(
+            1 for b in prospective_calibration
+            if (b.get("prospectiveN") or 0) >= _MIN_CAL
+        )
+        if not cal_prosp:
+            missing.append(f"prospective calibration (need ≥{_MIN_CAL} observations per bin)")
+        if over_n < _MIN_DIR or under_n < _MIN_DIR:
+            missing.append(
+                f"direction analysis (need ≥{_MIN_DIR} OVER and ≥{_MIN_DIR} UNDER events; "
+                f"have {over_n} OVER, {under_n} UNDER)"
+            )
+        if proj_n < _MIN_PROJ:
+            missing.append(f"projection bias (need ≥{_MIN_PROJ} regression events, have {proj_n})")
+        verdict = "CAUTION"
+        summary = (
+            "Insufficient evidence to evaluate the model. "
+            + ("Missing: " + "; ".join(missing) + "." if missing else "No settled picks found.")
+        )
+        return {
+            "verdict": verdict,
+            "summary": summary,
+            "issues": [],
+            "positives": [],
+            "basisN": eligible_samples,
+            "note": (
+                "GO = model beats baseline on all key metrics; "
+                "CAUTION = one or more moderate concerns or insufficient evidence; "
+                "NO_GO = fundamental classification or calibration failure."
+            ),
+        }
+
+    critical = any(
+        "not beating random" in i or "poorly calibrated" in i
+        for i in issues
+    )
+    if critical:
+        verdict = "NO_GO"
+        summary = (
+            "Model has a fundamental classification or calibration failure. "
+            "Confidence scores cannot be trusted as probability estimates."
+        )
+    elif issues:
+        verdict = "CAUTION"
+        summary = (
+            "Model shows mixed signals. Investigate the flagged concerns "
+            "before expanding to new sports or props."
+        )
+    else:
+        verdict = "GO"
+        summary = (
+            "Model passes all key out-of-sample checks. "
+            "No significant calibration, classification, or projection concerns detected."
+        )
+
+    return {
+        "verdict": verdict,
+        "summary": summary,
+        "issues": issues,
+        "positives": positives,
+        "basisN": eligible_samples,
+        "note": (
+            "GO = model beats baseline on all key metrics; "
+            "CAUTION = one or more moderate concerns; "
+            "NO_GO = fundamental classification or calibration failure."
+        ),
+    }
+
+
 def walk_forward_replay(rows: list[dict]) -> dict:
     """True out-of-sample historical replay.
 
@@ -401,13 +614,16 @@ def walk_forward_replay(rows: list[dict]) -> dict:
       classification        — prospective log-loss + Brier over all scored picks
       prospectiveCalibration— calibration bins built walk-forward: the bin
                               hit rate is computed from ONLY rows seen before
-                              the current pick, showing whether the stored
-                              confidence would have been accurate prospectively
+                              the current pick; each bin also includes a
+                              byDirection breakdown separating OVER and UNDER
       projection            — MAE, RMSE, meanError over all picks with
                               both actualValue and projectedValue
       bySport               — per-sport classification + projection metrics
       byProp                — per prop-type projection metrics (sport × propType)
+      byDirection           — hit-rate + log-loss breakdown by OVER vs UNDER
       dateRange             — first and last settledAt in the corpus
+      goNoGo                — synthesised go/no-go recommendation with verdict,
+                              summary, issues, and positives
     """
     deduped = dedupe_prediction_rows(rows)
     ordered = _sorted_rows(deduped)
@@ -448,6 +664,12 @@ def walk_forward_replay(rows: list[dict]) -> dict:
     # compared against the prior-bin empirical hit rate.
     prosp_bins: dict[str, dict] = {
         label: {"n": 0, "priorHitRateSum": 0.0, "hits": 0} for label, _, _ in _BIN_DEFS
+    }
+    # Direction-split prospective calibration: track OVER and UNDER separately
+    # within each confidence bin so over- vs under-calibration is visible.
+    prosp_bins_dir: dict[str, dict[str, dict]] = {
+        d: {label: {"n": 0, "priorHitRateSum": 0.0, "hits": 0} for label, _, _ in _BIN_DEFS}
+        for d in ("over", "under")
     }
 
     for index, row in enumerate(ordered):
@@ -497,6 +719,11 @@ def walk_forward_replay(rows: list[dict]) -> dict:
                 prosp_bins[label]["n"] += 1
                 prosp_bins[label]["priorHitRateSum"] += prior_rate * 100.0
                 prosp_bins[label]["hits"] += outcome
+                # Direction-split accumulation
+                if direction in prosp_bins_dir:
+                    prosp_bins_dir[direction][label]["n"] += 1
+                    prosp_bins_dir[direction][label]["priorHitRateSum"] += prior_rate * 100.0
+                    prosp_bins_dir[direction][label]["hits"] += outcome
 
         # ── Regression (MAE / RMSE) ────────────────────────────────────────
         actual = _number(row.get("actualValue"))
@@ -524,6 +751,19 @@ def walk_forward_replay(rows: list[dict]) -> dict:
                 running_bins[label]["hits"] += outcome
 
     # ── Assemble prospective calibration output ────────────────────────────
+    def _prosp_bin_summary(pb: dict) -> dict | None:
+        """Return {n, priorPredictedPct, observedPct, gapPp} or None."""
+        if not pb["n"]:
+            return None
+        prior_predicted = round(pb["priorHitRateSum"] / pb["n"], 1)
+        observed = round(pb["hits"] / pb["n"] * 100, 1)
+        return {
+            "n": pb["n"],
+            "priorPredictedPct": prior_predicted,
+            "observedPct": observed,
+            "gapPp": round(observed - prior_predicted, 1),
+        }
+
     calibration_output = []
     for label, _, _ in _BIN_DEFS:
         pb = prosp_bins[label]
@@ -538,6 +778,10 @@ def walk_forward_replay(rows: list[dict]) -> dict:
             observed = None
         # Always include final observed rate for the bin
         final_observed = round(rb["hits"] / rb["n"] * 100, 1) if rb["n"] else None
+        # Direction-split summaries (None when no data for that direction)
+        by_direction_bin: dict[str, dict | None] = {}
+        for d in ("over", "under"):
+            by_direction_bin[d] = _prosp_bin_summary(prosp_bins_dir[d][label])
         calibration_output.append({
             "label": label,
             "n": rb["n"],
@@ -546,8 +790,10 @@ def walk_forward_replay(rows: list[dict]) -> dict:
             "observedPct": observed,
             "gapPp": round(observed - prior_predicted, 1) if (prior_predicted is not None and observed is not None) else None,
             "finalObservedPct": final_observed,
+            "byDirection": by_direction_bin,
             "note": ("prospective: priorPredictedPct uses only picks settled before each row; "
-                     "finalObservedPct is the overall hit rate for the bin"),
+                     "finalObservedPct is the overall hit rate for the bin; "
+                     "byDirection separates OVER and UNDER calibration within the bin"),
         })
 
     # ── Per-sport summary ──────────────────────────────────────────────────
@@ -631,6 +877,28 @@ def walk_forward_replay(rows: list[dict]) -> dict:
         "bySport": by_sport_output,
         "byProp": by_prop_output,
         "byDirection": by_direction_output,
+        "goNoGo": _go_no_go_recommendation(
+            classification=(
+                {
+                    "n": prob_n,
+                    "logLoss": round(log_loss_sum / prob_n, 4),
+                    "brierScore": round(brier_sum / prob_n, 4),
+                }
+                if prob_n else {"n": 0, "logLoss": None, "brierScore": None}
+            ),
+            prospective_calibration=calibration_output,
+            projection=(
+                {
+                    "n": error_n,
+                    "mae": round(error_abs_sum / error_n, 4),
+                    "rmse": round(math.sqrt(error_sq_sum / error_n), 4),
+                    "meanError": round(error_signed_sum / error_n, 4),
+                }
+                if error_n else {"n": 0, "mae": None, "rmse": None, "meanError": None}
+            ),
+            by_direction=by_direction_output,
+            eligible_samples=len(ordered),
+        ),
     }
 
 def _walk_forward_projection(ordered: list[dict]) -> dict:

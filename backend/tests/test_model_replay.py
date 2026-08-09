@@ -237,6 +237,7 @@ class TestReplayVsScorecard:
         assert "missingPriorDataEvents" in replay
         assert "prospectiveCalibration" in replay
         assert "bySport" in replay
+        assert "goNoGo" in replay
         # Scorecard-only keys
         assert "chronologicalHoldout" in scorecard
         assert "n" in scorecard
@@ -245,3 +246,204 @@ class TestReplayVsScorecard:
         rows = [_make_row(i) for i in range(5)]
         replay = walk_forward_replay(rows)
         assert "walk" in replay["description"].lower() or "prospective" in replay["description"].lower()
+
+
+class TestGoNoGoRecommendation:
+    """The goNoGo field must carry a structured verdict with required keys."""
+
+    def test_go_no_go_keys_present(self):
+        rows = [_make_row(i) for i in range(20)]
+        result = walk_forward_replay(rows)
+        gng = result["goNoGo"]
+        for key in ("verdict", "summary", "issues", "positives", "basisN", "note"):
+            assert key in gng, f"Missing goNoGo key: {key}"
+
+    def test_verdict_is_one_of_three_values(self):
+        rows = [_make_row(i) for i in range(20)]
+        result = walk_forward_replay(rows)
+        assert result["goNoGo"]["verdict"] in {"GO", "CAUTION", "NO_GO"}
+
+    def test_summary_is_non_empty_string(self):
+        rows = [_make_row(i) for i in range(20)]
+        result = walk_forward_replay(rows)
+        assert isinstance(result["goNoGo"]["summary"], str)
+        assert len(result["goNoGo"]["summary"]) > 10
+
+    def test_issues_and_positives_are_lists(self):
+        rows = [_make_row(i) for i in range(20)]
+        result = walk_forward_replay(rows)
+        assert isinstance(result["goNoGo"]["issues"], list)
+        assert isinstance(result["goNoGo"]["positives"], list)
+
+    def test_basis_n_equals_eligible_samples(self):
+        rows = [_make_row(i) for i in range(15)]
+        result = walk_forward_replay(rows)
+        assert result["goNoGo"]["basisN"] == result["eligibleSamples"]
+
+    def test_empty_input_produces_caution_not_go(self):
+        """Empty corpus must return CAUTION — no checks ran, so GO is unsafe."""
+        result = walk_forward_replay([])
+        gng = result["goNoGo"]
+        assert "verdict" in gng
+        assert gng["verdict"] == "CAUTION", (
+            f"Empty corpus must return CAUTION (no evidence), got {gng['verdict']!r}. "
+            f"Summary: {gng.get('summary')}"
+        )
+        # Summary must mention the evidence gap, not claim all checks passed
+        assert "insufficient" in gng["summary"].lower() or "missing" in gng["summary"].lower(), (
+            f"Empty-corpus summary must describe missing evidence, got: {gng['summary']!r}"
+        )
+
+    def test_under_threshold_corpus_produces_caution_not_go(self):
+        """A corpus with only 5 rows is too thin for most checks — must not be GO."""
+        rows = [_make_row(i) for i in range(5)]
+        result = walk_forward_replay(rows)
+        gng = result["goNoGo"]
+        assert gng["verdict"] in {"CAUTION", "NO_GO"}, (
+            f"Under-threshold corpus (n=5) must not receive GO verdict, got {gng['verdict']!r}"
+        )
+
+    def test_unscored_rows_only_produces_caution_not_go(self):
+        """Rows with result=push (no scored directional outcome) leave classification empty."""
+        rows = []
+        for i in range(20):
+            r = _make_row(i, hit=True, confidence=70.0)
+            r["result"] = "push"
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        gng = result["goNoGo"]
+        # push rows produce no scored classification events → check cannot run
+        assert gng["verdict"] in {"CAUTION", "NO_GO"}, (
+            f"Push-only corpus must not receive GO verdict (no scored events), "
+            f"got {gng['verdict']!r}"
+        )
+
+    def test_coin_flip_confidence_produces_caution_or_no_go(self):
+        """Rows with 50% confidence alternating hit/miss should not get GO.
+
+        A model at exactly coin-flip calibration (50% confidence, ~50% hit rate)
+        cannot beat the log-loss baseline and must not receive a GO verdict.
+        """
+        rows = []
+        for i in range(30):
+            r = _make_row(i, hit=(i % 2 == 0), confidence=50.0)
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        assert result["goNoGo"]["verdict"] in {"CAUTION", "NO_GO"}, (
+            "50%-confidence alternating hit/miss model must not receive GO verdict"
+        )
+
+    def test_well_calibrated_model_gets_go_or_caution(self):
+        """Rows with high confidence and consistent hits should get GO or CAUTION."""
+        # 75% confidence, 80% hit rate — well calibrated, should not be NO_GO
+        rows = []
+        for i in range(40):
+            rows.append(_make_row(i, hit=(i % 5 != 0), confidence=75.0))
+        result = walk_forward_replay(rows)
+        assert result["goNoGo"]["verdict"] in {"GO", "CAUTION"}, (
+            "Well-calibrated model (75% confidence, 80% hit rate) must not be NO_GO"
+        )
+
+    def test_severe_direction_asymmetry_flagged_in_issues(self):
+        """A large OVER/UNDER hit-rate gap must appear in goNoGo issues."""
+        rows = []
+        # OVER picks: 10 rows, all miss (0% hit rate)
+        for i in range(10):
+            r = _make_row(i, hit=False, confidence=70.0)
+            r["recommendation"] = "over"
+            rows.append(r)
+        # UNDER picks: 10 rows, all hit (100% hit rate)
+        for i in range(10, 20):
+            r = _make_row(i, hit=True, confidence=70.0)
+            r["recommendation"] = "under"
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        issues_text = " ".join(result["goNoGo"]["issues"]).lower()
+        assert "direction" in issues_text or "asymmetr" in issues_text, (
+            "Severe OVER/UNDER asymmetry (0% vs 100% hit rate) must appear in goNoGo issues"
+        )
+
+    def test_systematic_projection_bias_flagged_in_issues(self):
+        """Consistent over-projection should surface in goNoGo issues."""
+        rows = []
+        for i in range(20):
+            r = _make_row(i, hit=True, confidence=70.0)
+            # Projected is always 5 units above actual → systematic over-projection
+            r["projectedValue"] = 20.0
+            r["actualValue"] = 5.0
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        issues_text = " ".join(result["goNoGo"]["issues"]).lower()
+        assert "bias" in issues_text or "project" in issues_text, (
+            "Systematic projection bias (meanError far from zero) must appear in goNoGo issues"
+        )
+
+
+class TestDirectionSplitCalibration:
+    """prospectiveCalibration bins must include a byDirection OVER/UNDER breakdown."""
+
+    def test_calibration_bins_have_by_direction_key(self):
+        rows = [_make_row(i, confidence=70.0) for i in range(30)]
+        result = walk_forward_replay(rows)
+        for b in result["prospectiveCalibration"]:
+            assert "byDirection" in b, (
+                f"Calibration bin {b.get('label')} missing byDirection key"
+            )
+
+    def test_by_direction_has_over_and_under_keys(self):
+        rows = [_make_row(i, confidence=70.0) for i in range(30)]
+        result = walk_forward_replay(rows)
+        for b in result["prospectiveCalibration"]:
+            assert "over" in b["byDirection"], "byDirection must contain 'over'"
+            assert "under" in b["byDirection"], "byDirection must contain 'under'"
+
+    def test_by_direction_over_populated_for_over_picks(self):
+        """Bins for rows with recommendation=over must populate the over bucket."""
+        rows = []
+        for i in range(40):
+            r = _make_row(i, confidence=70.0, hit=(i % 2 == 0))
+            r["recommendation"] = "over"
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        bins_with_over = [
+            b for b in result["prospectiveCalibration"]
+            if b["byDirection"].get("over") is not None
+        ]
+        assert bins_with_over, "At least one calibration bin should have over data"
+        for b in bins_with_over:
+            over = b["byDirection"]["over"]
+            assert "n" in over
+            assert "priorPredictedPct" in over
+            assert "observedPct" in over
+            assert "gapPp" in over
+
+    def test_by_direction_under_populated_for_under_picks(self):
+        """Bins for rows with recommendation=under must populate the under bucket."""
+        rows = []
+        for i in range(40):
+            r = _make_row(i, confidence=75.0, hit=(i % 3 != 2))
+            r["recommendation"] = "under"
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        bins_with_under = [
+            b for b in result["prospectiveCalibration"]
+            if b["byDirection"].get("under") is not None
+        ]
+        assert bins_with_under, "At least one calibration bin should have under data"
+
+    def test_direction_split_counts_sum_to_at_most_overall(self):
+        """Sum of OVER + UNDER prospective n must not exceed overall prospective n."""
+        rows = []
+        for i in range(40):
+            r = _make_row(i, confidence=70.0, hit=(i % 2 == 0))
+            r["recommendation"] = "over" if i % 3 != 0 else "under"
+            rows.append(r)
+        result = walk_forward_replay(rows)
+        for b in result["prospectiveCalibration"]:
+            over_n = (b["byDirection"].get("over") or {}).get("n", 0)
+            under_n = (b["byDirection"].get("under") or {}).get("n", 0)
+            total_prosp = b["prospectiveN"]
+            assert over_n + under_n <= total_prosp, (
+                f"Bin {b['label']}: over ({over_n}) + under ({under_n}) "
+                f"> prospectiveN ({total_prosp})"
+            )
