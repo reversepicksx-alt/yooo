@@ -52,11 +52,12 @@ def infer_grid_position(
     formation: Any,
     provider_position: Any = None,
 ) -> str:
-    """Infer a conservative exact position from API-Football's lineup grid.
+    """Infer a conservative exact position from a lineup grid.
 
     API-Football's ``grid`` is ``row:column`` from the team's defensive end.
-    The grid is more informative than the broad D/M/F category, but we only
-    infer a side when the formation gives us an unambiguous back line.
+    The grid is more informative than the broad D/M/F category, but exact
+    positions are returned only when the formation makes the tactical band
+    unambiguous.
     """
     raw = str(grid or "").strip()
     try:
@@ -87,6 +88,8 @@ def infer_grid_position(
     # manufacturing CM/CDM/CAM evidence.
     provider_category = normalize_observed_position(provider_position)
     if provider_category in {"M", "MID"} and row == 3:
+        if shape[:3] == [3, 1, 4] and column == 1:
+            return "CDM"
         if shape[:3] == [4, 3, 3] and column in {1, 2, 3}:
             return "CM"
         if shape[:3] == [4, 3, 1] and column in {1, 2, 3}:
@@ -99,6 +102,8 @@ def infer_grid_position(
             return "CM"
 
     if provider_category in {"M", "MID"} and row == 4:
+        if shape[:4] == [3, 1, 4, 2] and column in {1, 2, 3, 4}:
+            return {1: "LM", 2: "CM", 3: "CM", 4: "RM"}[column]
         if shape[:4] == [4, 2, 3, 1] and column in {1, 2, 3}:
             return "CAM"
         if shape[:4] == [4, 1, 4, 1] and column in {1, 2, 3, 4}:

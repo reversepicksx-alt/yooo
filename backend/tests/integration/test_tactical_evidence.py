@@ -105,6 +105,11 @@ def test_lineup_grid_resolves_unambiguous_midfield_bands():
     assert infer_grid_position("4:2", "4-2-3-1", "M") == "CAM"
     assert infer_grid_position("3:1", "4-1-4-1", "M") == "CDM"
     assert infer_grid_position("4:3", "4-1-4-1", "M") == "CM"
+    assert infer_grid_position("3:1", "3-1-4-2", "M") == "CDM"
+    assert infer_grid_position("4:1", "3-1-4-2", "M") == "LM"
+    assert infer_grid_position("4:2", "3-1-4-2", "M") == "CM"
+    assert infer_grid_position("4:3", "3-1-4-2", "M") == "CM"
+    assert infer_grid_position("4:4", "3-1-4-2", "M") == "RM"
 
 
 def test_player_opponent_history_reports_hit_rate_from_valid_values():
