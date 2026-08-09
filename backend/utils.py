@@ -19,6 +19,7 @@ from collections import OrderedDict as _OrderedDict
 from config import API_DAILY_SOFT_LIMIT
 
 _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+_COUNT_FILE = "/tmp/.api_sports_daily_count"
 _quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
 _daily_call_date: str | None = None
 _daily_call_count = 0
@@ -78,12 +79,45 @@ def _store_response(endpoint: str, key: str, value):
         _response_cache.popitem(last=False)
 
 
+def _load_daily_count_from_disk() -> tuple:
+    """Read the persisted daily call count checkpoint.
+
+    Returns (date_str, count) where date_str matches today's UTC date, or
+    (None, 0) if the file is missing, malformed, or from a previous day.
+    """
+    try:
+        if _os.path.exists(_COUNT_FILE):
+            with open(_COUNT_FILE) as f:
+                raw = f.read().strip()
+            if raw and ":" in raw:
+                date_str, _, count_str = raw.partition(":")
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if date_str == today:
+                    return date_str, int(count_str)
+    except Exception:
+        pass
+    return None, 0
+
+
+def _checkpoint_daily_count():
+    """Persist the current daily call count to disk so restarts can recover it."""
+    try:
+        with open(_COUNT_FILE, "w") as f:
+            f.write(f"{_daily_call_date}:{_daily_call_count}")
+    except Exception:
+        pass
+
+
 def _reset_daily_budget_if_needed():
     global _daily_call_date, _daily_call_count
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if _daily_call_date != today:
+        # First call of a new UTC day (or first call after a restart).
+        # Try to recover the persisted count so a redeploy mid-day doesn't
+        # show zero calls when hundreds were already made.
+        disk_date, disk_count = _load_daily_count_from_disk()
         _daily_call_date = today
-        _daily_call_count = 0
+        _daily_call_count = disk_count if disk_date == today else 0
 
 
 def _load_breaker_from_disk() -> str | None:
@@ -110,6 +144,13 @@ def _quota_tripped() -> bool:
         _quota_exhausted_date = None
         try:
             _os.remove(_BREAKER_FILE)
+        except Exception:
+            pass
+        # Stale count file from yesterday — let _reset_daily_budget_if_needed
+        # handle the new day's count; remove the old file so it isn't confused
+        # for a same-day recovery on any subsequent restart today.
+        try:
+            _os.remove(_COUNT_FILE)
         except Exception:
             pass
         return False
@@ -422,6 +463,7 @@ async def api_football_request(
         for attempt in range(2):
             try:
                 _daily_call_count += 1
+                _checkpoint_daily_count()
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.get(f"{API_FOOTBALL_BASE}/{endpoint}", headers=headers, params=params or {})
                     if resp.status_code == 429:

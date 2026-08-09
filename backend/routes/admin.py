@@ -1254,6 +1254,7 @@ async def admin_quota_reset(req: _QuotaResetRequest):
     await verify_owner(req.email, req.token)
     import os as _os
     _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+    _COUNT_FILE = "/tmp/.api_sports_daily_count"
     existed = _os.path.exists(_BREAKER_FILE)
     if existed:
         try:
@@ -1268,6 +1269,12 @@ async def admin_quota_reset(req: _QuotaResetRequest):
         _utils._quota_exhausted_date = None
         _utils._daily_call_count = 0
         _utils._last_quota_reset_at = reset_at
+        # Clear the daily count checkpoint so the reset is immediately reflected
+        # on the next restart (disk file must match the zeroed in-memory state).
+        try:
+            _os.remove(_COUNT_FILE)
+        except FileNotFoundError:
+            pass
     except Exception:
         pass
     return {
