@@ -1840,10 +1840,16 @@ async def predict(req: PredictionRequest):
                 if not fid:
                     return []
                 try:
-                    # Fetch players AND fixture statistics (possession) in parallel
+                    # Fetch players, fixture statistics, and the lineup grid
+                    # together.  The player-stat endpoint often reports only
+                    # D/M/F; the confirmed lineup grid is what identifies
+                    # CB/LB/RB in that specific appearance.
                     players_task = api_football_request("fixtures/players", {"fixture": fid})
                     stats_task = api_football_request("fixtures/statistics", {"fixture": fid})
-                    players_data, fixture_stats_data = await aio.gather(players_task, stats_task)
+                    lineups_task = api_football_request("fixtures/lineups", {"fixture": fid})
+                    players_data, fixture_stats_data, lineups_data = await aio.gather(
+                        players_task, stats_task, lineups_task
+                    )
 
                     if not players_data:
                         return []
@@ -1860,6 +1866,26 @@ async def predict(req: PredictionRequest):
                                         possession_map[tid] = int(poss_str)
                                     except (ValueError, TypeError):
                                         pass
+
+                    # Map player ID → exact observed position from the
+                    # fixture lineup grid.  Keep the provider category as a
+                    # fallback when a lineup is missing or the formation
+                    # cannot support an unambiguous inference.
+                    lineup_position_map = {}
+                    lineup_formation_map = {}
+                    for lineup_team in _api_response_list(lineups_data):
+                        team_id = (lineup_team.get("team") or {}).get("id")
+                        formation = lineup_team.get("formation")
+                        for lineup_row in lineup_team.get("startXI", []):
+                            lineup_player = lineup_row.get("player") or {}
+                            lineup_player_id = lineup_player.get("id")
+                            if lineup_player_id:
+                                lineup_position_map[lineup_player_id] = infer_grid_position(
+                                    lineup_player.get("grid"),
+                                    formation,
+                                    lineup_player.get("pos"),
+                                )
+                                lineup_formation_map[lineup_player_id] = formation
 
                     results = []
                     for team_data in players_data:
@@ -1883,7 +1909,11 @@ async def predict(req: PredictionRequest):
                             pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                             pos = pstats.get("games", {}).get("position", "")
                             minutes = pstats.get("games", {}).get("minutes") or 0
-                            if pos != fixture_pos or minutes < 30:
+                            provider_position = normalize_observed_position(pos)
+                            if (
+                                provider_position != normalize_observed_position(fixture_pos)
+                                or minutes < 30
+                            ):
                                 continue
                             stat_val = pstats.get(stat_cat, {}).get(stat_sub)
                             if stat_val is None:
@@ -1899,6 +1929,16 @@ async def predict(req: PredictionRequest):
                             rating = pstats.get("games", {}).get("rating")
                             p_id = p.get("player", {}).get("id")
                             p_name = p.get("player", {}).get("name", "")
+                            grid_position = lineup_position_map.get(p_id)
+                            observed_fixture_position = (
+                                grid_position
+                                if grid_position in {
+                                    "GK", "CB", "LB", "RB", "LWB", "RWB",
+                                    "CDM", "CM", "CAM", "LM", "RM", "LW",
+                                    "RW", "CF", "ST", "SS",
+                                }
+                                else provider_position
+                            )
 
                             # Look up cached specific position + role. Atlas may be
                             # write-blocked, so a missing cache row is expected; in
@@ -1916,7 +1956,6 @@ async def predict(req: PredictionRequest):
                             ) if p_id else None
                             spec_pos = (cached_pr or {}).get("specificPosition", "")
                             spec_role = (cached_pr or {}).get("role", "")
-                            observed_normalized = normalize_observed_position(pos)
                             # A cache row is only an exact-position claim when it
                             # came from grounded/manual evidence. Category
                             # fallbacks can contain a made-up CB/CM/etc. and must
@@ -1943,7 +1982,7 @@ async def predict(req: PredictionRequest):
                             }
                             observed_exact_target = bool(
                                 _exact_target_requested
-                                and observed_normalized == target_specific_pos
+                                and observed_fixture_position == target_specific_pos
                             )
                             cached_exact_target = bool(
                                 target_specific_pos
@@ -1959,15 +1998,18 @@ async def predict(req: PredictionRequest):
                                 "shots_total": (pstats.get("shots") or {}).get("total"),
                                 "clearances": (pstats.get("tackles") or {}).get("clearances"),
                             }
-                            observed_role = resolve_observed_role(pos, role_stats)
+                            observed_role = resolve_observed_role(
+                                observed_fixture_position,
+                                role_stats,
+                            )
                             # A match row is the strongest evidence for the
                             # player's actual position in that appearance.
                             # Never let a stale grounded profile replace an
                             # observed CB/LB/RB role, and never attach a
                             # cached exact role to a broad D/DEF row.
-                            if observed_normalized == "DEF":
+                            if observed_fixture_position == "DEF":
                                 candidate_role = ""
-                            elif observed_normalized in {
+                            elif observed_fixture_position in {
                                 "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
                                 "CM", "CAM", "LM", "RM", "LW", "RW", "CF",
                                 "ST", "SS",
@@ -2006,15 +2048,30 @@ async def predict(req: PredictionRequest):
                             position_verified = bool(
                                 observed_exact_target or cached_exact_target
                             )
-                            if observed_exact_target:
+                            if grid_position in {
+                                "GK", "CB", "LB", "RB", "LWB", "RWB",
+                                "CDM", "CM", "CAM", "LM", "RM", "LW",
+                                "RW", "CF", "ST", "SS",
+                            }:
+                                position_value = grid_position
+                                position_source = "fixture_lineup_grid"
+                            elif observed_exact_target:
                                 position_value = target_specific_pos
                                 position_source = "fixture_observed"
                             elif cached_exact_target:
                                 position_value = spec_pos
                                 position_source = "grounded_profile"
                             else:
-                                position_value = observed_normalized or fixture_pos
-                                position_source = "provider_category"
+                                position_value = observed_fixture_position or fixture_pos
+                                position_source = (
+                                    "fixture_lineup_grid"
+                                    if grid_position in {
+                                        "GK", "CB", "LB", "RB", "LWB", "RWB",
+                                        "CDM", "CM", "CAM", "LM", "RM", "LW",
+                                        "RW", "CF", "ST", "SS",
+                                    }
+                                    else "provider_category"
+                                )
 
                             # GK-specific: capture goals conceded for per-game save rate.
                             # For saves prop: stat_cat="goals", stat_sub="saves" per PROP_STAT_KEYS.
@@ -2042,10 +2099,21 @@ async def predict(req: PredictionRequest):
                                 "venue": comp_team_venue,
                                 "position": position_value or None,
                                 "matchPosition": observed_normalized or pos or None,
+                                "exactPosition": (
+                                    observed_fixture_position
+                                    if observed_fixture_position in {
+                                        "GK", "CB", "LB", "RB", "LWB", "RWB",
+                                        "CDM", "CM", "CAM", "LM", "RM", "LW",
+                                        "RW", "CF", "ST", "SS",
+                                    }
+                                    else None
+                                ),
+                                "gridPosition": grid_position,
+                                "lineupFormation": lineup_formation_map.get(p_id),
                                 "positionMatch": "specific" if position_verified else "provider_category",
                                 "positionVerified": position_verified,
                                 "positionSource": position_source,
-                                "observedPosition": observed_normalized or pos or None,
+                                "observedPosition": observed_fixture_position or observed_normalized or pos or None,
                                 "role": candidate_role,
                                 "roleSource": (
                                     "cached_role"
@@ -5909,7 +5977,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             None,
         )
         _observed_role = None
-        if (_pitch_lineup or {}).get("status") == "confirmed" and _observed_target:
+        _lineup_status = (_pitch_lineup or {}).get("status")
+        if _lineup_status in {"confirmed", "predicted"} and _observed_target:
             _observed_position = infer_grid_position(
                 _observed_target.get("grid"),
                 (_pitch_lineup or {}).get("formation"),
@@ -5941,7 +6010,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 player_role = _observed_role.get("role") or ""
                 display_position = specific_position
                 display_role = player_role
-                _position_resolution_source = "fixture_lineup_observation"
+                _position_resolution_source = (
+                    "fixture_lineup_observation"
+                    if _lineup_status == "confirmed"
+                    else "predicted_lineup_grid"
+                )
         _historical_position_summary = summarize_observed_positions(
             [{"position": item.get("observedPosition")} for item in h2h_player_stats]
         )
