@@ -79,5 +79,21 @@ Formation screenshots can validate the mapping, but identity still requires the
 backend's player ID/name/grid join; a formation label alone must not assign a
 position to the requested player.
 
+## API-Sports lineup identity joins
+
+Normalize provider player IDs before joining lineup, player-stat, and request
+payloads; API-Sports IDs can arrive as strings in one response and integers in
+another. A strict type-sensitive join can leave the pitch diagram correct while
+the analysis layer loses the target's exact grid position.
+
+**Why:** The rendered projected XI and the exact-position resolver consume
+separate API-Sports payloads. When `"44"` was compared directly with `44`, the
+target marker disappeared from the resolver even though the player was visibly
+on the pitch.
+
+**How to apply:** Use one normalized provider-ID helper for lineup status,
+projected-XI target marking, historical comparison lineup maps, and any future
+cross-response player joins.
+
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.

@@ -49,3 +49,10 @@ def test_midfield_grid_evidence_can_admit_exact_position_comparisons():
     assert 'shape[:4] == [3, 1, 4, 2]' in (ROOT / "tactical_evidence.py").read_text()
     assert 'return "CM"' in (ROOT / "tactical_evidence.py").read_text()
     assert 'target_specific_pos=specific_position' in PREDICT_SOURCE
+
+
+def test_api_sports_lineup_identity_is_normalized_before_exact_position_join():
+    assert "def _normalize_provider_player_id(value)" in PREDICT_SOURCE
+    assert "_normalize_provider_player_id(pl.get(\"id\")) == target_id" in PREDICT_SOURCE
+    assert "_normalize_provider_player_id(p_id)" in PREDICT_SOURCE
+    assert "_normalize_provider_player_id(item.get(\"player\", {}).get(\"id\"))" in PREDICT_SOURCE

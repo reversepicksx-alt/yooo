@@ -187,13 +187,22 @@ def _api_response_list(payload) -> list:
     return []
 
 
+def _normalize_provider_player_id(value):
+    """Normalize provider IDs before joining separate API-Sports responses."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value).strip() or None
+
+
 def _lineup_player_status(payload, player_id: int | str | None) -> str:
     """Return starting/substitute/not_in_squad/unknown from lineup payload."""
     if player_id is None:
         return "unknown"
-    try:
-        target_id = int(player_id)
-    except (TypeError, ValueError):
+    target_id = _normalize_provider_player_id(player_id)
+    if target_id is None:
         return "unknown"
     responses = _api_response_list(payload)
     if not responses:
@@ -201,14 +210,14 @@ def _lineup_player_status(payload, player_id: int | str | None) -> str:
     for team in responses:
         starters = team.get("startXI", []) if isinstance(team, dict) else []
         substitutes = team.get("substitutes", []) if isinstance(team, dict) else []
-        starter_ids = {
-            item.get("player", {}).get("id")
-            for item in starters
+        substitute_ids = {
+            _normalize_provider_player_id(item.get("player", {}).get("id"))
+            for item in substitutes
             if isinstance(item, dict) and item.get("player", {}).get("id") is not None
         }
-        substitute_ids = {
-            item.get("player", {}).get("id")
-            for item in substitutes
+        starter_ids = {
+            _normalize_provider_player_id(item.get("player", {}).get("id"))
+            for item in starters
             if isinstance(item, dict) and item.get("player", {}).get("id") is not None
         }
         if target_id in starter_ids:
@@ -2154,13 +2163,16 @@ async def predict(req: PredictionRequest):
                         for lineup_row in lineup_team.get("startXI", []):
                             lineup_player = lineup_row.get("player") or {}
                             lineup_player_id = lineup_player.get("id")
-                            if lineup_player_id:
-                                lineup_position_map[lineup_player_id] = infer_grid_position(
+                            if lineup_player_id is not None:
+                                lineup_player_key = _normalize_provider_player_id(
+                                    lineup_player_id
+                                )
+                                lineup_position_map[lineup_player_key] = infer_grid_position(
                                     lineup_player.get("grid"),
                                     formation,
                                     lineup_player.get("pos"),
                                 )
-                                lineup_formation_map[lineup_player_id] = formation
+                                lineup_formation_map[lineup_player_key] = formation
 
                     results = []
                     for team_data in players_data:
@@ -2212,8 +2224,9 @@ async def predict(req: PredictionRequest):
                                         pass
                             rating = pstats.get("games", {}).get("rating")
                             p_id = p.get("player", {}).get("id")
+                            p_id_key = _normalize_provider_player_id(p_id)
                             p_name = p.get("player", {}).get("name", "")
-                            grid_position = lineup_position_map.get(p_id)
+                            grid_position = lineup_position_map.get(p_id_key)
                             observed_fixture_position = (
                                 grid_position
                                 if grid_position in {
@@ -2402,7 +2415,7 @@ async def predict(req: PredictionRequest):
                                     else None
                                 ),
                                 "gridPosition": grid_position,
-                                "lineupFormation": lineup_formation_map.get(p_id),
+                                "lineupFormation": lineup_formation_map.get(p_id_key),
                                 "positionMatch": "specific" if position_verified else "provider_category",
                                 "positionVerified": position_verified,
                                 "positionSource": position_source,
@@ -5399,7 +5412,10 @@ async def predict(req: PredictionRequest):
                         "grid": pl.get("grid"),
                         "number": pl.get("number"),
                         "x": x, "y": y,
-                        "isTarget": bool(target_id) and pl.get("id") == target_id,
+                        "isTarget": (
+                            target_id is not None
+                            and _normalize_provider_player_id(pl.get("id")) == target_id
+                        ),
                     })
                 return {
                     "formation": team_lineup.get("formation"),
