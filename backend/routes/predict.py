@@ -3718,6 +3718,19 @@ async def predict(req: PredictionRequest):
             "projectionAdjustment": 0.0,
             "projectionAdjustmentStatus": "shadow_only",
         }
+        _gk_pool_prior = {
+            "version": "gk-pool-prior-v1",
+            "status": "not_applicable",
+            "mode": os.environ.get("GK_POOL_PRIOR_MODE", "shadow"),
+            "requestedMode": os.environ.get("GK_POOL_PRIOR_MODE", "shadow"),
+            "livePromotionRequested": False,
+            "applied": False,
+            "projectionAdjustmentStatus": "shadow_only",
+            "poolMean": None,
+            "poolRows": 0,
+            "poolPlayers": 0,
+            "reason": "Not a goalkeeper pass-attempt prediction.",
+        }
         # Safety defaults for T003/T004 — always defined even if exception occurs
         _redist_alerts: list = []
         _redist_multiplier: float = 1.0
@@ -4534,6 +4547,7 @@ async def predict(req: PredictionRequest):
             )
             if isinstance(early_bayes, dict):
                 early_bayes["pressureResponse"] = _pressure_response
+                early_bayes["goalkeeperPoolPrior"] = _gk_pool_prior
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
 
@@ -5609,6 +5623,17 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             "Midfielder": {"CDM", "CM", "CAM", "LM", "RM", "LW", "RW"},
             "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
         }
+        # Conservative fallback used only when the grounded resolver cannot
+        # return a specific position. Keep this provider-category fallback
+        # explicit and persisted fail-open so a cache outage never discards a
+        # computed prediction.
+        category_defaults = {
+            "Goalkeeper": ("GK", "Shot-Stopper"),
+            "Defender": ("CB", "Stopper"),
+            "Midfielder": ("CM", "Box-to-Box"),
+            "Attacker": ("ST", "Complete Forward"),
+            "": ("", ""),
+        }
 
         if req.positionOverride:
             specific_position = req.positionOverride
@@ -5628,6 +5653,31 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 player_id=req.playerId or 0,
                 stats=_role_stats if "_role_stats" in locals() else None,
             )
+            if not specific_position:
+                specific_position, player_role = category_defaults[player_position]
+                _position_resolution_source = "category_fallback"
+                try:
+                    await db.player_positions.update_one(
+                        {"playerId": req.playerId},
+                        {"$set": {
+                            "playerId": req.playerId,
+                            "playerName": req.playerName,
+                            "team": corrected_team_name,
+                            "genericPosition": player_position,
+                            "specificPosition": specific_position,
+                            "role": player_role,
+                            "roleSource": "provider_category_fallback",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }},
+                        upsert=True,
+                    )
+                except Exception as _position_cache_err:
+                    print(f"[POS ROLE CACHE WRITE] skipped: {_position_cache_err}")
+                    print(f"[POSITION CACHE WRITE] skipped: {_position_cache_err}")
+                print(
+                        f"[POS RESOLVE] Category fallback: "
+                        f"{req.playerName} → {specific_position} ({player_role})"
+                )
         else:
             specific_position = player_position
             _position_resolution_source = "provider_specific"
@@ -5733,6 +5783,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     )
                 except Exception as _role_persist_err:
                     print(f"[ROLE EVIDENCE] persistence skipped: {_role_persist_err}")
+                    print(f"[POS ROLE CACHE WRITE] skipped: {_role_persist_err}")
         else:
             _observed_role = {
                 "position": display_position or None,
@@ -5932,7 +5983,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         f"fewer back-passes as defenders push forward. GK distribution can drop late."
                     )
             except Exception:
-                pass
+                print("[POSITION CACHE WRITE] skipped: safety-valve cache update failed")
 
             # Determine cross-team correlation note for dominant-possession opponent
             _gk_cross_team_note = ""
@@ -6457,6 +6508,38 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "source": "api_football_fixture_player_stats",
             }
 
+        # The exact-opponent comparison pool is assembled after the initial
+        # Bayesian pass. For goalkeeper pass props, calculate its diagnostic
+        # prior here and attach it to the final ledger. It remains shadow-only
+        # until a walk-forward validation explicitly promotes the mode.
+        if (
+            req.sport == "soccer"
+            and req.propType in {"pass_attempts", "passes"}
+            and (
+                str(_bayes_position or "").upper() in {"GK", "G", "GOALKEEPER"}
+                or str(specific_position or "").upper() in {"GK", "G", "GOALKEEPER"}
+            )
+        ):
+            try:
+                from gk_pool_prior import build_gk_pool_prior
+                _gk_pool_prior = build_gk_pool_prior(
+                    position_comparison,
+                    player_prior_mean=(early_bayes or {}).get("priorMean"),
+                    mode=os.environ.get("GK_POOL_PRIOR_MODE", "shadow"),
+                )
+                _gk_pool_prior["sourceScope"] = position_comparison_scope
+                print(
+                    f"[GK POOL PRIOR] {req.playerName}: "
+                    f"status={_gk_pool_prior.get('status')} "
+                    f"mode={_gk_pool_prior.get('mode')} "
+                    f"pool={_gk_pool_prior.get('poolMean')} "
+                    f"n={_gk_pool_prior.get('poolRows')}"
+                )
+            except Exception as _gk_pool_err:
+                print(f"[GK POOL PRIOR] non-fatal: {_gk_pool_err}")
+            if isinstance(early_bayes, dict):
+                early_bayes["goalkeeperPoolPrior"] = _gk_pool_prior
+
         # ── CATEGORY SAFETY VALVE ──────────────────────────────────────────────
         # Hard override: API-Football generic category is the ground truth.  If a
         # stale/wrong position cache resolved an attacking role for a player the
@@ -6701,6 +6784,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "oppAllowedAvg": (real_bayes or {}).get("opponentAllowedAvg"),
                 "oppAllowedN":   (real_bayes or {}).get("opponentAllowedSamples"),
                 "oppAllowedWeight": (real_bayes or {}).get("opponentAllowedWeight"),
+                "goalkeeperPoolPrior": (real_bayes or {}).get("goalkeeperPoolPrior"),
                 "momentumLabel": (real_bayes or {}).get("momentumLabel"),
                 "momentumEffect":(real_bayes or {}).get("momentumEffect"),
                 "priorStd":      (real_bayes or {}).get("priorStd"),
@@ -10185,6 +10269,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "opponentFixtures": len(_af_opp_stats), "h2hPlayerGames": _af_opponent_n,
                     "comparableGames": _af_comparable_n, "possessionObservations": len(_af_poss_obs),
                     "teamPassObservations": len(_af_team_passes), "shareJoins": len(_af_shares),
+                    "goalkeeperPoolRows": int((_gk_pool_prior or {}).get("poolRows") or 0),
+                    "goalkeeperPoolPlayers": int((_gk_pool_prior or {}).get("poolPlayers") or 0),
                     "bzzoiroFixtureCovered": bool((bzzoiro_enrichment or {}).get("available")),
                     "statsbombFixtureCovered": bool((statsbomb_enrichment or {}).get("available")),
                 },
@@ -10199,6 +10285,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "gameScript": _af_game_script or None,
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                     "pressureResponse": prediction.get("pressureResponse"),
+                    "goalkeeperPoolPrior": (real_bayes or {}).get("goalkeeperPoolPrior"),
                     "bzzoiroEnrichment": prediction.get("tacticalContext", {}).get("bzzoiroEnrichment"),
                     "statsbombEnrichment": prediction.get("tacticalContext", {}).get("statsbombEnrichment"),
                     "tacticalIntelligence": prediction.get("tacticalIntelligence"),
