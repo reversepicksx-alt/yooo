@@ -37,8 +37,10 @@ function isLive(p: Pick) {
   if (isPendingReview(p)) return false;
   if (isSettled(p)) return false;
   return !!(
-    (p.matchStatus === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null))
-    || (p.status === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null))
+    // Fixture status is authoritative. Player stats can lag kickoff by one
+    // provider poll, but the card must still say LIVE instead of PENDING.
+    p.matchStatus === 'live'
+    || p.status === 'live'
     || (p.elapsed != null && p.elapsed > 0) || p.currentValue != null
     || (p.pace != null && p.pace > 0)
   );
@@ -454,6 +456,9 @@ export default function OwnerPickCard({
                     {pick.teamName || 'Team'}
                     <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
                   </Text>
+                  {live && pick.fixtureId != null && (
+                    <Text style={styles.compactMatchId}>MATCH ID {pick.fixtureId}</Text>
+                  )}
                 </View>
               </View>
               <View style={styles.compactRightCluster}>
@@ -681,6 +686,9 @@ export default function OwnerPickCard({
           <Text style={styles.footTime} numberOfLines={1}>
             {matchTime || (elapsed != null ? `${elapsed}'` : live ? '● LIVE' : '')}
           </Text>
+          {live && pick.fixtureId != null && (
+            <Text style={styles.matchId} numberOfLines={1}>MATCH ID {pick.fixtureId}</Text>
+          )}
           {showScoreLine && (
             <Text style={styles.footScore} numberOfLines={1}>
               {hasScore
@@ -868,6 +876,7 @@ const styles = StyleSheet.create({
   compactAvatarLetter: { color: Colors.primary, fontSize: 11, fontWeight: '900' },
   compactPlayerName: { color: '#fff', fontSize: 12.5, fontWeight: '800', letterSpacing: -0.2 },
   compactSubText: { color: 'rgba(255,255,255,0.4)', fontSize: 8.5, fontWeight: '600', marginTop: 1 },
+  compactMatchId: { color: Colors.primary, fontSize: 7.5, fontWeight: '800', letterSpacing: 0.35, marginTop: 1 },
   compactRightCluster: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 5 },
   compactShareBtn: {
     width: 22, height: 22, borderRadius: 11,
@@ -954,6 +963,7 @@ const styles = StyleSheet.create({
   trackMid: { position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1.5, backgroundColor: 'rgba(255,255,255,0.4)' },
   footRow: { marginTop: 4, gap: 2 },
   footTime: { color: 'rgba(255,255,255,0.3)', fontSize: 9, fontWeight: '600' },
+  matchId: { color: Colors.primary, fontSize: 9, fontWeight: '800', letterSpacing: 0.25, marginLeft: 8 },
   footScore: { color: 'rgba(255,255,255,0.25)', fontSize: 8.5, fontWeight: '500' },
   captureDisclaimer: {
     color: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: '500',

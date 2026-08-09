@@ -12,7 +12,7 @@ from models import (
     SavePickRequest, GetPicksRequest, DeletePickRequest,
     CorrectPickRequest, LiveUpdateRequest, SettlePicksRequest,
 )
-from utils import api_football_request
+from utils import api_football_request, priority_api_football_request
 import cs2_client as _cs2_client
 import wta_client as _wta_client
 import httpx as _httpx
@@ -916,7 +916,18 @@ async def list_picks(req: GetPicksRequest):
     # ── Short-circuit: serve from cache if fresh enough ───────────────────
     _now_mono = _time_mod.monotonic()
     _cached = _picks_list_cache.get(requester_email)
-    if _cached and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL:
+    _cached_has_active = bool(
+        _cached
+        and any(
+            p.get("status") in {"live", "pending"}
+            or p.get("matchStatus") == "live"
+            for p in (_cached.get("picks") or [])
+        )
+    )
+    # Active picks must always pass through the live resolver. Returning a
+    # 20-second cached snapshot while the client polls every 15 seconds made
+    # the Live tab show stale PENDING cards and hide minute-by-minute values.
+    if _cached and not _cached_has_active and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL:
         return {"picks": _cached["picks"]}
 
     # Always fetch only the requester's own picks for the My Picks / Live / History UI.
@@ -3126,7 +3137,7 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     known_fids     = list({p["fixtureId"] for p in picks_with_fid})
 
     async def _by_fid(fid: int) -> dict | None:
-        res = await api_football_request("fixtures", {"id": fid}) or []
+        res = await priority_api_football_request("fixtures", {"id": fid}) or []
         return res[0] if res else None
 
     # ── Pre-fetch shared caches for picks WITHOUT a stored fixtureId ─────
@@ -3141,7 +3152,7 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         _league = NWSL_LEAGUE_ID if _is_nwsl else None
         window_results = await aio.gather(
             *[
-                api_football_request(
+                priority_api_football_request(
                     "fixtures",
                     {
                         "team": tid,
@@ -3170,7 +3181,7 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         _seasons = [NWSL_SEASON] if lid == NWSL_LEAGUE_ID else [2025, 2026]
         window_results = await aio.gather(
             *[
-                api_football_request(
+                priority_api_football_request(
                     "fixtures",
                     {"league": lid, "from": from_d, "to": to_d, "season": season},
                 )
@@ -3190,7 +3201,7 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _by_team(tid: int) -> list:
         # T1: live team lookup is most specific.
-        live = await api_football_request("fixtures", {"team": tid, "live": "all"}) or []
+        live = await priority_api_football_request("fixtures", {"team": tid, "live": "all"}) or []
         if live:
             return live
         # Fallback: 3-day window. South American / Mexican kickoffs often land
@@ -3200,14 +3211,14 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _by_league(lid: int) -> list:
         # T2: live league lookup.
-        live = await api_football_request("fixtures", {"league": lid, "live": "all"}) or []
+        live = await priority_api_football_request("fixtures", {"league": lid, "live": "all"}) or []
         if live:
             return live
         # Fallback: 3-day window for the same UTC-date reason.
         return await _league_window(lid, yesterday_str, tomorrow_str)
 
     async def _all_live() -> list:
-        return await api_football_request("fixtures", {"live": "all"}) or []
+        return await priority_api_football_request("fixtures", {"live": "all"}) or []
 
     async def _empty_list() -> list:
         return []
@@ -3422,7 +3433,7 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _fetch_players(fid: int) -> list:
         try:
-            data = await api_football_request("fixtures/players", {"fixture": fid})
+            data = await priority_api_football_request("fixtures/players", {"fixture": fid})
             if data:
                 print(f"[LIVE] fixtures/players fixture={fid} → {len(data)} teams")
             else:
@@ -3728,7 +3739,7 @@ def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
 async def _fetch_fixture_possession(fixture_id: int, home_id: int, away_id: int) -> tuple:
     """Return (home_poss, away_poss) from fixtures/statistics, or (None, None) on failure."""
     try:
-        stats_data = await api_football_request("fixtures/statistics", {"fixture": fixture_id})
+        stats_data = await priority_api_football_request("fixtures/statistics", {"fixture": fixture_id})
         if not stats_data:
             return (None, None)
         h_poss, a_poss = None, None
@@ -3848,7 +3859,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         (home_poss, away_poss) = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
     else:
         player_stats_data, (home_poss, away_poss) = await aio.gather(
-            api_football_request("fixtures/players", {"fixture": fixture_id}),
+            priority_api_football_request("fixtures/players", {"fixture": fixture_id}),
             _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
         )
     # Opponent season-average possession for richer post-match context

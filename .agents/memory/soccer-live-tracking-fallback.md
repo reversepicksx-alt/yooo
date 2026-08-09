@@ -20,6 +20,7 @@ Root causes:
 
 - Team and league lookups use a 3-day `from`/`to` window and try both `2025` and `2026` seasons in one call. This catches matches that are live, finished, or on a different UTC date.
 - Pre-store `fixtureId` for any match discovered in the lookup window, not only `NS` fixtures. Once stored, subsequent calls use the direct `fixtures?id=X` path.
+- Active pick-list polls must bypass the short-lived list snapshot cache, and all API-Football live lookups/player-stat fetches must use the priority request path so maintenance traffic cannot starve live cards at the local soft budget.
 - Auto-settlement name matching uses the same robust rules as live tracking: full/substring, last-name (>=4 chars), and initial+last (e.g. `S. Montiel` matches `E. Montiel`). Name matching is also a fallback when the stored `playerId` does not match the API entry.
 - DNP / not-in-squad settlement: if a finished fixture's `fixtures/players` response does not include the player, settle as `push`/`dnp` instead of leaving the pick stuck in `live`. This handles injuries, rests, and squad omissions like Paredes vs Deportivo Riestra.
 - Add explicit logging (`[LIVE-MISS]`, `[AUTO-SETTLE-DNP]`, `[SETTLE-DNP]`) when a pick cannot be matched or is DNP so future failures are diagnosable.
@@ -32,5 +33,6 @@ API-Football's live coverage is tiered by region and rate-limit budget. South Am
 
 - Any future expansion to new leagues should use the stored-`fixtureId` path as the primary lookup and the 3-day window as the fallback.
 - Never rely on `fixtures?live=all` as the primary source for live tracking; treat it as a last-resort cross-check.
+- Treat stored `status`/fixture live status as authoritative for rendering: player stats can be temporarily unavailable without turning a live pick into `PENDING`. Keep the fixture ID visible on compact cards and the tracker.
 - Keep player-name matching identical across live tracking, settlement, and pick-creation to avoid inconsistent matching.
 - When a finished fixture's player-stats response is non-empty but does not contain the target player, settle as DNP/push immediately; do not defer to the background loop.

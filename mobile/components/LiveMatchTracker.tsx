@@ -124,6 +124,11 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
           <Text style={styles.headerTitle}>Live Match Tracker</Text>
           <View style={styles.headerSpacer} />
         </View>
+        {pick.fixtureId != null && (
+          <View style={styles.matchIdBanner}>
+            <Text style={styles.matchIdText}>MATCH ID {pick.fixtureId}</Text>
+          </View>
+        )}
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.scoreBoard}>
@@ -362,6 +367,19 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 36,
+  },
+  matchIdBanner: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(57,255,20,0.14)',
+  },
+  matchIdText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   scrollContent: {
     padding: 20,
