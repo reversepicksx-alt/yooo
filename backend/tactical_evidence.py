@@ -67,18 +67,44 @@ def infer_grid_position(
     shape = [int(part) for part in str(formation or "").split("-") if part.isdigit()]
     if row == 1:
         return "GK"
-    if not shape or row != 2:
+    if not shape:
         return normalize_observed_position(provider_position)
 
     defenders = shape[0]
-    if defenders == 4 and column in {1, 2, 3, 4}:
-        return {1: "LB", 2: "CB", 3: "CB", 4: "RB"}[column]
-    if defenders == 3 and column in {1, 2, 3}:
-        return "CB"
-    if defenders == 5 and column in {1, 2, 3, 4, 5}:
-        return {
-            1: "LWB", 2: "CB", 3: "CB", 4: "CB", 5: "RWB",
-        }[column]
+    if row == 2:
+        if defenders == 4 and column in {1, 2, 3, 4}:
+            return {1: "LB", 2: "CB", 3: "CB", 4: "RB"}[column]
+        if defenders == 3 and column in {1, 2, 3}:
+            return "CB"
+        if defenders == 5 and column in {1, 2, 3, 4, 5}:
+            return {
+                1: "LWB", 2: "CB", 3: "CB", 4: "CB", 5: "RWB",
+            }[column]
+
+    # API-Football uses the same row/column grid for midfielders. These
+    # mappings are intentionally limited to formations where the row's
+    # tactical band is unambiguous; otherwise retain M/MID rather than
+    # manufacturing CM/CDM/CAM evidence.
+    provider_category = normalize_observed_position(provider_position)
+    if provider_category in {"M", "MID"} and row == 3:
+        if shape[:3] == [4, 3, 3] and column in {1, 2, 3}:
+            return "CM"
+        if shape[:3] == [4, 3, 1] and column in {1, 2, 3}:
+            return "CM"
+        if shape[:3] == [4, 2, 3] and column in {1, 2}:
+            return "CDM"
+        if shape[:3] == [4, 1, 4] and column == 1:
+            return "CDM"
+        if shape[:3] == [4, 4, 2] and column in {2, 3}:
+            return "CM"
+
+    if provider_category in {"M", "MID"} and row == 4:
+        if shape[:4] == [4, 2, 3, 1] and column in {1, 2, 3}:
+            return "CAM"
+        if shape[:4] == [4, 1, 4, 1] and column in {1, 2, 3, 4}:
+            return "CM"
+        if shape[:4] == [4, 3, 1, 2] and column == 1:
+            return "CAM"
 
     return normalize_observed_position(provider_position)
 

@@ -60,5 +60,20 @@ The player's API-Football generic category is a hard safety boundary for cached 
 
 **How to apply:** Validate cached specific positions against the generic category before returning them from role resolution or using them in prediction math. Keep known corrections keyed by playerId. Generic fallback values must not be persisted as `specificPosition`.
 
+## Lineup-grid midfield evidence
+
+Verified or predicted API-Football lineup grids may provide exact midfield evidence
+when the formation makes the tactical band unambiguous. For example, row 3 in a
+4-3-3 is `CM`, row 3/4 in a 4-2-3-1 are `CDM`/`CAM`, and row 3/4 in a 4-1-4-1
+are `CDM`/`CM`. Ambiguous rows still remain `MID`.
+
+**Why:** A generic `MID` row left valid exact-position cohorts empty for players
+such as Rodri, while promoting every midfielder would recreate the original
+false-role problem.
+
+**How to apply:** Use formation-aware grid evidence only for the listed
+unambiguous bands, preserve provider-category fallbacks elsewhere, and continue
+to admit comparison rows by exact position rather than inferred tactical role.
+
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.

@@ -99,6 +99,14 @@ def test_lineup_grid_stays_conservative_when_shape_is_ambiguous():
     assert infer_grid_position(None, "4-3-3", "D") == "DEF"
 
 
+def test_lineup_grid_resolves_unambiguous_midfield_bands():
+    assert infer_grid_position("3:2", "4-3-3", "M") == "CM"
+    assert infer_grid_position("3:1", "4-2-3-1", "M") == "CDM"
+    assert infer_grid_position("4:2", "4-2-3-1", "M") == "CAM"
+    assert infer_grid_position("3:1", "4-1-4-1", "M") == "CDM"
+    assert infer_grid_position("4:3", "4-1-4-1", "M") == "CM"
+
+
 def test_player_opponent_history_reports_hit_rate_from_valid_values():
     result = summarize_player_opponent_history([4, 7, 2, None], 3.5)
     assert result == {

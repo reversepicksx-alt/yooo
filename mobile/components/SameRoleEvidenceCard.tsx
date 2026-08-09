@@ -235,6 +235,40 @@ export default function SameRoleEvidenceCard({
     Number.isFinite(avgOpponentPossession) &&
     possessionStatus !== 'unavailable';
 
+  // An unavailable exact position is a valid evidence outcome, but it should
+  // not consume the same visual weight as a verified comparison cohort. Keep
+  // the disclosure visible without presenting broad-category rows as a
+  // failed or misleading full analysis.
+  if (exactPositionUnavailable && !hasSourcePlayers) {
+    const targetLabel = positionLabel(data.targetPosition || data.positionShort);
+    return (
+      <View style={{
+        marginTop: 8,
+        paddingHorizontal: 11,
+        paddingVertical: 9,
+        borderRadius: 9,
+        backgroundColor: 'rgba(245,158,11,0.045)',
+        borderWidth: 1,
+        borderColor: 'rgba(245,158,11,0.34)',
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontSize: 9, color: '#F59E0B', fontWeight: '900', letterSpacing: 0.9 }}>
+            POSITION EVIDENCE
+          </Text>
+          <Text style={{ marginLeft: 'auto', fontSize: 9, color: '#F59E0B', fontWeight: '900' }}>
+            UNAVAILABLE
+          </Text>
+        </View>
+        <Text style={{ fontSize: 11, color: Colors.text, fontWeight: '800', lineHeight: 15, marginTop: 4 }}>
+          Exact {targetLabel.toLowerCase()} evidence was not verified for this fixture.
+        </Text>
+        <Text style={{ fontSize: 9.5, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
+          Broad-category rows are excluded rather than relabeled. This is context only and does not change the projection.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={{
       marginTop: 8,
@@ -363,9 +397,9 @@ export default function SameRoleEvidenceCard({
           })}
         </View>
       )}
-      {!hasSourcePlayers && (
+       {!hasSourcePlayers && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 8 }}>
-          Exact-position evidence is unavailable for this opponent window; generic DEF rows are intentionally not relabeled as {position}.
+           Exact-position evidence is unavailable for this opponent window; broad-category rows are intentionally not relabeled as {position}.
         </Text>
       )}
       {Object.keys(data.crossPropAverages || {}).filter((key) => key !== data.propType).length > 0 && (

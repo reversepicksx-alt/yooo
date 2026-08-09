@@ -700,7 +700,10 @@ export default function ScanScreen() {
   }, [prediction?.playerId]);
 
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // The web subscription banner is rendered above the navigator in normal
+  // document flow. Adding another fixed web inset here creates a large empty
+  // black band between the banner and the scan header on mobile Safari.
+  const topPad = Platform.OS === 'web' ? 0 : insets.top;
   const analysisRef = useRef<any>(null);
   const [savingImage, setSavingImage] = useState(false);
 

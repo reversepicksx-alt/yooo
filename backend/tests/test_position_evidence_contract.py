@@ -41,3 +41,10 @@ def test_exact_midfield_comparisons_reject_generic_rows_and_role_padding():
 def test_current_generic_lineup_blocks_historical_exact_position_upgrade():
     assert '_current_lineup_observed_position in {"DEF", "MID", "FWD"}' in PREDICT_SOURCE
     assert "fixture_lineup_category" in PREDICT_SOURCE
+
+
+def test_midfield_grid_evidence_can_admit_exact_position_comparisons():
+    assert 'shape[:3] == [4, 3, 3]' in (ROOT / "tactical_evidence.py").read_text()
+    assert 'shape[:3] == [4, 2, 3]' in (ROOT / "tactical_evidence.py").read_text()
+    assert 'return "CM"' in (ROOT / "tactical_evidence.py").read_text()
+    assert 'target_specific_pos=specific_position' in PREDICT_SOURCE
