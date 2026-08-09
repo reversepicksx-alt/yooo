@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, setUsername, setProfileImage, getDmInbox, getQuotaStatus, resetQuotaBreaker, type QuotaStatus } from '@/lib/api';
+import { getUserProfile, setUsername, setProfileImage, getDmInbox, getQuotaStatus, type QuotaStatus } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
@@ -467,10 +467,8 @@ export default function AccountScreen() {
   const [usernameError, setUsernameError] = useState('');
   const [instructionsOpen, setInstructionsOpen] = useState(false);
 
-  // Owner: API-Football quota breaker state
+  // Owner-only provider status indicator
   const [quotaStatus, setQuotaStatus] = useState<QuotaStatus | null>(null);
-  const [quotaResetting, setQuotaResetting] = useState(false);
-  const [quotaMsg, setQuotaMsg] = useState('');
 
   // RevenueCat state (iOS native only)
   const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
@@ -520,24 +518,6 @@ export default function AccountScreen() {
   useEffect(() => {
     fetchQuotaStatus();
   }, [fetchQuotaStatus]);
-
-  const handleQuotaReset = async () => {
-    if (!session?.email || !session?.token) return;
-    setQuotaResetting(true);
-    setQuotaMsg('');
-    try {
-      const res = await resetQuotaBreaker(session.email, session.token);
-      setQuotaMsg(res.message);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Refresh status after reset
-      await fetchQuotaStatus();
-    } catch (e: unknown) {
-      setQuotaMsg(e instanceof Error ? e.message : 'Reset failed. Try again.');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setQuotaResetting(false);
-    }
-  };
 
   // Poll DM inbox for unread count
   useEffect(() => {
@@ -814,6 +794,26 @@ export default function AccountScreen() {
               </View>
             )}
           </TouchableOpacity>
+          {isOwner && (
+            <View
+              accessibilityLabel={`API quota ${quotaStatus === null ? 'status checking' : quotaStatus.active ? 'exhausted' : 'available'}`}
+              style={styles.apiStatus}
+            >
+              <Text style={styles.apiStatusLabel}>API</Text>
+              <View
+                style={[
+                  styles.apiStatusDot,
+                  {
+                    backgroundColor: quotaStatus === null
+                      ? Colors.textTertiary
+                      : quotaStatus.active
+                        ? '#ef4444'
+                        : '#22c55e',
+                  },
+                ]}
+              />
+            </View>
+          )}
           <NotificationBell />
         </View>
       </View>
@@ -1018,106 +1018,6 @@ export default function AccountScreen() {
           </>
         )}
 
-        {/* ── Owner: API-Football Diagnostics ── */}
-        {isOwner && (
-          <>
-            <Text style={styles.sectionLabel}>Diagnostics</Text>
-            <View style={[styles.menuGroup, { padding: 14, gap: 10 }]}>
-              {/* Quota breaker status row */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View style={[styles.menuIcon, {
-                  backgroundColor: quotaStatus?.active ? '#2a1010' : '#0e1f0e',
-                }]}>
-                  <Ionicons
-                    name={quotaStatus?.active ? 'warning-outline' : 'checkmark-circle-outline'}
-                    size={18}
-                    color={quotaStatus?.active ? '#f87171' : '#4ade80'}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '700' }}>
-                    API-Football Quota Breaker
-                  </Text>
-                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
-                    {quotaStatus === null
-                      ? 'Checking…'
-                      : quotaStatus.active
-                        ? `Active — tripped ${quotaStatus.trippedDate ?? 'today'} (UTC). Predictions blocked.`
-                        : 'Clear — predictions unblocked.'}
-                  </Text>
-                  {!!quotaStatus?.lastResetAt && (
-                    <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 2 }}>
-                      {`Last reset: ${(() => {
-                        try {
-                          const d = new Date(quotaStatus.lastResetAt!);
-                          const diffMs = Date.now() - d.getTime();
-                          const mins = Math.floor(diffMs / 60000);
-                          if (mins < 1) return 'just now';
-                          if (mins < 60) return `${mins}m ago`;
-                          const hrs = Math.floor(mins / 60);
-                          if (hrs < 24) return `${hrs}h ago`;
-                          return d.toLocaleString();
-                        } catch { return quotaStatus.lastResetAt; }
-                      })()}`}
-                    </Text>
-                  )}
-                </View>
-              </View>
-
-              {/* Reset button */}
-              <TouchableOpacity
-                style={{
-                  backgroundColor: quotaStatus?.active ? Colors.primary : '#1a1a1a',
-                  borderRadius: 8,
-                  paddingVertical: 10,
-                  alignItems: 'center',
-                  borderWidth: quotaStatus?.active ? 0 : 1,
-                  borderColor: Colors.borderSubtle,
-                  opacity: quotaResetting ? 0.6 : 1,
-                }}
-                onPress={handleQuotaReset}
-                disabled={quotaResetting}
-                activeOpacity={0.8}
-              >
-                {quotaResetting ? (
-                  <ActivityIndicator size="small" color={quotaStatus?.active ? Colors.background : Colors.textSecondary} />
-                ) : (
-                  <Text style={{
-                    color: quotaStatus?.active ? Colors.background : Colors.textSecondary,
-                    fontSize: 11,
-                    fontWeight: '900',
-                  }}>
-                    RESET API QUOTA BREAKER
-                  </Text>
-                )}
-              </TouchableOpacity>
-
-              {/* Inline feedback message */}
-              {!!quotaMsg && (
-                <Text style={{
-                  color: quotaMsg.includes('unblocked') ? '#4ade80' : Colors.textSecondary,
-                  fontSize: 11,
-                  lineHeight: 16,
-                  textAlign: 'center',
-                }}>
-                  {quotaMsg}
-                </Text>
-              )}
-
-              {/* Refresh status link */}
-              <TouchableOpacity
-                onPress={fetchQuotaStatus}
-                style={{ alignItems: 'center', paddingTop: 2 }}
-                activeOpacity={0.7}
-              >
-                <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
-                  Tap to refresh status
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
-
         <Text style={styles.sectionLabel}>About</Text>
         <View style={styles.menuGroup}>
           <MenuRow icon="football-outline" label="Sport" value="Soccer (All Major Leagues)" />
@@ -1210,6 +1110,23 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingBottom: 16 },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   headerIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  apiStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 4,
+  },
+  apiStatusLabel: {
+    color: Colors.textTertiary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  apiStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   dmBadge: {
     position: 'absolute', top: 2, right: 2,
     backgroundColor: Colors.primary, borderRadius: 7,
