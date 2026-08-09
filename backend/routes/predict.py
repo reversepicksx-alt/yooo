@@ -1832,7 +1832,7 @@ async def predict(req: PredictionRequest):
                         # If opponent was HOME, the comparison team was AWAY, and vice versa
                         opp_fixture_venue = fix.get("venue", "")  # opponent's venue in this fixture
                         comp_team_venue = "away" if opp_fixture_venue == "home" else "home"
-                        if comp_team_venue != comp_venue:
+                        if comp_venue != "any" and comp_team_venue != comp_venue:
                             continue  # Skip — wrong venue for comparison
 
                         team_poss = possession_map.get(tid, None)
@@ -2132,19 +2132,29 @@ async def predict(req: PredictionRequest):
                 opponent_recent_raw = await api_football_request(
                     "fixtures", {"team": safe_opp_id, "last": _cohort_fixture_lookback}
                 )
-        opponent_fixture_list = []
-        if opponent_recent_raw:
-            for f in opponent_recent_raw[:_cohort_fixture_lookback]:
-                opp_home_id = f.get("teams", {}).get("home", {}).get("id")
+        def _normalize_opponent_fixtures(raw_fixtures):
+            normalized = []
+            for f in raw_fixtures or []:
+                fixture = f.get("fixture", {}) or {}
+                teams = f.get("teams", {}) or {}
+                home = teams.get("home", {}) or {}
+                away = teams.get("away", {}) or {}
+                fixture_id = fixture.get("id")
+                opp_home_id = home.get("id")
+                if not fixture_id or not opp_home_id:
+                    continue
                 opp_venue = "home" if opp_home_id == req.opponentId else "away"
-                opponent_fixture_list.append({
-                    "fixtureId": f.get("fixture", {}).get("id"),
-                    "date": f.get("fixture", {}).get("date", ""),
-                    "opponent": f.get("teams", {}).get("away" if opp_venue == "home" else "home", {}).get("name", "Unknown"),
+                normalized.append({
+                    "fixtureId": fixture_id,
+                    "date": fixture.get("date", ""),
+                    "opponent": (away if opp_venue == "home" else home).get("name", "Unknown"),
                     "venue": opp_venue,
-                    "homeGoals": f.get("goals", {}).get("home", 0) or 0,
-                    "awayGoals": f.get("goals", {}).get("away", 0) or 0,
+                    "homeGoals": (f.get("goals", {}) or {}).get("home", 0) or 0,
+                    "awayGoals": (f.get("goals", {}) or {}).get("away", 0) or 0,
                 })
+            return normalized
+
+        opponent_fixture_list = _normalize_opponent_fixtures(opponent_recent_raw)
 
         # Filter opponent fixtures by their venue in THIS matchup (skipped for neutral)
         venue_filtered_opp_fixtures = (
@@ -6154,6 +6164,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 
         # POSITION COMPARISON: Fetch same-position players vs opponent (run after player_position resolved)
         position_comparison = []
+        # Canonical narrow scope: "sourceScope": "exact_opponent_same_role_same_venue"
+        position_comparison_scope = "exact_opponent_same_role_same_venue"
         try:
             position_comparison = await aio.wait_for(
                 fetch_position_comparison(
@@ -6167,6 +6179,112 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             )
         except Exception as e:
             print(f"[POS COMP] Error/timeout: {e}")
+
+        # A current-season pool can be very small even when the opponent has a
+        # deep, useful history. Go back through prior seasons before showing a
+        # three-player "opponent" sample as if it were complete. The same exact
+        # opponent, role, position, and venue filters remain active; only the
+        # season window broadens.
+        if len(position_comparison) < 15 and safe_opp_id and not _is_bdl_league:
+            _prior_season_rows = []
+            for _prior_season in (CURRENT_SEASON - 1, CURRENT_SEASON - 2):
+                try:
+                    _prior_raw = await api_football_request(
+                        "fixtures",
+                        {"team": safe_opp_id, "season": _prior_season},
+                    )
+                    _prior_rows = _normalize_opponent_fixtures(_prior_raw)
+                    if _prior_rows:
+                        _prior_season_rows.extend(_prior_rows)
+                        print(
+                            f"[POS COMP] Prior-season fallback: opponent={safe_opp_id} "
+                            f"season={_prior_season} fixtures={len(_prior_rows)}"
+                        )
+                except Exception as _prior_err:
+                    print(
+                        f"[POS COMP] Prior-season fallback failed for "
+                        f"{safe_opp_id}/{_prior_season}: {type(_prior_err).__name__}"
+                    )
+
+            if _prior_season_rows:
+                _existing_fixture_ids = {
+                    row.get("fixtureId") for row in opponent_fixture_list
+                }
+                opponent_fixture_list.extend(
+                    row for row in _prior_season_rows
+                    if row.get("fixtureId") not in _existing_fixture_ids
+                )
+                try:
+                    _prior_comparison = await aio.wait_for(
+                        fetch_position_comparison(
+                            _prior_season_rows,
+                            player_position,
+                            req.propType,
+                            req.opponentId,
+                            player_venue,
+                            len(_prior_season_rows),
+                            target_specific_pos=specific_position,
+                            target_role=display_role or player_role,
+                        ) if player_position else _empty_list(),
+                        timeout=12,
+                    )
+                except Exception as _prior_comp_err:
+                    print(f"[POS COMP] Prior-season comparison failed: {_prior_comp_err}")
+                    _prior_comparison = []
+
+                if _prior_comparison:
+                    by_player = {
+                        row.get("playerId") or str(row.get("name") or "").strip().lower(): row
+                        for row in position_comparison
+                    }
+                    for row in _prior_comparison:
+                        key = row.get("playerId") or str(row.get("name") or "").strip().lower()
+                        if key and key not in by_player:
+                            by_player[key] = row
+                    position_comparison = list(by_player.values())
+                    if len(position_comparison) > 15:
+                        position_comparison = position_comparison[:15]
+                    if len(position_comparison) > 3:
+                        position_comparison_scope = (
+                            "exact_opponent_same_role_same_venue_plus_prior_seasons"
+                        )
+
+        # If the exact venue remains sparse, use verified appearances against
+        # the same opponent from either venue. This is still opponent-specific
+        # and role-specific, but must be labeled as mixed-venue evidence so the
+        # UI does not imply an away-only sample.
+        if len(position_comparison) < 15 and opponent_fixture_list:
+            try:
+                _mixed_comparison = await aio.wait_for(
+                    fetch_position_comparison(
+                        opponent_fixture_list,
+                        player_position,
+                        req.propType,
+                        req.opponentId,
+                        "any",
+                        len(opponent_fixture_list),
+                        target_specific_pos=specific_position,
+                        target_role=display_role or player_role,
+                    ) if player_position else _empty_list(),
+                    timeout=15,
+                )
+            except Exception as _mixed_comp_err:
+                print(f"[POS COMP] Mixed-venue comparison failed: {_mixed_comp_err}")
+                _mixed_comparison = []
+            if _mixed_comparison:
+                by_player = {
+                    row.get("playerId") or str(row.get("name") or "").strip().lower(): row
+                    for row in position_comparison
+                }
+                for row in _mixed_comparison:
+                    key = row.get("playerId") or str(row.get("name") or "").strip().lower()
+                    if key and key not in by_player:
+                        by_player[key] = row
+                position_comparison = list(by_player.values())[:15]
+                if len(position_comparison) > 3:
+                    position_comparison_scope = (
+                        "exact_opponent_same_role_mixed_venue_plus_prior_seasons"
+                    )
 
         # ── COMPARISON ENRICHMENT: Add season save rate (GK) or venue pass avg to each player ──
         if position_comparison:
@@ -6307,7 +6425,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "venue": player_venue,
                 "targetPosition": specific_position or display_position,
                 "targetRole": display_role or player_role,
-                "sourceScope": "exact_opponent_same_role_same_venue",
+                "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
             }
 

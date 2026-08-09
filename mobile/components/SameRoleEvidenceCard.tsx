@@ -89,6 +89,12 @@ export default function SameRoleEvidenceCard({
   const position = data.targetPosition || data.positionShort || 'same position';
   const limited = sample < minimum;
   const sourcePlayers = (data.players || []).slice(0, 15);
+  const scope = String(data.sourceScope || '');
+  const scopeLabel = scope.includes('mixed_venue')
+    ? 'same-opponent home + away fixtures'
+    : scope.includes('prior_seasons')
+      ? `same-opponent ${data.venue || 'venue'} fixtures, including prior seasons`
+      : `matching ${data.venue || 'venue'} fixtures`;
 
   return (
     <View style={{
@@ -113,7 +119,7 @@ export default function SameRoleEvidenceCard({
         {' '}to {position} · {role}
       </Text>
       <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
-        {sample} distinct same-role player{sample === 1 ? '' : 's'} in matching {data.venue || 'venue'} fixtures
+         {sample} distinct same-role player{sample === 1 ? '' : 's'} in {scopeLabel}
         {hasVerdict ? ` · line ${numericLine.toFixed(1)} · pick ${rec}` : ''}
         {limited ? ` · limited sample (target n≥${minimum})` : ' · target sample reached'}
       </Text>

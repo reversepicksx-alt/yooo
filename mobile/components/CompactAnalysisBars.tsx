@@ -186,10 +186,20 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     && expectedHome >= 0
     && expectedAway >= 0;
   const expectedVenue = preferredVenue ?? 'home';
-  const expectedPlayerTeamPossession = expectedVenue === 'home' ? expectedHome : expectedAway;
-  const expectedOpponentPossession = expectedVenue === 'home' ? expectedAway : expectedHome;
-  const expectedPlayerTeam = compactTeamName(prediction.teamName, 'PLAYER TEAM');
-  const expectedOpponentTeam = compactTeamName(prediction.opponentName || prediction.opponent, 'OPPONENT');
+  // The possession bar is fixture-oriented, not player-oriented: home is
+  // always the left segment and away is always the right segment. The player
+  // may be the away team, but that must never make the away team appear on the
+  // left or make the labels look like a reversed matchup.
+  const expectedHomeTeam = compactTeamName(
+    prediction.homeTeam
+      || (expectedVenue === 'home' ? prediction.teamName : prediction.opponentName || prediction.opponent),
+    'HOME TEAM',
+  );
+  const expectedAwayTeam = compactTeamName(
+    prediction.awayTeam
+      || (expectedVenue === 'away' ? prediction.teamName : prediction.opponentName || prediction.opponent),
+    'AWAY TEAM',
+  );
 
   return (
     <>
@@ -203,15 +213,15 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             <Text style={styles.meta}>{expectedVenue.toUpperCase()} SIDE</Text>
           </View>
           <View style={styles.expectedPossessionBar}>
-            <View style={[styles.expectedPossessionPlayer, { flex: Math.max(expectedPlayerTeamPossession, 0.1) }]} />
-            <View style={[styles.expectedPossessionOpponent, { flex: Math.max(expectedOpponentPossession, 0.1) }]} />
+            <View style={[styles.expectedPossessionPlayer, { flex: Math.max(expectedHome, 0.1) }]} />
+            <View style={[styles.expectedPossessionOpponent, { flex: Math.max(expectedAway, 0.1) }]} />
           </View>
           <View style={styles.expectedPossessionLabels}>
             <Text style={styles.expectedPossessionPlayerText} numberOfLines={1}>
-              {expectedPlayerTeam} {Math.round(expectedPlayerTeamPossession)}%
+              {expectedHomeTeam} {Math.round(expectedHome)}%
             </Text>
             <Text style={styles.expectedPossessionOpponentText} numberOfLines={1}>
-              {Math.round(expectedOpponentPossession)}% {expectedOpponentTeam}
+              {Math.round(expectedAway)}% {expectedAwayTeam}
             </Text>
           </View>
         </View>
