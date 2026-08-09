@@ -11,7 +11,8 @@ PICKS_SOURCE = (
 
 def test_position_cohort_requires_same_role_and_has_broad_api_pool():
     assert "target_role=None" in PREDICT_SOURCE
-    assert "if target_role and candidate_role != target_role:" in PREDICT_SOURCE
+    assert "_apply_role_match and candidate_role != target_role" in PREDICT_SOURCE
+    assert '"CB", "LB", "RB", "LWB", "RWB"' in PREDICT_SOURCE
     assert "target_role=display_role or player_role" in PREDICT_SOURCE
     assert '"last": _cohort_fixture_lookback' in PREDICT_SOURCE
     assert "fetch_position_comparison(" in PREDICT_SOURCE
@@ -20,7 +21,8 @@ def test_position_cohort_requires_same_role_and_has_broad_api_pool():
 
 
 def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
-    assert '"sourceScope": "exact_opponent_same_role_same_venue"' in PREDICT_SOURCE
+    assert '"sourceScope": position_comparison_scope' in PREDICT_SOURCE
+    assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE
     assert '"targetRole": display_role or player_role' in PREDICT_SOURCE
     assert '"targetPosition": specific_position or display_position' in PREDICT_SOURCE
     assert '"passAttempts": (pstats.get("passes") or {}).get("total")' in PREDICT_SOURCE

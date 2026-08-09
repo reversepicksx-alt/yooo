@@ -1820,13 +1820,14 @@ async def predict(req: PredictionRequest):
             target_specific_pos=None,
             target_role=None,
         ):
-            """Fetch same-position, same-role players who played against the opponent.
+            """Fetch exact-position comparison players who played against the opponent.
             Filters by venue: if target player is AWAY, only show comparison players' AWAY performances.
             Also fetches possession data for each match.
-            If target_specific_pos/target_role is set, the candidate must match the
-            verified specific position and deterministic role. API-Football does not
-            provide tactical role labels, so role matching uses cached role when
-            available and the fixture player's own stat fingerprint otherwise."""
+            If target_specific_pos is set, the candidate must match that verified
+            specific position. Tactical role matching is intentionally limited to
+            forwards and midfielders; defender roles such as Stopper and
+            Ball-Playing CB are not reliable enough to filter out an otherwise
+            exact CB/LB/RB appearance."""
             fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
             if not fixture_pos or not opp_fixtures:
                 return []
@@ -2042,8 +2043,21 @@ async def predict(req: PredictionRequest):
                                 # useful for broad cohorts, but are not proof of
                                 # the target's natural side-specific position.
                                 continue
-                            if target_role and candidate_role != target_role:
-                                continue  # Same position is not enough; role must match too.
+                            # Exact defender position is the complete comparison
+                            # key. API-Football/Gemini role labels frequently
+                            # disagree between otherwise equivalent centre-backs
+                            # (for example Stopper vs Ball-Playing CB), so a role
+                            # gate here incorrectly emptied Carlos's cohort.
+                            _role_match_positions = {
+                                "LW", "RW", "CF", "ST", "SS",
+                                "CAM", "CM", "CDM", "LM", "RM",
+                            }
+                            _apply_role_match = (
+                                bool(target_role)
+                                and target_specific_pos in _role_match_positions
+                            )
+                            if _apply_role_match and candidate_role != target_role:
+                                continue
 
                             position_verified = bool(
                                 observed_exact_target or cached_exact_target
@@ -2114,7 +2128,8 @@ async def predict(req: PredictionRequest):
                                 "positionVerified": position_verified,
                                 "positionSource": position_source,
                                 "observedPosition": observed_fixture_position or observed_normalized or pos or None,
-                                "role": candidate_role,
+                                "role": candidate_role if _apply_role_match else None,
+                                "roleMatchApplied": _apply_role_match,
                                 "roleSource": (
                                     "cached_role"
                                     if spec_role and trusted_cached_position
@@ -6505,10 +6520,19 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 {'LEAN OVER' if projected_saves > req.line else 'LEAN UNDER' if projected_saves < req.line else 'PUSH ZONE'} — but weight scenarios (blowout, cagey game, etc.)
 """
 
-        # POSITION COMPARISON: Fetch same-position players vs opponent (run after player_position resolved)
+        # POSITION COMPARISON: Fetch exact-position players vs opponent (run
+        # after player_position resolved). Defender cohorts deliberately do
+        # not use tactical sub-role matching.
         position_comparison = []
-        # Canonical narrow scope: "sourceScope": "exact_opponent_same_role_same_venue"
-        position_comparison_scope = "exact_opponent_same_role_same_venue"
+        _defender_positions = {"CB", "LB", "RB", "LWB", "RWB"}
+        _defender_position_cohort = specific_position in _defender_positions
+        # Canonical narrow scope. Defender labels say "same_position"; other
+        # positions retain the role-aware scope for the UI and audit trail.
+        position_comparison_scope = (
+            "exact_opponent_same_position_same_venue"
+            if _defender_position_cohort
+            else "exact_opponent_same_role_same_venue"
+        )
         try:
             position_comparison = await aio.wait_for(
                 fetch_position_comparison(
@@ -6589,7 +6613,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         position_comparison = position_comparison[:15]
                     if len(position_comparison) > 3:
                         position_comparison_scope = (
-                            "exact_opponent_same_role_same_venue_plus_prior_seasons"
+                            "exact_opponent_same_position_same_venue_plus_prior_seasons"
+                            if _defender_position_cohort
+                            else "exact_opponent_same_role_same_venue_plus_prior_seasons"
                         )
 
         # If the exact venue remains sparse, use verified appearances against
@@ -6626,7 +6652,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 position_comparison = list(by_player.values())[:15]
                 if len(position_comparison) > 3:
                     position_comparison_scope = (
-                        "exact_opponent_same_role_mixed_venue_plus_prior_seasons"
+                        "exact_opponent_same_position_mixed_venue_plus_prior_seasons"
+                        if _defender_position_cohort
+                        else "exact_opponent_same_role_mixed_venue_plus_prior_seasons"
                     )
 
         # ── COMPARISON ENRICHMENT: Add season save rate (GK) or venue pass avg to each player ──
@@ -6827,6 +6855,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "venue": player_venue,
                 "targetPosition": specific_position or display_position,
                 "targetRole": display_role or player_role,
+                "comparisonMode": (
+                    "same-position" if _defender_position_cohort else "same-role"
+                ),
                 "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
             }

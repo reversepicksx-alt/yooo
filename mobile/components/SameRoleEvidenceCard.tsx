@@ -19,6 +19,7 @@ type CohortPlayer = {
   date?: string;
   positionVerified?: boolean;
   positionSource?: string;
+  roleMatchApplied?: boolean;
 };
 
 export type SameRoleEvidence = {
@@ -45,6 +46,7 @@ export type SameRoleEvidence = {
   underHitRate?: number | null;
   players?: CohortPlayer[];
   sourceScope?: string;
+  comparisonMode?: 'same-position' | 'same-role' | string;
   verdict?: {
     verdict?: 'verifies' | 'contradicts' | 'neutral' | 'unavailable' | string;
     reason?: string;
@@ -92,8 +94,12 @@ function positionLabel(value: unknown) {
   return labels[normalized] || String(value || 'Position unavailable');
 }
 
+function scopeIncludesPosition(value: unknown) {
+  return String(value || '').includes('same_position');
+}
+
 /**
- * Exact-opponent, same-role evidence. This is deliberately separate from
+ * Exact-opponent, same-position or same-role evidence. This is deliberately separate from
  * PLAYER PROP HISTORY: the latter is the selected player's own history.
  */
 export default function SameRoleEvidenceCard({
@@ -125,7 +131,9 @@ export default function SameRoleEvidenceCard({
     ? Colors.success
     : verdict === 'CONTRADICTS' ? Colors.error : '#F59E0B';
   const prop = label(data.propType);
-  const role = data.targetRole || 'same role';
+  const isSamePosition = data.comparisonMode === 'same-position'
+    || scopeIncludesPosition(data.sourceScope);
+  const role = isSamePosition ? '' : (data.targetRole || 'same role');
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
   const sourcePlayers = (data.players || []).slice(0, 15);
@@ -159,7 +167,7 @@ export default function SameRoleEvidenceCard({
     }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <Text style={{ fontSize: 9, color: verdictColor, fontWeight: '900', letterSpacing: 1 }}>
-          SAME-ROLE OPPONENT EVIDENCE
+          {isSamePosition ? 'SAME-POSITION OPPONENT EVIDENCE' : 'SAME-ROLE OPPONENT EVIDENCE'}
         </Text>
         <Text style={{ marginLeft: 'auto', fontSize: 9, color: verdictColor, fontWeight: '900' }}>
           {verdict}
@@ -167,7 +175,7 @@ export default function SameRoleEvidenceCard({
       </View>
       <Text style={{ fontSize: 12, color: Colors.text, fontWeight: '800', lineHeight: 17 }}>
         {data.opponent || 'Exact opponent'} allows an average of {average != null ? Number(average).toFixed(1) : '—'} {prop.toLowerCase()}
-        {' '}to {position} · {role}
+        {' '}to {position}{role ? ` · ${role}` : ''}
       </Text>
       <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
          {sample} distinct same-role player{sample === 1 ? '' : 's'} in {scopeLabel}

@@ -552,6 +552,7 @@ export interface PredictionResult {
   positionComparison?: {
     targetPosition?: string;
     targetRole?: string;
+    comparisonMode?: 'same-position' | 'same-role' | string;
     positionShort?: string;
     opponent?: string;
     venue?: string;
