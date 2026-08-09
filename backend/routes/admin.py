@@ -1226,10 +1226,20 @@ async def admin_quota_status(email: str, token: str):
     # Pro plan; override in production to match the actual subscribed plan).
     hard_limit = int(_os.environ.get("API_FOOTBALL_HARD_LIMIT", "450000"))
 
-    # Last manual reset timestamp (in-memory only; clears on process restart)
+    # Last manual reset timestamp — in-memory first, then /tmp fast-path,
+    # then MongoDB (deployment-persistent) as the authoritative fallback.
     last_reset_at: str | None = None
     try:
         last_reset_at = _utils._last_quota_reset_at
+        if not last_reset_at:
+            last_reset_at = _utils._load_reset_timestamp_from_disk()
+        if not last_reset_at:
+            doc = await db.settings.find_one({"key": "QUOTA_LAST_RESET_AT"}, {"_id": 0})
+            if doc and doc.get("value"):
+                last_reset_at = doc["value"]
+        if last_reset_at:
+            # Populate in-memory so subsequent calls skip DB/disk reads
+            _utils._last_quota_reset_at = last_reset_at
     except Exception:
         pass
 
@@ -1261,14 +1271,32 @@ async def admin_quota_reset(req: _QuotaResetRequest):
             _os.remove(_BREAKER_FILE)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Could not remove breaker file: {e}")
-    # Also clear the in-memory flag in utils and record the reset timestamp
+    # Clear the in-memory flag in utils and record the reset timestamp
     from datetime import datetime, timezone
     reset_at = datetime.now(timezone.utc).isoformat()
+    persistence_warning: str | None = None
     try:
         import utils as _utils
         _utils._quota_exhausted_date = None
         _utils._daily_call_count = 0
         _utils._last_quota_reset_at = reset_at
+        # ── 1. Persist to MongoDB (deployment-persistent, survives redeploys) ──
+        try:
+            await db.settings.update_one(
+                {"key": "QUOTA_LAST_RESET_AT"},
+                {"$set": {"key": "QUOTA_LAST_RESET_AT", "value": reset_at}},
+                upsert=True,
+            )
+        except Exception as db_err:
+            # DB write failed — timestamp is in-memory only for this process
+            # lifetime; surface a warning so the owner knows durability is degraded.
+            persistence_warning = f"DB write failed — timestamp is in-memory only: {db_err}"
+        # ── 2. Also write to /tmp as a fast-path for same-container restarts ──
+        try:
+            with open(_utils._RESET_TIMESTAMP_FILE, "w") as _f:
+                _f.write(reset_at)
+        except Exception:
+            pass
         # Clear the daily count checkpoint so the reset is immediately reflected
         # on the next restart (disk file must match the zeroed in-memory state).
         try:
@@ -1277,12 +1305,15 @@ async def admin_quota_reset(req: _QuotaResetRequest):
             pass
     except Exception:
         pass
-    return {
+    response: dict = {
         "cleared": existed,
         "message": "Quota circuit breaker reset — API-Football calls are unblocked." if existed
                    else "Breaker was not active (quota was not exhausted).",
         "resetAt": reset_at,
     }
+    if persistence_warning:
+        response["persistenceWarning"] = persistence_warning
+    return response
 
 @router.get("/storage-health")
 async def admin_storage_health(email: str, token: str):

@@ -20,6 +20,7 @@ from config import API_DAILY_SOFT_LIMIT
 
 _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
 _COUNT_FILE = "/tmp/.api_sports_daily_count"
+_RESET_TIMESTAMP_FILE = "/tmp/.api_sports_quota_last_reset"
 _quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
 _daily_call_date: str | None = None
 _daily_call_count = 0
@@ -125,6 +126,17 @@ def _load_breaker_from_disk() -> str | None:
     try:
         if _os.path.exists(_BREAKER_FILE):
             with open(_BREAKER_FILE) as f:
+                return f.read().strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _load_reset_timestamp_from_disk() -> str | None:
+    """Read the persisted last-reset ISO-8601 timestamp from disk (survives process restart)."""
+    try:
+        if _os.path.exists(_RESET_TIMESTAMP_FILE):
+            with open(_RESET_TIMESTAMP_FILE) as f:
                 return f.read().strip() or None
     except Exception:
         pass
