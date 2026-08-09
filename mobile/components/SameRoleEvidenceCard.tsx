@@ -8,6 +8,8 @@ type CohortPlayer = {
   team?: string;
   statValue?: number | null;
   passAttempts?: number | null;
+  teamPossession?: number | null;
+  oppPossession?: number | null;
   crossPropStats?: Record<string, number>;
   minutes?: number | null;
   position?: string;
@@ -27,6 +29,11 @@ export type SameRoleEvidence = {
   avgStatValue?: number | null;
   average?: number | null;
   weightedAverage?: number | null;
+  avgPossession?: number | null;
+  avgOpponentPossession?: number | null;
+  expectedPlayerPossession?: number | null;
+  possessionSampleSize?: number;
+  possessionComparison?: string;
   sampleSize?: number;
   minimumRecommendedSample?: number;
   sampleStatus?: string;
@@ -95,6 +102,13 @@ export default function SameRoleEvidenceCard({
     : scope.includes('prior_seasons')
       ? `same-opponent ${data.venue || 'venue'} fixtures, including prior seasons`
       : `matching ${data.venue || 'venue'} fixtures`;
+  const avgPossession = Number(data.avgPossession);
+  const avgOpponentPossession = Number(data.avgOpponentPossession);
+  const expectedPlayerPossession = Number(data.expectedPlayerPossession);
+  const possessionSampleSize = Number(data.possessionSampleSize || 0);
+  const hasPossessionComparison =
+    Number.isFinite(avgPossession) &&
+    Number.isFinite(avgOpponentPossession);
 
   return (
     <View style={{
@@ -126,6 +140,30 @@ export default function SameRoleEvidenceCard({
       <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 3 }}>
         Weighted evidence average · minutes and repeated verified meetings count more
       </Text>
+      {hasPossessionComparison && (
+        <View style={{
+          marginTop: 8,
+          paddingTop: 7,
+          borderTopWidth: 1,
+          borderTopColor: 'rgba(255,255,255,0.08)',
+        }}>
+          <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8 }}>
+            POSSESSION CONTEXT · SAME OPPONENT
+          </Text>
+          <Text style={{ fontSize: 10, color: Colors.text, lineHeight: 15, marginTop: 4 }}>
+            Sampled teams averaged {avgPossession.toFixed(0)}% possession
+            {' '}vs {avgOpponentPossession.toFixed(0)}% for {data.opponent || 'the opponent'}
+            {Number.isFinite(expectedPlayerPossession)
+              ? ` · current expected ${expectedPlayerPossession.toFixed(0)}%`
+              : ''}
+          </Text>
+          <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
+            {possessionSampleSize > 0
+              ? `${possessionSampleSize} sampled matches with verified possession · context only`
+              : 'Verified possession context · context only'}
+          </Text>
+        </View>
+      )}
       {(data.overHitRate != null || data.underHitRate != null) && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 3 }}>
           Against this line: {data.overHitRate != null ? `${data.overHitRate}% OVER` : 'OVER —'}
@@ -141,7 +179,7 @@ export default function SameRoleEvidenceCard({
           borderTopColor: 'rgba(255,255,255,0.08)',
         }}>
           <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8, marginBottom: 4 }}>
-            SOURCE PLAYERS · PASS ATTEMPTS
+            SOURCE PLAYERS · PROP / MATCH POSS
           </Text>
           {sourcePlayers.map((player, index) => {
             const passAttempts = player.passAttempts
@@ -162,6 +200,15 @@ export default function SameRoleEvidenceCard({
                 </Text>
                 <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '900', marginLeft: 8 }}>
                   {passAttempts != null ? Number(passAttempts).toFixed(0) : '—'}
+                </Text>
+                <Text style={{ width: 94, textAlign: 'right', fontSize: 8.5, color: Colors.textSecondary, fontWeight: '800', marginLeft: 7 }}>
+                  {player.teamPossession != null
+                    ? `P ${Number(player.teamPossession).toFixed(0)}%`
+                    : 'P —'}
+                  {' · '}
+                  {player.oppPossession != null
+                    ? `OPP ${Number(player.oppPossession).toFixed(0)}%`
+                    : 'OPP —'}
                 </Text>
               </View>
             );

@@ -27,6 +27,10 @@ def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
     assert '"matchPosition": pos or None' in PREDICT_SOURCE
     assert '"weightMethod": _cohort_evidence.get("weightMethod")' in PREDICT_SOURCE
     assert '"avgStatValue": comp_avg' in PREDICT_SOURCE
+    assert '"teamPossession": team_poss' in PREDICT_SOURCE
+    assert '"oppPossession": opp_poss' in PREDICT_SOURCE
+    assert '"avgOpponentPossession": comp_opp_poss_avg' in PREDICT_SOURCE
+    assert '"expectedPlayerPossession": current_expected_player_poss' in PREDICT_SOURCE
     assert '"weightedAverage": _cohort_evidence.get("average")' in PREDICT_SOURCE
     assert '"_legacyModelAverage"' in PREDICT_SOURCE
     assert "legacy_unique" in PREDICT_SOURCE

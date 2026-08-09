@@ -6370,6 +6370,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 p.get("teamPossession") for p in position_comparison
                 if p.get("teamPossession") is not None
             ]
+            comp_opp_poss = [
+                p.get("oppPossession") for p in position_comparison
+                if p.get("oppPossession") is not None
+            ]
             # Keep the existing deterministic model-facing opponent average
             # unchanged until the weighted evidence has passed settled-pick
             # replay. The new weighted value is exposed separately for the
@@ -6389,6 +6393,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             )
             comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else None
             comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
+            comp_opp_poss_avg = (
+                round(sum(comp_opp_poss) / len(comp_opp_poss), 1)
+                if comp_opp_poss else None
+            )
+            # This is the possession expectation for the selected player's
+            # team in the current fixture. It is comparison context only:
+            # same-role evidence must never alter the deterministic projection.
+            try:
+                current_expected_player_poss = round(
+                    float((match_dominance or {}).get("expectedPoss")),
+                    1,
+                )
+            except (TypeError, ValueError):
+                current_expected_player_poss = None
             cross_prop_values = {}
             cross_prop_samples = {}
             for _row in position_comparison:
@@ -6408,6 +6426,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "weightedAverage": _cohort_evidence.get("average"),
                 "avgPer90": comp_per90_avg,
                 "avgPossession": comp_poss_avg,
+                "avgOpponentPossession": comp_opp_poss_avg,
+                "expectedPlayerPossession": current_expected_player_poss,
+                "possessionSampleSize": len(comp_poss),
+                "possessionComparison": (
+                    "sampled teams averaged "
+                    f"{comp_poss_avg:.1f}% possession vs {comp_opp_poss_avg:.1f}% for "
+                    f"the opponent"
+                    if comp_poss_avg is not None and comp_opp_poss_avg is not None
+                    else "verified match possession unavailable for this sample"
+                ),
                 "sampleSize": _cohort_evidence["sampleSize"],
                 "minimumRecommendedSample": _cohort_evidence["minimumRecommendedSample"],
                 "sampleStatus": _cohort_evidence["sampleStatus"],
