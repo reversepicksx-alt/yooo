@@ -7,7 +7,7 @@ from config import (
     db, OWNER_EMAIL, DYNAMIC_KEYS,
     get_dynamic_setting, set_dynamic_setting,
 )
-from models import AdminSettingsRequest, AdminTestKeyRequest
+from models import AdminSettingsRequest, AdminTestKeyRequest, ListGrantsRequest
 from pass_projection_calibration import walk_forward_validate
 from model_metrics import build_scorecard, walk_forward_replay, validate_weighted_opponent_evidence
 from routes.stripe_pay import checkout_idempotency_key, find_open_stripe_subscriptions
@@ -292,7 +292,7 @@ async def revoke_access(req: RevokeAccessRequest):
 
 
 @router.post("/list-grants")
-async def list_grants(req: AdminSettingsRequest):
+async def list_grants(req: ListGrantsRequest):
     """List all manual access grants (owner only)."""
     await verify_owner(req.email, req.token)
     grants = await db.manual_access_grants.find({}, {"_id": 0}).sort("grantedAt", -1).to_list(None)

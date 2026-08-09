@@ -178,6 +178,11 @@ class AdminSettingsRequest(BaseModel):
     value: str
 
 
+class ListGrantsRequest(BaseModel):
+    email: str
+    token: str
+
+
 class AdminTestKeyRequest(BaseModel):
     email: str
     token: str
