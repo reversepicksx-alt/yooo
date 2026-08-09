@@ -1057,6 +1057,9 @@ export default function PicksScreen() {
   }), [picks, searchQuery]);
   const live = filteredPicks.filter(isLive);
   const history = filteredPicks.filter(isHistoryVisible);
+  // uniqueHistory collapses duplicate saved rows to one per prediction event,
+  // matching the same deduplication the backend uses for accuracy metrics.
+  const uniqueHistory = useMemo(() => uniquePickEvents(history), [history]);
 
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';
@@ -1151,7 +1154,11 @@ export default function PicksScreen() {
                 <View style={styles.tabDot} />
               )}
               <Text style={[styles.toggleText, activeTab === t && styles.toggleTextActive]}>
-                {t === 'live' ? `Live${live.length > 0 ? ` (${live.length})` : ''}` : `History${history.length > 0 ? ` (${history.length})` : ''}`}
+                {t === 'live'
+                ? `Live${live.length > 0 ? ` (${live.length})` : ''}`
+                : uniqueHistory.length > 0
+                  ? `History (${uniqueHistory.length}${uniqueHistory.length < history.length ? ` of ${history.length}` : ''})`
+                  : 'History'}
               </Text>
             </TouchableOpacity>
           ))}

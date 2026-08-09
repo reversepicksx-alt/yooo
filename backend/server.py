@@ -59,7 +59,12 @@ from routes.notifications import router as notifications_router
 from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from routes.sports_config import router as sports_config_router
 from cache import seed_cache, background_refresh_loop
-from model_metrics import build_scorecard, dedupe_prediction_rows, walk_forward_replay
+from model_metrics import (
+    build_scorecard,
+    dedupe_prediction_rows,
+    walk_forward_replay,
+    _is_scored_directional_row,
+)
 
 app.include_router(auth_router)
 app.include_router(revenuecat_webhook_router)
@@ -1073,8 +1078,14 @@ async def owner_analytics(payload: dict = Body(...)):
             "dataset": "all_users",
             "sport": "soccer",
             "period": period,
+            # rawSettled   — total DB rows fetched (includes every save of every pick)
+            # settled      — unique prediction events (one per canonical event key)
+            # scoredEvents — unique events with a verified directional HIT or MISS;
+            #                PUSH, DNP, and PASS/calibration-only rows are excluded.
+            #                This matches the denominator used by build_scorecard.scoredN.
             "rawSettled": len(raw_rows),
             "settled": total_settled,
+            "scoredEvents": sum(1 for row in deduped_rows if _is_scored_directional_row(row)),
             "duplicateRowsRemoved": len(raw_rows) - total_settled,
         },
     }

@@ -1,8 +1,27 @@
 """Leakage-conscious evaluation metrics for settled prediction records.
 
 These functions are deliberately pure so the same definitions can be used by
-the API, tests, and offline reports.  A settled pick is deduplicated by
-trackingId because one prediction can be saved by multiple users.
+the API, tests, and offline reports.
+
+Terminology used throughout this module
+---------------------------------------
+raw records      — every row returned from the database (one per save action);
+                   a single prediction event may produce many raw records when
+                   users save the same pick or a user saves it more than once.
+unique events    — raw records collapsed to one row per prediction event using
+                   the canonical event key (_event_key).  This is the unit all
+                   accuracy metrics use.
+scored events    — unique events whose result is a verified directional HIT or
+                   MISS; PUSH, DNP, and legacy PASS rows are NOT scored because
+                   they carry no binary classification signal.
+
+Deduplication key
+-----------------
+Each unique prediction event is identified by _event_key(), which combines
+sport, fixture identity (fixtureId when present, otherwise fixtureDate, then a
+16-minute timestamp bucket), player identity, team/opponent identity, prop
+type, line, and resolved direction.  trackingId is a per-user, per-save handle
+and must NOT be used as the deduplication key.
 
 Two distinct evaluation modes are provided:
 
@@ -89,6 +108,21 @@ def _pass_calibration_metrics(rows: list[dict]) -> dict:
 
 
 def _event_key(row: dict) -> str:
+    """Return the canonical event key for a single prediction row.
+
+    This is the single authoritative deduplication identifier for the system.
+    Two rows with the same key represent the same prediction event (e.g. the
+    same pick saved by two different users, or saved twice by the same user).
+
+    Key components (in order):
+      sport | fixture-identity | playerId | playerName | teamId | opponentId
+      | propType | line | resolved-direction
+
+    Fixture identity falls back through three tiers:
+      1. fixtureId           — exact match; preferred for all modern records
+      2. fixtureDate/matchDate — date bucket; used when fixtureId is absent
+      3. 16-minute timestamp bucket — last resort for very old records
+    """
     recommendation = str(row.get("recommendation") or "").lower()
     if recommendation == "pass":
         recommendation = str(row.get("passLeaning") or "pass").lower()
@@ -104,18 +138,25 @@ def _event_key(row: dict) -> str:
     # from becoming duplicate events while retaining distinct match days.
     fixture_date = row.get("fixtureDate") or row.get("matchDate")
     if fixture_date:
+        # Use the resolved fixture_date value directly, not row.get("fixtureDate"),
+        # so records that carry only matchDate (not fixtureDate) still contribute
+        # the correct date to the key and remain distinguishable from other days.
         parts = [str(row.get(key, "")) for key in (
-            "sport", "fixtureDate", "playerId", "playerName", "teamId",
+            "sport", "playerId", "playerName", "teamId",
             "opponentId", "propType", "line",
         )]
-        return "|".join([*parts, recommendation])
+        return "|".join(["", str(fixture_date), *parts, recommendation])
     timestamp = str(row.get("timestamp") or row.get("createdAt") or "")
+    # Use the first 16 characters (YYYY-MM-DDTHH:MM) as a per-minute bucket
+    # so two saves of the same pick within the same minute collapse together,
+    # while picks on different days remain distinct events.
     timestamp_bucket = timestamp[:16] if timestamp else ""
     parts = [str(row.get(key, "")) for key in (
         "sport", "playerId", "playerName", "teamId", "opponentId",
-        "propType", "line", "venue", timestamp_bucket,
+        "propType", "line", "venue",
     )]
-    return "|".join([*parts, recommendation])
+    # Append the bucket directly as a value — do NOT use it as a dict key.
+    return "|".join([*parts, timestamp_bucket, recommendation])
 
 
 def dedupe_prediction_rows(rows: list[dict]) -> list[dict]:
@@ -263,14 +304,22 @@ def build_scorecard(rows: list[dict]) -> dict:
 
     result_counts = defaultdict(int)
     calibration_only = 0
+    scored_n = 0
     for row in deduped:
         result_counts[str(row.get("result") or "unknown").lower()] += 1
         if _is_pass_row(row):
             calibration_only += 1
+        if _is_scored_directional_row(row):
+            scored_n += 1
 
     return {
-        "n": len(deduped),
+        # rawN  — total DB rows fetched (one per save action; includes duplicates)
+        # n     — unique prediction events after deduplication via _event_key()
+        # scoredN — unique events with a verified directional HIT or MISS outcome;
+        #           this is the denominator for all binary classification metrics
         "rawN": len(rows),
+        "n": len(deduped),
+        "scoredN": scored_n,
         "duplicateRowsRemoved": max(0, len(rows) - len(deduped)),
         "resultCounts": dict(result_counts),
         "calibrationOnlyN": calibration_only,
