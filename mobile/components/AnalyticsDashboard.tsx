@@ -42,10 +42,18 @@ function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   return null;
 }
 
-type Period = 'all' | '30d' | '7d';
+type Period = 'all' | 'today' | '30d' | '7d';
 
 function filterByPeriod(picks: Pick[], period: Period) {
   if (period === 'all') return picks;
+  if (period === 'today') {
+    const now = new Date();
+    const startOfTodayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    return picks.filter(p => {
+      const timestamp = new Date((p as any).settledAt || (p as any).timestamp || p.createdAt || 0).getTime();
+      return Number.isFinite(timestamp) && timestamp >= startOfTodayUtc;
+    });
+  }
   const days = period === '30d' ? 30 : 7;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
@@ -574,14 +582,14 @@ export default function AnalyticsDashboard({
 
           {/* Period filters */}
           <View style={s.periodRow}>
-            {(['all', '30d', '7d'] as Period[]).map(p => (
+            {(['all', 'today', '30d', '7d'] as Period[]).map(p => (
               <TouchableOpacity
                 key={p}
                 onPress={() => setPeriod(p)}
                 style={[s.periodBtn, period === p && s.periodBtnActive]}
               >
                 <Text style={[s.periodBtnText, period === p && s.periodBtnTextActive]}>
-                  {p === 'all' ? 'All Time' : p === '30d' ? 'Last 30 Days' : 'Last 7 Days'}
+                  {p === 'all' ? 'All Time' : p === 'today' ? 'Today' : p === '30d' ? 'Last 30 Days' : 'Last 7 Days'}
                 </Text>
               </TouchableOpacity>
             ))}

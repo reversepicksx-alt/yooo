@@ -687,7 +687,7 @@ async def owner_analytics(payload: dict = Body(...)):
     email = str(payload.get("email") or "").lower().strip()
     token = str(payload.get("token") or "")
     period = str(payload.get("period") or "all").lower()
-    if period not in {"all", "30d", "7d"}:
+    if period not in {"all", "today", "30d", "7d"}:
         raise HTTPException(status_code=400, detail="Invalid analytics period")
     if email not in OWNER_EMAILS:
         raise HTTPException(status_code=403, detail="Owner access required")
@@ -720,8 +720,12 @@ async def owner_analytics(payload: dict = Body(...)):
         },
     ).to_list(100000)
     if period != "all":
-        days = 30 if period == "30d" else 7
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        now_utc = datetime.now(timezone.utc)
+        if period == "today":
+            cutoff = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            days = 30 if period == "30d" else 7
+            cutoff = now_utc - timedelta(days=days)
 
         def in_period(row: dict) -> bool:
             raw_date = row.get("settledAt") or row.get("timestamp") or row.get("createdAt")

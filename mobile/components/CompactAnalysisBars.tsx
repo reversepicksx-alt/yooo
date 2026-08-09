@@ -174,8 +174,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   };
   const selectedGame = selected?.group === 'recent' ? logs[selected.index] : null;
-  const selectedH2H = selected?.group === 'h2h' ? h2hRows[selected.index] : null;
-  const detailRow = selectedGame || selectedH2H;
+  const detailRow = selectedGame;
   const detailPossession = detailRow?.teamPossession ?? detailRow?.possession;
   const detailOpponentPossession = detailRow?.opponentPossession;
   const expectedPossession = prediction.expectedPossession;
@@ -303,7 +302,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       )}
 
       <View style={styles.card}>
-        <View style={styles.header}>
+        <View style={styles.h2hHeader}>
           <View style={styles.headerLeft}>
             <Ionicons name="swap-horizontal-outline" size={11} color={Colors.primary} />
             <Text style={styles.title}>
@@ -313,23 +312,23 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           {h2h.avgVsOpponent != null && <Text style={styles.meta}>AVG {Number(h2h.avgVsOpponent).toFixed(1)}</Text>}
         </View>
         {h2hRows.length > 0 ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
             <View style={{ width: h2hRows.length * 39 + 10 }}>
-              <View style={styles.chart}>
+              <View style={styles.h2hChart}>
                 {h2hRows.map((row: any, index: number) => {
                   const value = typeof row.displayValue === 'number' ? row.displayValue : null;
                   const maxValue = Math.max(...h2hRows.map((item: any) => Number(item.displayValue) || 0), row.teamOnly ? 100 : prediction.line ?? 0, 1) * 1.18;
                   const isOver = value != null && !row.teamOnly && prediction.line != null && value > prediction.line;
                   const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
-                  const height = value != null ? Math.max(10, (value / maxValue) * 112) : 10;
-                  const possession = row.possession != null ? `POSS ${row.possession}%` : 'POSS N/A';
+                  const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
+                  const possession = row.possession != null ? `P${row.possession}` : 'P—';
                   const date = row.date ? String(row.date).slice(5, 10) : '—';
                   const isSelected = selected?.group === 'h2h' && selected.index === index;
                   return (
                     <TouchableOpacity
                       key={`${date}-${index}`}
                        style={[
-                         styles.barColumn,
+                          styles.h2hBarColumn,
                          preferredVenue && rowVenue(row) === preferredVenue && styles.barColumnVenueSelected,
                          isSelected && styles.barColumnSelected,
                        ]}
@@ -337,36 +336,17 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       activeOpacity={0.8}
                       accessibilityLabel={`${row.opponent || row.homeTeam || 'H2H meeting'}, ${row.teamOnly ? 'team meeting' : `${value ?? 'unavailable'} stat`}`}
                     >
-                      <Text style={[styles.value, { color: value != null && !row.teamOnly ? color : Colors.textTertiary }]}>
+                      <Text style={[styles.h2hValue, { color: value != null && !row.teamOnly ? color : Colors.textTertiary }]}>
                         {value != null && !row.teamOnly ? value : row.teamOnly && value != null ? `${value}%` : '—'}
                       </Text>
-                      <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]}>
-                        <Text style={styles.possession}>{possession}</Text>
-                      </View>
-                      <Text style={styles.date}>{date}</Text>
-                      <Text style={[styles.opponent, { color: row.teamOnly ? '#4A6CFF' : Colors.textSecondary }]}>
-                        {shortOpponent(opponentName(row))}
-                      </Text>
-                      <Text style={styles.possessionLabel}>{possession.replace('POSS ', 'P')}</Text>
-                      <Text style={[styles.venueLabel, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}>
-                        {venueMark(rowVenue(row))}
+                      <View style={[styles.h2hBar, { height, backgroundColor: color + 'B8' }]} />
+                      <Text style={styles.h2hDate}>{date}</Text>
+                      <Text style={[styles.h2hMeta, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}>
+                        {possession} · {venueMark(rowVenue(row))}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
-              </View>
-              {selectedH2H && (
-                <Text style={styles.detail}>
-                  {selectedH2H.date ? String(selectedH2H.date).slice(0, 10) : 'Meeting'} · {selectedH2H.opponent || selectedH2H.homeTeam || 'Opponent'} · {selectedH2H.teamOnly ? 'team meeting; player did not appear' : `${selectedH2H.displayValue ?? 'stat unavailable'} stat`}
-                  {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
-                  {detailOpponentPossession != null ? ` / OPP ${detailOpponentPossession}%` : ''}
-                  {selectedH2H.matchScore || selectedH2H.score ? ` · ${selectedH2H.matchScore || selectedH2H.score}` : ''}
-                </Text>
-              )}
-              <View style={styles.legend}>
-                <View style={styles.legendDot} />
-                <Text style={styles.legendText}>{h2hRows.every((row: any) => row.teamOnly) ? 'team meeting · player did not appear' : 'player appearance'}</Text>
-                <Text style={[styles.legendText, { marginLeft: 'auto' }]}>POSS = verified team share</Text>
               </View>
             </View>
           </ScrollView>
@@ -400,6 +380,13 @@ const styles = {
     paddingHorizontal: 14,
     paddingTop: 12,
     paddingBottom: 8,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+  },
+  h2hHeader: {
+    paddingHorizontal: 14,
+    paddingTop: 7,
+    paddingBottom: 4,
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
   },
@@ -438,8 +425,15 @@ const styles = {
     textAlign: 'right' as const,
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
+  h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 5 },
   chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
   barColumn: { width: 34, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
+  h2hChart: { height: 39, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
+  h2hBarColumn: { width: 34, height: 39, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 1 },
+  h2hValue: { fontSize: 7, fontWeight: '800' as const, lineHeight: 8, marginBottom: 1 },
+  h2hBar: { width: 22, minHeight: 4, borderRadius: 2 },
+  h2hDate: { fontSize: 6, color: '#555', lineHeight: 7, marginTop: 2 },
+  h2hMeta: { fontSize: 6, lineHeight: 7, fontWeight: '800' as const },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
   value: { fontSize: 8, fontWeight: '800' as const, marginBottom: 2 },
