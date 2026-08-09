@@ -577,6 +577,14 @@ export interface PredictionResult {
     average?: number;
     weightedAverage?: number | null;
     sampleSize?: number;
+     avgPossession?: number;
+     avgOpponentPossession?: number;
+     expectedPlayerPossession?: number;
+     possessionSampleSize?: number;
+     teamPossessionSampleSize?: number;
+     opponentPossessionSampleSize?: number;
+     possessionSource?: string;
+     possessionStatus?: string;
     minimumRecommendedSample?: number;
     sampleStatus?: string;
     overHitRate?: number;

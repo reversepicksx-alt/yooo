@@ -39,6 +39,8 @@ export type SameRoleEvidence = {
   avgOpponentPossession?: number | null;
   expectedPlayerPossession?: number | null;
   possessionSampleSize?: number;
+  teamPossessionSampleSize?: number;
+  opponentPossessionSampleSize?: number;
   possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
   possessionSource?: string | null;
   possessionComparison?: string;
@@ -227,6 +229,12 @@ export default function SameRoleEvidenceCard({
   const avgOpponentPossession = Number(data.avgOpponentPossession);
   const expectedPlayerPossession = Number(data.expectedPlayerPossession);
   const possessionSampleSize = Number(data.possessionSampleSize || 0);
+  const teamPossessionSampleSize = Number(
+    data.teamPossessionSampleSize || possessionSampleSize,
+  );
+  const opponentPossessionSampleSize = Number(
+    data.opponentPossessionSampleSize || possessionSampleSize,
+  );
   const possessionStatus = String(data.possessionStatus || (
     possessionSampleSize > 0 ? 'verified' : 'unavailable'
   )).toLowerCase();
@@ -313,18 +321,16 @@ export default function SameRoleEvidenceCard({
           borderTopColor: 'rgba(255,255,255,0.08)',
         }}>
           <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8 }}>
-            POSSESSION CONTEXT · SAME OPPONENT
+             POSSESSION CONTEXT · TEAM SCHEDULES
           </Text>
           <Text style={{ fontSize: 10, color: Colors.text, lineHeight: 15, marginTop: 4 }}>
-            Sampled teams averaged {avgPossession.toFixed(0)}% possession
+             The selected team schedule averaged {avgPossession.toFixed(0)}% possession
             {' '}vs {avgOpponentPossession.toFixed(0)}% for {data.opponent || 'the opponent'}
-            {Number.isFinite(expectedPlayerPossession)
-              ? ` · current expected ${expectedPlayerPossession.toFixed(0)}%`
-              : ''}
+             .
           </Text>
           <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
             {possessionStatus === 'verified'
-              ? `${possessionSampleSize} sampled matches with verified possession · context only`
+               ? `${teamPossessionSampleSize} selected-team matches and ${opponentPossessionSampleSize} opponent matches with verified possession · player appearances not required · context only`
               : 'Estimated possession context · context only'}
           </Text>
         </View>

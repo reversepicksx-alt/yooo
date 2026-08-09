@@ -1303,6 +1303,93 @@ async def predict(req: PredictionRequest):
             results_raw = await aio.gather(*tasks, return_exceptions=True)
             return [r for r in results_raw if r and not isinstance(r, Exception)]
 
+        async def fetch_team_possession_average(fixture_list, team_id, limit=20):
+            """Average possession from a team's full fixture schedule.
+
+            This is deliberately independent of player logs and lineup rows.
+            A player who did not appear in a fixture must not remove that match
+            from the club's possession average.
+            """
+            if not team_id or not fixture_list:
+                return {"average": None, "sampleSize": 0, "fixtureIds": [], "source": None}
+
+            async def fetch_one(fix):
+                fid = fix.get("fixtureId")
+                if not fid:
+                    return None
+                cache_key = f"fxt_team_poss_{fid}_{team_id}"
+                try:
+                    cached = await db.fixture_player_cache.find_one(
+                        {"_k": cache_key}, {"_id": 0, "d": 1}
+                    )
+                    cached_data = (cached or {}).get("d") or {}
+                    cached_value = cached_data.get("teamPossession")
+                    if isinstance(cached_value, (int, float)):
+                        return {"fixtureId": fid, "value": float(cached_value)}
+                except Exception:
+                    pass
+
+                try:
+                    stats_rows = await api_football_request(
+                        "fixtures/statistics", {"fixture": fid}
+                    )
+                    value = None
+                    for team_stats in stats_rows or []:
+                        if (team_stats.get("team") or {}).get("id") != team_id:
+                            continue
+                        for stat in team_stats.get("statistics") or []:
+                            if stat.get("type") != "Ball Possession":
+                                continue
+                            raw = str(stat.get("value") or "").replace("%", "").strip()
+                            try:
+                                value = float(raw)
+                            except (TypeError, ValueError):
+                                value = None
+                            break
+                        break
+                    if value is None:
+                        return None
+                    try:
+                        await db.fixture_player_cache.update_one(
+                            {"_k": cache_key},
+                            {"$set": {
+                                "_k": cache_key,
+                                "d": {
+                                    "teamId": team_id,
+                                    "teamPossession": value,
+                                    "fixtureId": fid,
+                                },
+                            }},
+                            upsert=True,
+                        )
+                    except Exception as cache_err:
+                        print(f"[TEAM POSS CACHE] skipped: {cache_err}")
+                    return {"fixtureId": fid, "value": value}
+                except Exception:
+                    return None
+
+            sem = aio.Semaphore(6)
+
+            async def bounded(fix):
+                async with sem:
+                    return await fetch_one(fix)
+
+            results = await aio.gather(
+                *(bounded(fix) for fix in fixture_list[:limit]),
+                return_exceptions=True,
+            )
+            valid = [
+                row for row in results
+                if isinstance(row, dict) and isinstance(row.get("value"), (int, float))
+            ]
+            return {
+                "average": round(sum(row["value"] for row in valid) / len(valid), 1)
+                if valid else None,
+                "sampleSize": len(valid),
+                "fixtureIds": [row["fixtureId"] for row in valid],
+                "source": "fixture_statistics_team_schedule" if valid else None,
+            }
+
         # 2. Player game-by-game box scores from recent fixtures
         async def fetch_player_game_logs(fixture_list, player_id, limit=35):
             """Fetch player's individual stats — always live from API, all competitions."""
@@ -2206,10 +2293,32 @@ async def predict(req: PredictionRequest):
                             # for the response even when the fixture lineup
                             # does not return an exact grid position.
                             observed_normalized = provider_position
-                            if (
-                                provider_position != normalize_observed_position(fixture_pos)
-                                or minutes < 30
-                            ):
+                            _target_generic_categories = {
+                                "GK": {"G", "GK"},
+                                "CB": {"D", "DEF"},
+                                "LB": {"D", "DEF"},
+                                "RB": {"D", "DEF"},
+                                "LWB": {"D", "DEF", "M", "MID"},
+                                "RWB": {"D", "DEF", "M", "MID"},
+                                "CDM": {"M", "MID"},
+                                "CM": {"M", "MID"},
+                                "CAM": {"M", "MID"},
+                                "LM": {"M", "MID"},
+                                "RM": {"M", "MID"},
+                                "LW": {"F", "FWD", "M", "MID"},
+                                "RW": {"F", "FWD", "M", "MID"},
+                                "CF": {"F", "FWD"},
+                                "ST": {"F", "FWD"},
+                                "SS": {"F", "FWD", "M", "MID"},
+                            }
+                            _provider_category_allowed = (
+                                provider_position == normalize_observed_position(fixture_pos)
+                                or (
+                                    target_specific_pos in _target_generic_categories
+                                    and provider_position in _target_generic_categories[target_specific_pos]
+                                )
+                            )
+                            if not _provider_category_allowed or minutes < 30:
                                 continue
                             stat_val = pstats.get(stat_cat, {}).get(stat_sub)
                             if stat_val is None:
@@ -2625,7 +2734,7 @@ async def predict(req: PredictionRequest):
         # Get opponent's recent fixtures — local DB first, API fallback.
         # Keep a broad enough API-backed pool to reach the 15-player cohort
         # target; the cohort itself still refuses to pad missing evidence.
-        _cohort_fixture_lookback = 20
+        _cohort_fixture_lookback = 40
         opponent_recent_raw = None
         if safe_opp_id:
             try:
@@ -2671,6 +2780,20 @@ async def predict(req: PredictionRequest):
 
         # Wave 2: Use VENUE-FILTERED fixtures for deep stats
         # For neutral venue: use all fixtures (no venue preference)
+        # Possession context is a team-level sample, not a player-history
+        # sample. Use each club's completed schedule independently so a
+        # player's minutes or non-appearance cannot change the club average.
+        team_schedule_possession_task = fetch_team_possession_average(
+            all_team_fixtures,
+            actual_team_id or 40,
+            20,
+        )
+        opponent_schedule_possession_task = fetch_team_possession_average(
+            opponent_fixture_list,
+            req.opponentId,
+            20,
+        )
+
         team_fixture_stats_task = fetch_fixture_team_stats(
             all_team_fixtures[:5] if _is_neutral else (venue_filtered_team_fixtures[:5] if len(venue_filtered_team_fixtures) >= 3 else all_team_fixtures[:5]),
             actual_team_id or 40, 5
@@ -2912,6 +3035,16 @@ async def predict(req: PredictionRequest):
             _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 18),
             _bounded_required(player_game_logs_task, "player game logs", 25),
             _bounded_required(situation_task, "match situation", 10),
+            _bounded_required(
+                team_schedule_possession_task,
+                "team schedule possession",
+                18,
+            ),
+            _bounded_required(
+                opponent_schedule_possession_task,
+                "opponent schedule possession",
+                18,
+            ),
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(
@@ -2921,7 +3054,7 @@ async def predict(req: PredictionRequest):
         try:
             required_results = await aio.wait_for(required_wave2, timeout=27)
         except aio.TimeoutError:
-            required_results = [None, None, None, None]
+            required_results = [None, None, None, None, None, None]
             print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 27s for {req.playerName}")
 
         try:
@@ -2934,6 +3067,18 @@ async def predict(req: PredictionRequest):
         opponent_fixture_stats = required_results[1] if not isinstance(required_results[1], (Exception, type(None))) else []
         player_game_logs = required_results[2] if not isinstance(required_results[2], (Exception, type(None))) else []
         game_situation = required_results[3] if len(required_results) > 3 and not isinstance(required_results[3], (Exception, type(None))) else {}
+        team_schedule_possession = (
+            required_results[4]
+            if len(required_results) > 4
+            and not isinstance(required_results[4], (Exception, type(None)))
+            else {"average": None, "sampleSize": 0, "fixtureIds": [], "source": None}
+        )
+        opponent_schedule_possession = (
+            required_results[5]
+            if len(required_results) > 5
+            and not isinstance(required_results[5], (Exception, type(None)))
+            else {"average": None, "sampleSize": 0, "fixtureIds": [], "source": None}
+        )
         bzzoiro_enrichment = (
             optional_results[0]
             if len(optional_results) > 0 and not isinstance(optional_results[0], (Exception, type(None)))
@@ -7197,14 +7342,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 p.get("per90") for p in position_comparison
                 if p.get("per90") is not None
             ]
-            comp_poss = [
-                p.get("teamPossession") for p in position_comparison
-                if p.get("teamPossession") is not None
-            ]
-            comp_opp_poss = [
-                p.get("oppPossession") for p in position_comparison
-                if p.get("oppPossession") is not None
-            ]
+            # These are deliberately NOT derived from position_comparison.
+            # Comparable-player rows are appearance/minutes-filtered; team
+            # possession must represent the club schedule, including matches
+            # where the selected player did not play.
+            team_schedule_poss_avg = (team_schedule_possession or {}).get("average")
+            opponent_schedule_poss_avg = (opponent_schedule_possession or {}).get("average")
+            team_schedule_poss_n = int(
+                (team_schedule_possession or {}).get("sampleSize") or 0
+            )
+            opponent_schedule_poss_n = int(
+                (opponent_schedule_possession or {}).get("sampleSize") or 0
+            )
             # Keep the existing deterministic model-facing opponent average
             # unchanged until the weighted evidence has passed settled-pick
             # replay. The new weighted value is exposed separately for the
@@ -7223,20 +7372,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 else round(sum(comp_values) / len(comp_values), 2) if comp_values else None
             )
             comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else None
-            comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
-            comp_opp_poss_avg = (
-                round(sum(comp_opp_poss) / len(comp_opp_poss), 1)
-                if comp_opp_poss else None
+            comp_poss_avg = team_schedule_poss_avg
+            comp_opp_poss_avg = opponent_schedule_poss_avg
+            _team_schedule_poss_verified = (
+                isinstance(comp_poss_avg, (int, float))
+                and isinstance(comp_opp_poss_avg, (int, float))
+                and team_schedule_poss_n > 0
+                and opponent_schedule_poss_n > 0
             )
-            _paired_comp_poss = [
-                (
-                    float(row["teamPossession"]),
-                    float(row["oppPossession"]),
-                )
-                for row in position_comparison
-                if isinstance(row.get("teamPossession"), (int, float))
-                and isinstance(row.get("oppPossession"), (int, float))
-            ]
             # This is the possession expectation for the selected player's
             # team in the current fixture. It is comparison context only:
             # same-role evidence must never alter the deterministic projection.
@@ -7268,17 +7411,26 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "avgPossession": comp_poss_avg,
                 "avgOpponentPossession": comp_opp_poss_avg,
                 "expectedPlayerPossession": current_expected_player_poss,
-                "possessionSampleSize": len(comp_poss),
-                "possessionStatus": "verified" if _paired_comp_poss else "unavailable",
+                "possessionSampleSize": min(
+                    team_schedule_poss_n,
+                    opponent_schedule_poss_n,
+                ),
+                "teamPossessionSampleSize": team_schedule_poss_n,
+                "opponentPossessionSampleSize": opponent_schedule_poss_n,
+                "possessionStatus": (
+                    "verified" if _team_schedule_poss_verified else "unavailable"
+                ),
                 "possessionSource": (
-                    "fixture_statistics" if _paired_comp_poss else None
+                    "fixture_statistics_team_schedule"
+                    if _team_schedule_poss_verified
+                    else None
                 ),
                 "possessionComparison": (
-                    "sampled teams averaged "
+                    "team schedules averaged "
                     f"{comp_poss_avg:.1f}% possession vs {comp_opp_poss_avg:.1f}% for "
                     f"the opponent"
-                    if comp_poss_avg is not None and comp_opp_poss_avg is not None
-                    else "verified match possession unavailable for this sample"
+                    if _team_schedule_poss_verified
+                    else "verified team-schedule possession unavailable"
                 ),
                 "sampleSize": _cohort_evidence["sampleSize"],
                 "minimumRecommendedSample": _cohort_evidence["minimumRecommendedSample"],

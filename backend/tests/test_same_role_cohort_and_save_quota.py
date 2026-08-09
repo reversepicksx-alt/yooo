@@ -15,6 +15,7 @@ def test_position_cohort_requires_exact_position_and_has_broad_api_pool():
     assert '"CB", "LB", "RB", "LWB", "RWB"' in PREDICT_SOURCE
     assert "target_role=display_role or player_role" in PREDICT_SOURCE
     assert '"last": _cohort_fixture_lookback' in PREDICT_SOURCE
+    assert "_cohort_fixture_lookback = 40" in PREDICT_SOURCE
     assert "fetch_position_comparison(" in PREDICT_SOURCE
     assert "return unique[:15]" in PREDICT_SOURCE
     assert '"evidenceWeight"' in PREDICT_SOURCE
@@ -39,6 +40,19 @@ def test_position_cohort_is_labeled_exact_opponent_same_position_evidence():
     assert '"positionSource": position_source' in PREDICT_SOURCE
     assert "Broad provider categories (DEF/MID/FWD)" in PREDICT_SOURCE
     assert "legacy_unique" in PREDICT_SOURCE
+
+
+def test_possession_context_uses_independent_team_schedules():
+    assert "async def fetch_team_possession_average" in PREDICT_SOURCE
+    assert "fixture_statistics_team_schedule" in PREDICT_SOURCE
+    assert "team_schedule_possession_task" in PREDICT_SOURCE
+    assert "opponent_schedule_possession_task" in PREDICT_SOURCE
+    assert "player appearances not required" in PREDICT_SOURCE or "player" in PREDICT_SOURCE
+
+
+def test_wide_exact_positions_allow_broad_provider_midfielder_rows():
+    assert '"LW": {"F", "FWD", "M", "MID"}' in PREDICT_SOURCE
+    assert '"RW": {"F", "FWD", "M", "MID"}' in PREDICT_SOURCE
 
 
 def test_position_cohort_lineup_enrichment_cannot_drop_player_stats():

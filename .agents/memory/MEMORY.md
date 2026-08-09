@@ -154,3 +154,4 @@
 - [Trust-oriented evidence display](trust-oriented-evidence-display.md) — users trust predictions more when provenance, sample context, and unavailable data are visible instead of hidden or estimated.
 - [Season-boundary evidence handling](season-boundary-evidence.md) — new fixtures can belong to the next competition season while valid history remains in the completed prior season; filter incomplete rows, do not weaken provenance.
 - [API-Football attacking grid columns](api-football-attacking-grid.md) — 4-2-3-1 row-four columns are LW/CAM/RW left-to-right; never collapse all three into CAM.
+- [Team-schedule possession context](team-schedule-possession.md) — possession context must average independent club schedules; player minutes and exact-position cohort rows must not determine the sample.
