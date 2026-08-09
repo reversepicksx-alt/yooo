@@ -857,7 +857,7 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
            <Text style={aStyles.proCardNote}>
              {positionCohort?.opponent || 'Opponent'} matchup sample: comparable{' '}
              {cohortPositionLabel(positionCohort?.targetPosition || positionCohort?.positionShort)}{' '}
-             averaged {cohortAverage ?? '—'} {PROP_LABELS[positionCohort?.propType ?? '']?.toLowerCase() ?? String(positionCohort?.propType ?? 'prop').replace(/_/g, ' ')}
+             players averaged {cohortAverage ?? '—'} {PROP_LABELS[positionCohort?.propType ?? '']?.toLowerCase() ?? String(positionCohort?.propType ?? 'prop').replace(/_/g, ' ')}
              {positionCohort?.venue ? ` in matching ${positionCohort.venue} fixtures` : ''}
              {' '}· n={cohortSample}
               {positionCohort?.overHitRate != null ? ` · ${positionCohort.overHitRate}% OVER` : ''}

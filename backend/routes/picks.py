@@ -1615,10 +1615,13 @@ async def list_picks(req: GetPicksRequest):
                             if meta_set.get("settlementReview") is None:
                                 meta_set.pop("settlementReview", None)
                                 update_doc["$unset"] = {"settlementReview": ""}
-                            await db.picks.update_one(
-                                {"pickId": p["pickId"], "email": pick_email},
-                                update_doc
-                            )
+                            try:
+                                await db.picks.update_one(
+                                    {"pickId": p["pickId"], "email": pick_email},
+                                    update_doc
+                                )
+                            except Exception as _we:
+                                print(f"[PICKS-LIST WRITE FAIL] final-refresh {p.get('playerName','')}: {_we}")
                 except Exception as _re:
                     print(f"[FINAL REFRESH] Error for {p.get('playerName','?')}: {_re}")
     except Exception as _fe:
