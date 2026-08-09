@@ -32,6 +32,9 @@ export interface FuzzyPlayerResult {
   teamName: string;
   leagueId: number;
   position?: string;
+  positionVerified?: boolean;
+  positionSource?: string;
+  teamConfirmed?: boolean;
 }
 
 export interface UniversalPlayerResult extends FuzzyPlayerResult {
@@ -201,13 +204,18 @@ export default function FuzzySearchInput({
         r = data.leagues || [];
       } else if (searchType === 'players') {
         const data = await searchPlayersQuick(q, leagueId);
-        r = (data.players || []).map((p: any) => ({
+        r = (data.players || [])
+          .filter((p: any) => p.teamConfirmed === true && p.positionVerified === true)
+          .map((p: any) => ({
           playerId: (p.id as number) || 0,
           playerName: (p.name as string) || '',
           teamId: (p.teamId as number) || 0,
           teamName: (p.teamName as string) || (p.team as string) || '',
           leagueId: (p.leagueId as number) || 0,
           position: (p.position as string) || '',
+          positionVerified: p.positionVerified === true,
+          positionSource: p.positionSource || '',
+          teamConfirmed: p.teamConfirmed === true,
         }));
       } else if (searchType === 'all_players') {
         // Search the three supported player providers in parallel. A single
@@ -224,7 +232,9 @@ export default function FuzzySearchInput({
         const mlbRows = mlbResult.status === 'fulfilled' ? mlbResult.value : [];
         const nflRows = nflResult.status === 'fulfilled' ? nflResult.value : [];
         r = [
-          ...soccerRows.map((p: any) => ({
+          ...soccerRows
+            .filter((p: any) => p.teamConfirmed === true && p.positionVerified === true)
+            .map((p: any) => ({
             sport: 'soccer',
             playerId: p.id || p.playerId || 0,
             playerName: p.name || p.playerName || '',
@@ -232,6 +242,9 @@ export default function FuzzySearchInput({
             teamName: p.teamName || p.team || '',
             leagueId: p.leagueId || 0,
             position: p.position || '',
+            positionVerified: p.positionVerified === true,
+            positionSource: p.positionSource || '',
+            teamConfirmed: p.teamConfirmed === true,
             raw: p,
           })),
           ...mlbRows.map((p: MlbPlayer) => ({

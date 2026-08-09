@@ -4,7 +4,7 @@ import time
 import unicodedata
 from fastapi import APIRouter
 
-from config import CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON, db
+from config import CURRENT_SEASON, NWSL_LEAGUE_ID, NWSL_SEASON, POSITION_PROMPT_VERSION, db
 from models import PlayerSearchRequest, PlayerRoleResolveRequest
 from utils import api_football_request, priority_api_football_request, is_quota_exhausted
 
@@ -37,6 +37,105 @@ _INTL_LEAGUES = {
     27,  # World Cup Qualifiers - South America
     28,  # World Cup Qualifiers - Africa
 }
+
+# Search is an identity surface, not a position guesser.  API-Football squad
+# records normally contain only broad categories (Defender/Attacker/etc.).
+# Those categories must never be converted into a fake CB/CF claim.
+_SEARCH_EXACT_POSITIONS = {
+    "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+    "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+}
+_SEARCH_POSITION_ALIASES = {
+    "GOALKEEPER": "GK", "KEEPER": "GK",
+    "CENTRE BACK": "CB", "CENTER BACK": "CB",
+    "LEFT BACK": "LB", "RIGHT BACK": "RB",
+    "LEFT WING BACK": "LWB", "RIGHT WING BACK": "RWB",
+    "DEFENSIVE MIDFIELDER": "CDM", "HOLDING MIDFIELDER": "CDM",
+    "CENTRAL MIDFIELDER": "CM", "ATTACKING MIDFIELDER": "CAM",
+    "LEFT MIDFIELDER": "LM", "RIGHT MIDFIELDER": "RM",
+    "LEFT WINGER": "LW", "RIGHT WINGER": "RW",
+    "CENTRE FORWARD": "CF", "CENTER FORWARD": "CF",
+    "STRIKER": "ST", "SECOND STRIKER": "SS",
+}
+_SEARCH_GENERIC_CATEGORIES = {
+    "GOALKEEPER": {"GK"},
+    "DEFENDER": {"CB", "LB", "RB", "LWB", "RWB"},
+    "MIDFIELDER": {"CDM", "CM", "CAM", "LM", "RM"},
+    "ATTACKER": {"LW", "RW", "CF", "ST", "SS", "CAM"},
+    "FORWARD": {"LW", "RW", "CF", "ST", "SS", "CAM"},
+}
+_SEARCH_TRUSTED_POSITION_SOURCES = {"gemini_web_grounded", "manual_override"}
+
+
+def _search_exact_position(value: object) -> str:
+    text = " ".join(str(value or "").strip().upper().replace("-", " ").split())
+    position = _SEARCH_POSITION_ALIASES.get(text, text)
+    return position if position in _SEARCH_EXACT_POSITIONS else ""
+
+
+def _search_position_category(value: object) -> str:
+    return " ".join(str(value or "").strip().upper().replace("-", " ").split())
+
+
+def _confirmed_search_rows(
+    player_list: list[dict],
+    position_docs: dict[int, dict] | None = None,
+) -> list[dict]:
+    """Keep only soccer search rows with confirmed team and exact position."""
+    position_docs = position_docs or {}
+    confirmed = []
+    for player in player_list or []:
+        pid = player.get("id") or player.get("playerId")
+        team_id = player.get("teamId") or 0
+        team_name = (player.get("teamName") or "").strip()
+        if not pid or not team_id or not team_name:
+            continue
+
+        category = _search_position_category(player.get("position"))
+        exact_position = _search_exact_position(category)
+        position_source = "provider_exact" if exact_position else ""
+
+        if not exact_position:
+            cached = position_docs.get(int(pid)) or {}
+            cached_position = _search_exact_position(cached.get("specificPosition"))
+            cached_source = cached.get("source")
+            allowed = _SEARCH_GENERIC_CATEGORIES.get(category)
+            cached_team = unicodedata.normalize(
+                "NFD", (cached.get("team") or "").lower()
+            )
+            cached_team = "".join(
+                c for c in cached_team if unicodedata.category(c) != "Mn"
+            ).strip()
+            returned_team = unicodedata.normalize("NFD", team_name.lower())
+            returned_team = "".join(
+                c for c in returned_team if unicodedata.category(c) != "Mn"
+            ).strip()
+            if (
+                cached_position
+                and cached_source in _SEARCH_TRUSTED_POSITION_SOURCES
+                and (
+                    cached.get("promptVersion", 0) >= POSITION_PROMPT_VERSION
+                    or cached_source == "manual_override"
+                )
+                and (not allowed or cached_position in allowed)
+                and cached_team
+                and cached_team == returned_team
+            ):
+                exact_position = cached_position
+                position_source = cached_source
+
+        if not exact_position:
+            continue
+
+        enriched = dict(player)
+        enriched.update({
+            "position": exact_position,
+            "positionVerified": True,
+            "positionSource": position_source,
+            "teamConfirmed": True,
+        })
+        confirmed.append(enriched)
+    return confirmed
 
 
 async def _search_players_cache(
@@ -618,20 +717,39 @@ async def search_players(req: PlayerSearchRequest):
             player_list = [p for p in player_list if sort_key(p)[0] == 0]
         return player_list[:15]
 
-    def _mask_unverified_team(player_list):
-        """Keep search useful without presenting cache data as current club.
+    async def _filter_confirmed_search_players(player_list: list[dict]) -> list[dict]:
+        """Return only search rows with a real club and trusted position.
 
-        Search is an identity step. The selected player gets a synchronous
-        current-club verification from /players/{id}/contexts. Until then,
-        cache/provider team fields are intentionally hidden so an old club
-        cannot be mistaken for a confirmed transfer destination.
+        API-Football commonly returns broad categories such as Defender or
+        Attacker. Those are useful for conservative prediction fallbacks, but
+        they are not exact positions and must not be displayed as CB/CF (or
+        any other guessed position). Exact provider values are accepted;
+        otherwise use only a current-version grounded/manual position record
+        keyed by playerId.
         """
-        for player in player_list:
-            player["teamId"] = 0
-            player["teamName"] = ""
-            player["leagueId"] = 0
-            player["teamVerified"] = False
-        return player_list
+        by_id = {
+            int(player.get("id") or player.get("playerId")): player
+            for player in (player_list or [])
+            if player.get("id") or player.get("playerId")
+        }
+        position_docs: dict[int, dict] = {}
+        try:
+            if by_id:
+                docs = await db.player_positions.find(
+                    {"playerId": {"$in": list(by_id)}},
+                    {"_id": 0, "playerId": 1, "specificPosition": 1,
+                     "source": 1, "promptVersion": 1, "team": 1},
+                ).to_list(len(by_id))
+                position_docs = {
+                    int(doc["playerId"]): doc
+                    for doc in (docs or [])
+                    if doc.get("playerId")
+                }
+        except Exception as exc:
+            # Provider-exact rows remain usable if Atlas is unavailable.
+            # Generic rows are still excluded because they lack exact evidence.
+            print(f"[PLAYER SEARCH] exact-position lookup skipped: {exc}")
+        return _confirmed_search_rows(player_list, position_docs)
 
     async def _resolve_club_for_intl_player(p: dict) -> dict:
         """If a cache hit shows a national team, fetch the player's actual club
@@ -932,16 +1050,7 @@ async def search_players(req: PlayerSearchRequest):
                                 print(f"[BG-CLUB-STALE] pid={p.get('id')} err={_e}")
                     aio.ensure_future(_bg_refresh_stale(stale_club_hits))
 
-            # Cache rows are search hints, not proof of a current club.  Do
-            # not put their historical team into the universal search result:
-            # the selection flow performs a synchronous current-club
-            # verification before it can auto-fill a fixture.
-            for player in sorted_results:
-                player["teamId"] = 0
-                player["teamName"] = ""
-                player["leagueId"] = 0
-                player["teamVerified"] = False
-            return {"players": sorted_results}
+            return {"players": await _filter_confirmed_search_players(sorted_results)}
     except (aio.TimeoutError, TimeoutError):
         print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")
     except Exception as exc:
@@ -956,7 +1065,9 @@ async def search_players(req: PlayerSearchRequest):
                 try:
                     fallback = await _search_players_cache(last_word, req.league_id, relaxed=True)
                     if fallback:
-                        return {"players": _mask_unverified_team(_apply_sort_and_quality(fallback))}
+                        return {"players": await _filter_confirmed_search_players(
+                            _apply_sort_and_quality(fallback)
+                        )}
                 except Exception:
                     pass
         # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
@@ -966,7 +1077,9 @@ async def search_players(req: PlayerSearchRequest):
             from soccer_bdl_client import search_bdl_players
             bdl_hits = await aio.wait_for(search_bdl_players(req.query), timeout=1.25)
             if bdl_hits:
-                return {"players": _mask_unverified_team(_apply_sort_and_quality(bdl_hits))}
+                return {"players": await _filter_confirmed_search_players(
+                    _apply_sort_and_quality(bdl_hits)
+                )}
         except (aio.TimeoutError, TimeoutError):
             print(f"[PLAYER SEARCH] BDL lookup exceeded 1250ms for {req.query!r}")
         except Exception:
@@ -1058,7 +1171,9 @@ async def search_players(req: PlayerSearchRequest):
         except Exception as exc:
             print(f"[PLAYER SEARCH] exact context lookup failed for {req.query!r}: {exc}")
 
-    return {"players": _mask_unverified_team(_apply_sort_and_quality(live_players))}
+    return {"players": await _filter_confirmed_search_players(
+        _apply_sort_and_quality(live_players)
+    )}
 
     all_players = []
 
