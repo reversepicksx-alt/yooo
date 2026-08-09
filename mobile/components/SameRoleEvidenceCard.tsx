@@ -10,8 +10,10 @@ type CohortPlayer = {
   passAttempts?: number | null;
   teamPossession?: number | null;
   oppPossession?: number | null;
+  tp?: number | null;
   crossPropStats?: Record<string, number>;
   minutes?: number | null;
+  minutesPlayed?: number | null;
   position?: string;
   matchPosition?: string | null;
   observedPosition?: string | null;
@@ -111,9 +113,9 @@ export default function SameRoleEvidenceCard({
   recommendation?: string | null;
   line?: number | null;
 }) {
-  if (!data || !(Number(data.sampleSize) > 0)) return null;
+  if (!data) return null;
 
-  const sample = Number(data.sampleSize);
+  const sample = Number(data.sampleSize || 0);
   const minimum = Number(data.minimumRecommendedSample || 15);
   const average = data.average ?? data.avgStatValue;
   const rec = String(recommendation || '').toUpperCase();
@@ -137,6 +139,7 @@ export default function SameRoleEvidenceCard({
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
   const sourcePlayers = (data.players || []).slice(0, 15);
+  const hasSourcePlayers = sourcePlayers.length > 0;
   const scope = String(data.sourceScope || '');
   const scopeLabel = scope.includes('mixed_venue')
     ? 'same-opponent home + away fixtures'
@@ -167,7 +170,9 @@ export default function SameRoleEvidenceCard({
     }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <Text style={{ fontSize: 9, color: verdictColor, fontWeight: '900', letterSpacing: 1 }}>
-          {isSamePosition ? 'SAME-POSITION OPPONENT EVIDENCE' : 'SAME-ROLE OPPONENT EVIDENCE'}
+          {isSamePosition
+            ? `SIMILAR ${positionLabel(data.targetPosition || data.positionShort || 'POSITION').toUpperCase()} PLAYERS`
+            : 'SAME-ROLE OPPONENT EVIDENCE'}
         </Text>
         <Text style={{ marginLeft: 'auto', fontSize: 9, color: verdictColor, fontWeight: '900' }}>
           {verdict}
@@ -177,8 +182,10 @@ export default function SameRoleEvidenceCard({
         {data.opponent || 'Exact opponent'} allows an average of {average != null ? Number(average).toFixed(1) : '—'} {prop.toLowerCase()}
         {' '}to {position}{role ? ` · ${role}` : ''}
       </Text>
-      <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
-         {sample} distinct same-role player{sample === 1 ? '' : 's'} in {scopeLabel}
+       <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
+         {sample > 0
+           ? `${sample} distinct ${isSamePosition ? 'same-position player' : 'same-role player'}${sample === 1 ? '' : 's'} in ${scopeLabel}`
+           : `No exact ${positionLabel(data.targetPosition || data.positionShort || 'position')} source-player rows were returned`}
         {hasVerdict ? ` · line ${numericLine.toFixed(1)} · pick ${rec}` : ''}
         {limited ? ` · limited sample (target n≥${minimum})` : ' · target sample reached'}
       </Text>
@@ -216,7 +223,7 @@ export default function SameRoleEvidenceCard({
           {data.underHitRate != null ? `${data.underHitRate}% UNDER` : 'UNDER —'}
         </Text>
       )}
-      {sourcePlayers.length > 0 && (
+      {hasSourcePlayers && (
         <View style={{
           marginTop: 8,
           paddingTop: 7,
@@ -264,19 +271,23 @@ export default function SameRoleEvidenceCard({
                     {label(data.propType)} {statValue != null ? Number(statValue).toFixed(0) : '—'}
                   </Text>
                   <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '800', lineHeight: 15, marginTop: 1 }}>
-                    {player.teamPossession != null
-                      ? `TEAM ${Number(player.teamPossession).toFixed(0)}%`
-                      : 'TEAM —'}
-                    {' · '}
-                    {player.oppPossession != null
-                      ? `OPP ${Number(player.oppPossession).toFixed(0)}%`
-                      : 'OPP —'}
+                    {player.tp != null || player.teamPossession != null
+                      ? `TP ${Number(player.tp ?? player.teamPossession).toFixed(0)}%`
+                      : 'TP —'}
+                  </Text>
+                  <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '800', lineHeight: 15 }}>
+                    MIN {player.minutesPlayed ?? player.minutes ?? '—'}
                   </Text>
                 </View>
               </View>
             );
           })}
         </View>
+      )}
+      {!hasSourcePlayers && (
+        <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 8 }}>
+          Exact-position evidence is unavailable for this opponent window; generic DEF rows are intentionally not relabeled as {position}.
+        </Text>
       )}
       {Object.keys(data.crossPropAverages || {}).filter((key) => key !== data.propType).length > 0 && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 3 }}>

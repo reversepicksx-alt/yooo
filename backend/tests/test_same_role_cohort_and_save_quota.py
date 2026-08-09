@@ -41,6 +41,33 @@ def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
     assert "legacy_unique" in PREDICT_SOURCE
 
 
+def test_position_cohort_lineup_enrichment_cannot_drop_player_stats():
+    assert "lineups_task = aio.create_task(" in PREDICT_SOURCE
+    assert "players_data, fixture_stats_data = await aio.wait_for(" in PREDICT_SOURCE
+    assert "timeout=3.0" in PREDICT_SOURCE
+    assert "lineups_data = await aio.wait_for(lineups_task, timeout=1.0)" in PREDICT_SOURCE
+    assert "if not lineups_task.done():" in PREDICT_SOURCE
+
+
+def test_soccer_player_history_requires_exact_tp_and_minutes():
+    assert "async def _fetch_fixture_possession(" in PREDICT_SOURCE
+    assert '"tp": gl["teamPossession"]' not in PREDICT_SOURCE
+    assert "_tp_complete" in PREDICT_SOURCE
+    assert "_missing_tp_logs" in PREDICT_SOURCE
+    assert "status_code=424" in PREDICT_SOURCE
+    assert '"tpHomeAvg"' in PREDICT_SOURCE
+    assert '"tpAwayAvg"' in PREDICT_SOURCE
+    assert '"minutesPlayed": minutes' in PREDICT_SOURCE
+    assert "async def _direct_fixture_possession(" in PREDICT_SOURCE
+
+
+def test_comparison_rows_require_verified_possession_and_exact_minutes():
+    assert "if team_poss is None or opp_poss is None:" in PREDICT_SOURCE
+    assert "or minutes < 30" in PREDICT_SOURCE
+    assert '"tp": team_poss' in PREDICT_SOURCE
+    assert '"minutesPlayed": minutes' in PREDICT_SOURCE
+
+
 def test_cohort_verdict_is_not_evaluated_before_prediction_exists():
     # The cohort is assembled before deterministic synthesis creates the
     # prediction dict. Verdict reconciliation belongs to the final response

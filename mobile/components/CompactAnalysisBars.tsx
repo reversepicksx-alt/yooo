@@ -155,6 +155,25 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const awaySplit = prediction.awayAvg != null
     ? { average: Number(prediction.awayAvg), count: logs.filter((row) => rowVenue(row) === 'away').length }
     : averageForVenue(logs, 'away');
+  const last10Logs = logs.slice(0, 10);
+  const tpHomeValues = last10Logs
+    .filter((row) => rowVenue(row) === 'home' && row.teamPossession != null)
+    .map((row) => Number(row.teamPossession))
+    .filter(Number.isFinite);
+  const tpAwayValues = last10Logs
+    .filter((row) => rowVenue(row) === 'away' && row.teamPossession != null)
+    .map((row) => Number(row.teamPossession))
+    .filter(Number.isFinite);
+  const tpHomeSplit = prediction.tpHomeAvg != null
+    ? { average: Number(prediction.tpHomeAvg), count: Number(prediction.tpHomeCount ?? tpHomeValues.length) }
+    : tpHomeValues.length
+      ? { average: tpHomeValues.reduce((sum, value) => sum + value, 0) / tpHomeValues.length, count: tpHomeValues.length }
+      : null;
+  const tpAwaySplit = prediction.tpAwayAvg != null
+    ? { average: Number(prediction.tpAwayAvg), count: Number(prediction.tpAwayCount ?? tpAwayValues.length) }
+    : tpAwayValues.length
+      ? { average: tpAwayValues.reduce((sum, value) => sum + value, 0) / tpAwayValues.length, count: tpAwayValues.length }
+      : null;
 
   // Keep the prediction's venue visibly selected from the first render. This
   // applies to both recent logs and H2H, so an away pick never opens on home
@@ -259,7 +278,8 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
                   const height = Math.max(10, (value / maxValue) * 112);
                   const date = game.date ? String(game.date).slice(5, 10) : '—';
-                  const possession = game.teamPossession != null ? `P${game.teamPossession}%` : 'P—';
+                  const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
+                  const minutes = game.minutesPlayed ?? game.minutes;
                   const isSelected = selected?.group === 'recent' && selected.index === index;
                   return (
                     <TouchableOpacity
@@ -280,6 +300,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                         {shortOpponent(opponentName(game))}
                       </Text>
                       <Text style={styles.possessionLabel}>{possession}</Text>
+                      <Text style={styles.possessionLabel}>
+                        MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
+                      </Text>
                       <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
                         {venueMark(rowVenue(game))}
                       </Text>
@@ -313,6 +336,25 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               <Text style={styles.splitMeta}>{awaySplit ? `${awaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
             </View>
           </View>
+          {(tpHomeSplit || tpAwaySplit) && (
+            <View style={styles.splitRow}>
+              <View style={styles.splitItem}>
+                <Text style={styles.splitLabel}>TP HOME · LAST 10</Text>
+                <Text style={[styles.splitValue, { color: Colors.success }]}>
+                  {tpHomeSplit ? `${tpHomeSplit.average.toFixed(1)}%` : '—'}
+                </Text>
+                <Text style={styles.splitMeta}>{tpHomeSplit ? `${tpHomeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
+              </View>
+              <View style={styles.splitDivider} />
+              <View style={styles.splitItem}>
+                <Text style={styles.splitLabel}>TP AWAY · LAST 10</Text>
+                <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
+                  {tpAwaySplit ? `${tpAwaySplit.average.toFixed(1)}%` : '—'}
+                </Text>
+                <Text style={styles.splitMeta}>{tpAwaySplit ? `${tpAwaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
+              </View>
+            </View>
+          )}
         </View>
       )}
 
@@ -336,7 +378,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const isOver = value != null && !row.teamOnly && prediction.line != null && value > prediction.line;
                   const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
                   const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
-                  const possession = row.possession != null ? `P${row.possession}` : 'P—';
+                  const possession = row.possession != null ? `TP ${Number(row.possession).toFixed(0)}%` : 'TP —';
                   const date = row.date ? String(row.date).slice(5, 10) : '—';
                   const isSelected = selected?.group === 'h2h' && selected.index === index;
                   return (

@@ -13,5 +13,6 @@ Any time `asyncio.gather()` or a module-level constant (e.g. `INTERNATIONAL_LEAG
 - After referencing any config constant in a route file, grep for the import at the top.
 - When an endpoint returns a "fallback" response (found:false, leagueFromHistory:true, etc.) but isolated tests succeed, suspect a silently-caught NameError in the primary path.
 - Debug by temporarily printing inside the `except Exception` handler before assuming the API is at fault.
+- Treat optional enrichment collectors the same way: every response field they reference must be assigned before parsing, or a caught `NameError` can turn valid source rows into an empty evidence packet.
 
 **Second bug in same incident:** `fast_endpoint` was used but never defined in `routes/players.py` — should be `"players/profiles"`. Same pattern: no crash, just every player search falling through to exception handler and logging a confusing NameError message.

@@ -147,3 +147,4 @@
 - [Owner-only player media](owner-only-media-gating.md) — photos and team crests require server-side owner authorization and stay out of persisted prediction records.
 - [Owner API status indicator](owner-api-status-indicator.md) — quota health is a compact owner-only header dot; regular users see no provider details.
 - [MLB next-game date boundary](mlb-next-game-date-boundary.md) — reject cached or provider-returned games before today at both API and mobile boundaries.
+- [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.

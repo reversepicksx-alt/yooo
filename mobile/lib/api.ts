@@ -327,6 +327,8 @@ export interface GameLog {
   value: number | null;
   season?: number | null;
   minutes: number;
+  minutesPlayed?: number | null;
+  tp?: number | null;
   score?: string;
   oppRank?: number | null;
   oppTier?: string | null;
@@ -393,6 +395,11 @@ export interface PredictionResult {
     games?: Record<string, unknown>[];
     homeAvg?: number;
     awayAvg?: number;
+    tpHomeAvg?: number | null;
+    tpAwayAvg?: number | null;
+    tpHomeCount?: number;
+    tpAwayCount?: number;
+    last10Count?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   };
   /** Explanation source. Active predictions use the deterministic model. */
@@ -512,6 +519,11 @@ export interface PredictionResult {
   gameLogs?: GameLog[];
   homeAvg?: number;
   awayAvg?: number;
+  tpHomeAvg?: number | null;
+  tpAwayAvg?: number | null;
+  tpHomeCount?: number;
+  tpAwayCount?: number;
+  last10Count?: number;
   sampleSize?: number;
   hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   h2hPlayerStats?: {
@@ -837,6 +849,11 @@ interface RawPrediction {
     games?: Record<string, unknown>[];
     homeAvg?: number;
     awayAvg?: number;
+    tpHomeAvg?: number | null;
+    tpAwayAvg?: number | null;
+    tpHomeCount?: number;
+    tpAwayCount?: number;
+    last10Count?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number; summary?: string };
   };
   h2hPlayerStats?: {
@@ -1148,6 +1165,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
             venue: (g.venue as string) || '',
             value,
             minutes: (g.minutes as number) || 0,
+            minutesPlayed: (g.minutesPlayed as number | null) ?? (g.minutes as number) ?? null,
+            tp: (g.tp as number | null) ?? (g.teamPossession as number | null) ?? null,
             score: (g.score as string) || undefined,
             oppRank: (g.oppRank as number | null) ?? undefined,
             oppTier: (g.oppTier as string | null) ?? undefined,
@@ -1203,6 +1222,11 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     gameLogs: gameLogs.length > 0 ? gameLogs : undefined,
     homeAvg: raw.playerGameLogs?.homeAvg,
     awayAvg: raw.playerGameLogs?.awayAvg,
+    tpHomeAvg: raw.playerGameLogs?.tpHomeAvg,
+    tpAwayAvg: raw.playerGameLogs?.tpAwayAvg,
+    tpHomeCount: raw.playerGameLogs?.tpHomeCount,
+    tpAwayCount: raw.playerGameLogs?.tpAwayCount,
+    last10Count: raw.playerGameLogs?.last10Count,
     sampleSize: rawGames.length || undefined,
     hitRates: raw.playerGameLogs?.hitRates
       ? {
@@ -1409,6 +1433,11 @@ export interface Pick {
     games?: Record<string, unknown>[];
     homeAvg?: number;
     awayAvg?: number;
+    tpHomeAvg?: number | null;
+    tpAwayAvg?: number | null;
+    tpHomeCount?: number;
+    tpAwayCount?: number;
+    last10Count?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   };
   aiSource?: 'model' | 'deterministic_model' | string;
