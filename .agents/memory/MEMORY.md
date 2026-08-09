@@ -153,3 +153,4 @@
 - [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.
 - [Trust-oriented evidence display](trust-oriented-evidence-display.md) — users trust predictions more when provenance, sample context, and unavailable data are visible instead of hidden or estimated.
 - [Season-boundary evidence handling](season-boundary-evidence.md) — new fixtures can belong to the next competition season while valid history remains in the completed prior season; filter incomplete rows, do not weaken provenance.
+- [API-Football attacking grid columns](api-football-attacking-grid.md) — 4-2-3-1 row-four columns are LW/CAM/RW left-to-right; never collapse all three into CAM.

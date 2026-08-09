@@ -2273,6 +2273,7 @@ async def predict(req: PredictionRequest):
                                 str(cached_position_source or "") in {
                                     "gemini_web_grounded",
                                     "manual_override",
+                                    "api_sports_lineup_history",
                                 }
                                 and bool(spec_pos)
                             )
@@ -6314,7 +6315,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             cached_profile_is_trusted = bool(
                 cached_specific
                 and cached_specific in GENERIC_TO_SPECIFIC.get(player_position, set())
-                and cached_source in {"gemini_web_grounded", "manual_override"}
+                and cached_source in {
+                    "gemini_web_grounded",
+                    "manual_override",
+                    "api_sports_lineup_history",
+                }
             )
             if cached_profile_is_trusted and cached_role not in POSITION_ROLE_MAP.get(
                 cached_specific, set()
@@ -6518,7 +6523,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             if (
                 not _role_override_active
                 and _position_resolution_source not in {
-                    "gemini_web_grounded", "cache", "fixture_lineup_observation",
+                    "gemini_web_grounded",
+                    "cache",
+                    "fixture_lineup_observation",
+                    "api_sports_lineup_history",
                 }
             ):
                 specific_position = _observed_role.get("position") or specific_position

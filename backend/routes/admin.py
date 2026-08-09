@@ -639,6 +639,32 @@ async def clear_player_position(req: _PositionClearRequest):
     }
 
 
+class _PositionBackfillRequest(BaseModel):
+    email: str
+    token: str
+    limit: int = 250
+    fixturesPerPlayer: int = 12
+    minObservations: int = 2
+
+
+@router.post("/positions/backfill-api-sports")
+async def backfill_positions_from_api_sports(req: _PositionBackfillRequest):
+    """Owner-only repair of weak soccer profiles from API-Sports lineup grids."""
+    await verify_owner(req.email, req.token)
+    if not 1 <= req.limit <= 1000:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 1000")
+    if not 1 <= req.fixturesPerPlayer <= 20:
+        raise HTTPException(status_code=400, detail="fixturesPerPlayer must be between 1 and 20")
+    if not 1 <= req.minObservations <= req.fixturesPerPlayer:
+        raise HTTPException(status_code=400, detail="minObservations is out of range")
+    from position_backfill import backfill_api_sports_positions
+    return await backfill_api_sports_positions(
+        limit=req.limit,
+        fixtures_per_player=req.fixturesPerPlayer,
+        min_observations=req.minObservations,
+    )
+
+
 _OWNER_ACCESS_CODE = os.environ.get("OWNER_ACCESS_CODE", "").strip()
 
 async def _verify_owner_or_code(email: str, token: str):

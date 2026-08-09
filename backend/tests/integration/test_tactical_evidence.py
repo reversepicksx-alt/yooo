@@ -102,7 +102,9 @@ def test_lineup_grid_stays_conservative_when_shape_is_ambiguous():
 def test_lineup_grid_resolves_unambiguous_midfield_bands():
     assert infer_grid_position("3:2", "4-3-3", "M") == "CM"
     assert infer_grid_position("3:1", "4-2-3-1", "M") == "CDM"
+    assert infer_grid_position("4:1", "4-2-3-1", "M") == "LW"
     assert infer_grid_position("4:2", "4-2-3-1", "M") == "CAM"
+    assert infer_grid_position("4:3", "4-2-3-1", "M") == "RW"
     assert infer_grid_position("3:1", "4-1-4-1", "M") == "CDM"
     assert infer_grid_position("4:3", "4-1-4-1", "M") == "CM"
     assert infer_grid_position("3:1", "3-1-4-2", "M") == "CDM"

@@ -105,7 +105,11 @@ def infer_grid_position(
         if shape[:4] == [3, 1, 4, 2] and column in {1, 2, 3, 4}:
             return {1: "LM", 2: "CM", 3: "CM", 4: "RM"}[column]
         if shape[:4] == [4, 2, 3, 1] and column in {1, 2, 3}:
-            return "CAM"
+            # The three players on row four are the left attacking midfielder,
+            # central attacking midfielder, and right attacking midfielder.
+            # Treating every column as CAM incorrectly turns wide wingers such
+            # as Doku into central players.
+            return {1: "LW", 2: "CAM", 3: "RW"}[column]
         if shape[:4] == [4, 1, 4, 1] and column in {1, 2, 3, 4}:
             return "CM"
         if shape[:4] == [4, 3, 1, 2] and column == 1:

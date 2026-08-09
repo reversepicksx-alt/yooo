@@ -132,7 +132,11 @@ def _trusted_cached_profile(cached: dict | None, category: str) -> tuple[str, st
     if (
         not position
         or position not in allowed
-        or source not in {"gemini_web_grounded", "manual_override"}
+        or source not in {
+            "gemini_web_grounded",
+            "manual_override",
+            "api_sports_lineup_history",
+        }
     ):
         return None
     role = _canonical_role(cached.get("role"))
@@ -463,7 +467,9 @@ async def resolve_position_deterministic(player_name: str, sport: str = "soccer"
         {"_id": 0, "specificPosition": 1, "role": 1, "source": 1},
     )
     if cached and cached.get("specificPosition") and cached.get("source") in {
-        "gemini_web_grounded", "manual_override"
+        "gemini_web_grounded",
+        "manual_override",
+        "api_sports_lineup_history",
     }:
         return {"position": cached["specificPosition"], "role": cached.get("role", "")}
 
@@ -488,7 +494,11 @@ async def resolve_positions_batch(players: list) -> dict:
         if (
             cached
             and cached.get("specificPosition")
-            and cached.get("source") in {"gemini_web_grounded", "manual_override"}
+            and cached.get("source") in {
+                "gemini_web_grounded",
+                "manual_override",
+                "api_sports_lineup_history",
+            }
         ):
             results[name] = {"position": cached["specificPosition"], "role": cached.get("role", "")}
         else:

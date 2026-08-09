@@ -87,3 +87,17 @@ def test_grounded_player_profiles_are_durable_without_prompt_version_or_ttl_gate
         "Midfielder",
     )
     assert profile == ("CM", "Box-to-Box")
+
+
+def test_api_sports_lineup_history_profiles_are_trusted():
+    from ai_positions import _trusted_cached_profile
+
+    profile = _trusted_cached_profile(
+        {
+            "specificPosition": "LW",
+            "role": "",
+            "source": "api_sports_lineup_history",
+        },
+        "Attacker",
+    )
+    assert profile == ("LW", "")
