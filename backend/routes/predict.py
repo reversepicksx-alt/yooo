@@ -2026,7 +2026,13 @@ async def predict(req: PredictionRequest):
         # =============================================
         # POSITION COMPARISON: Same-position players vs opponent
         # =============================================
-        FIXTURE_POS_MAP = {"Goalkeeper": "G", "Defender": "D", "Midfielder": "M", "Attacker": "F"}
+        FIXTURE_POS_MAP = {
+            "Goalkeeper": "G", "Defender": "D", "Midfielder": "M", "Attacker": "F",
+            "GK": "G",
+            "CB": "D", "LB": "D", "RB": "D", "LWB": "D", "RWB": "D",
+            "CDM": "M", "CM": "M", "CAM": "M", "LM": "M", "RM": "M",
+            "LW": "F", "RW": "F", "CF": "F", "ST": "F", "SS": "F",
+        }
         PROP_STAT_KEYS = {
             "pass_attempts": ("passes", "total"), "shots": ("shots", "total"),
             "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
@@ -2059,6 +2065,14 @@ async def predict(req: PredictionRequest):
             exact CB/LB/RB appearance."""
             fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
             if not fixture_pos or not opp_fixtures:
+                return []
+            # A comparison cohort is only meaningful when the target itself
+            # has a verified exact position. Never build a padded generic
+            # midfield cohort when the target is only M/MID.
+            if target_specific_pos not in {
+                "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM",
+                "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+            }:
                 return []
             stat_cat, stat_sub = PROP_STAT_KEYS.get(prop_type, ("passes", "total"))
             # The comparison players' venue should match the TARGET player's venue
@@ -2317,16 +2331,7 @@ async def predict(req: PredictionRequest):
                             # disagree between otherwise equivalent centre-backs
                             # (for example Stopper vs Ball-Playing CB), so a role
                             # gate here incorrectly emptied Carlos's cohort.
-                            _role_match_positions = {
-                                "LW", "RW", "CF", "ST", "SS",
-                                "CAM", "CM", "CDM", "LM", "RM",
-                            }
-                            _apply_role_match = (
-                                bool(target_role)
-                                and target_specific_pos in _role_match_positions
-                            )
-                            if _apply_role_match and candidate_role != target_role:
-                                continue
+                            _apply_role_match = False
 
                             position_verified = bool(
                                 observed_exact_target or cached_exact_target
@@ -2368,6 +2373,11 @@ async def predict(req: PredictionRequest):
                                     except (TypeError, ValueError):
                                         pass
 
+                            _candidate_role_source = (
+                                "cached_role"
+                                if spec_role and trusted_cached_position
+                                else observed_role.get("source")
+                            )
                             results.append({
                                 "name": p_name,
                                 "playerId": p_id,
@@ -2397,12 +2407,12 @@ async def predict(req: PredictionRequest):
                                 "positionVerified": position_verified,
                                 "positionSource": position_source,
                                 "observedPosition": observed_fixture_position or observed_normalized or pos or None,
-                                "role": candidate_role if _apply_role_match else None,
+                                "role": candidate_role or None,
                                 "roleMatchApplied": _apply_role_match,
-                                "roleSource": (
-                                    "cached_role"
-                                    if spec_role and trusted_cached_position
-                                    else observed_role.get("source")
+                                "roleSource": _candidate_role_source,
+                                "roleInferred": bool(
+                                    candidate_role
+                                    and str(_candidate_role_source or "").endswith("_inferred")
                                 ),
                                 "teamPossession": team_poss,
                                 "oppPossession": opp_poss,
@@ -6257,17 +6267,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
         }
         # Conservative fallback used only when the grounded resolver cannot
-        # return a specific position. Keep this provider-category fallback
-        # explicit and persisted fail-open so a cache outage never discards a
-        # computed prediction.
-        category_defaults = {
-            "Goalkeeper": ("GK", "Shot-Stopper"),
-            "Defender": ("CB", "Stopper"),
-            "Midfielder": ("CM", "Box-to-Box"),
-            "Attacker": ("ST", "Complete Forward"),
-            "": ("", ""),
-        }
-
+        # return a specific position. Keep the provider category broad:
+        # generic M/MID is not proof of CM, CDM, or CAM.
         if req.positionOverride:
             specific_position = req.positionOverride
             player_role = req.roleOverride or ""
@@ -6294,15 +6295,25 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     ),
                     timeout=1.5,
                 )
+                # ai_positions returns the provider category on its
+                # fail-open path so callers can display it honestly. It is
+                # not an exact position for projection, role matching, or
+                # comparison admission.
+                if _position_resolution_source == "provider_category_fallback":
+                    specific_position = ""
+                    player_role = ""
             except Exception as _position_resolve_err:
                 print(
                     f"[POSITION RESOLVE] bounded fallback for {req.playerName}: "
                     f"{type(_position_resolve_err).__name__}"
                 )
-                specific_position, player_role = category_defaults[player_position]
+                specific_position, player_role = "", ""
                 _position_resolution_source = "category_fallback"
             if not specific_position:
-                specific_position, player_role = category_defaults[player_position]
+                # Keep the broad provider category in player_position/display
+                # only. Never persist it as specificPosition: that would make
+                # a later cache lookup appear to have exact evidence.
+                specific_position, player_role = "", ""
                 _position_resolution_source = "category_fallback"
                 try:
                     await db.player_positions.update_one(
@@ -6312,8 +6323,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                             "playerName": req.playerName,
                             "team": corrected_team_name,
                             "genericPosition": player_position,
-                            "specificPosition": specific_position,
-                            "role": player_role,
+                            "specificPosition": "",
+                            "role": "",
                             "roleSource": "provider_category_fallback",
                             "updatedAt": datetime.now(timezone.utc).isoformat(),
                         }},
@@ -6323,8 +6334,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     print(f"[POS ROLE CACHE WRITE] skipped: {_position_cache_err}")
                     print(f"[POSITION CACHE WRITE] skipped: {_position_cache_err}")
                 print(
-                        f"[POS RESOLVE] Category fallback: "
-                        f"{req.playerName} → {specific_position} ({player_role})"
+                    f"[POS RESOLVE] Category fallback: "
+                    f"{req.playerName} → {player_position} (exact position unavailable)"
                 )
         else:
             specific_position = player_position
@@ -6434,14 +6445,19 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # cannot be upgraded by an older H2H/cache role into CB or Fullback.
         # Keep the current fixture's uncertainty visible instead of allowing
         # a stale exact-position label to win.
-        _current_lineup_position_is_generic = (
-            (_pitch_lineup or {}).get("status") == "confirmed"
-            and _observed_target is not None
-            and infer_grid_position(
+        _current_lineup_observed_position = (
+            infer_grid_position(
                 _observed_target.get("grid"),
                 (_pitch_lineup or {}).get("formation"),
                 _observed_target.get("pos"),
-            ) == "DEF"
+            )
+            if _observed_target is not None
+            else ""
+        )
+        _current_lineup_position_is_generic = (
+            (_pitch_lineup or {}).get("status") == "confirmed"
+            and _observed_target is not None
+            and _current_lineup_observed_position in {"DEF", "MID", "FWD"}
         )
         if (
             (not _observed_role or not _observed_role.get("role"))
@@ -6452,7 +6468,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 _observed_role = resolve_observed_role(_historical_position, _role_stats)
                 _observed_role["sampleSize"] = _historical_position_summary.get("sampleSize", 0)
                 _observed_role["positionCounts"] = _historical_position_summary.get("positionCounts", {})
-                _observed_role["source"] = "h2h_fixture_position_history"
+                _observed_role["source"] = (
+                    "h2h_fixture_role_inferred"
+                    if _observed_role.get("role")
+                    else "h2h_fixture_position_history"
+                )
         if _observed_role and (
             _observed_role.get("role")
             or _observed_role.get("position") == "DEF"
@@ -6938,18 +6958,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 """
 
         # POSITION COMPARISON: Fetch exact-position players vs opponent (run
-        # after player_position resolved). Defender cohorts deliberately do
-        # not use tactical sub-role matching.
+        # after player_position resolved). Tactical role is explanatory
+        # metadata only; it never admits or excludes a comparison row.
         position_comparison = []
         _defender_positions = {"CB", "LB", "RB", "LWB", "RWB"}
         _defender_position_cohort = specific_position in _defender_positions
-        # Canonical narrow scope. Defender labels say "same_position"; other
-        # positions retain the role-aware scope for the UI and audit trail.
-        position_comparison_scope = (
-            "exact_opponent_same_position_same_venue"
-            if _defender_position_cohort
-            else "exact_opponent_same_role_same_venue"
-        )
+        position_comparison_scope = "exact_opponent_same_position_same_venue"
         try:
             position_comparison = await aio.wait_for(
                 fetch_position_comparison(
@@ -7031,13 +7045,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     if len(position_comparison) > 3:
                         position_comparison_scope = (
                             "exact_opponent_same_position_same_venue_plus_prior_seasons"
-                            if _defender_position_cohort
-                            else "exact_opponent_same_role_same_venue_plus_prior_seasons"
                         )
 
         print(
             f"[POS COMP] target={req.playerName} position={specific_position or display_position} "
-            f"mode={'same-position' if _defender_position_cohort else 'same-role'} "
+            f"mode=exact-position "
             f"rows={len(position_comparison)}"
         )
 
@@ -7239,8 +7251,25 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "venue": player_venue,
                 "targetPosition": specific_position or display_position,
                 "targetRole": display_role or player_role,
+                # Every admitted row has already passed exact-position
+                # compatibility. Tactical role is context only and does not
+                # broaden the cohort.
                 "comparisonMode": (
-                    "same-position" if _defender_position_cohort else "same-role"
+                    "same-position"
+                    if specific_position in {
+                        "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
+                        "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+                    }
+                    else "unavailable"
+                ),
+                "positionEvidenceType": (
+                    "exact_position" if position_comparison else "unavailable"
+                ),
+                "positionEvidenceNote": (
+                    "Rows require exact observed lineup/provider position or "
+                    "trusted grounded/manual position; tactical role is context only."
+                    if position_comparison
+                    else "Exact-position comparison evidence unavailable; no broad-category substitutes shown."
                 ),
                 "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
@@ -8787,6 +8816,15 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "team": player_team_display,
             "position": display_position or "Unknown",
             "role": display_role or "",
+            "positionSource": _position_resolution_source,
+            "roleSource": _observed_role.get("source") if _observed_role else None,
+            "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
+            "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
+            "roleIsInferred": bool(
+                display_role
+                and _observed_role
+                and str(_observed_role.get("source", "")).endswith("_inferred")
+            ),
         }
         prediction["opponent"] = req.opponentName
         prediction["propType"] = req.propType

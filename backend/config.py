@@ -181,7 +181,7 @@ TOP_5_LEAGUES = [39, 140, 135, 78, 61]
 
 # ── Position prompt version — increment when the resolution prompt/logic changes
 # to force re-resolution of any cached positions on next predict call ──
-POSITION_PROMPT_VERSION = 9
+POSITION_PROMPT_VERSION = 10
 
 # ── API-Football protection ──
 # Keep background traffic opt-in. User-triggered searches/predictions and

@@ -186,12 +186,65 @@ def resolve_observed_role(
         else:
             role = "Complete Forward"
             evidence = [f"observed {observed} lineup position", "pressing role not independently verified"]
-    elif observed in {"CM", "MID"}:
-        role = "Advanced Playmaker" if key_passes >= 1.5 else "Box-to-Box"
-        evidence = [f"observed {observed} lineup position"]
+    elif observed == "CM":
+        # CM is an exact observed position, but the lineup category alone
+        # does not prove a tactical role. A role is only an inference when a
+        # multi-match output fingerprint supports it.
+        if shots >= 1.5 and dribbles >= 1.5:
+            role = "Box-to-Box"
+            evidence = [
+                f"observed {observed} lineup position",
+                f"{shots:.1f} shots/game",
+                f"{dribbles:.1f} dribbles/game",
+                "role inferred from multi-match output fingerprint",
+            ]
+        elif passes >= 50 and tackles < 4.0:
+            role = "Deep-Lying Playmaker"
+            evidence = [
+                f"observed {observed} lineup position",
+                f"{passes:.1f} passes/game",
+                "role inferred from pass-volume fingerprint",
+            ]
+        elif tackles >= 4.5:
+            role = "Ball Winner"
+            evidence = [
+                f"observed {observed} lineup position",
+                f"{tackles:.1f} tackles/game",
+                "role inferred from defensive-output fingerprint",
+            ]
+        else:
+            evidence = [
+                f"observed {observed} lineup position",
+                "exact tactical role unavailable",
+            ]
+    elif observed == "MID":
+        # Generic M/MID is category evidence only. Never turn it into a
+        # Box-to-Box or other exact midfield role.
+        role = None
+        evidence = [
+            "observed generic midfielder lineup category",
+            "exact CM/CDM/CAM position and tactical role not independently verified",
+        ]
     elif observed in {"CDM", "DM"}:
-        role = "Deep-Lying Playmaker" if passes >= 50 and tackles < 4.5 else "Ball Winner"
-        evidence = [f"observed {observed} lineup position"]
+        if passes >= 50 and tackles < 4.5:
+            role = "Deep-Lying Playmaker"
+            evidence = [
+                f"observed {observed} lineup position",
+                f"{passes:.1f} passes/game",
+                "role inferred from pass-volume fingerprint",
+            ]
+        elif tackles >= 4.5:
+            role = "Ball Winner"
+            evidence = [
+                f"observed {observed} lineup position",
+                f"{tackles:.1f} tackles/game",
+                "role inferred from defensive-output fingerprint",
+            ]
+        else:
+            evidence = [
+                f"observed {observed} lineup position",
+                "exact tactical role unavailable",
+            ]
     elif observed == "CB":
         role = "Ball-Playing CB" if passes >= 50 else "Stopper"
         evidence = [f"observed {observed} lineup position"]
@@ -214,7 +267,15 @@ def resolve_observed_role(
     return {
         "position": observed or None,
         "role": role,
-        "source": "fixture_lineup_observation" if observed else "unavailable",
+        "source": (
+            "fixture_lineup_role_inferred"
+            if observed and role
+            else "fixture_lineup_position_observation"
+            if observed in _EXACT_POSITIONS
+            else "fixture_lineup_category"
+            if observed in {"DEF", "MID", "FWD"}
+            else "unavailable"
+        ),
         "confidence": (
             "high"
             if observed and role and (
@@ -223,6 +284,7 @@ def resolve_observed_role(
             )
             else "low"
         ),
+        "roleIsInferred": bool(role),
         "evidence": evidence,
     }
 

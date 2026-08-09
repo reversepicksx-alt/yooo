@@ -567,6 +567,8 @@ export interface PredictionResult {
     targetPosition?: string;
     targetRole?: string;
     comparisonMode?: 'same-position' | 'same-role' | string;
+    positionEvidenceType?: 'exact_position' | 'unavailable' | string;
+    positionEvidenceNote?: string;
     positionShort?: string;
     opponent?: string;
     venue?: string;
@@ -590,6 +592,7 @@ export interface PredictionResult {
       position?: string | null;
        positionVerified?: boolean;
        positionSource?: string;
+       roleInferred?: boolean;
     }>;
     sourceScope?: string;
     verdict?: {
@@ -657,6 +660,10 @@ export interface PredictionResult {
   playerId?: number;
   playerPosition?: string;
   playerRole?: string;
+  playerPositionSource?: string;
+  playerRoleSource?: string;
+  playerRoleConfidence?: string;
+  playerRoleIsInferred?: boolean;
   sharpSummary?: string;
   keyEvidence?: string;
   gameFlowDynamics?: string;
@@ -774,7 +781,17 @@ export interface PredictionResult {
 
 interface RawPrediction {
   sport?: string;
-  player?: { id?: number; name?: string; team?: string; position?: string; role?: string };
+  player?: {
+    id?: number;
+    name?: string;
+    team?: string;
+    position?: string;
+    role?: string;
+    positionSource?: string;
+    roleSource?: string;
+    roleConfidence?: string;
+    roleIsInferred?: boolean;
+  };
   propType?: string;
   line?: number;
   projectedValue?: number;
@@ -1295,6 +1312,10 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     playerId: raw._request?.playerId || raw.player?.id || undefined,
     playerPosition: raw.player?.position || undefined,
     playerRole: raw.player?.role || undefined,
+    playerPositionSource: raw.player?.positionSource || undefined,
+    playerRoleSource: raw.player?.roleSource || undefined,
+    playerRoleConfidence: raw.player?.roleConfidence || undefined,
+    playerRoleIsInferred: raw.player?.roleIsInferred || undefined,
     sport: raw.sport || (request.sport as string) || undefined,
     tacticalAlerts: raw.tacticalAlerts || undefined,
     isWorldCup: (raw as any).isWorldCup || undefined,
@@ -1793,6 +1814,9 @@ export interface PlayerRoleResult {
   position: string;
   role: string;
   source?: string;
+  roleIsInferred?: boolean;
+  confidence?: string;
+  evidence?: string[];
   cached?: boolean;
 }
 

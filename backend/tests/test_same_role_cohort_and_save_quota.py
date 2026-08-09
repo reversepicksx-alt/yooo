@@ -9,9 +9,9 @@ PICKS_SOURCE = (
 ).read_text()
 
 
-def test_position_cohort_requires_same_role_and_has_broad_api_pool():
+def test_position_cohort_requires_exact_position_and_has_broad_api_pool():
     assert "target_role=None" in PREDICT_SOURCE
-    assert "_apply_role_match and candidate_role != target_role" in PREDICT_SOURCE
+    assert "_apply_role_match = False" in PREDICT_SOURCE
     assert '"CB", "LB", "RB", "LWB", "RWB"' in PREDICT_SOURCE
     assert "target_role=display_role or player_role" in PREDICT_SOURCE
     assert '"last": _cohort_fixture_lookback' in PREDICT_SOURCE
@@ -20,7 +20,7 @@ def test_position_cohort_requires_same_role_and_has_broad_api_pool():
     assert '"evidenceWeight"' in PREDICT_SOURCE
 
 
-def test_position_cohort_is_labeled_exact_opponent_same_role_evidence():
+def test_position_cohort_is_labeled_exact_opponent_same_position_evidence():
     assert '"sourceScope": position_comparison_scope' in PREDICT_SOURCE
     assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE
     assert '"targetRole": display_role or player_role' in PREDICT_SOURCE
@@ -54,8 +54,10 @@ def test_same_role_opponent_evidence_stays_venue_filtered():
     assert 'comp_venue = player_venue_filter' in PREDICT_SOURCE
     assert 'if comp_venue != "any" and comp_team_venue != comp_venue:' in PREDICT_SOURCE
     assert "mixed_venue" not in PREDICT_SOURCE
-    assert '"exact_opponent_same_role_same_venue"' in PREDICT_SOURCE
-    assert '"exact_opponent_same_role_same_venue_plus_prior_seasons"' in PREDICT_SOURCE
+    assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE
+    assert '"exact_opponent_same_position_same_venue_plus_prior_seasons"' in PREDICT_SOURCE
+    assert '"positionEvidenceType"' in PREDICT_SOURCE
+    assert '"positionEvidenceNote"' in PREDICT_SOURCE
     assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE
     assert '"exact_opponent_same_position_same_venue_plus_prior_seasons"' in PREDICT_SOURCE
 

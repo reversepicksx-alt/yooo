@@ -24,10 +24,12 @@ def test_prediction_route_guards_optional_atlas_cache_writes():
 
 
 def test_category_position_cache_write_is_inside_exception_guard():
-    """The screenshot's category fallback write must stay inside its try block."""
-    start = PREDICT_SOURCE.index('specific_position, player_role = category_defaults[player_position]')
+    """Broad-category cache writes must remain fail-open and non-specific."""
+    start = PREDICT_SOURCE.index(
+        'try:\n                    await db.player_positions.update_one(',
+    )
     end = PREDICT_SOURCE.index(
-        'print(\n                        f"[POS RESOLVE] Category fallback:',
+        'print(\n                    f"[POS RESOLVE] Category fallback:',
         start,
     )
     block = PREDICT_SOURCE[start:end]

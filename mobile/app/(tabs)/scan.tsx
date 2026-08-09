@@ -1906,7 +1906,11 @@ export default function ScanScreen() {
                     : resolvedPlayer.position
                       ? ` · ${resolvedPlayer.position}`
                       : ''}
-                  {resolvedRole?.role ? `  ·  ${resolvedRole.role}` : ''}
+                  {resolvedRole?.role
+                    ? `  ·  ${resolvedRole.role}${resolvedRole.roleIsInferred ? ' (inferred)' : ''}`
+                    : resolvedRole?.position && resolvedRole.position.toUpperCase() === 'MID'
+                      ? '  ·  exact role unavailable'
+                      : ''}
                 </Text>
                 {roleLoading && (
                   <Text style={{ color: '#666', fontSize: 10, marginTop: 2 }}>

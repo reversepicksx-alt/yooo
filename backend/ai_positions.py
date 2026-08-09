@@ -279,7 +279,11 @@ def _stat_fingerprint_role(generic_position: str, stats: dict | None) -> str | N
     if gpos == "Goalkeeper":
         return None  # GK sub-role determined by team context, not stats
 
+    # A generic provider category cannot support a tactical role. Exact
+    # positions may be used by callers that already have lineup evidence.
     if gpos == "Midfielder":
+        return None
+    if gpos in {"Cm", "Cdm", "Cam"}:
         if passes_pg >= 65 and tackles_pg < 3.5 and shots_pg < 1.5:
             return "Deep-Lying Playmaker"
         if tackles_pg >= 6.0:
@@ -423,16 +427,15 @@ async def resolve_player_role(
         )
         return verified["specificPosition"], verified["role"], "gemini_web_grounded"
 
-    # Provider category is the only non-web fallback. It supplies a broad,
-    # conservative position and never invents a tactical role.
-    _GENERIC_DEFAULT_POS = {
-        "Goalkeeper": "GK", "Defender": "CB",
-        "Midfielder": "CM", "Attacker": "CF",
-    }
-    if category in _GENERIC_DEFAULT_POS:
-        default_pos = _GENERIC_DEFAULT_POS[category]
-        print(f"[ROLE RESOLVE] {player_name} → {default_pos} (provider fallback; Gemini unavailable)")
-        return default_pos, "", "provider_category_fallback"
+    # Provider category is the only non-web fallback. It supplies only the
+    # broad observed category and never manufactures an exact position or
+    # tactical role.  A generic M/MID row is not evidence for CM/CDM/CAM.
+    if category:
+        print(
+            f"[ROLE RESOLVE] {player_name} → {category} "
+            "(provider category fallback; Gemini unavailable)"
+        )
+        return category, "", "provider_category_fallback"
 
     print(f"[ROLE RESOLVE] {player_name} → no resolution possible")
     return "", "", "fallback"

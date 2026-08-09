@@ -22,6 +22,7 @@ type CohortPlayer = {
   positionVerified?: boolean;
   positionSource?: string;
   roleMatchApplied?: boolean;
+  roleInferred?: boolean;
 };
 
 export type SameRoleEvidence = {
@@ -49,6 +50,8 @@ export type SameRoleEvidence = {
   players?: CohortPlayer[];
   sourceScope?: string;
   comparisonMode?: 'same-position' | 'same-role' | string;
+  positionEvidenceType?: 'exact_position' | 'unavailable' | string;
+  positionEvidenceNote?: string;
   verdict?: {
     verdict?: 'verifies' | 'contradicts' | 'neutral' | 'unavailable' | string;
     reason?: string;
@@ -201,6 +204,8 @@ export default function SameRoleEvidenceCard({
   const prop = label(data.propType);
   const isSamePosition = data.comparisonMode === 'same-position'
     || scopeIncludesPosition(data.sourceScope);
+  const exactPositionUnavailable = data.positionEvidenceType === 'unavailable'
+    || data.comparisonMode === 'unavailable';
   const role = isSamePosition ? '' : (data.targetRole || 'same role');
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
@@ -242,9 +247,11 @@ export default function SameRoleEvidenceCard({
     }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <Text style={{ fontSize: 9, color: verdictColor, fontWeight: '900', letterSpacing: 1 }}>
-          {isSamePosition
-            ? `SIMILAR ${positionLabel(data.targetPosition || data.positionShort || 'POSITION').toUpperCase()} PLAYERS`
-            : 'SAME-ROLE OPPONENT EVIDENCE'}
+           {exactPositionUnavailable
+             ? 'EXACT-POSITION EVIDENCE UNAVAILABLE'
+             : isSamePosition
+             ? `EXACT ${positionLabel(data.targetPosition || data.positionShort || 'POSITION').toUpperCase()} EVIDENCE`
+             : 'SAME-ROLE OPPONENT EVIDENCE'}
         </Text>
         <Text style={{ marginLeft: 'auto', fontSize: 9, color: verdictColor, fontWeight: '900' }}>
           {verdict}
@@ -255,13 +262,14 @@ export default function SameRoleEvidenceCard({
       </Text>
        <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
          {sample > 0
-           ? `${sample} distinct ${isSamePosition ? 'same-position player' : 'same-role player'}${sample === 1 ? '' : 's'} in ${scopeLabel}`
+            ? `${sample} distinct ${isSamePosition ? 'exact-position player' : 'same-role player'}${sample === 1 ? '' : 's'} in ${scopeLabel}`
            : `No exact ${positionLabel(data.targetPosition || data.positionShort || 'position')} source-player rows were returned`}
         {hasVerdict ? ` · line ${numericLine.toFixed(1)} · pick ${rec}` : ''}
         {limited ? ` · limited sample (target n≥${minimum})` : ' · target sample reached'}
       </Text>
       <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 3 }}>
-        Weighted evidence average · minutes and repeated verified meetings count more
+         {data.positionEvidenceNote
+           || 'Exact observed position is required; tactical role is context only.'}
       </Text>
       {hasPossessionComparison && (
         <View style={{
@@ -334,7 +342,7 @@ export default function SameRoleEvidenceCard({
                     numberOfLines={2}
                     style={{ fontSize: 10.5, color: Colors.textSecondary, lineHeight: 15, marginTop: 1 }}
                   >
-                    {player.team || 'Team unavailable'} · {position}{roleText ? ` · ${roleText}` : ''}
+                     {player.team || 'Team unavailable'} · {position}{roleText ? ` · ${roleText}${player.roleInferred ? ' (inferred)' : ''}` : ''}
                   </Text>
                 </View>
                 <View style={{ width: 142, alignItems: 'flex-end' }}>

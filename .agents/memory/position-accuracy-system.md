@@ -3,7 +3,23 @@ name: Position accuracy system
 description: 5 defects fixed in position resolution — version bump, lookup preference, re-squeeze, prompt upgrade, admin endpoint.
 ---
 
-## The 5 Defects and Fixes
+## Position resolution rules
+
+The resolver now keeps provider categories broad when exact evidence is unavailable:
+`Midfielder` remains `Midfielder` with no tactical role, rather than becoming
+`CM · Box-to-Box`. Exact positions require grounded/manual evidence or verified
+fixture/history observations. Tactical roles inferred from statistics are
+explanatory metadata only and cannot admit comparison rows.
+
+**Why:** Generic M/MID rows were admitting wingers, attacking midfielders, and
+unrelated midfielders into Rodri-like comparison cohorts, while the old default
+silently presented a guessed Box-to-Box role as fact.
+
+**How to apply:** Use exact observed positions for cohort matching. Show broad
+categories or an unavailable state when exact evidence is missing, and label
+inferred roles with their provenance.
+
+## The 5 Earlier Defects and Fixes
 
 **1. POSITION_PROMPT_VERSION (config.py)**
 Increment this number whenever position resolution logic or prompt changes. Any cache entry with `promptVersion < POSITION_PROMPT_VERSION` is treated as stale and re-resolved on next predict call. Currently v4.
@@ -38,11 +54,11 @@ Accepts `{email, token, playerName?, playerId?}`. Deletes entries matching eithe
 - Robertson: LB/Wing-Back (correct from cache hit v4)
 
 ## Category safety boundary
-The player's API-Football generic category is a hard safety boundary for cached and fallback resolution. A player marked Defender must never inherit an ST/Poacher cache entry; when no trustworthy specific defender position is available, use the conservative CB/Stopper fallback rather than an attacking role.
+The player's API-Football generic category is a hard safety boundary for cached and fallback resolution. A player marked Defender must never inherit an ST/Poacher cache entry; when no trustworthy specific defender position is available, retain the broad Defender category with no guessed exact position or role.
 
 **Why:** Jonathan de Jesus Alves was correctly identified by the player cache as a Defender, but a versioned AI cache entry incorrectly labeled him ST/Poacher. With Gemini disabled, that stale entry could not safely self-correct.
 
-**How to apply:** Validate cached specific positions against the generic category before returning them from role resolution or using them in prediction math. Keep known corrections keyed by playerId.
+**How to apply:** Validate cached specific positions against the generic category before returning them from role resolution or using them in prediction math. Keep known corrections keyed by playerId. Generic fallback values must not be persisted as `specificPosition`.
 
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.

@@ -1482,13 +1482,6 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
             "Midfielder": {"CDM", "CM", "CAM", "LM", "RM"},
             "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
         }
-        DEFAULT_POSITION_ROLE = {
-            "Goalkeeper": ("GK", "Shot-Stopper"),
-            "Defender": ("CB", "Stopper"),
-            "Midfielder": ("CM", "Box-to-Box"),
-            "Attacker": ("CF", "Complete Forward"),
-        }
-
         # The search cache is the source for the API's generic category.  Do
         # not let an empty/stale request field make a cached ST/Poacher entry
         # win over a player record that is explicitly marked Defender.
