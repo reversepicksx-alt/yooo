@@ -9937,6 +9937,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
+                bzzoiro_enrichment=bzzoiro_enrichment,
             )
         except Exception as _tactical_intel_err:
             print(f"[TACTICAL INTELLIGENCE] failed: {_tactical_intel_err}")
@@ -10199,6 +10200,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
+                bzzoiro_enrichment=bzzoiro_enrichment,
             )
             prediction["matchScript"] = prediction["tacticalIntelligence"].get("matchScript")
             prediction["positionalReality"] = prediction["tacticalIntelligence"].get("positionalReality")
@@ -10214,15 +10216,28 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 historical_data.get("h2hPlayerStats") or {}
             ).get("opponentHitRate")
             prediction["tacticalIntelligence"]["positionCohort"] = position_comp_data
-            prediction["tacticalIntelligence"].setdefault("player", {}).update({
-                "position": display_position or None,
+            _ti_player = prediction["tacticalIntelligence"].setdefault("player", {})
+            # Role metadata always comes from the final observed-role resolver
+            # and should be updated unconditionally.
+            _ti_player.update({
                 "role": display_role or player_role or None,
-                "positionSource": _observed_role.get("source") if _observed_role else None,
                 "roleSource": _observed_role.get("source") if _observed_role else None,
                 "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
                 "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
                 "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
             })
+            # Position and its provenance are only overwritten when the
+            # API-Football observation actually supplied a value.  When the
+            # tactical builder resolved position from a validated Bzzoiro
+            # supplement (positionSource == "bzzoiro_shadow_confirmed_lineup"),
+            # the builder's values are preserved here so the final packet
+            # remains consistent with the role-group and positional-reality
+            # calculations that were already performed with that position.
+            if display_position:
+                _ti_player["position"] = display_position
+                _ti_player["positionSource"] = (
+                    _observed_role.get("source") if _observed_role else None
+                )
         except Exception as _tactical_refresh_err:
             print(f"[TACTICAL INTELLIGENCE] scenario refresh failed: {_tactical_refresh_err}")
 

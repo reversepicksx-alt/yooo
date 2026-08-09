@@ -264,8 +264,16 @@ def build_tactical_intelligence(
     game_script: dict[str, Any] | None = None,
     lineup: dict[str, Any] | None = None,
     history_values: list[Any] | None = None,
+    bzzoiro_enrichment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a complete, provenance-tagged tactical evidence packet."""
+    """Build a complete, provenance-tagged tactical evidence packet.
+
+    ``bzzoiro_enrichment`` is optional shadow context.  It is consumed only
+    when its ``positionValidation`` gate passes (exact fixture date match and
+    confirmed lineup presence) so raw Bzzoiro data can never reach the packet
+    without explicit quality gating.  API-Football remains authoritative for
+    all projection inputs.
+    """
     lineup = lineup if isinstance(lineup, dict) else {}
     home = lineup.get("home") if isinstance(lineup.get("home"), dict) else {}
     away = lineup.get("away") if isinstance(lineup.get("away"), dict) else {}
@@ -282,7 +290,55 @@ def build_tactical_intelligence(
     )
     target_pos = _clean(player_position) or _player_position(target or {})
     target_role = _clean(player_role) or _clean((prediction.get("player") or {}).get("role"))
-    target_group = _role_group(target_pos, target_role)
+
+    # ── Bzzoiro shadow supplement ─────────────────────────────────────────
+    # Use Bzzoiro's confirmed lineup position only when:
+    #   1. The positionValidation gate has explicitly passed, AND
+    #   2. API-Football did not supply a usable position for this player.
+    # This keeps API-Football authoritative and prevents unvalidated coordinates
+    # from entering the packet.
+    _bzz: dict[str, Any] = bzzoiro_enrichment if isinstance(bzzoiro_enrichment, dict) else {}
+    _bzz_validation: dict[str, Any] = _bzz.get("positionValidation") or {}
+    _bzz_lineup_target: dict[str, Any] = (_bzz.get("lineup") or {}).get("target") or {}
+    _bzz_avg_pos: dict[str, Any] = (_bzz.get("target") or {}).get("averagePosition") or {}
+
+    _bzz_position_raw = (
+        _bzz_lineup_target.get("position") or _bzz_lineup_target.get("pos")
+        if isinstance(_bzz_lineup_target, dict)
+        else None
+    )
+    _bzz_gate_passed = (
+        _bzz_validation.get("lineupValid")
+        and _bzz_validation.get("fixtureDateMatch") == "exact"
+    )
+    _bzz_position: str | None = None
+    _bzz_position_source = "unavailable"
+    if _bzz_gate_passed and _bzz_position_raw and not target_pos:
+        # Normalize through the same alias table as API-Football positions.
+        from tactical_evidence import normalize_observed_position
+        _bzz_position = normalize_observed_position(_bzz_position_raw) or None
+        if _bzz_position:
+            _bzz_position_source = "bzzoiro_shadow_confirmed_lineup"
+
+    # Effective position: prefer API-Football, fall back to validated Bzzoiro.
+    effective_pos = target_pos or _bzz_position or ""
+    effective_pos_source = (
+        "lineup-provider" if target_pos
+        else _bzz_position_source if _bzz_position
+        else "unavailable"
+    )
+
+    # Average-position grid coordinates from Bzzoiro (shadow only).
+    # Only forwarded when the coordinates passed the 0–100 range check.
+    _bzz_grid_x: float | None = None
+    _bzz_grid_y: float | None = None
+    if _bzz_gate_passed and _bzz_validation.get("coordinatesValid") and isinstance(_bzz_avg_pos, dict):
+        try:
+            _bzz_grid_x = float(_bzz_avg_pos["x"]) if _bzz_avg_pos.get("x") is not None else None
+            _bzz_grid_y = float(_bzz_avg_pos["y"]) if _bzz_avg_pos.get("y") is not None else None
+        except (TypeError, ValueError):
+            _bzz_grid_x = _bzz_grid_y = None
+    target_group = _role_group(effective_pos, target_role)
     opponent_matchup = _opponent_role_matchup(target, opponent_players, prop_type)
 
     market = prediction.get("moneyline") if isinstance(prediction.get("moneyline"), dict) else {}
@@ -345,7 +401,7 @@ def build_tactical_intelligence(
     )
     positional_reality = build_positional_reality(
         player=target,
-        position=target_pos,
+        position=effective_pos,
         role=target_role,
         prop_type=prop_type,
         is_home=is_player_home,
@@ -372,8 +428,13 @@ def build_tactical_intelligence(
     shape_status = "confirmed" if lineup_status == "confirmed" else "projected" if lineup_status == "predicted" else "unavailable"
 
     limitations = []
-    if not target_pos and not target_role:
+    if not effective_pos and not target_role:
         limitations.append("player role and position unavailable")
+    if _bzz_position and not target_pos:
+        limitations.append(
+            "player position sourced from Bzzoiro shadow lineup; "
+            "API-Football lineup position unavailable for this fixture."
+        )
     if not opponent_players:
         limitations.append("opponent lineup unavailable")
     if not formation or not opponent_formation:
@@ -392,20 +453,34 @@ def build_tactical_intelligence(
         and (market_status == "verified_fixture_moneyline" or possession_is_real)
     ) else "limited"
 
+    # Bzzoiro average-position coordinates: use provider grid position from the
+    # API-Football lineup when available; supplement with validated Bzzoiro
+    # coordinates (shadow-only) when the API-Football lineup has no x/y data.
+    _api_grid_x = target.get("x") if target else None
+    _api_grid_y = target.get("y") if target else None
+    _grid_x = _api_grid_x if _api_grid_x is not None else _bzz_grid_x
+    _grid_y = _api_grid_y if _api_grid_y is not None else _bzz_grid_y
+    _grid_source = (
+        "api_football" if _api_grid_x is not None
+        else "bzzoiro_shadow" if _bzz_grid_x is not None
+        else "unavailable"
+    )
+
     return {
         "version": "tactical-shadow-v2",
         "mode": "shadow",
         "status": tactical_status,
         "sourcePolicy": "verified inputs only; inferred mechanisms are labeled",
         "player": {
-            "position": target_pos or None,
+            "position": effective_pos or None,
             "role": target_role or None,
             "roleGroup": target_group,
             "providerGridPosition": {
-                "x": target.get("x") if target else None,
-                "y": target.get("y") if target else None,
+                "x": _grid_x,
+                "y": _grid_y,
+                "source": _grid_source,
             },
-            "positionSource": "lineup-provider" if target_pos else "unavailable",
+            "positionSource": effective_pos_source,
             "roleSource": "position-role-resolver" if target_role else "unavailable",
         },
         "lineup": {
