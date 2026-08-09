@@ -2131,6 +2131,129 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     return {"found": True, "analysis": prediction}
 
 
+@router.post("/picks/{pick_id}/refresh-analysis")
+async def refresh_pick_analysis(pick_id: str, payload: dict):
+    """Regenerate the compact-v3-tactical explanation for a saved pick.
+
+    Rebuilds the evidence packet from the stored pick fields, forces a fresh AI
+    generation (bypassing the compact explanation cache), persists the new text
+    back onto the pick document, and returns it immediately.
+
+    The endpoint is available to every authenticated subscriber.  The button is
+    intentionally hidden on the client side once the pick is settled and already
+    has a long-form explanation — the server does not enforce that policy so the
+    owner can still trigger a refresh after settlement.
+    """
+    email = (payload.get("email") or "").lower().strip()
+    token = payload.get("token") or ""
+    if not email or not token:
+        raise HTTPException(status_code=400, detail="email and token required")
+
+    session = await db.sessions.find_one({"email": email, "session_token": token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    pick = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0})
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+
+    # Build the evidence packet from the stored pick.  Try to enrich it with
+    # the latest cached prediction data (which carries more complete evidence
+    # packets including h2hPlayerStats, gameLogs, bayesianMetrics, etc.).
+    prediction_data: dict = dict(pick)
+
+    player_id = pick.get("playerId")
+    prop_type = pick.get("propType", "")
+    fixture_id = pick.get("fixtureId")
+    prediction_line = pick.get("line")
+
+    _pred_filter: dict = {"propType": prop_type}
+    if prediction_line is not None:
+        _pred_filter["line"] = prediction_line
+    if fixture_id:
+        _pred_filter["fixtureId"] = fixture_id
+
+    cached_prediction = None
+    try:
+        _proj_fields = {
+            "_id": 0,
+            "bayesianMetrics": 1, "tacticalIntelligence": 1, "matchupOverview": 1,
+            "playerGameLogs": 1, "gameLogs": 1, "h2hPlayerStats": 1,
+            "opponentDefensiveProfile": 1, "opponentProfile": 1,
+            "evidenceQuality": 1, "factorLedger": 1, "factorLedgerFingerprint": 1,
+            "positionComparison": 1, "tacticalContext": 1, "matchScript": 1,
+            "homeAvg": 1, "awayAvg": 1, "hitRates": 1,
+            "propHistoricalRate": 1, "propHistoricalN": 1,
+            "priorMean": 1, "momentumMean": 1, "momentumLabel": 1,
+            "volatility": 1, "priorSamples": 1,
+        }
+        if player_id and player_id != 0:
+            cached_prediction = await aio.wait_for(
+                db.predictions.find_one(
+                    {"player.id": player_id, **_pred_filter},
+                    _proj_fields,
+                    sort=[("_created", -1)],
+                ),
+                timeout=3.0,
+            )
+        if not cached_prediction and pick.get("playerName"):
+            cached_prediction = await aio.wait_for(
+                db.predictions.find_one(
+                    {"player.name": pick["playerName"], **_pred_filter},
+                    _proj_fields,
+                    sort=[("_created", -1)],
+                ),
+                timeout=3.0,
+            )
+    except Exception as _exc:
+        print(f"[REFRESH ANALYSIS] prediction lookup skipped: {_exc}")
+
+    if cached_prediction:
+        # Merge cached prediction into pick data — pick fields take priority
+        # for identity (playerName, line, recommendation) but prediction fields
+        # provide richer evidence packets.
+        merged = {**cached_prediction, **prediction_data}
+        prediction_data = merged
+
+    ledger = prediction_data.get("factorLedger") or {}
+    ledger_fingerprint = prediction_data.get("factorLedgerFingerprint") or ""
+
+    try:
+        from compact_explanation import build_compact_explanation
+        text, source, cache_key = await build_compact_explanation(
+            prediction_data,
+            ledger,
+            ledger_fingerprint,
+            force=True,
+        )
+    except Exception as exc:
+        print(f"[REFRESH ANALYSIS] build_compact_explanation failed: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to generate analysis")
+
+    if not text:
+        raise HTTPException(status_code=503, detail="Analysis generation unavailable; try again later")
+
+    # Persist the refreshed explanation back to the pick document.
+    try:
+        await db.picks.update_one(
+            {"pickId": pick_id, "email": email},
+            {"$set": {
+                "tacticalBreakdown": text,
+                "tacticalBreakdownRefreshedAt": datetime.now(timezone.utc).isoformat(),
+                "tacticalBreakdownSource": source,
+            }},
+        )
+    except Exception as exc:
+        print(f"[REFRESH ANALYSIS] pick update failed (returning text anyway): {exc}")
+
+    return {
+        "ok": True,
+        "text": text,
+        "source": source,
+        "cacheKey": cache_key,
+    }
+
+
 @router.post("/picks/delete")
 async def delete_pick(req: DeletePickRequest):
     email = req.email.lower().strip()

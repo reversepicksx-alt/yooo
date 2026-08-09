@@ -29,7 +29,7 @@ import StreaksAchievements from '@/components/StreaksAchievements';
 import PicksCalendar from '@/components/PicksCalendar';
 import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
-import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
+import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, refreshPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
@@ -840,6 +840,7 @@ export default function PicksScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
+  const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [liveTrackerPick, setLiveTrackerPick] = useState<Pick | null>(null);
   const [streaksOpen, setStreaksOpen] = useState(false);
@@ -1028,6 +1029,34 @@ export default function PicksScreen() {
           - Math.abs(Number(a.projectedValue ?? a.projection ?? 0) - Number(a.line ?? 0));
       })[0] ?? null;
   }, [picks]);
+
+  const handleRefreshAnalysis = useCallback(async () => {
+    if (!session || !analysisModal) return;
+    const id = analysisModal.pick.pickId;
+    if (!id) return;
+    setRefreshingAnalysis(true);
+    try {
+      const result = await refreshPickAnalysis(session.email, session.token, id);
+      if (result.ok && result.text) {
+        // Merge the refreshed text into the modal data so it renders immediately
+        setAnalysisModal((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            data: {
+              ...(prev.data ?? {}),
+              tacticalBreakdown: result.text,
+            },
+          };
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (e: any) {
+      Alert.alert('Refresh failed', e?.message || 'Could not refresh analysis. Try again later.');
+    } finally {
+      setRefreshingAnalysis(false);
+    }
+  }, [session, analysisModal]);
 
   // Manager badge press — open analysis modal for this pick and scroll to manager context
   const handleManagerBadgePress = useCallback(async (pick: Pick) => {
@@ -1311,6 +1340,31 @@ export default function PicksScreen() {
                   <Text style={[mStyles.modalRecText, { color: modalRecColor }]}>{modalRec}</Text>
                 </View>
               ) : null}
+              {/* Refresh analysis button — hidden once settled with a long-form explanation */}
+              {(() => {
+                const pick = analysisModal?.pick as any;
+                const isSettled = pick?.status === 'settled';
+                const existingText = (analysisModal?.data as any)?.tacticalBreakdown
+                  ?? pick?.tacticalBreakdown ?? '';
+                const wordCount = String(existingText || '').split(/\s+/).filter(Boolean).length;
+                const hasLongForm = wordCount >= 380;
+                if (isSettled && hasLongForm) return null;
+                return (
+                  <TouchableOpacity
+                    onPress={handleRefreshAnalysis}
+                    style={[mStyles.modalClose, { marginRight: 4 }]}
+                    disabled={refreshingAnalysis || analysisModal?.loading}
+                    accessibilityLabel="Update analysis"
+                    accessibilityRole="button"
+                  >
+                    {refreshingAnalysis ? (
+                      <ActivityIndicator size="small" color={Colors.primary} />
+                    ) : (
+                      <Ionicons name="refresh" size={18} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })()}
               <TouchableOpacity onPress={() => setAnalysisModal(null)} style={mStyles.modalClose}>
                 <Ionicons name="close" size={18} color={Colors.textSecondary} />
               </TouchableOpacity>

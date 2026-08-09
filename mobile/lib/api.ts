@@ -1672,6 +1672,21 @@ export async function fetchPickAnalysis(email: string, token: string, pickId: st
   return apiCall<{ found: boolean; analysis?: Record<string, unknown> }>(`/api/picks/analysis?${params.toString()}`);
 }
 
+export async function refreshPickAnalysis(
+  email: string,
+  token: string,
+  pickId: string,
+): Promise<{ ok: boolean; text: string; source: string }> {
+  return apiCall<{ ok: boolean; text: string; source: string }>(
+    `/api/picks/${encodeURIComponent(pickId)}/refresh-analysis`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, token }),
+    },
+  );
+}
+
 export async function generateMatchReview(email: string, token: string, pickId: string): Promise<string | null> {
   try {
     const res = await apiCall<{ ok: boolean; matchReview?: string }>(

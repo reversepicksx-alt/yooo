@@ -419,8 +419,14 @@ async def build_compact_explanation(
     prediction: dict[str, Any],
     ledger_payload: dict[str, Any],
     ledger_fingerprint: str,
+    force: bool = False,
 ) -> tuple[str, str, str]:
-    """Return ``(text, source, cache_key)`` after the final ledger is locked."""
+    """Return ``(text, source, cache_key)`` after the final ledger is locked.
+
+    When ``force=True`` the cache is bypassed and a fresh AI generation is
+    attempted regardless of what is already stored.  The new text is written
+    back to the cache (overwriting the old entry) so future reads are fast.
+    """
     packet = build_evidence_packet(prediction)
     raw_identity = {
         "playerId": prediction.get("playerId"),
@@ -433,9 +439,10 @@ async def build_compact_explanation(
         json.dumps(raw_identity, sort_keys=True, default=str).encode()
     ).hexdigest()[:32]
     fallback = _fallback(packet)
-    cached = await _cached_text(cache_key)
-    if cached:
-        return cached, "gemini_cached", cache_key
+    if not force:
+        cached = await _cached_text(cache_key)
+        if cached:
+            return cached, "gemini_cached", cache_key
     if str(prediction.get("sport") or "soccer").lower() != "soccer":
         return fallback, "compact_deterministic", cache_key
     lock = _generation_locks.setdefault(cache_key, aio.Lock())
