@@ -1391,19 +1391,18 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
     """Resolve and cache a player's specific position + tactical role.
 
     Called from mobile immediately after a player is selected (before prediction).
-    Returns from the MongoDB cache when available and fresh; otherwise resolves
-    via deterministic cache + stat fingerprint and caches for 7 days.
+    Returns a versioned grounded identity result when available; otherwise
+    verifies the player with Gemini web search and caches the evidence for 7 days.
 
     Request body: { playerId?, playerName, teamName?, genericPosition?, stats? }
     Response:     { position, role, source, cached }
     """
     try:
-        from ai_positions import resolve_player_role, _GENERIC_ROLES
+        from ai_positions import resolve_player_role
         from config import POSITION_PROMPT_VERSION
         from cache import COL_PLAYERS
         from datetime import datetime, timezone
 
-        ROLE_CACHE_TTL_DAYS = 7
         GENERIC_TO_SPECIFIC = {
             "Goalkeeper": {"GK"},
             "Defender": {"CB", "LB", "RB", "LWB", "RWB"},
@@ -1435,96 +1434,11 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
             except Exception as cache_error:
                 print(f"[RESOLVE ROLE] Generic position lookup failed: {cache_error}")
 
-        # ── Cache check ──────────────────────────────────────────────────────
-        cached = None
-        if req.playerId:
-            cached = await db.player_positions.find_one(
-                {"playerId": req.playerId},
-                {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1,
-                 "promptVersion": 1, "source": 1}
-            )
-        if not cached and req.playerName:
-            cached = await db.player_positions.find_one(
-                {"playerName": req.playerName},
-                {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1,
-                 "promptVersion": 1, "source": 1}
-            )
-
-        # A versioned cache entry can still be semantically wrong.  Enforce
-        # the player's generic API category before returning it.  This guards
-        # against the exact failure where a centre-back was shown as
-        # "ST · Poacher" because the AI cache was stale or overconfident.
-        allowed_positions = GENERIC_TO_SPECIFIC.get(generic_position)
-        if (
-            cached
-            and cached.get("specificPosition")
-            and allowed_positions
-            and cached["specificPosition"] not in allowed_positions
-        ):
-            corrected_position, corrected_role = DEFAULT_POSITION_ROLE[generic_position]
-            print(
-                f"[RESOLVE ROLE] Category guard: {req.playerName} "
-                f"{generic_position} rejects {cached['specificPosition']}/{cached.get('role', '')} "
-                f"→ {corrected_position}/{corrected_role}"
-            )
-            corrected_fields = {
-                "playerId": req.playerId,
-                "playerName": req.playerName,
-                "specificPosition": corrected_position,
-                "role": corrected_role,
-                "source": "position_guard",
-                "promptVersion": POSITION_PROMPT_VERSION,
-                "updatedAt": datetime.now(timezone.utc).isoformat(),
-            }
-            if req.teamName:
-                corrected_fields["team"] = req.teamName
-            if generic_position:
-                corrected_fields["genericPosition"] = generic_position
-            cache_key = {"playerId": req.playerId} if req.playerId else {"playerName": req.playerName}
-            await db.player_positions.update_one(
-                cache_key,
-                {"$set": corrected_fields},
-                upsert=True,
-            )
-            cached = {
-                "specificPosition": corrected_position,
-                "role": corrected_role,
-                "source": "position_guard",
-                "promptVersion": POSITION_PROMPT_VERSION,
-                "updatedAt": corrected_fields["updatedAt"],
-            }
-
-        if (cached
-                and cached.get("specificPosition")
-                and cached.get("role") not in _GENERIC_ROLES):
-            stored_ver = cached.get("promptVersion", 0)
-            if stored_ver >= POSITION_PROMPT_VERSION:
-                cached_at = cached.get("updatedAt", "")
-                cache_ok = False
-                if cached_at:
-                    try:
-                        age_days = (
-                            datetime.now(timezone.utc)
-                            - datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
-                        ).days
-                        cache_ok = age_days < ROLE_CACHE_TTL_DAYS
-                    except Exception:
-                        cache_ok = True
-                else:
-                    cache_ok = True
-                if cache_ok:
-                    return {
-                        "position": cached["specificPosition"],
-                        "role": cached.get("role", ""),
-                        "source": cached.get("source", "cache"),
-                        "cached": True,
-                    }
-
         # ── Fresh resolution ─────────────────────────────────────────────────
         pos, role, source = await resolve_player_role(
             player_name=req.playerName,
             team_name=req.teamName or "",
-            generic_position=req.genericPosition or "",
+            generic_position=generic_position,
             player_id=req.playerId or 0,
             stats=req.stats,
         )

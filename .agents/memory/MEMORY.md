@@ -139,3 +139,4 @@
 - [Prediction response identity](prediction-response-identity.md) — normalize explicit null identity fields at the final response boundary, not only missing keys.
 - [Tactical explanation assembly](tactical-explanation-assembly.md) — generate one final role-specific narrative after the ledger; never append early and late explanations together.
 - [Player context write fail-open](player-context-write-fail-open.md) — verified club identity must survive Atlas/cache write failures; persistence outages must not force manual matchup setup.
+- [Gemini position grounding](gemini-position-grounding.md) — accept identity verification only with actual Search citations; proxy responses without grounding must remain conservative fallback data.

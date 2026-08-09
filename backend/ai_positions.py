@@ -1,7 +1,25 @@
-"""Deterministic position and tactical role resolution for players."""
+"""Web-grounded position and tactical-role verification for soccer players.
+
+Gemini is used here only to confirm identity, position, and role from grounded
+web results. Its output is never used to generate prose or directly alter
+projection math.
+"""
+from __future__ import annotations
+
+import asyncio as aio
+import json
+import os
+from datetime import datetime, timezone
+
 from config import db
 
-POSITION_RESOLUTION_VERSION = 7
+POSITION_RESOLUTION_VERSION = 8
+_POSITION_AI_MODEL = os.environ.get("GEMINI_POSITION_MODEL", "gemini-2.5-flash")
+_POSITION_AI_TTL_DAYS = 7
+_POSITION_AI_DAILY_LIMIT = max(1, int(os.environ.get("GEMINI_POSITION_DAILY_LIMIT", "100")))
+_position_usage_date = ""
+_position_usage_attempts = 0
+_position_usage_lock = aio.Lock()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,6 +65,213 @@ _GENERIC_ROLES = {
     "", "Midfielder", "Defender", "Forward", "Attacker",
     "Goalkeeper", "midfielder", "defender", "forward",
 }
+
+
+def _generic_category(value: object) -> str:
+    return {
+        "goalkeeper": "Goalkeeper",
+        "defender": "Defender",
+        "midfielder": "Midfielder",
+        "attacker": "Attacker",
+        "forward": "Attacker",
+    }.get(str(value or "").strip().lower(), "")
+
+
+def _canonical_position(value: object) -> str:
+    text = " ".join(str(value or "").strip().upper().replace("-", " ").split())
+    aliases = {
+        "GOALKEEPER": "GK", "KEEPER": "GK",
+        "CENTRE BACK": "CB", "CENTER BACK": "CB",
+        "LEFT BACK": "LB", "RIGHT BACK": "RB",
+        "LEFT WING BACK": "LWB", "RIGHT WING BACK": "RWB",
+        "DEFENSIVE MIDFIELDER": "CDM", "HOLDING MIDFIELDER": "CDM",
+        "CENTRAL MIDFIELDER": "CM", "ATTACKING MIDFIELDER": "CAM",
+        "LEFT MIDFIELDER": "LM", "RIGHT MIDFIELDER": "RM",
+        "LEFT WINGER": "LW", "RIGHT WINGER": "RW",
+        "CENTRE FORWARD": "CF", "CENTER FORWARD": "CF",
+        "STRIKER": "ST", "SECOND STRIKER": "SS",
+    }
+    position = aliases.get(text, text)
+    return position if position in _VALID_POSITIONS else ""
+
+
+def _canonical_role(value: object) -> str:
+    text = " ".join(str(value or "").strip().replace("_", " ").split()).lower()
+    aliases = {
+        "shot stopper": "Shot-Stopper", "sweeper keeper": "Sweeper Keeper",
+        "ball playing cb": "Ball-Playing CB", "ball-playing cb": "Ball-Playing CB",
+        "stopper": "Stopper", "fullback": "Fullback", "full back": "Fullback",
+        "wing back": "Wing-Back", "wing-back": "Wing-Back",
+        "inverted fullback": "Inverted Fullback", "anchor": "Anchor",
+        "ball winner": "Ball Winner", "deep lying playmaker": "Deep-Lying Playmaker",
+        "deep-lying playmaker": "Deep-Lying Playmaker", "box to box": "Box-to-Box",
+        "box-to-box": "Box-to-Box", "mezzala": "Mezzala",
+        "advanced playmaker": "Advanced Playmaker", "wide playmaker": "Wide Playmaker",
+        "traditional winger": "Traditional Winger", "inverted winger": "Inverted Winger",
+        "progressive carrier": "Progressive Carrier", "inside forward": "Inside Forward",
+        "target man": "Target Man", "poacher": "Poacher", "false 9": "False 9",
+        "shadow striker": "Shadow Striker", "complete forward": "Complete Forward",
+        "pressing forward": "Pressing Forward",
+    }
+    return aliases.get(text, "")
+
+
+def _grounding_sources(response: object) -> list[dict]:
+    def _field(value: object, *names: str):
+        if isinstance(value, dict):
+            for name in names:
+                if name in value:
+                    return value[name]
+            return None
+        for name in names:
+            result = getattr(value, name, None)
+            if result is not None:
+                return result
+        return None
+
+    sources: list[dict] = []
+    candidates = _field(response, "candidates") or []
+    for candidate in candidates:
+        # google-genai currently exposes snake_case attributes, while older
+        # proxy/test response objects may expose the wire-format camelCase
+        # name. Accept both, but still require an actual web URI.
+        metadata = _field(candidate, "grounding_metadata", "groundingMetadata")
+        chunks = _field(metadata, "grounding_chunks", "groundingChunks") or []
+        for chunk in chunks:
+            web = _field(chunk, "web", "webGroundingChunk")
+            url = _field(web, "uri", "url")
+            title = _field(web, "title", "domain")
+            if url and not any(item["url"] == url for item in sources):
+                sources.append({"url": url, "title": title or ""})
+    return sources[:8]
+
+
+async def _position_ai_budget_available() -> bool:
+    global _position_usage_date, _position_usage_attempts
+    today = datetime.now(timezone.utc).date().isoformat()
+    async with _position_usage_lock:
+        if _position_usage_date != today:
+            _position_usage_date = today
+            _position_usage_attempts = 0
+        if _position_usage_attempts >= _POSITION_AI_DAILY_LIMIT:
+            return False
+        _position_usage_attempts += 1
+        return True
+
+
+async def _verify_with_grounded_gemini(
+    player_name: str,
+    team_name: str,
+    generic_position: str,
+) -> dict | None:
+    """Ask Gemini only for a web-grounded position/role identity check."""
+    if os.environ.get("GEMINI_POSITION_VERIFICATION", "true").lower() not in {
+        "1", "true", "yes", "on"
+    }:
+        return None
+    api_key = os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    base_url = os.environ.get("AI_INTEGRATIONS_GEMINI_BASE_URL")
+    if not api_key or not base_url or not await _position_ai_budget_available():
+        return None
+
+    prompt = f"""
+Use Google Search grounding now to verify the real-world soccer position and
+tactical role of exactly this player. You must perform a live web search before
+answering and use the search results, not memory.
+Player: {player_name}
+Current/known club context: {team_name or "unknown"}
+Provider broad category: {generic_position or "unknown"}
+
+Search reliable current or recent sources such as the player's official club or
+national-team profile, league profile, reputable match reports, or established
+football databases. Do not infer position from the requested prop, stats, or
+formation assumptions. Avoid same-name players.
+
+Return this compact JSON object only, with no explanation before or after it:
+{{
+  "position": "one of GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS",
+  "role": "one canonical tactical role from the vocabulary below, or empty string",
+  "confidence": "high, medium, or low"
+}}
+Canonical roles: {_ROLE_LIST}
+"""
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(
+            api_key=api_key,
+            http_options={"api_version": "", "base_url": base_url},
+        )
+        response = await aio.wait_for(
+            aio.to_thread(
+                client.models.generate_content,
+                model=_POSITION_AI_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    maxOutputTokens=500,
+                    tools=[types.Tool(googleSearch=types.GoogleSearch())],
+                ),
+            ),
+            timeout=20,
+        )
+        sources = _grounding_sources(response)
+        if not sources and await _position_ai_budget_available():
+            # The managed Gemini proxy can occasionally answer from model
+            # memory without invoking its Search tool. Retry once with an
+            # explicit live-search instruction; an ungrounded answer remains
+            # unusable.
+            retry_prompt = prompt + """
+IMPORTANT: Do not answer until Google Search has returned web results. The
+answer is invalid unless your response contains grounding citations from those
+results. Search the exact player name plus soccer position now.
+"""
+            response = await aio.wait_for(
+                aio.to_thread(
+                    client.models.generate_content,
+                    model=_POSITION_AI_MODEL,
+                    contents=retry_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        maxOutputTokens=500,
+                        tools=[types.Tool(googleSearch=types.GoogleSearch())],
+                    ),
+                ),
+                timeout=20,
+            )
+            sources = _grounding_sources(response)
+        if not sources:
+            print(f"[POSITION GEMINI] rejected ungrounded response for {player_name}")
+            return None
+        raw = str(getattr(response, "text", "") or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            raw = raw.split("```", 1)[0].strip()
+        # Search-grounded Gemini may append a short explanatory sentence
+        # after the JSON object. Parse the first complete object only.
+        json_start = raw.find("{")
+        if json_start >= 0:
+            raw = raw[json_start:]
+        parsed, _ = json.JSONDecoder().raw_decode(raw)
+        position = _canonical_position(parsed.get("position"))
+        category = _generic_category(generic_position)
+        if not position or position not in _GENERIC_TO_SPECIFIC.get(category, set()):
+            print(f"[POSITION GEMINI] category mismatch for {player_name}: {position} vs {category}")
+            return None
+        role = _canonical_role(parsed.get("role"))
+        if role not in _POSITION_ROLE_MAP.get(position, set()):
+            role = ""
+        confidence = str(parsed.get("confidence") or "").lower()
+        return {
+            "specificPosition": position,
+            "role": role,
+            "confidence": confidence if confidence in {"high", "medium", "low"} else "medium",
+            "sources": sources,
+        }
+    except Exception as exc:
+        print(f"[POSITION GEMINI] verification skipped for {player_name}: {type(exc).__name__}: {exc}")
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,70 +367,89 @@ async def resolve_player_role(
     player_id: int = 0,
     stats: dict | None = None,
 ) -> tuple[str, str, str]:
-    """Resolve position using cache and stat fingerprint only."""
-    from datetime import datetime, timezone
+    """Resolve position/role with grounded web evidence and category safety."""
     from config import POSITION_PROMPT_VERSION
-    ROLE_CACHE_TTL_DAYS = 7
+    category = _generic_category(generic_position)
+    allowed_positions = _GENERIC_TO_SPECIFIC.get(category, set())
     cached = None
+    projection = {
+        "_id": 0,
+        "specificPosition": 1,
+        "role": 1,
+        "updatedAt": 1,
+        "promptVersion": 1,
+        "source": 1,
+    }
     if player_id:
         cached = await db.player_positions.find_one(
             {"playerId": player_id},
-            {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1}
+            projection,
         )
     if not cached and player_name:
         cached = await db.player_positions.find_one(
             {"playerName": player_name},
-            {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1}
+            projection,
         )
 
-    if cached and cached.get("specificPosition") and cached.get("role") not in _GENERIC_ROLES:
-        # Manual overrides are permanent — never re-resolve regardless of version or TTL
+    cached_pos = _canonical_position((cached or {}).get("specificPosition"))
+    cached_role = _canonical_role((cached or {}).get("role"))
+    if (
+        cached
+        and cached_pos in allowed_positions
+        and cached.get("source") in {"gemini_web_grounded", "manual_override"}
+        and cached.get("promptVersion", 0) >= POSITION_PROMPT_VERSION
+    ):
         if cached.get("source") == "manual_override":
-            return cached["specificPosition"], cached.get("role", ""), "cache"
-        stored_ver = cached.get("promptVersion", 0)
-        if stored_ver >= POSITION_PROMPT_VERSION:
-            cached_at = cached.get("updatedAt", "")
-            try:
-                age_days = (
-                    datetime.now(timezone.utc)
-                    - datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
-                ).days
-                if age_days < ROLE_CACHE_TTL_DAYS:
-                    return cached["specificPosition"], cached.get("role", ""), "cache"
-            except Exception:
-                return cached["specificPosition"], cached.get("role", ""), "cache"
+            return cached_pos, cached_role, "cache"
+        try:
+            age_days = (
+                datetime.now(timezone.utc)
+                - datetime.fromisoformat(
+                    str(cached.get("updatedAt", "")).replace("Z", "+00:00")
+                )
+            ).days
+            if age_days < _POSITION_AI_TTL_DAYS:
+                return cached_pos, cached_role, "cache"
+        except Exception:
+            pass
 
-    # ── Stat fingerprint (instant hint, no AI) ───────────────────────────────
-    fingerprint_hint = _stat_fingerprint_role(generic_position, stats)
-
-    # ── Stat fingerprint fallback ─────────────────────────────────────────────
-    if fingerprint_hint and generic_position:
-        possible_positions = sorted(_GENERIC_TO_SPECIFIC.get(generic_position, set()))
-        # Find the first specific position whose valid-role set actually includes
-        # the fingerprint hint, so "False 9" resolves to CF not CAM.
-        matched_pos = next(
-            (pos for pos in possible_positions
-             if fingerprint_hint in _POSITION_ROLE_MAP.get(pos, set())),
-            possible_positions[0] if possible_positions else ""
+    verified = await _verify_with_grounded_gemini(player_name, team_name, category)
+    if verified:
+        fields = {
+            "playerId": player_id,
+            "playerName": player_name,
+            "team": team_name or "",
+            "genericPosition": category,
+            "specificPosition": verified["specificPosition"],
+            "role": verified["role"],
+            "confidence": verified["confidence"],
+            "evidenceSources": verified["sources"],
+            "source": "gemini_web_grounded",
+            "promptVersion": POSITION_PROMPT_VERSION,
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            cache_key = {"playerId": player_id} if player_id else {"playerName": player_name}
+            await db.player_positions.update_one(cache_key, {"$set": fields}, upsert=True)
+        except Exception as exc:
+            print(f"[POSITION GEMINI CACHE WRITE] skipped for {player_name}: {exc}")
+        print(
+            f"[POSITION GEMINI] {player_name} → "
+            f"{verified['specificPosition']}/{verified['role'] or 'role unavailable'} "
+            f"({verified['confidence']})"
         )
-        if matched_pos:
-            valid_roles = _POSITION_ROLE_MAP.get(matched_pos, set())
-            fallback_role = fingerprint_hint if fingerprint_hint in valid_roles else (sorted(valid_roles)[0] if valid_roles else "")
-            print(f"[ROLE RESOLVE] {player_name} → {matched_pos} | {fallback_role} (stat_fingerprint)")
-            return matched_pos, fallback_role, "stat_fingerprint"
+        return verified["specificPosition"], verified["role"], "gemini_web_grounded"
 
-    # Generic-position fallback: return a canonical specific position without
-    # a role when stats aren't available, so callers know at least the broad
-    # position rather than getting nothing at all.
+    # Provider category is the only non-web fallback. It supplies a broad,
+    # conservative position and never invents a tactical role.
     _GENERIC_DEFAULT_POS = {
         "Goalkeeper": "GK", "Defender": "CB",
-        "Midfielder": "CM", "Attacker": "CF", "Forward": "CF",
+        "Midfielder": "CM", "Attacker": "CF",
     }
-    gp = (generic_position or "").strip().title()
-    if gp in _GENERIC_DEFAULT_POS:
-        default_pos = _GENERIC_DEFAULT_POS[gp]
-        print(f"[ROLE RESOLVE] {player_name} → {default_pos} (generic fallback, no stats)")
-        return default_pos, "", "generic_fallback"
+    if category in _GENERIC_DEFAULT_POS:
+        default_pos = _GENERIC_DEFAULT_POS[category]
+        print(f"[ROLE RESOLVE] {player_name} → {default_pos} (provider fallback; Gemini unavailable)")
+        return default_pos, "", "provider_category_fallback"
 
     print(f"[ROLE RESOLVE] {player_name} → no resolution possible")
     return "", "", "fallback"
@@ -215,17 +459,16 @@ async def resolve_player_role(
 # Compatibility API — kept for existing batch position lookups
 # ─────────────────────────────────────────────────────────────────────────────
 async def resolve_position_deterministic(player_name: str, sport: str = "soccer") -> dict:
-    """Lightweight cache-first lookup with deterministic fallback."""
-
+    """Compatibility lookup that only trusts grounded/manual identity records."""
     cached = await db.player_positions.find_one(
-        {"playerName": player_name}, {"_id": 0, "specificPosition": 1, "role": 1}
+        {"playerName": player_name},
+        {"_id": 0, "specificPosition": 1, "role": 1, "source": 1},
     )
-    if cached and cached.get("specificPosition"):
+    if cached and cached.get("specificPosition") and cached.get("source") in {
+        "gemini_web_grounded", "manual_override"
+    }:
         return {"position": cached["specificPosition"], "role": cached.get("role", "")}
 
-    pos, role, _ = await resolve_player_role(player_name)
-    if pos:
-        return {"position": pos, "role": role}
     return {"position": "", "role": ""}
 
 
@@ -241,9 +484,14 @@ async def resolve_positions_batch(players: list) -> dict:
         if not name:
             continue
         cached = await db.player_positions.find_one(
-            {"playerName": name}, {"_id": 0, "specificPosition": 1, "role": 1}
+            {"playerName": name},
+            {"_id": 0, "specificPosition": 1, "role": 1, "source": 1},
         )
-        if cached and cached.get("specificPosition"):
+        if (
+            cached
+            and cached.get("specificPosition")
+            and cached.get("source") in {"gemini_web_grounded", "manual_override"}
+        ):
             results[name] = {"position": cached["specificPosition"], "role": cached.get("role", "")}
         else:
             unresolved.append(p)
@@ -252,6 +500,8 @@ async def resolve_positions_batch(players: list) -> dict:
         name = p.get("playerName", "")
         pos, role, _ = await resolve_player_role(
             name,
+            team_name=p.get("teamName") or p.get("team") or "",
+            generic_position=p.get("genericPosition") or p.get("position") or "",
             player_id=p.get("playerId", 0),
         )
         if pos:

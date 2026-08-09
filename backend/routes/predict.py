@@ -5525,10 +5525,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
 
         # Extract player's ACTUAL position from API-Sports data
         player_position = ""
+        best_entry = None
         if player_stats:
             stats_list = player_stats.get("statistics", [])
             # Find the stat entry with most appearances (most relevant)
-            best_entry = None
             best_apps = 0
             for s in stats_list:
                 apps = s.get("games", {}).get("appearences") or 0
@@ -5545,13 +5545,29 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         player_position = pos
                         break
 
+        # API-Football uses compact category codes in some statistics payloads
+        # (DEF/MID/FWD/G). Normalize them before the grounded verifier and all
+        # downstream position gates so the provider category stays authoritative.
+        player_position = {
+            "G": "Goalkeeper",
+            "GK": "Goalkeeper",
+            "DEF": "Defender",
+            "D": "Defender",
+            "MID": "Midfielder",
+            "M": "Midfielder",
+            "FWD": "Attacker",
+            "F": "Attacker",
+        }.get(str(player_position or "").strip().upper(), player_position)
+
         # =============================================
-        # AI POSITION RESOLVER: Get specific position (RW, CM, CB, etc.)
-        # Uses cache first, then AI as fallback with API-Sports context
+        # GROUNDED POSITION RESOLVER: confirm identity only
+        # Gemini is used here solely for web-grounded position/role verification.
+        # It never writes narrative and never changes projection math directly.
         # =============================================
         specific_position = ""
         player_role = ""
         cached_pos = None
+        _position_resolution_source = "fallback"
         _role_override_active = bool(req.positionOverride)
         GENERIC_POSITIONS = {"Goalkeeper", "Defender", "Midfielder", "Attacker", ""}
 
@@ -5584,114 +5600,27 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
         }
 
-        if player_position in GENERIC_POSITIONS or not player_position:
-            # Check user-provided position override first
-            if req.positionOverride:
-                specific_position = req.positionOverride
-                player_role = req.roleOverride or ""
-                print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
-            else:
-                # Check cache (with 30-day expiry and version check)
-                from config import POSITION_PROMPT_VERSION
-                cached_pos = await db.player_positions.find_one(
-                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1, "source": 1}
-                )
-                cache_valid = False
-                if cached_pos and cached_pos.get("specificPosition"):
-                    # Manual overrides are permanent — never re-resolve regardless of version or TTL
-                    if cached_pos.get("source") == "manual_override":
-                        cache_valid = True
-                    # Check version first — stale version always forces re-resolution
-                    elif cached_pos.get("promptVersion", 0) < POSITION_PROMPT_VERSION:
-                        stored_version = cached_pos.get("promptVersion", 0)
-                        print(f"[POS RESOLVE] Prompt version outdated (v{stored_version} < v{POSITION_PROMPT_VERSION}): {req.playerName} — re-resolving")
-                        cache_valid = False
-                    else:
-                        # Check if cache is fresh (< 30 days)
-                        cached_at = cached_pos.get("updatedAt", "")
-                        if cached_at:
-                            try:
-                                cached_dt = datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
-                                age_days = (datetime.now(timezone.utc) - cached_dt).days
-                                cache_valid = age_days < 30
-                                if not cache_valid:
-                                    print(f"[POS RESOLVE] Cache expired ({age_days} days): {req.playerName}")
-                            except Exception:
-                                cache_valid = True  # If we can't parse date, trust the cache
-                        else:
-                            cache_valid = True  # Legacy cache entries without updatedAt
-
-                if cache_valid:
-                    cached_specific = cached_pos["specificPosition"]
-                    allowed_cached_positions = GENERIC_TO_SPECIFIC.get(player_position)
-                    if (
-                        allowed_cached_positions
-                        and cached_specific not in allowed_cached_positions
-                    ):
-                        # A versioned cache entry is not enough: API-Sports'
-                        # generic category is a hard safety boundary.  A
-                        # Defender must never inherit ST/Poacher math just
-                        # because an earlier resolution was wrong.
-                        print(
-                            f"[POS RESOLVE] Category guard: {req.playerName} "
-                            f"{player_position} rejects {cached_specific}/{cached_pos.get('role', '')}"
-                        )
-                        cache_valid = False
-                    else:
-                        specific_position = cached_specific
-                        player_role = cached_pos.get("role", "")
-                    valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
-                    if valid_roles and (not player_role or player_role not in valid_roles):
-                        corrected_role = sorted(valid_roles)[0] if valid_roles else ""
-                        print(f"[POS RESOLVE] Cache role fix: {req.playerName} {specific_position}/{player_role} → {corrected_role}")
-                        player_role = corrected_role
-                        try:
-                            await db.player_positions.update_one(
-                                {"playerId": req.playerId},
-                                {"$set": {"role": corrected_role}}
-                            )
-                        except Exception as _role_cache_err:
-                            print(f"[POS ROLE CACHE WRITE] skipped: {_role_cache_err}")
-                    else:
-                        print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
-
-            if not specific_position:
-                # If the API category is known but there is no valid specific
-                # cache, use the conservative category default directly.
-                if player_position in GENERIC_TO_SPECIFIC:
-                    category_defaults = {
-                        "Goalkeeper": ("GK", "Shot-Stopper"),
-                        "Defender": ("CB", "Stopper"),
-                        "Midfielder": ("CM", "Box-to-Box"),
-                        # Do not manufacture a pressing role from a generic
-                        # attacker category. A verified lineup/fingerprint
-                        # role can replace this conservative fallback below.
-                        "Attacker": ("ST", "Complete Forward"),
-                    }
-                    specific_position, player_role = category_defaults[player_position]
-                    try:
-                        await db.player_positions.update_one(
-                            {"playerId": req.playerId},
-                            {"$set": {
-                                "playerId": req.playerId,
-                                "playerName": req.playerName,
-                                "team": corrected_team_name,
-                                "genericPosition": player_position,
-                                "specificPosition": specific_position,
-                                "role": player_role,
-                                "promptVersion": POSITION_PROMPT_VERSION,
-                                "updatedAt": datetime.now(timezone.utc).isoformat(),
-                            }},
-                            upsert=True
-                        )
-                    except Exception as _position_cache_err:
-                        print(f"[POSITION CACHE WRITE] skipped: {_position_cache_err}")
-                    print(
-                        f"[POS RESOLVE] Category fallback: {req.playerName} "
-                        f"{player_position} → {specific_position} | {player_role} (cached)"
-                    )
+        if req.positionOverride:
+            specific_position = req.positionOverride
+            player_role = req.roleOverride or ""
+            _position_resolution_source = "manual_override"
+            print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
+        elif player_position in GENERIC_POSITIONS or not player_position:
+            from ai_positions import resolve_player_role
+            cached_pos = await db.player_positions.find_one(
+                {"playerId": req.playerId},
+                {"_id": 0, "source": 1, "specificPosition": 1},
+            )
+            specific_position, player_role, _position_resolution_source = await resolve_player_role(
+                player_name=req.playerName,
+                team_name=corrected_team_name or req.teamName or "",
+                generic_position=player_position,
+                player_id=req.playerId or 0,
+                stats=_role_stats if "_role_stats" in locals() else None,
+            )
         else:
             specific_position = player_position
+            _position_resolution_source = "provider_specific"
 
         # Use specific position if available, otherwise fall back to generic
         display_position = specific_position or player_position
@@ -5765,7 +5694,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 _observed_role["positionCounts"] = _historical_position_summary.get("positionCounts", {})
                 _observed_role["source"] = "h2h_fixture_position_history"
         if _observed_role and _observed_role.get("role"):
-            if not _role_override_active and not (cached_pos and cached_pos.get("source") == "manual_override"):
+            if (
+                not _role_override_active
+                and _position_resolution_source not in {"gemini_web_grounded", "cache"}
+                and not (cached_pos and cached_pos.get("source") == "gemini_web_grounded")
+            ):
                 specific_position = _observed_role.get("position") or specific_position
                 player_role = _observed_role["role"]
                 display_position = specific_position or player_position
