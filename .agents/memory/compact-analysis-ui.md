@@ -15,6 +15,12 @@ H2H evidence should remain a compact comparison strip rather than a second full-
 
 **How to apply:** Keep H2H height close to the bar content itself and use tap selection only where it adds information without restoring a large detail panel.
 
+Analytics hit rates must display their scored numerator/denominator and excluded outcome counts; never let a small daily rate read like it applies to every headline pick.
+
+**Why:** A Today screenshot showed 90.9% beside 15 picks, but the rate was 10/11 HIT/MISS rows while four non-directional outcomes were excluded, and one scored row had no recognized OVER/UNDER direction.
+
+**How to apply:** Label totals as settled/events versus scored, show `hits / (hits + misses)`, and surface DNP/unknown rows plus directionless scored records.
+
 ## Venue marker layout (bars)
 
 `H` / `A` venue marker appears as its own `<Text>` element (`styles.venueLabel`) directly beneath the `possessionLabel` row — NOT beside the abbreviated opponent name. Both Recent Matches and H2H bars follow this layout. Color: green for home, blue for away.
