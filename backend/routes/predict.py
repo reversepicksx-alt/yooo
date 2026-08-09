@@ -2241,7 +2241,15 @@ async def predict(req: PredictionRequest):
                             # write-blocked, so a missing cache row is expected; in
                             # that case infer the role from this API fixture row.
                             cached_pr = await db.player_positions.find_one(
-                                {"playerId": p_id},
+                                {
+                                    "$or": [
+                                        {"playerId": p_id},
+                                        {"playerId": p_id_key},
+                                        {"playerId": str(p_id)}
+                                        if p_id is not None
+                                        else {"playerId": None},
+                                    ]
+                                },
                                 {
                                     "_id": 0,
                                     "specificPosition": 1,
@@ -6294,8 +6302,24 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             from ai_positions import resolve_player_role
             cached_pos = await db.player_positions.find_one(
                 {"playerId": req.playerId},
-                {"_id": 0, "source": 1, "specificPosition": 1},
+                {"_id": 0, "source": 1, "roleSource": 1, "specificPosition": 1, "role": 1},
             )
+            cached_specific = str((cached_pos or {}).get("specificPosition") or "").strip().upper()
+            cached_source = str(
+                (cached_pos or {}).get("source")
+                or (cached_pos or {}).get("roleSource")
+                or ""
+            )
+            cached_role = str((cached_pos or {}).get("role") or "").strip()
+            cached_profile_is_trusted = bool(
+                cached_specific
+                and cached_specific in GENERIC_TO_SPECIFIC.get(player_position, set())
+                and cached_source in {"gemini_web_grounded", "manual_override"}
+            )
+            if cached_profile_is_trusted and cached_role not in POSITION_ROLE_MAP.get(
+                cached_specific, set()
+            ):
+                cached_role = ""
             try:
                 # Grounded position is explanation enrichment only. Keep the
                 # provider category fallback available when the Gemini proxy
@@ -6325,33 +6349,31 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 )
                 specific_position, player_role = "", ""
                 _position_resolution_source = "category_fallback"
+            # The resolver may time out while reading the same Atlas record
+            # that was already fetched above. Use that trusted player-ID
+            # profile directly rather than throwing away exact evidence and
+            # disabling same-position comparisons for this request.
+            if not specific_position and cached_profile_is_trusted:
+                specific_position = cached_specific
+                player_role = cached_role
+                _position_resolution_source = "cache"
+                print(
+                    f"[POS RESOLVE] Durable profile fallback: "
+                    f"{req.playerName} → {specific_position}"
+                    f"{' / ' + player_role if player_role else ''}"
+                )
             if not specific_position:
                 # Keep the broad provider category in player_position/display
-                # only. Never persist it as specificPosition: that would make
-                # a later cache lookup appear to have exact evidence.
+                # only. Most importantly, do not overwrite an already-grounded
+                # player-ID profile with an empty timeout/category fallback.
+                # Position identity is durable enrichment, not per-request
+                # ephemeral state.
                 specific_position, player_role = "", ""
                 _position_resolution_source = "category_fallback"
-                try:
-                    await db.player_positions.update_one(
-                        {"playerId": req.playerId},
-                        {"$set": {
-                            "playerId": req.playerId,
-                            "playerName": req.playerName,
-                            "team": corrected_team_name,
-                            "genericPosition": player_position,
-                            "specificPosition": "",
-                            "role": "",
-                            "roleSource": "provider_category_fallback",
-                            "updatedAt": datetime.now(timezone.utc).isoformat(),
-                        }},
-                        upsert=True,
-                    )
-                except Exception as _position_cache_err:
-                    print(f"[POS ROLE CACHE WRITE] skipped: {_position_cache_err}")
-                    print(f"[POSITION CACHE WRITE] skipped: {_position_cache_err}")
                 print(
                     f"[POS RESOLVE] Category fallback: "
-                    f"{req.playerName} → {player_position} (exact position unavailable)"
+                    f"{req.playerName} → {player_position} "
+                    "(exact position unavailable; existing profile preserved)"
                 )
         else:
             specific_position = player_position

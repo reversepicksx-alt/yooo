@@ -23,16 +23,16 @@ def test_prediction_route_guards_optional_atlas_cache_writes():
         )
 
 
-def test_category_position_cache_write_is_inside_exception_guard():
-    """Broad-category cache writes must remain fail-open and non-specific."""
-    start = PREDICT_SOURCE.index(
-        'try:\n                    await db.player_positions.update_one(',
+def test_category_fallback_does_not_write_an_empty_position_profile():
+    """A timeout/category fallback must not erase durable position evidence."""
+    fallback_start = PREDICT_SOURCE.index(
+        "if not specific_position:",
+        PREDICT_SOURCE.index("elif player_position in GENERIC_POSITIONS"),
     )
-    end = PREDICT_SOURCE.index(
+    fallback_end = PREDICT_SOURCE.index(
         'print(\n                    f"[POS RESOLVE] Category fallback:',
-        start,
+        fallback_start,
     )
-    block = PREDICT_SOURCE[start:end]
-    assert "try:" in block
-    assert "except Exception as _position_cache_err:" in block
-    assert "await db.player_positions.update_one(" in block
+    fallback_block = PREDICT_SOURCE[fallback_start:fallback_end]
+    assert "player_positions.update_one" not in fallback_block
+    assert "existing profile preserved" in PREDICT_SOURCE

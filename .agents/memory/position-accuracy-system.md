@@ -95,5 +95,20 @@ on the pitch.
 projected-XI target marking, historical comparison lineup maps, and any future
 cross-response player joins.
 
+## Durable grounded player profiles
+
+Grounded/manual player-ID position profiles are durable identity evidence, not a
+seven-day prediction cache. If the bounded Gemini resolver times out, use the
+already-read trusted profile directly and never overwrite it with an empty
+provider-category fallback.
+
+**Why:** Position resolution is optional enrichment, but same-position
+comparison admission depends on it. A Gemini timeout otherwise turns a known
+player into generic `MID` and removes all similar-player rows.
+
+**How to apply:** Fixture grid/confirmed observation remains highest priority;
+trusted player-ID profile is the fallback; generic API-Sports categories remain
+broad and cannot authorize exact-position cohorts.
+
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.

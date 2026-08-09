@@ -27,7 +27,7 @@ def test_generic_midfielder_has_no_box_to_box_fallback():
 def test_provider_category_fallback_never_returns_exact_midfield_position():
     assert 'return category, "", "provider_category_fallback"' in AI_POSITIONS_SOURCE
     assert '"Midfielder": "CM"' not in AI_POSITIONS_SOURCE
-    assert '"specificPosition": ""' in PREDICT_SOURCE
+    assert "existing profile preserved" in PREDICT_SOURCE
 
 
 def test_exact_midfield_comparisons_reject_generic_rows_and_role_padding():
@@ -56,3 +56,34 @@ def test_api_sports_lineup_identity_is_normalized_before_exact_position_join():
     assert "_normalize_provider_player_id(pl.get(\"id\")) == target_id" in PREDICT_SOURCE
     assert "_normalize_provider_player_id(p_id)" in PREDICT_SOURCE
     assert "_normalize_provider_player_id(item.get(\"player\", {}).get(\"id\"))" in PREDICT_SOURCE
+
+
+def test_prediction_does_not_erase_grounded_profile_on_category_fallback():
+    assert "existing profile preserved" in PREDICT_SOURCE
+    assert '"specificPosition": ""' not in PREDICT_SOURCE[
+        PREDICT_SOURCE.index('if not specific_position:'):PREDICT_SOURCE.index(
+            'print(\n                    f"[POS RESOLVE] Category fallback:',
+            PREDICT_SOURCE.index('if not specific_position:'),
+        )
+    ]
+
+
+def test_comparison_profiles_accept_string_or_integer_provider_ids():
+    comparison_start = PREDICT_SOURCE.index("cached_pr = await db.player_positions.find_one(")
+    comparison_block = PREDICT_SOURCE[comparison_start:comparison_start + 900]
+    assert '{"playerId": p_id_key}' in comparison_block
+    assert '{"playerId": str(p_id)}' in comparison_block
+
+
+def test_grounded_player_profiles_are_durable_without_prompt_version_or_ttl_gate():
+    from ai_positions import _trusted_cached_profile
+
+    profile = _trusted_cached_profile(
+        {
+            "specificPosition": "CM",
+            "role": "Box-to-Box",
+            "source": "gemini_web_grounded",
+        },
+        "Midfielder",
+    )
+    assert profile == ("CM", "Box-to-Box")

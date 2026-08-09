@@ -116,6 +116,31 @@ def _canonical_role(value: object) -> str:
     return aliases.get(text, "")
 
 
+def _trusted_cached_profile(cached: dict | None, category: str) -> tuple[str, str] | None:
+    """Return a durable grounded/manual profile without requiring freshness.
+
+    Position identity is not a prediction-time feature that should disappear
+    when Gemini is temporarily slow.  Once a player-ID record has grounded or
+    manual evidence, it remains safe to use until an explicit correction or a
+    stronger fixture observation replaces it.
+    """
+    if not isinstance(cached, dict):
+        return None
+    position = _canonical_position(cached.get("specificPosition"))
+    allowed = _GENERIC_TO_SPECIFIC.get(category, set())
+    source = str(cached.get("source") or cached.get("roleSource") or "")
+    if (
+        not position
+        or position not in allowed
+        or source not in {"gemini_web_grounded", "manual_override"}
+    ):
+        return None
+    role = _canonical_role(cached.get("role"))
+    if role not in _POSITION_ROLE_MAP.get(position, set()):
+        role = ""
+    return position, role
+
+
 def _grounding_sources(response: object) -> list[dict]:
     def _field(value: object, *names: str):
         if isinstance(value, dict):
@@ -363,13 +388,17 @@ async def resolve_player_role(
         "_id": 0,
         "specificPosition": 1,
         "role": 1,
-        "updatedAt": 1,
-        "promptVersion": 1,
         "source": 1,
+        "roleSource": 1,
     }
     if player_id:
         cached = await db.player_positions.find_one(
-            {"playerId": player_id},
+            {
+                "$or": [
+                    {"playerId": player_id},
+                    {"playerId": str(player_id)},
+                ]
+            },
             projection,
         )
     if not cached and player_name:
@@ -378,27 +407,10 @@ async def resolve_player_role(
             projection,
         )
 
-    cached_pos = _canonical_position((cached or {}).get("specificPosition"))
-    cached_role = _canonical_role((cached or {}).get("role"))
-    if (
-        cached
-        and cached_pos in allowed_positions
-        and cached.get("source") in {"gemini_web_grounded", "manual_override"}
-        and cached.get("promptVersion", 0) >= POSITION_PROMPT_VERSION
-    ):
-        if cached.get("source") == "manual_override":
-            return cached_pos, cached_role, "cache"
-        try:
-            age_days = (
-                datetime.now(timezone.utc)
-                - datetime.fromisoformat(
-                    str(cached.get("updatedAt", "")).replace("Z", "+00:00")
-                )
-            ).days
-            if age_days < _POSITION_AI_TTL_DAYS:
-                return cached_pos, cached_role, "cache"
-        except Exception:
-            pass
+    cached_profile = _trusted_cached_profile(cached, category)
+    if cached_profile:
+        cached_pos, cached_role = cached_profile
+        return cached_pos, cached_role, "cache"
 
     verified = await _verify_with_grounded_gemini(player_name, team_name, category)
     if verified:
