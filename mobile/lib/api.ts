@@ -2074,6 +2074,7 @@ export interface QuotaStatus {
   softLimit: number;
   hardLimit: number;
   date: string;
+  lastResetAt: string | null;
 }
 
 export async function getQuotaStatus(

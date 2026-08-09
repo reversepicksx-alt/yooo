@@ -273,7 +273,7 @@ export default function AnalyticsDashboard({
 
   const renderQuotaUsage = () => {
     if (!quotaStatus) return null;
-    const { active, trippedDate, dailyCallCount, softLimit, hardLimit, date } = quotaStatus;
+    const { active, trippedDate, dailyCallCount, softLimit, hardLimit, date, lastResetAt } = quotaStatus;
 
     // The soft limit is the operative enforcement threshold — background API
     // calls are suspended once it is reached, long before the provider's
@@ -312,6 +312,26 @@ export default function AnalyticsDashboard({
         {trippedDate ? (
           <Text style={[s.storageBarMeta, { color: Colors.error, marginTop: 4 }]}>
             Breaker tripped: {trippedDate} — all API calls suspended until midnight UTC
+          </Text>
+        ) : null}
+
+        {lastResetAt ? (
+          <Text style={[s.storageBarMeta, { color: Colors.textTertiary, marginTop: 3 }]}>
+            Last reset: {(() => {
+              try {
+                const d = new Date(lastResetAt);
+                const now = new Date();
+                const diffMs = now.getTime() - d.getTime();
+                const diffMins = Math.floor(diffMs / 60000);
+                if (diffMins < 1) return 'just now';
+                if (diffMins < 60) return `${diffMins}m ago`;
+                const diffHrs = Math.floor(diffMins / 60);
+                if (diffHrs < 24) return `${diffHrs}h ago`;
+                return d.toLocaleString();
+              } catch {
+                return lastResetAt;
+              }
+            })()}
           </Text>
         ) : null}
 

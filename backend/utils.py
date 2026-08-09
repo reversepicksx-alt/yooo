@@ -22,6 +22,7 @@ _BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
 _quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
 _daily_call_date: str | None = None
 _daily_call_count = 0
+_last_quota_reset_at: str | None = None  # ISO-8601 UTC timestamp of last manual breaker reset
 # The local soft budget protects background maintenance work. A request handler
 # can mark its child API calls as priority so a busy startup/settlement job
 # cannot starve an authenticated user prediction. This is deliberately

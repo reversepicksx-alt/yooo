@@ -1225,6 +1225,14 @@ async def admin_quota_status(email: str, token: str):
     # Hard plan limit is configurable via env var (default matches API-Football
     # Pro plan; override in production to match the actual subscribed plan).
     hard_limit = int(_os.environ.get("API_FOOTBALL_HARD_LIMIT", "450000"))
+
+    # Last manual reset timestamp (in-memory only; clears on process restart)
+    last_reset_at: str | None = None
+    try:
+        last_reset_at = _utils._last_quota_reset_at
+    except Exception:
+        pass
+
     return {
         "active": active,
         "trippedDate": tripped_date,
@@ -1232,6 +1240,7 @@ async def admin_quota_status(email: str, token: str):
         "softLimit": API_DAILY_SOFT_LIMIT,
         "hardLimit": hard_limit,
         "date": today,
+        "lastResetAt": last_reset_at,
     }
 
 
@@ -1251,17 +1260,21 @@ async def admin_quota_reset(req: _QuotaResetRequest):
             _os.remove(_BREAKER_FILE)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Could not remove breaker file: {e}")
-    # Also clear the in-memory flag in utils
+    # Also clear the in-memory flag in utils and record the reset timestamp
+    from datetime import datetime, timezone
+    reset_at = datetime.now(timezone.utc).isoformat()
     try:
         import utils as _utils
         _utils._quota_exhausted_date = None
         _utils._daily_call_count = 0
+        _utils._last_quota_reset_at = reset_at
     except Exception:
         pass
     return {
         "cleared": existed,
         "message": "Quota circuit breaker reset — API-Football calls are unblocked." if existed
                    else "Breaker was not active (quota was not exhausted).",
+        "resetAt": reset_at,
     }
 
 @router.get("/storage-health")

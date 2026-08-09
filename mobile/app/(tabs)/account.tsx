@@ -1045,6 +1045,22 @@ export default function AccountScreen() {
                         ? `Active — tripped ${quotaStatus.trippedDate ?? 'today'} (UTC). Predictions blocked.`
                         : 'Clear — predictions unblocked.'}
                   </Text>
+                  {!!quotaStatus?.lastResetAt && (
+                    <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 2 }}>
+                      {`Last reset: ${(() => {
+                        try {
+                          const d = new Date(quotaStatus.lastResetAt!);
+                          const diffMs = Date.now() - d.getTime();
+                          const mins = Math.floor(diffMs / 60000);
+                          if (mins < 1) return 'just now';
+                          if (mins < 60) return `${mins}m ago`;
+                          const hrs = Math.floor(mins / 60);
+                          if (hrs < 24) return `${hrs}h ago`;
+                          return d.toLocaleString();
+                        } catch { return quotaStatus.lastResetAt; }
+                      })()}`}
+                    </Text>
+                  )}
                 </View>
               </View>
 
