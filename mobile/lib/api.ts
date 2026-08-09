@@ -335,6 +335,8 @@ export interface GameLog {
   quality?: boolean;
   teamPossession?: number | null;
   opponentPossession?: number | null;
+  /** Exact opponent team shots on target in this fixture; populated for soccer saves logs. */
+  opponentShotsOnTarget?: number | null;
   blocks?: number | null;
   interceptions?: number | null;
   tackles?: number | null;
@@ -1173,6 +1175,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
             quality: (g.quality as boolean) ?? undefined,
             teamPossession: (g.teamPossession as number | null) ?? null,
             opponentPossession: (g.opponentPossession as number | null) ?? null,
+             opponentShotsOnTarget: (g.opponentShotsOnTarget as number | null) ?? null,
             blocks: (g.tackles_blocks as number | null) ?? null,
             interceptions: (g.tackles_interceptions as number | null) ?? null,
             tackles: (g.tackles_total as number | null) ?? null,

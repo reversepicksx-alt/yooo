@@ -19,6 +19,39 @@ export const PROP_LABELS: Record<string, string> = {
   yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
 };
 
+function cohortPositionLabel(value: unknown) {
+  const labels: Record<string, string> = {
+    GK: 'goalkeepers',
+    G: 'goalkeepers',
+    GOALKEEPER: 'goalkeepers',
+    CB: 'centre-backs',
+    LB: 'left-backs',
+    RB: 'right-backs',
+    LWB: 'left wing-backs',
+    RWB: 'right wing-backs',
+    DEF: 'defenders',
+    D: 'defenders',
+    CDM: 'defensive midfielders',
+    DM: 'defensive midfielders',
+    CM: 'central midfielders',
+    MID: 'midfielders',
+    M: 'midfielders',
+    CAM: 'attacking midfielders',
+    AM: 'attacking midfielders',
+    LM: 'left midfielders',
+    RM: 'right midfielders',
+    LW: 'left wingers',
+    RW: 'right wingers',
+    CF: 'forwards',
+    ST: 'strikers',
+    SS: 'second strikers',
+    F: 'forwards',
+    FWD: 'forwards',
+  };
+  const raw = String(value || '').trim();
+  return labels[raw.toUpperCase().replace(/\s+/g, '')] || `${raw.toLowerCase() || 'same-position'} players`;
+}
+
 /** Evidence Summary ribbon — compact data-quality scorecard. */
 export function renderEvidenceSummary(data: Record<string, unknown> | null) {
   if (!data) return null;
@@ -78,7 +111,7 @@ export function renderEvidenceSummary(data: Record<string, unknown> | null) {
   );
 }
 
-/** Opponent Defensive Profile card — how the opponent concedes to this position/prop. */
+/** Opponent profile card — descriptive matchup context for the selected prop. */
 export function renderOpponentDefProfile(
   data: Record<string, unknown> | null,
   pick: { opponentName?: string | null; line?: number | null } | null,
@@ -109,7 +142,7 @@ export function renderOpponentDefProfile(
           <Text style={[aStyles.proCardMetricValue, { color: accentColor }]}>
             {Number(prof.avgAllowed).toFixed(1)}
           </Text>
-          <Text style={aStyles.proCardMetricLabel}>{prop.toUpperCase()} ALLOWED</Text>
+          <Text style={aStyles.proCardMetricLabel}>{prop.toUpperCase()} MATCHUP AVG</Text>
         </View>
         {prof.playerSeasonAvg != null && (
           <View style={aStyles.proCardMetric}>
@@ -133,8 +166,8 @@ export function renderOpponentDefProfile(
         {favorable == null
           ? 'Insufficient data to classify.'
           : favorable
-          ? `Favourable — ${prof.opponent} concedes above-average ${prop} to this position.`
-          : `Unfavourable — ${prof.opponent} allows below-average ${prop} here.`}
+           ? `Favourable — comparable ${prop.toLowerCase()} observations are above this player's season baseline.`
+           : `Unfavourable — comparable ${prop.toLowerCase()} observations are below this player's season baseline.`}
       </Text>
     </View>
   );
@@ -821,8 +854,12 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
             </Text>
           )}
           {hasCohort ? (
-            <Text style={aStyles.proCardNote}>
-              Same-position cohort: n={cohortSample} · average {cohortAverage ?? '—'}
+           <Text style={aStyles.proCardNote}>
+             {positionCohort?.opponent || 'Opponent'} matchup sample: comparable{' '}
+             {cohortPositionLabel(positionCohort?.targetPosition || positionCohort?.positionShort)}{' '}
+             averaged {cohortAverage ?? '—'} {PROP_LABELS[positionCohort?.propType ?? '']?.toLowerCase() ?? String(positionCohort?.propType ?? 'prop').replace(/_/g, ' ')}
+             {positionCohort?.venue ? ` in matching ${positionCohort.venue} fixtures` : ''}
+             {' '}· n={cohortSample}
               {positionCohort?.overHitRate != null ? ` · ${positionCohort.overHitRate}% OVER` : ''}
               {cohortSample < cohortMinimum ? ` · limited (target n≥${cohortMinimum})` : ' · sufficient sample'}.
             </Text>

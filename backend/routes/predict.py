@@ -34,6 +34,7 @@ from tactical_evidence import (
     summarize_observed_positions,
     summarize_player_opponent_history,
     summarize_position_cohort,
+    build_position_cohort_statement,
 )
 from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
@@ -1400,6 +1401,82 @@ async def predict(req: PredictionRequest):
                     print(f"[PLAYER TP] fixture={fid} unavailable: {type(poss_err).__name__}")
                     return None, None
 
+            async def _fetch_fixture_opponent_sot(
+                fid,
+                home_id,
+                away_id,
+                player_team_id,
+            ):
+                """Return exact-fixture opponent shots on target for a player log.
+
+                This is intentionally separate from the player's save total:
+                the opponent's team SOT is the match context that generated the
+                save opportunity. Missing provider data remains unavailable.
+                """
+                cache_key = f"fxt_sot_{fid}"
+                try:
+                    cached = await db.fixture_player_cache.find_one(
+                        {"_k": cache_key}, {"_id": 0, "d": 1}
+                    )
+                    cached_data = (cached or {}).get("d") or {}
+                    if (
+                        cached_data.get("home_sot") is not None
+                        and cached_data.get("away_sot") is not None
+                    ):
+                        opponent_id = (
+                            away_id if player_team_id == home_id else home_id
+                        )
+                        return (
+                            float(cached_data["away_sot"])
+                            if opponent_id == away_id
+                            else float(cached_data["home_sot"])
+                        )
+                except Exception:
+                    pass
+                try:
+                    stats_rows = await api_football_request(
+                        "fixtures/statistics", {"fixture": fid}
+                    )
+                    home_sot = away_sot = None
+                    for team_stats in stats_rows or []:
+                        team_id = (team_stats.get("team") or {}).get("id")
+                        for stat in team_stats.get("statistics") or []:
+                            if stat.get("type") != "Shots on Goal":
+                                continue
+                            raw = stat.get("value")
+                            try:
+                                value = float(str(raw).replace("%", "").strip())
+                            except (TypeError, ValueError):
+                                continue
+                            if team_id == home_id:
+                                home_sot = value
+                            elif team_id == away_id:
+                                away_sot = value
+                    if home_sot is None or away_sot is None:
+                        return None
+                    try:
+                        await db.fixture_player_cache.update_one(
+                            {"_k": cache_key},
+                            {"$set": {
+                                "_k": cache_key,
+                                "d": {
+                                    "home_sot": home_sot,
+                                    "away_sot": away_sot,
+                                },
+                            }},
+                            upsert=True,
+                        )
+                    except Exception as cache_err:
+                        print(f"[PLAYER OPP SOT CACHE] skipped: {cache_err}")
+                    opponent_id = away_id if player_team_id == home_id else home_id
+                    return away_sot if opponent_id == away_id else home_sot
+                except Exception as sot_err:
+                    print(
+                        f"[PLAYER OPP SOT] fixture={fid} unavailable: "
+                        f"{type(sot_err).__name__}"
+                    )
+                    return None
+
             collected = []
             if not player_id or not actual_team_id:
                 return collected
@@ -1484,6 +1561,38 @@ async def predict(req: PredictionRequest):
                                         "away_poss": _result[1],
                                     }
 
+                    # Saves need the opponent's exact-fixture SOT beside each
+                    # player save total. Hydrate only saves rows so other props
+                    # do not incur this extra provider work.
+                    sot_docs: dict[str, float] = {}
+                    if (
+                        req.sport == "soccer"
+                        and req.propType in {"saves", "goalie_saves"}
+                    ):
+                        _sot_tasks = []
+                        _sot_fids = []
+                        for _fid, _meta in fxm_docs.items():
+                            if (
+                                _meta.get("home_id") is not None
+                                and _meta.get("away_id") is not None
+                            ):
+                                _sot_fids.append(_fid)
+                                _sot_tasks.append(
+                                    _fetch_fixture_opponent_sot(
+                                        _fid,
+                                        _meta["home_id"],
+                                        _meta["away_id"],
+                                        actual_team_id,
+                                    )
+                                )
+                        if _sot_tasks:
+                            _sot_results = await aio.gather(
+                                *_sot_tasks, return_exceptions=True
+                            )
+                            for _fid, _result in zip(_sot_fids, _sot_results):
+                                if isinstance(_result, (int, float)):
+                                    sot_docs[_fid] = float(_result)
+
                     for fid_str, entry in fid_map.items():
                         d = entry.get("d", {})
                         if not d:
@@ -1540,6 +1649,11 @@ async def predict(req: PredictionRequest):
                                     # Do not expose a cached row with no
                                     # verified TP. Stage 1 can fetch it.
                                     continue
+                                if (
+                                    req.propType in {"saves", "goalie_saves"}
+                                    and fid_str in sot_docs
+                                ):
+                                    gl["opponentShotsOnTarget"] = sot_docs[fid_str]
                         else:
                             gl["venue"] = ""
                             gl["opponent"] = ""
@@ -1702,6 +1816,20 @@ async def predict(req: PredictionRequest):
                                 gl_dict["tp"] = away_poss
                             return gl_dict
 
+                        async def _enrich_opponent_sot(gl_dict: dict) -> dict:
+                            if (
+                                req.sport == "soccer"
+                                and req.propType in {"saves", "goalie_saves"}
+                            ):
+                                home_id = fix_raw.get("teams", {}).get("home", {}).get("id")
+                                away_id = fix_raw.get("teams", {}).get("away", {}).get("id")
+                                opponent_sot = await _fetch_fixture_opponent_sot(
+                                    fid, home_id, away_id, actual_team_id
+                                )
+                                if opponent_sot is not None:
+                                    gl_dict["opponentShotsOnTarget"] = opponent_sot
+                            return gl_dict
+
                         # Check prefetch cache first — avoids extra API call if already cached
                         cache_key = f"fxp_{fid}_{player_id}"
                         cached_doc = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1, "_ts": 1})
@@ -1738,6 +1866,7 @@ async def predict(req: PredictionRequest):
                                         gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
                                     gl["_fid"] = str(fid)
                                     gl = await _enrich_possession(gl)
+                                    gl = await _enrich_opponent_sot(gl)
                                     return gl
                                 # Fall through to live API fetch for saves
 
@@ -1826,6 +1955,7 @@ async def predict(req: PredictionRequest):
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
                         gl["_fid"] = str(fid)
                         gl = await _enrich_possession(gl)
+                        gl = await _enrich_opponent_sot(gl)
                         if (
                             req.sport == "soccer"
                             and (
@@ -9637,10 +9767,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "sampleSize":    _op_n,
                     "propType":      req.propType,
                     "description": (
-                        f"{req.opponentName} allows {abs(_op_diff_pct):.0f}% "
-                        f"{'fewer' if _op_is_neg else 'more'} "
-                        f"{req.propType.replace('_', ' ')} than baseline "
-                        f"to this position ({_op_n} games)"
+                        f"Comparable {req.propType.replace('_', ' ')} observations against "
+                        f"{req.opponentName} averaged {abs(_op_diff_pct):.0f}% "
+                        f"{'below' if _op_is_neg else 'above'} the player's baseline "
+                        f"for this position ({_op_n} games)"
                     ),
                 }
                 print(
@@ -9772,10 +9902,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 except (ValueError, TypeError):
                     pass
 
-        # For saves props: the "Opponent Profile OPP AVG" must reflect the avg saves
-        # that other GKs at the same venue made vs this opponent — not the opponent's SOT.
-        # positionComparison already sampled exactly that (same position, same venue, same opponent).
-        if req.propType == "saves" and position_comp_data and position_comp_data.get("avgStatValue"):
+        # A position comparison is a player-event cohort, not a team-level
+        # "allowed" total. Prefer it for every prop when available so the
+        # analysis describes exactly what comparable players recorded against
+        # this opponent at the matching venue.
+        if position_comp_data and position_comp_data.get("avgStatValue") is not None:
             opp_allowed_avg = round(float(position_comp_data["avgStatValue"]), 1)
 
         prediction["analysisSummary"] = {
@@ -9784,6 +9915,13 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "venueSampleSize": len(venue_samples),
             "venueAverage": venue_avg,
             "opponentAllowedAverage": opp_allowed_avg,
+            "opponentEvidenceSource": (
+                "same_position_player_cohort"
+                if position_comp_data and position_comp_data.get("avgStatValue") is not None
+                else "team_match_stats"
+                if opp_allowed_avg is not None
+                else None
+            ),
             "goalkeeperSaveRate": gk_formula_data.get("gkSaveRate") if gk_formula_data else None,
             "goalkeeperSaveSample": gk_formula_data.get("gkSampleSize") if gk_formula_data else None,
             "opponentShotsOnTarget": gk_formula_data.get("opponentAvgSOT") if gk_formula_data else None,
@@ -9987,8 +10125,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             _opp_n2   = position_comp_data.get("sampleSize", 0)
             _opp_pos2 = position_comp_data.get("positionShort", "position")
             _m_opp_parts.append(
-                f"{req.opponentName} allows {_opp_avg2:.1f} {req.propType} "
-                f"to {_opp_pos2}s ({_opp_n2} matchups)"
+                build_position_cohort_statement(
+                    opponent=req.opponentName,
+                    prop_type=req.propType,
+                    position=_opp_pos2,
+                    average=_opp_avg2,
+                    sample_size=_opp_n2,
+                    venue=position_comp_data.get("venue") or player_venue,
+                )
+                or f"{req.opponentName} matchup sample: {_opp_avg2:.1f} "
+                f"{req.propType.replace('_', ' ')} across {_opp_n2} comparable observations"
             )
         if h2h_data:
             _h2h_v2 = [g.get("stat_value") or g.get("statValue") for g in h2h_data
@@ -10030,9 +10176,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         _m_ev_note = ""
         if position_comp_data and position_comp_data.get("avgStatValue"):
             _m_ev_note = (
-                f" Opponent allows {position_comp_data['avgStatValue']:.1f} "
-                f"to {position_comp_data.get('positionShort','pos')}s "
-                f"({position_comp_data.get('sampleSize',0)} matchups)."
+                " "
+                + (
+                    build_position_cohort_statement(
+                        opponent=req.opponentName,
+                        prop_type=req.propType,
+                        position=position_comp_data.get("positionShort"),
+                        average=position_comp_data["avgStatValue"],
+                        sample_size=position_comp_data.get("sampleSize", 0),
+                        venue=position_comp_data.get("venue") or player_venue,
+                    )
+                    or ""
+                )
             )
         _m_sharp_summary = (
             f"Reverse Formula: {_m_proj_s} {_m_rec} {_m_line_s} "

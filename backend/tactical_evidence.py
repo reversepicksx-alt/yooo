@@ -333,6 +333,114 @@ def summarize_position_cohort(
     }
 
 
+_COHORT_PROP_LABELS = {
+    "pass_attempts": "pass attempts",
+    "passes": "passes",
+    "shots": "shots",
+    "shots_on_target": "shots on target",
+    "goals": "goals",
+    "assists": "assists",
+    "shots_assisted": "shot assists",
+    "key_passes": "key passes",
+    "tackles": "tackles",
+    "saves": "saves",
+    "goalie_saves": "saves",
+    "interceptions": "interceptions",
+    "blocks": "blocks",
+    "dribbles": "dribbles",
+    "dribbles_success": "successful dribbles",
+    "fouls_drawn": "fouls drawn",
+    "fouls_committed": "fouls committed",
+    "crosses": "crosses",
+    "clearances": "clearances",
+    "duels_won": "duels won",
+    "yellow_cards": "yellow cards",
+}
+
+_COHORT_POSITION_LABELS = {
+    "GK": "goalkeepers",
+    "G": "goalkeepers",
+    "GOALKEEPER": "goalkeepers",
+    "CB": "centre-backs",
+    "LCB": "centre-backs",
+    "RCB": "centre-backs",
+    "LB": "left-backs",
+    "LWB": "left wing-backs",
+    "RB": "right-backs",
+    "RWB": "right wing-backs",
+    "D": "defenders",
+    "DEF": "defenders",
+    "CDM": "defensive midfielders",
+    "DM": "defensive midfielders",
+    "CM": "central midfielders",
+    "M": "midfielders",
+    "MID": "midfielders",
+    "CAM": "attacking midfielders",
+    "AM": "attacking midfielders",
+    "LM": "left midfielders",
+    "RM": "right midfielders",
+    "LW": "left wingers",
+    "RW": "right wingers",
+    "WING": "wide attackers",
+    "CF": "forwards",
+    "ST": "strikers",
+    "SS": "second strikers",
+    "F": "forwards",
+    "FWD": "forwards",
+}
+
+
+def position_cohort_stat_label(prop_type: Any) -> str:
+    """Return the customer-facing name for a player event count."""
+    raw = str(prop_type or "prop").strip().lower()
+    return _COHORT_PROP_LABELS.get(raw, raw.replace("_", " "))
+
+
+def position_cohort_subject(position: Any) -> str:
+    """Return the observed position as a plural cohort subject."""
+    raw = str(position or "").strip().upper().replace(" ", "")
+    if raw in _COHORT_POSITION_LABELS:
+        return _COHORT_POSITION_LABELS[raw]
+    readable = str(position or "same-role players").strip().lower()
+    return readable if readable.endswith("s") else f"{readable}s"
+
+
+def build_position_cohort_statement(
+    *,
+    opponent: Any,
+    prop_type: Any,
+    position: Any,
+    average: Any,
+    sample_size: Any,
+    venue: Any = None,
+) -> str | None:
+    """Describe a player cohort without claiming the opponent directly records it.
+
+    The comparison is an observed sample of players who played this stat against
+    the opponent. It is not automatically a team-level "allowed" metric.
+    """
+    try:
+        avg = float(average)
+        count = int(sample_size)
+    except (TypeError, ValueError):
+        return None
+    if count <= 0:
+        return None
+    opponent_text = str(opponent or "the opponent")
+    venue_text = str(venue or "").strip().lower()
+    venue_phrase = (
+        f" in matching {venue_text} fixtures"
+        if venue_text in {"home", "away"}
+        else ""
+    )
+    return (
+        f"{opponent_text} matchup sample: "
+        f"{position_cohort_subject(position)} averaged "
+        f"{avg:.1f} {position_cohort_stat_label(prop_type)}"
+        f"{venue_phrase} (n={count})."
+    )
+
+
 def position_cohort_verdict(
     cohort: dict[str, Any] | None,
     recommendation: Any,

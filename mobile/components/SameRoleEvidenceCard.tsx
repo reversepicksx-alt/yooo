@@ -96,6 +96,72 @@ function positionLabel(value: unknown) {
   return labels[normalized] || String(value || 'Position unavailable');
 }
 
+function cohortSubject(value: unknown) {
+  const normalized = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+  const labels: Record<string, string> = {
+    GK: 'Goalkeepers',
+    G: 'Goalkeepers',
+    GOALKEEPER: 'Goalkeepers',
+    GOALKEEPERS: 'Goalkeepers',
+    CB: 'Centre-backs',
+    CENTREBACK: 'Centre-backs',
+    CENTERBACK: 'Centre-backs',
+    DEFENDER: 'Defenders',
+    DEFENDERS: 'Defenders',
+    LB: 'Left-backs',
+    RB: 'Right-backs',
+    LWB: 'Left wing-backs',
+    RWB: 'Right wing-backs',
+    DEF: 'Defenders',
+    D: 'Defenders',
+    CDM: 'Defensive midfielders',
+    DM: 'Defensive midfielders',
+    CM: 'Central midfielders',
+    MID: 'Midfielders',
+    M: 'Midfielders',
+    CAM: 'Attacking midfielders',
+    AM: 'Attacking midfielders',
+    LM: 'Left midfielders',
+    RM: 'Right midfielders',
+    LW: 'Left wingers',
+    RW: 'Right wingers',
+    CF: 'Forwards',
+    ST: 'Strikers',
+    SS: 'Second strikers',
+    F: 'Forwards',
+    FWD: 'Forwards',
+  };
+  return labels[normalized] || `${positionLabel(value)} players`;
+}
+
+function cohortPropLabel(value: unknown) {
+  const labels: Record<string, string> = {
+    pass_attempts: 'pass attempts',
+    passes: 'passes',
+    shots: 'shots',
+    shots_on_target: 'shots on target',
+    goals: 'goals',
+    assists: 'assists',
+    shots_assisted: 'shot assists',
+    key_passes: 'key passes',
+    tackles: 'tackles',
+    saves: 'saves',
+    goalie_saves: 'saves',
+    interceptions: 'interceptions',
+    blocks: 'blocks',
+    dribbles: 'dribbles',
+    dribbles_success: 'successful dribbles',
+    fouls_drawn: 'fouls drawn',
+    fouls_committed: 'fouls committed',
+    crosses: 'crosses',
+    clearances: 'clearances',
+    duels_won: 'duels won',
+    yellow_cards: 'yellow cards',
+  };
+  const raw = String(value || 'prop');
+  return labels[raw] || raw.replace(/_/g, ' ');
+}
+
 function scopeIncludesPosition(value: unknown) {
   return String(value || '').includes('same_position');
 }
@@ -142,10 +208,16 @@ export default function SameRoleEvidenceCard({
   const hasSourcePlayers = sourcePlayers.length > 0;
   const scope = String(data.sourceScope || '');
   const scopeLabel = scope.includes('mixed_venue')
-    ? 'same-opponent home + away fixtures'
+    ? 'same-opponent mixed-venue fixtures'
     : scope.includes('prior_seasons')
       ? `same-opponent ${data.venue || 'venue'} fixtures, including prior seasons`
       : `matching ${data.venue || 'venue'} fixtures`;
+  const cohortAverageText = average != null ? Number(average).toFixed(1) : '—';
+  const cohortSentence = average != null && sample > 0
+    ? `Against ${data.opponent || 'this opponent'}, comparable ${cohortSubject(
+        data.targetPosition || data.positionShort,
+      ).toLowerCase()} averaged ${cohortAverageText} ${cohortPropLabel(data.propType)} in ${scopeLabel}.`
+    : `No verified comparable player average is available for ${data.opponent || 'this opponent'}.`;
   const avgPossession = Number(data.avgPossession);
   const avgOpponentPossession = Number(data.avgOpponentPossession);
   const expectedPlayerPossession = Number(data.expectedPlayerPossession);
@@ -179,8 +251,7 @@ export default function SameRoleEvidenceCard({
         </Text>
       </View>
       <Text style={{ fontSize: 12, color: Colors.text, fontWeight: '800', lineHeight: 17 }}>
-        {data.opponent || 'Exact opponent'} allows an average of {average != null ? Number(average).toFixed(1) : '—'} {prop.toLowerCase()}
-        {' '}to {position}{role ? ` · ${role}` : ''}
+        {cohortSentence}
       </Text>
        <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
          {sample > 0

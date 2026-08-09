@@ -210,6 +210,11 @@ function RecentBarCard({ prediction }: { prediction: PredictionResult }) {
                   <Text style={{ fontSize: 7, color: game.venue === 'home' ? Colors.success : '#60A5FA', fontWeight: '700', lineHeight: 10 }}>
                     {opponent}
                   </Text>
+                                   {['saves', 'goalie_saves'].includes(String(prediction.propType || '')) && (
+                                     <Text style={{ fontSize: 7, color: '#60A5FA', fontWeight: '700', lineHeight: 10 }}>
+                                       SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
+                                     </Text>
+                                   )}
                 </View>
               );
             })}
@@ -1045,7 +1050,7 @@ export default function ScanScreen() {
       const oppAllowed = pred.analysisSummary?.opponentAllowedAverage;
       const venueSummary = [
         venueAvg != null ? `venue avg ${Number(venueAvg).toFixed(1)}` : null,
-        oppAllowed != null ? `opponent allows avg ${Number(oppAllowed).toFixed(1)}` : null,
+        oppAllowed != null ? `matching opponent sample avg ${Number(oppAllowed).toFixed(1)}` : null,
       ].filter(Boolean).join(', ');
 
       const prompt =
@@ -3807,7 +3812,7 @@ export default function ScanScreen() {
                               </View>
                             </View>
                             <Text style={styles.mfOppCardDesc} numberOfLines={2}>
-                              {oppShort} allows {absPct.toFixed(0)}% {direction} {propLabel} than this player's {op.playerBaseline.toFixed(1)} avg
+                              Comparable {propLabel} observations against {oppShort} are {absPct.toFixed(0)}% {direction} this player's {op.playerBaseline.toFixed(1)} avg
                             </Text>
                           </View>
                         );
@@ -4077,10 +4082,10 @@ export default function ScanScreen() {
                               <Text style={styles.summaryValue}>{s.goalkeeperSaveRate != null ? `${s.goalkeeperSaveRate.toFixed(1)}%` : '—'}</Text>
                               <Text style={styles.summarySub}>{s.goalkeeperSaveSample ?? 0} GAMES</Text>
                             </View>
-                            <View style={styles.summaryItem}>
-                              <Text style={styles.summaryLabel}>Opponent SoT</Text>
+                             <View style={styles.summaryItem}>
+                               <Text style={styles.summaryLabel}>Expected Opponent SOT</Text>
                               <Text style={styles.summaryValue}>{s.opponentShotsOnTarget != null ? s.opponentShotsOnTarget.toFixed(1) : '—'}</Text>
-                              <Text style={styles.summarySub}>AGAINST</Text>
+                               <Text style={styles.summarySub}>MATCH AVG</Text>
                             </View>
                           </>
                         )}
@@ -4574,6 +4579,15 @@ export default function ScanScreen() {
                                         fontSize: 9, fontWeight: '800', lineHeight: 11, marginBottom: 2,
                                         color: isDesel ? '#333' : isOver ? Colors.success : Colors.error,
                                       }}>{val}</Text>
+                                    )}
+                                    {['saves', 'goalie_saves'].includes(propT) && (
+                                      <Text style={{
+                                        fontSize: 7, lineHeight: 9, marginBottom: 1,
+                                        color: isDesel ? '#333' : '#60A5FA',
+                                        fontWeight: '700',
+                                      }}>
+                                        SOT {g.opponentShotsOnTarget != null ? Number(g.opponentShotsOnTarget).toFixed(0) : '—'}
+                                      </Text>
                                     )}
                                     {/* Bar */}
                                     <View style={{

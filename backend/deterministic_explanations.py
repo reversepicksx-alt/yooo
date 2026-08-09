@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from tactical_evidence import build_position_cohort_statement
+
 
 async def unavailable_explanation(*_args: Any, **_kwargs: Any) -> str:
     """Compatibility response for features that require text/image generation."""
@@ -190,16 +192,30 @@ def _tactical_mechanism_lines(context: dict[str, Any], prop_raw: str) -> list[st
     if allowed is not None and n_allowed >= 3:
         if diff is not None:
             comparison = "above" if diff > 0 else "below" if diff < 0 else "near"
+            cohort_statement = build_position_cohort_statement(
+                opponent=context.get("opponent") or "Opponent",
+                prop_type=prop_raw,
+                position=context.get("position") or context.get("role"),
+                average=allowed,
+                sample_size=n_allowed,
+                venue=context.get("venue"),
+            )
             lines.append(
-                f"Opponent mechanism: {context.get('opponent') or 'Opponent'} allows "
-                f"{allowed:.1f} {prop} to this position over {n_allowed} comparable games, "
+                f"Opponent mechanism: {cohort_statement or 'comparable player sample is available'}, "
                 f"{comparison} the player's baseline by {abs(diff):.0f}%"
                 f"{f' ({tier})' if tier else ''}."
             )
         else:
+            cohort_statement = build_position_cohort_statement(
+                opponent=context.get("opponent") or "Opponent",
+                prop_type=prop_raw,
+                position=context.get("position") or context.get("role"),
+                average=allowed,
+                sample_size=n_allowed,
+                venue=context.get("venue"),
+            )
             lines.append(
-                f"Opponent mechanism: {context.get('opponent') or 'Opponent'} allows "
-                f"{allowed:.1f} {prop} to this position across {n_allowed} comparable games."
+                f"Opponent mechanism: {cohort_statement or 'Comparable player sample is available.'}"
             )
 
     formation = context.get("lineupFormation")
@@ -501,9 +517,18 @@ def build_deterministic_explanation(
     # Legacy opponent average fallback for cached predictions that predate the
     # tactical context packet.
     if opp_allowed_avg is not None and not any("Opponent mechanism:" in line_ for line_ in tactical_lines):
+        cohort_statement = build_position_cohort_statement(
+            opponent=opponent or "Opponent",
+            prop_type=prop_raw,
+            position=tactical_context.get("position") or tactical_context.get("role"),
+            average=opp_allowed_avg,
+            sample_size=tactical_context.get("opponentAllowedSamples"),
+            venue=venue,
+        )
+        fallback_opponent = opponent or "Opponent"
         tactical_lines.append(
-            f"{opponent or 'Opponent'} allows an average of {_fmt(opp_allowed_avg)} {prop} "
-            f"to players at this position — used as a defensive-context anchor."
+            f"{cohort_statement or f'{fallback_opponent} matchup evidence is available'} "
+            "— used as a matchup-context anchor."
         )
 
     # Momentum

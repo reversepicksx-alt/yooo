@@ -303,6 +303,11 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       <Text style={styles.possessionLabel}>
                         MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
                       </Text>
+                    {prediction.propType === 'saves' && (
+                      <Text style={styles.possessionLabel}>
+                        OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
+                      </Text>
+                    )}
                       <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
                         {venueMark(rowVenue(game))}
                       </Text>
@@ -315,6 +320,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   {selectedGame.date ? String(selectedGame.date).slice(0, 10) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
                   {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
                   {selectedGame.score ? ` · ${selectedGame.score}` : ''}
+                  {prediction.propType === 'saves'
+                    ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
+                    : ''}
                 </Text>
               )}
             </View>

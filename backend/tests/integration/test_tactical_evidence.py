@@ -4,6 +4,7 @@ from tactical_evidence import (
     summarize_observed_positions,
     summarize_player_opponent_history,
     summarize_position_cohort,
+    build_position_cohort_statement,
 )
 
 
@@ -148,3 +149,26 @@ def test_observed_position_summary_exposes_sample_and_dominant_position():
     assert result["sampleSize"] == 3
     assert result["dominantPosition"] == "RW"
     assert result["positionCounts"] == {"RW": 2, "ST": 1}
+
+
+def test_position_cohort_statement_uses_player_event_language_for_all_prop_families():
+    cases = [
+        ("saves", "GK", "goalkeepers averaged 3.3 saves"),
+        ("pass_attempts", "CB", "centre-backs averaged 42.0 pass attempts"),
+        ("shots_on_target", "ST", "strikers averaged 1.5 shots on target"),
+        ("tackles", "LB", "left-backs averaged 4.0 tackles"),
+        ("clearances", "DEF", "defenders averaged 6.0 clearances"),
+    ]
+    for prop_type, position, expected in cases:
+        statement = build_position_cohort_statement(
+            opponent="Vasco DA Gama",
+            prop_type=prop_type,
+            position=position,
+            average={"saves": 3.3, "pass_attempts": 42, "shots_on_target": 1.5,
+                     "tackles": 4, "clearances": 6}[prop_type],
+            sample_size=8,
+            venue="home",
+        )
+        assert expected in statement
+        assert "allows" not in statement
+        assert "in matching home fixtures" in statement

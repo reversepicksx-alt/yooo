@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from positional_reality import build_positional_reality
+from tactical_evidence import build_position_cohort_statement
 
 
 PASS_PROPS = {"pass_attempts", "passes", "key_passes", "crosses"}
@@ -411,9 +412,13 @@ def build_tactical_intelligence(
 
     if opponent_allowed_average is not None and opponent_allowed_samples >= 3:
         opponent_evidence = "comparable_opponent_sample"
-        opponent_note = (
-            f"Opponent allows {opponent_allowed_average:.1f} {prop_type.replace('_', ' ')} "
-            f"across {opponent_allowed_samples} comparable observations."
+        opponent_note = build_position_cohort_statement(
+            opponent=prediction.get("opponentName") or prediction.get("opponent"),
+            prop_type=prop_type,
+            position=effective_pos or target_group,
+            average=opponent_allowed_average,
+            sample_size=opponent_allowed_samples,
+            venue=prediction.get("venue"),
         )
     elif position_comparable_samples:
         opponent_evidence = "position_comparison_sample"

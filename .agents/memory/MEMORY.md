@@ -145,6 +145,7 @@
  - [Universal search contract](universal-search-contract.md) — combined soccer/MLB/NFL search must preserve each provider's payload contract; absent new flags can silently remove one sport.
 - [Player search exact-word cap](player-search-exact-word-cap.md) — bounded substring cache results can hide standalone names; merge a bounded exact-word query before ranking.
 - [Same-role venue evidence](same-role-venue-evidence.md) — opponent comparison cohorts must match the target player's home/away venue; prior seasons may broaden time, never venue.
+- [Player cohort analysis language](player-cohort-analysis-language.md) — comparable player-event averages are matchup samples, not generic team “allowed” totals.
  - [Prediction latency boundaries](prediction-latency-boundaries.md) — keep verified fixture/player math synchronous; cache-first and independently bound optional historical, grounded, and shadow enrichment.
 - [Owner-only player media](owner-only-media-gating.md) — photos and team crests require server-side owner authorization and stay out of persisted prediction records.
 - [Owner API status indicator](owner-api-status-indicator.md) — quota health is a compact owner-only header dot; regular users see no provider details.

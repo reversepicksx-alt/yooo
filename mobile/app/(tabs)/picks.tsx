@@ -624,7 +624,7 @@ function renderOpponentDefProfile(data: Record<string, unknown> | null, pick: an
       <View style={mStyles.proCardMetrics}>
         <View style={mStyles.proCardMetric}>
           <Text style={[mStyles.proCardMetricValue, { color: accentColor }]}>{Number(prof.avgAllowed).toFixed(1)}</Text>
-          <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} ALLOWED</Text>
+          <Text style={mStyles.proCardMetricLabel}>{prop.toUpperCase()} MATCHUP AVG</Text>
         </View>
         {prof.playerSeasonAvg != null && (
           <View style={mStyles.proCardMetric}>
@@ -646,8 +646,8 @@ function renderOpponentDefProfile(data: Record<string, unknown> | null, pick: an
         {favorable == null
           ? 'Insufficient data to classify.'
           : favorable
-          ? `Favourable — ${prof.opponent} concedes above-average ${prop} to this position.`
-          : `Unfavourable — ${prof.opponent} allows below-average ${prop} here.`}
+          ? `Favourable — comparable ${prop.toLowerCase()} observations are above this player's season baseline.`
+          : `Unfavourable — comparable ${prop.toLowerCase()} observations are below this player's season baseline.`}
       </Text>
     </View>
   );

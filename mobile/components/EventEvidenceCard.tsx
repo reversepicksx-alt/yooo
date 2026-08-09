@@ -67,7 +67,7 @@ export default function EventEvidenceCard({
       {opponentRows.length > 0 && (
         <View style={{ marginTop: 8 }}>
           <Text style={{ fontSize: 8, color: Colors.textTertiary, fontWeight: '800', letterSpacing: 0.6 }}>
-            OPPONENT ALLOWED · TARGET POSITIONS
+            OPPONENT MATCHUP · TARGET POSITIONS
           </Text>
           {opponentRows.slice(0, 5).map(([position, row]) => (
             <View key={`opp-${position}`} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
