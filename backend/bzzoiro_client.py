@@ -50,6 +50,17 @@ COVERAGE_CONSTRAINTS: dict[str, Any] = {
             "Confirm terms before using Bzzoiro data in production decisions or "
             "projections that affect subscribers."
         ),
+        "confirmationProcess": (
+            "1. Review Bzzoiro's terms of service at https://sports.bzzoiro.com for "
+            "commercial and SaaS use rights. "
+            "2. Confirm that caching enrichment data for up to 6 hours per "
+            "fixture/team/opponent triple is permitted. "
+            "3. Confirm that using enrichment data to inform subscriber-facing "
+            "predictions is within the permitted scope. "
+            "4. Once confirmed, set BZZOIRO_COMMERCIAL_CONFIRMED=true in the "
+            "production environment and update this field: 'verified': True."
+        ),
+        "runtimeFlag": "BZZOIRO_COMMERCIAL_CONFIRMED",
     },
     "competitionCoverage": {
         "confirmed": ["MLS", "Liga MX"],
@@ -79,6 +90,29 @@ COVERAGE_CONSTRAINTS: dict[str, Any] = {
         "productionReadiness": "not_ready — settled-pick replay required before live influence.",
     },
 }
+
+
+_COMMERCIAL_CONFIRMED_FLAG = "BZZOIRO_COMMERCIAL_CONFIRMED"
+
+
+def get_commercial_status() -> dict[str, Any]:
+    """Return a summary of the Bzzoiro commercial-use confirmation state.
+
+    The owner dashboard calls this to display a warning when
+    BZZOIRO_API_TOKEN is set but commercial terms have not been confirmed.
+    """
+    token_set = bool(os.environ.get(TOKEN_ENV, "").strip())
+    confirmed_raw = os.environ.get(_COMMERCIAL_CONFIRMED_FLAG, "").strip().lower()
+    confirmed = confirmed_raw in {"1", "true", "yes"}
+    constraints = COVERAGE_CONSTRAINTS["commercialUse"]
+    return {
+        "tokenSet": token_set,
+        "commercialConfirmed": confirmed,
+        "warningActive": token_set and not confirmed,
+        "note": constraints["note"],
+        "confirmationProcess": constraints.get("confirmationProcess", ""),
+        "runtimeFlag": _COMMERCIAL_CONFIRMED_FLAG,
+    }
 
 
 def _empty(reason: str) -> dict[str, Any]:

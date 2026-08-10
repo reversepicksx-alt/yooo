@@ -2228,6 +2228,25 @@ export async function getQuotaStatus(
   );
 }
 
+export interface BzzoiroStatus {
+  tokenSet: boolean;
+  commercialConfirmed: boolean;
+  warningActive: boolean;
+  note: string;
+  confirmationProcess: string;
+  runtimeFlag: string;
+}
+
+export async function getBzzoiroStatus(
+  email: string,
+  token: string,
+): Promise<BzzoiroStatus> {
+  return apiCall(
+    `/api/admin/bzzoiro-status?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`,
+    { method: 'GET' },
+  );
+}
+
 export async function resetQuotaBreaker(
   email: string,
   token: string,

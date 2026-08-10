@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, resetQuotaBreaker, triggerStorageCleanup, Pick, AnalyticsData } from '@/lib/api';
+import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, getBzzoiroStatus, resetQuotaBreaker, triggerStorageCleanup, Pick, AnalyticsData, BzzoiroStatus } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -237,6 +237,12 @@ export default function AnalyticsDashboard({
     enabled: visible && !!session,
     staleTime: 2 * 60_000,   // 2 minutes — show fresh counts
   });
+  const { data: bzzoiroStatus } = useQuery<BzzoiroStatus>({
+    queryKey: ['bzzoiroStatus', session?.email],
+    queryFn: () => getBzzoiroStatus(session!.email, session!.token),
+    enabled: visible && !!session,
+    staleTime: 10 * 60_000,  // 10 minutes — env vars change rarely
+  });
   const [quotaResetting, setQuotaResetting] = React.useState(false);
 
   const handleQuotaReset = async () => {
@@ -355,6 +361,47 @@ export default function AnalyticsDashboard({
             </Text>
           </TouchableOpacity>
         )}
+      </View>
+    );
+  };
+
+  const renderBzzoiroWarning = () => {
+    if (!bzzoiroStatus) return null;
+    // Only show the card when the token is set — if no token, Bzzoiro is
+    // disabled and there's nothing to warn about.
+    if (!bzzoiroStatus.tokenSet) return null;
+    if (bzzoiroStatus.commercialConfirmed) {
+      // Confirmed — show a compact OK row so the owner knows it's resolved.
+      return (
+        <View style={[s.storageCard, { borderColor: 'rgba(57,255,20,0.25)' }]}>
+          <View style={s.storageHeader}>
+            <Text style={s.chartTitle}>BZZOIRO ENRICHMENT</Text>
+            <Text style={[s.storageStatus, { color: Colors.success }]}>✓ TERMS CONFIRMED</Text>
+          </View>
+          <Text style={s.storageBarMeta}>
+            Commercial-use terms confirmed. Shadow enrichment active.
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View style={[s.storageCard, s.storageCardDegraded, { borderColor: 'rgba(245,158,11,0.4)', backgroundColor: 'rgba(245,158,11,0.07)' }]}>
+        <View style={s.storageHeader}>
+          <Text style={s.chartTitle}>BZZOIRO ENRICHMENT</Text>
+          <Text style={[s.storageStatus, { color: '#f59e0b' }]}>⚠ TERMS UNCONFIRMED</Text>
+        </View>
+        <Text style={[s.storageBarMeta, { color: '#f59e0b', marginBottom: 6 }]}>
+          BZZOIRO_API_TOKEN is set but commercial-use terms have not been verified.
+          Bzzoiro data is shadow-only and must not influence production projections
+          until terms are confirmed.
+        </Text>
+        <Text style={s.storageBarMeta}>
+          To resolve: review Bzzoiro's commercial terms, then set{' '}
+          <Text style={{ fontWeight: '700', color: Colors.text }}>
+            BZZOIRO_COMMERCIAL_CONFIRMED=true
+          </Text>{' '}
+          in the production environment.
+        </Text>
       </View>
     );
   };
@@ -618,6 +665,7 @@ export default function AnalyticsDashboard({
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
             {renderQuotaUsage()}
             {renderStorageHealth()}
+            {renderBzzoiroWarning()}
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>
                 <View style={s.chartHeader}>

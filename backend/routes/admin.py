@@ -1643,6 +1643,20 @@ async def admin_quota_status(email: str, token: str):
     }
 
 
+@router.get("/bzzoiro-status")
+async def admin_bzzoiro_status(email: str, token: str):
+    """Owner-only: Bzzoiro commercial-use confirmation state.
+
+    Returns whether BZZOIRO_API_TOKEN is set and whether the owner has
+    confirmed commercial terms via BZZOIRO_COMMERCIAL_CONFIRMED.  The
+    owner dashboard displays a warning card when the token is active but
+    terms are unconfirmed.
+    """
+    await verify_owner(email, token)
+    from bzzoiro_client import get_commercial_status
+    return get_commercial_status()
+
+
 @router.post("/quota-reset")
 async def admin_quota_reset(req: _QuotaResetRequest):
     """Owner-only: clear the API-Football daily quota circuit breaker.
