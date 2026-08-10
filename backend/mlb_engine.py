@@ -1402,16 +1402,30 @@ def compute_mlb_projection(
         mc_lambda  = posterior_mean * scratch_discount if prop_type == "pitcher_strikeouts" else posterior_mean
         dispersion = _NB_DISPERSION.get(prop_type, 1.60)
         mc_var     = max(mc_lambda * dispersion, mc_lambda * 1.01)
-        _po, _pu, ci_low, ci_high = _baye_mc(
+        (
+            _po, _pu,
+            ci60_low, ci60_high,
+            ci80_low, ci80_high,
+            most_likely_value,
+        ) = _baye_mc(
             mean=mc_lambda, std=math.sqrt(mc_var),
             line=line, n_sims=10_000, is_count_stat=True, variance=mc_var,
         )
     else:
         effective_std = max(posterior_std, posterior_mean * 0.12, 0.33)
-        _po, _pu, ci_low, ci_high = _baye_mc(
+        (
+            _po, _pu,
+            ci60_low, ci60_high,
+            ci80_low, ci80_high,
+            most_likely_value,
+        ) = _baye_mc(
             mean=posterior_mean, std=effective_std,
             line=line, n_sims=10_000, is_count_stat=False,
         )
+    # The shared Monte Carlo helper returns both uncertainty bands. Keep the
+    # legacy confidenceInterval shape for existing MLB clients, while also
+    # exposing the unified distribution contract used by the other engines.
+    ci_low, ci_high = ci80_low, ci80_high
     p_over  = round(_po * 100, 1)
     p_under = round(_pu * 100, 1)
 
@@ -1595,6 +1609,15 @@ def compute_mlb_projection(
         "confidenceLevel":    conf_level,
         "lowConviction":      low_conviction,
         "confidenceInterval": {"low": round(ci_low, 2), "high": round(ci_high, 2)},
+        "mostLikelyValue":    round(most_likely_value, 2),
+        "range60":            [round(ci60_low, 2), round(ci60_high, 2)],
+        "range80":            [round(ci80_low, 2), round(ci80_high, 2)],
+        "distribution": {
+            "distributionType": "negative_binomial" if is_count else "gaussian",
+            "mostLikelyValue": round(most_likely_value, 2),
+            "range60": [round(ci60_low, 2), round(ci60_high, 2)],
+            "range80": [round(ci80_low, 2), round(ci80_high, 2)],
+        },
         "venue":              venue,
         "priorSamples":       n_games,
         "priorMean":          round(prior_mean, 2),
@@ -1615,6 +1638,15 @@ def compute_mlb_projection(
             "momentumMean":       round(momentum_mean, 2),
             "momentumLabel":      momentum_label,
             "posteriorMean":      posterior_mean,
+            "mostLikelyValue":    round(most_likely_value, 2),
+            "range60":            [round(ci60_low, 2), round(ci60_high, 2)],
+            "range80":            [round(ci80_low, 2), round(ci80_high, 2)],
+            "distribution": {
+                "distributionType": "negative_binomial" if is_count else "gaussian",
+                "mostLikelyValue": round(most_likely_value, 2),
+                "range60": [round(ci60_low, 2), round(ci60_high, 2)],
+                "range80": [round(ci80_low, 2), round(ci80_high, 2)],
+            },
             "sampleSize":         n_games,
             "volatility":         volatility,
             "cv":                 round(cv, 3),

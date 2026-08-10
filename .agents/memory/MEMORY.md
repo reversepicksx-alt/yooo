@@ -1,4 +1,3 @@
-- [Missing imports silent failures](missing-imports-silent-failures.md) — asyncio/config constants missing in route files cause NameErrors caught by except-pass, returning wrong fallback data with no traceback; always verify imports after adding asyncio.gather or a config constant.
 - [Evidence-quality gate](evidence-quality-gate.md) — post-projection layer caps confidence and converts thin edges to PASS; missing optional feeds are neutral; real log count may undercount in quota-exhausted mode (logs need targetStat or prop-specific field).
 - [Squad sync name clobber](squad-sync-name-clobber.md) — squad re-sync delete+reinsert overwrites enriched full names with abbreviated API names, silently breaking multi-word search; all name writers must keep the longer existing name.
 - [Projection line-anchor bug](projection-line-anchor.md) — projectedValue showed line±0.5 (not real Bayesian) whenever CONSISTENCY GUARD or BAYESIAN TRUTH flipped direction. Fix: use real_bayes["posteriorMean"] in both overrides.
@@ -100,7 +99,6 @@
 - [Website Stripe duplicate protection](website-stripe-duplicate-protection.md) — never cancel existing subscriptions during checkout; block open duplicates, use explicit no-proration plan changes, and keep retirement jobs dormant.
 - [Thin opponent sample confidence](thin-opponent-sample-confidence.md) — one or two opponent meetings cannot justify very-high confidence; disclose thin evidence and cap conservatively.
 - [Auditable model factors](auditable-model-factors.md) — prediction explanations must snapshot final inputs at the pipeline boundary, persist with saved picks, and show unavailable data explicitly.
-- [Evidence-quality controls](evidence-quality-controls.md) — missing optional feeds stay neutral; only sparse support plus a thin edge can cap confidence or produce PASS.
 - [Full analysis destination](analysis-destination.md) — analysis views own the complete narrative and recent-game evidence; concise pick cards must not duplicate or hide it.
 - [Final projection ledger AI contract](final-projection-ledger-ai-contract.md) — Gemini must explain the exact post-calibration projection snapshot, with cache identity bound to the ledger fingerprint.
 - [Soccer settlement source integrity](settlement-source-integrity.md) — provider stat paths and exact-fixture provenance are required before a value can be final or enter calibration.
@@ -142,7 +140,6 @@
 - [Player context write fail-open](player-context-write-fail-open.md) — verified club identity must survive Atlas/cache write failures; persistence outages must not force manual matchup setup.
 - [Gemini position grounding](gemini-position-grounding.md) — accept identity verification only with actual Search citations; proxy responses without grounding must remain conservative fallback data.
 - [Goalkeeper pool prior](gk-pool-prior-shadow.md) — keeper pass-volume pool evidence is goalkeeper-only, sample-shrunk, auditable, and shadow-only until settled-pick replay validates live influence.
- - [Universal search contract](universal-search-contract.md) — combined soccer/MLB/NFL search must preserve each provider's payload contract; absent new flags can silently remove one sport.
 - [Player search exact-word cap](player-search-exact-word-cap.md) — bounded substring cache results can hide standalone names; merge a bounded exact-word query before ranking.
 - [Same-role venue evidence](same-role-venue-evidence.md) — opponent comparison cohorts must match the target player's home/away venue; prior seasons may broaden time, never venue.
 - [Player cohort analysis language](player-cohort-analysis-language.md) — comparable player-event averages are matchup samples, not generic team “allowed” totals.
@@ -157,3 +154,4 @@
 - [API-Football attacking grid columns](api-football-attacking-grid.md) — 4-2-3-1 row-four columns are LW/CAM/RW left-to-right; never collapse all three into CAM.
 - [Team-schedule possession context](team-schedule-possession.md) — possession context must average independent club schedules; player minutes and exact-position cohort rows must not determine the sample.
 - [Gaussian live probability](gaussian-live-probability.md) — the elite three-layer design is baseline, matchup likelihood, and live Gaussian remaining-total update; tactical modifiers are separate.
+- [MLB Monte Carlo contract](mlb-monte-carlo-contract.md) — shared probability helper returns seven values; MLB must preserve legacy intervals while consuming the full distribution contract.
