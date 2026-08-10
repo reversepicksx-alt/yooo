@@ -1180,6 +1180,20 @@ const GAME_LOG_FIELD_MAP: Record<string, string> = {
   duels_won: 'duels_won',
 };
 
+const BROAD_POSITION_LABELS = new Set([
+  'GK', 'G', 'GOALKEEPER',
+  'DEF', 'D', 'DEFENDER',
+  'MID', 'M', 'MIDFIELDER',
+  'FWD', 'F', 'FW', 'FORWARD', 'ATTACKER',
+]);
+
+function customerRole(position: unknown, role: unknown): string | undefined {
+  const normalizedPosition = String(position || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (BROAD_POSITION_LABELS.has(normalizedPosition)) return undefined;
+  const value = String(role || '').trim();
+  return value || undefined;
+}
+
 export async function predict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
   const raw = await apiCall<RawPrediction>('/api/predict', {
     method: 'POST',
@@ -1288,7 +1302,9 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
           matches: (raw.h2hPlayerStats.matches ?? []).map(m => ({
             date: m.date || '',
             score: m.score || m.matchScore || '',
-            venue: m.venue || '',
+             venue: ['home', 'away'].includes(String(m.venue || '').toLowerCase())
+               ? String(m.venue).toLowerCase()
+               : '',
             minutes: m.minutesPlayed || m.minutes || 0,
             targetStat: m.targetStat ?? null,
             opponent: m.opponent || '',
@@ -1336,7 +1352,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
     playerId: raw._request?.playerId || raw.player?.id || undefined,
     playerPosition: raw.player?.position || undefined,
-    playerRole: raw.player?.role || undefined,
+    playerRole: customerRole(raw.player?.position, raw.player?.role),
     playerPositionSource: raw.player?.positionSource || undefined,
     playerRoleSource: raw.player?.roleSource || undefined,
     playerRoleConfidence: raw.player?.roleConfidence || undefined,
@@ -1595,7 +1611,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     venue: p.venue as string,
     trackingId: p.trackingId as string,
     position: (p.position as string) || undefined,
-    role: (p.role as string) || undefined,
+    role: customerRole(p.position, p.role),
     coinFlip: (p.coinFlip as boolean) || undefined,
     matchScore: (p.matchScore as string) || undefined,
     finalHomeGoals: (p.finalHomeGoals as number) ?? null,
@@ -1661,7 +1677,7 @@ export async function getMatchups(email: string, token: string): Promise<{
     propType: (p.propType as string) || '',
     line: (p.line as number) || 0,
     position: (p.position as string) || undefined,
-    role: (p.role as string) || undefined,
+    role: customerRole(p.position, p.role),
     recommendation: (p.recommendation as string) || undefined,
     result: (p.result as string) || undefined,
     actualValue: (p.actualValue as number) ?? null,

@@ -178,35 +178,16 @@ def resolve_observed_role(
         role = "Advanced Playmaker" if key_passes >= 1.5 else "Shadow Striker"
         evidence = [f"observed {observed} lineup position"]
     elif observed == "FWD":
-        # API-Football often reports historical attacker rows as generic F.
-        # Apply the same creator-over-finisher fingerprint here instead of
-        # allowing a stale cached "Pressing Forward" label to win.
-        if key_passes >= 2.0 and dribbles >= 2.0 and shots < 2.5:
-            role = "False 9"
-            evidence = ["observed generic forward position", "creator-over-finisher fingerprint"]
-        elif passes >= 35 and key_passes >= 2.5 and dribbles >= 3.0:
-            role = "Creative Forward"
-            evidence = [
-                "observed generic forward position",
-                f"{passes:.1f} passes/game",
-                f"{key_passes:.1f} key passes/game",
-                f"{dribbles:.1f} dribbles/game",
-                "creative link-play and carry fingerprint",
-                "exact wide/central zone not independently verified",
-            ]
-        elif key_passes >= 1.5 and dribbles >= 1.5 and shots < 2.5:
-            role = "Complete Forward"
-            evidence = [
-                "observed generic forward position",
-                "creative link-play fingerprint",
-                "pressing role not independently verified",
-            ]
-        else:
-            role = "Complete Forward"
-            evidence = [
-                "observed generic forward position",
-                "pressing role not independently verified",
-            ]
+        # FWD/F is a provider category, not an exact position. Stats can
+        # describe a possible attacking profile, but they cannot distinguish
+        # CF/ST/SS or justify a customer-facing tactical role. Keep this
+        # unavailable across every prop type until exact fixture/profile
+        # evidence exists.
+        role = None
+        evidence = [
+            "generic forward category only",
+            "exact wide/central/striker position not independently verified",
+        ]
     elif observed in {"CF", "SS"}:
         if key_passes >= 2.0 and dribbles >= 2.0 and shots < 2.5:
             role = "False 9"

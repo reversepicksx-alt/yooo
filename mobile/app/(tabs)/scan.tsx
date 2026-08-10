@@ -130,6 +130,9 @@ function H2HBarCard({ prediction }: { prediction: PredictionResult }) {
                 : isOver ? Colors.success : value != null ? Colors.error : '#444';
               const possessionText = row.possession != null ? `POSS ${row.possession}%` : 'POSS N/A';
               const date = row.date ? String(row.date).slice(5, 10) : '—';
+              const venue = row.venue === 'home' || row.venue === 'away'
+                ? row.venue.slice(0, 1).toUpperCase()
+                : '–';
               const opponent = row.opponent || row.homeTeam || 'TEAM';
               const opponentShort = String(opponent).replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |sp |ca |cp |ue |ce |cm |se |sk )/i, '').slice(0, 4).toUpperCase();
               return (
@@ -146,7 +149,9 @@ function H2HBarCard({ prediction }: { prediction: PredictionResult }) {
                       {possessionText}
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 7, color: '#555', lineHeight: 10, marginTop: 4 }}>{date}</Text>
+                   <Text style={{ fontSize: 7, color: '#777', lineHeight: 10, marginTop: 4 }}>
+                     {date} · {venue}
+                   </Text>
                   <Text style={{ fontSize: 7, color: row.teamOnly ? '#4A6CFF' : accent, fontWeight: '700', lineHeight: 10 }}>{opponentShort}</Text>
                 </View>
               );

@@ -89,7 +89,8 @@ function opponentName(row: Record<string, any>) {
 }
 
 function venueMark(value: unknown) {
-  return normalizeVenue(value) === 'home' ? 'H' : 'A';
+  const venue = normalizeVenue(value);
+  return venue === 'home' ? 'H' : venue === 'away' ? 'A' : '–';
 }
 
 function averageForVenue(rows: Array<Record<string, any>>, venue: 'home' | 'away') {

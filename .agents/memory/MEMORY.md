@@ -155,3 +155,4 @@
 - [Team-schedule possession context](team-schedule-possession.md) — possession context must average independent club schedules; player minutes and exact-position cohort rows must not determine the sample.
 - [Gaussian live probability](gaussian-live-probability.md) — the elite three-layer design is baseline, matchup likelihood, and live Gaussian remaining-total update; tactical modifiers are separate.
 - [MLB Monte Carlo contract](mlb-monte-carlo-contract.md) — shared probability helper returns seven values; MLB must preserve legacy intervals while consuming the full distribution contract.
+- [Broad position and H2H venue](broad-position-and-h2h-venue-contract.md) — broad provider categories stay role-free; H2H fixture rows preserve and render explicit H/A venue.

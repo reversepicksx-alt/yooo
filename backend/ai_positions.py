@@ -305,12 +305,11 @@ def _stat_fingerprint_role(generic_position: str, stats: dict | None) -> str | N
 
     gpos = (generic_position or "").strip().title()
 
-    if gpos == "Goalkeeper":
-        return None  # GK sub-role determined by team context, not stats
-
-    # A generic provider category cannot support a tactical role. Exact
-    # positions may be used by callers that already have lineup evidence.
-    if gpos == "Midfielder":
+    # Broad provider categories cannot support a tactical role. Stats can
+    # describe output, but they cannot distinguish CB/LB/RB, CM/CAM, or
+    # CF/ST/SS. Exact positions may be used by callers that already have
+    # lineup/profile evidence.
+    if gpos in {"Goalkeeper", "Defender", "Midfielder", "Attacker", "Forward"}:
         return None
     if gpos in {"Cm", "Cdm", "Cam"}:
         if passes_pg >= 65 and tackles_pg < 3.5 and shots_pg < 1.5:

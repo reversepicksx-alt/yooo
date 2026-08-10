@@ -24,10 +24,26 @@ def test_generic_midfielder_has_no_box_to_box_fallback():
     assert '"Midfielder": ("CM", "Box-to-Box")' not in PLAYERS_SOURCE
 
 
+def test_generic_forward_has_no_invented_tactical_role():
+    result = resolve_observed_role("FWD", {
+        "appearances": 20,
+        "shots_total": 60,
+        "dribbles_attempts": 50,
+        "passes_total": 900,
+        "key_passes": 50,
+    })
+    assert result["position"] == "FWD"
+    assert result["role"] is None
+    assert result["source"] == "fixture_lineup_category"
+    assert "generic forward category only" in result["evidence"]
+    assert "observed generic forward position" not in result["evidence"]
+
+
 def test_provider_category_fallback_never_returns_exact_midfield_position():
     assert 'return category, "", "provider_category_fallback"' in AI_POSITIONS_SOURCE
     assert '"Midfielder": "CM"' not in AI_POSITIONS_SOURCE
     assert "existing profile preserved" in PREDICT_SOURCE
+    assert 'gpos in {"Goalkeeper", "Defender", "Midfielder", "Attacker", "Forward"}' in AI_POSITIONS_SOURCE
 
 
 def test_exact_midfield_comparisons_reject_generic_rows_and_role_padding():
@@ -41,6 +57,8 @@ def test_exact_midfield_comparisons_reject_generic_rows_and_role_padding():
 def test_current_generic_lineup_blocks_historical_exact_position_upgrade():
     assert '_current_lineup_observed_position in {"DEF", "MID", "FWD"}' in PREDICT_SOURCE
     assert "fixture_lineup_category" in PREDICT_SOURCE
+    assert "if _current_lineup_position_is_generic and not _role_override_active:" in PREDICT_SOURCE
+    assert 'display_role = ""' in PREDICT_SOURCE
 
 
 def test_midfield_grid_evidence_can_admit_exact_position_comparisons():

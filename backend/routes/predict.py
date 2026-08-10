@@ -6695,6 +6695,26 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             and _observed_target is not None
             and _current_lineup_observed_position in {"DEF", "MID", "FWD"}
         )
+        # A confirmed generic fixture category is stronger than an older
+        # grounded/profile role, but it is not exact-position evidence. Clear
+        # any stale tactical role here so a current FWD row cannot render as
+        # Complete Forward (or any other invented exact role) system-wide.
+        if _current_lineup_position_is_generic and not _role_override_active:
+            specific_position = ""
+            player_role = ""
+            display_position = player_position
+            display_role = ""
+            _position_resolution_source = "fixture_lineup_category"
+            _observed_role = {
+                "position": _current_lineup_observed_position,
+                "role": None,
+                "source": "fixture_lineup_category",
+                "confidence": "low",
+                "evidence": [
+                    f"confirmed generic {_current_lineup_observed_position} fixture category",
+                    "exact position and tactical role unavailable",
+                ],
+            }
         if (
             (not _observed_role or not _observed_role.get("role"))
             and not _current_lineup_position_is_generic
