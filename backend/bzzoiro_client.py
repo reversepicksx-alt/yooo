@@ -768,7 +768,19 @@ async def fetch_fixture_enrichment(
             if isinstance(cached_at, datetime):
                 age = (datetime.now(timezone.utc) - cached_at.replace(tzinfo=timezone.utc)).total_seconds()
                 if age < CACHE_TTL_SECONDS:
-                    return cached["data"]
+                    data = cached["data"]
+                    # Entries stored before positionValidation was added will
+                    # not have the key.  Rather than serving a stale packet
+                    # that causes tactical_intelligence to silently skip the
+                    # Bzzoiro position supplement, re-run validate_position_data
+                    # in-process and attach the result.  This is cheaper than a
+                    # full re-fetch and idempotent (the raw enrichment data is
+                    # still fresh within the TTL).
+                    if "positionValidation" not in data:
+                        data = dict(data)  # shallow copy — do not mutate cached doc
+                        data["positionValidation"] = validate_position_data(data)
+                        print("[BZZOIRO] back-filled positionValidation on stale cache entry")
+                    return data
     except Exception as exc:
         print(f"[BZZOIRO] cache read skipped: {type(exc).__name__}: {exc}")
 

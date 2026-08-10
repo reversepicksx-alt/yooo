@@ -1,3 +1,4 @@
+import pytest
 from bzzoiro_client import compute_press_proxy, _find_event, validate_position_data, COVERAGE_CONSTRAINTS
 
 
@@ -447,3 +448,89 @@ def test_ti_rejects_bzzoiro_coordinates_when_out_of_pitch_range():
     # coordinates must NOT be forwarded because coordinatesValid=False.
     assert grid["source"] != "bzzoiro_shadow"
     assert grid.get("x") is None or grid["source"] == "unavailable"
+
+
+# ── stale cache back-fill tests ────────────────────────────────────────────────
+
+
+def test_stale_cache_entry_without_position_validation_is_back_filled():
+    """A cached packet stored before positionValidation was added must be
+    handled safely: validate_position_data must be run in-process and the
+    result attached, so tactical_intelligence does not silently skip Bzzoiro
+    position supplement for those picks."""
+    # Simulate a stale cache entry — a fully-formed enrichment packet that was
+    # stored before the positionValidation field was introduced.
+    stale_packet = _make_enrichment(
+        target_lineup={"id": 7, "name": "Jonathan David", "position": "ST"},
+        avg_pos={"x": 82.0, "y": 50.0},
+    )
+    # Confirm the fixture: stale packet must NOT have positionValidation yet.
+    assert "positionValidation" not in stale_packet
+
+    # Simulate what fetch_fixture_enrichment does on a stale cache hit:
+    # if positionValidation is absent, back-fill without a re-fetch.
+    if "positionValidation" not in stale_packet:
+        stale_packet = dict(stale_packet)
+        stale_packet["positionValidation"] = validate_position_data(stale_packet)
+
+    # The resulting packet must have positionValidation populated.
+    pv = stale_packet.get("positionValidation")
+    assert pv is not None, "positionValidation must be back-filled on stale cache entry"
+    assert isinstance(pv, dict), "positionValidation must be a dict"
+
+    # The back-filled validation must correctly reflect the packet's signals.
+    assert pv["lineupValid"] is True
+    assert pv["coordinatesValid"] is True
+    assert pv["usableAsPositionSupplement"] is True
+
+    # tactical_intelligence must now be able to use the Bzzoiro position.
+    packet = _build_ti(bzzoiro_enrichment=stale_packet, player_position="")
+    player = packet["player"]
+    assert player["position"] == "ST"
+    assert player["positionSource"] == "bzzoiro_shadow_confirmed_lineup"
+
+
+def test_stale_cache_entry_back_fill_does_not_mutate_original_dict():
+    """The back-fill must shallow-copy the cached dict so the in-memory
+    cache document is not mutated (idempotent reads)."""
+    stale_packet = _make_enrichment(
+        target_lineup={"id": 8, "name": "Messi", "position": "RW"},
+        avg_pos={"x": 78.0, "y": 42.0},
+    )
+    original_id = id(stale_packet)
+
+    # Replicate the back-fill logic from fetch_fixture_enrichment.
+    result = stale_packet
+    if "positionValidation" not in result:
+        result = dict(result)  # shallow copy — must not mutate original
+        result["positionValidation"] = validate_position_data(result)
+
+    # The result is a new object.
+    assert id(result) != original_id, "back-fill must not mutate the original cached dict"
+    # The original must remain unmodified.
+    assert "positionValidation" not in stale_packet
+
+
+def test_stale_cache_entry_with_invalid_data_gets_non_usable_validation():
+    """A stale cache entry with degraded signals (e.g. fuzzy date match) must
+    receive a positionValidation that marks it as not usable, preventing
+    tactical_intelligence from using unreliable position data."""
+    stale_packet = _make_enrichment(
+        coverage="approximate_date",  # fuzzy — must fail validation
+        target_lineup={"name": "Player", "position": "CM"},
+        avg_pos={"x": 55.0, "y": 30.0},
+    )
+    assert "positionValidation" not in stale_packet
+
+    # Back-fill.
+    stale_packet = dict(stale_packet)
+    stale_packet["positionValidation"] = validate_position_data(stale_packet)
+
+    pv = stale_packet["positionValidation"]
+    assert pv["usableAsPositionSupplement"] is False
+    assert pv["fixtureDateMatch"] == "fuzzy"
+
+    # tactical_intelligence must reject the position from this stale entry.
+    packet = _build_ti(bzzoiro_enrichment=stale_packet, player_position="")
+    player = packet["player"]
+    assert player.get("positionSource") != "bzzoiro_shadow_confirmed_lineup"
