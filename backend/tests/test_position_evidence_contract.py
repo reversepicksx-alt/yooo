@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tactical_evidence import resolve_observed_role
+from tactical_evidence import exact_position_from_lineup_payload, resolve_observed_role
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +58,36 @@ def test_current_generic_lineup_blocks_historical_exact_position_upgrade():
     assert '_current_lineup_observed_position in {"DEF", "MID", "FWD"}' in PREDICT_SOURCE
     assert "fixture_lineup_category" in PREDICT_SOURCE
     assert "if _current_lineup_position_is_generic and not _role_override_active:" in PREDICT_SOURCE
-    assert 'display_role = ""' in PREDICT_SOURCE
+    assert 'f"exact {specific_position} retained from verified lineup history"' in PREDICT_SOURCE
+
+
+def test_lineup_grid_resolves_generic_forward_to_exact_striker_position():
+    payload = [
+        {
+            "formation": "4-2-3-1",
+            "startXI": [
+                {"player": {"id": 9946, "pos": "F", "grid": "5:1"}},
+            ],
+        }
+    ]
+    assert exact_position_from_lineup_payload(payload, 9946) == "ST"
+
+
+def test_common_forward_grid_positions_are_exact():
+    assert exact_position_from_lineup_payload(
+        [{"formation": "4-2-3-1", "startXI": [
+            {"player": {"id": 10, "pos": "F", "grid": "4:1"}},
+            {"player": {"id": 11, "pos": "F", "grid": "4:2"}},
+            {"player": {"id": 12, "pos": "F", "grid": "4:3"}},
+        ]}],
+        10,
+    ) == "LW"
+    assert exact_position_from_lineup_payload(
+        [{"formation": "4-3-3", "startXI": [
+            {"player": {"id": 20, "pos": "F", "grid": "4:2"}},
+        ]}],
+        20,
+    ) == "ST"
 
 
 def test_midfield_grid_evidence_can_admit_exact_position_comparisons():

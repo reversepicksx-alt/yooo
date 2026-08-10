@@ -28,6 +28,7 @@ import soccer_bdl_client as _bdl_soc
 from tactical_evidence import (
     build_tactical_conclusion,
     infer_grid_position,
+    exact_position_from_lineup_payload,
     normalize_observed_position,
     position_cohort_verdict,
     resolve_observed_role,
@@ -6063,7 +6064,15 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             async def fetch_h2h_player_stat(fid, fixture_info):
                 """Fetch the target player's stats from a specific H2H fixture"""
                 try:
-                    pstats = await api_football_request("fixtures/players", {"fixture": fid})
+                    pstats, lineup_payload = await aio.gather(
+                        api_football_request("fixtures/players", {"fixture": fid}),
+                        api_football_request("fixtures/lineups", {"fixture": fid}),
+                        return_exceptions=True,
+                    )
+                    if isinstance(pstats, Exception):
+                        pstats = []
+                    if isinstance(lineup_payload, Exception):
+                        lineup_payload = []
                     if not pstats:
                         return None
 
@@ -6127,13 +6136,26 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                             _h2h_poss_opp  = 100 - _h2h_poss_team
                                 except Exception:
                                     pass
+                                exact_h2h_position = exact_position_from_lineup_payload(
+                                    _api_response_list(lineup_payload),
+                                    req.playerId,
+                                )
+                                observed_h2h_position = (
+                                    exact_h2h_position
+                                    or (stats.get("games") or {}).get("position")
+                                )
                                 return {
                                      "fixtureId": fid,
                                     "date": fixture_info.get("fixture", {}).get("date", ""),
                                     "opponent": opponent_name,
                                     "venue": venue_in_match,
                                     "minutesPlayed": minutes_played,
-                                    "observedPosition": (stats.get("games") or {}).get("position"),
+                                    "observedPosition": observed_h2h_position,
+                                    "positionSource": (
+                                        "fixture_lineup_grid"
+                                        if exact_h2h_position
+                                        else "fixture_player_stats"
+                                    ),
                                     "statValues": {k: v for k, v in stat_key_map_h2h.items() if v is not None},
                                     "targetStat": stat_key_map_h2h.get(req.propType),
                                     "targetStatPer90": round((stat_key_map_h2h.get(req.propType, 0) or 0) / minutes_played * 90, 2) if minutes_played > 0 and stat_key_map_h2h.get(req.propType) else None,
@@ -6677,10 +6699,42 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         _historical_position_summary = summarize_observed_positions(
             [{"position": item.get("observedPosition")} for item in h2h_player_stats]
         )
-        # A confirmed generic D/DEF row is meaningful broad evidence, but it
-        # cannot be upgraded by an older H2H/cache role into CB or Fullback.
-        # Keep the current fixture's uncertainty visible instead of allowing
-        # a stale exact-position label to win.
+        # A generic current D/M/F row is incomplete detail, not contradictory
+        # evidence. Exact positions from verified player-ID history or lineup
+        # grids remain usable for the target's natural comparison cohort.
+        _historical_exact_positions = {
+            "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+            "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+        }
+        _historical_exact_position = next(
+            (
+                position
+                for position, count in sorted(
+                    (_historical_position_summary.get("positionCounts") or {}).items(),
+                    key=lambda item: (-item[1], item[0]),
+                )
+                if position in _historical_exact_positions
+            ),
+            None,
+        )
+        if (
+            not specific_position
+            and _historical_exact_position
+            and _historical_exact_position in GENERIC_TO_SPECIFIC.get(player_position, set())
+        ):
+            specific_position = _historical_exact_position
+            player_role = resolve_observed_role(
+                specific_position,
+                _role_stats,
+            ).get("role") or ""
+            display_position = specific_position
+            display_role = player_role
+            _position_resolution_source = "h2h_fixture_lineup_history"
+            print(
+                f"[POS RESOLVE] H2H lineup history: {req.playerName} → "
+                f"{specific_position}{' / ' + player_role if player_role else ''}"
+            )
+
         _current_lineup_observed_position = (
             infer_grid_position(
                 _observed_target.get("grid"),
@@ -6695,26 +6749,33 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             and _observed_target is not None
             and _current_lineup_observed_position in {"DEF", "MID", "FWD"}
         )
-        # A confirmed generic fixture category is stronger than an older
-        # grounded/profile role, but it is not exact-position evidence. Clear
-        # any stale tactical role here so a current FWD row cannot render as
-        # Complete Forward (or any other invented exact role) system-wide.
+        # A generic current fixture category is incomplete detail. It must not
+        # erase an exact position already verified from player-ID history or a
+        # lineup grid; it only prevents a role from being inferred when no
+        # exact position exists yet.
         if _current_lineup_position_is_generic and not _role_override_active:
-            specific_position = ""
-            player_role = ""
-            display_position = player_position
-            display_role = ""
-            _position_resolution_source = "fixture_lineup_category"
-            _observed_role = {
-                "position": _current_lineup_observed_position,
-                "role": None,
-                "source": "fixture_lineup_category",
-                "confidence": "low",
-                "evidence": [
-                    f"confirmed generic {_current_lineup_observed_position} fixture category",
-                    "exact position and tactical role unavailable",
-                ],
-            }
+            if specific_position:
+                _observed_role = {
+                    "position": specific_position,
+                    "role": player_role or None,
+                    "source": _position_resolution_source,
+                    "confidence": "medium",
+                    "evidence": [
+                        f"current fixture reports generic {_current_lineup_observed_position}",
+                        f"exact {specific_position} retained from verified lineup history",
+                    ],
+                }
+            else:
+                _observed_role = {
+                    "position": _current_lineup_observed_position,
+                    "role": None,
+                    "source": "fixture_lineup_category",
+                    "confidence": "low",
+                    "evidence": [
+                        f"current fixture reports generic {_current_lineup_observed_position}",
+                        "exact position still requires lineup/profile evidence",
+                    ],
+                }
         if (
             (not _observed_role or not _observed_role.get("role"))
             and not _current_lineup_position_is_generic
@@ -6740,6 +6801,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     "cache",
                     "fixture_lineup_observation",
                     "api_sports_lineup_history",
+                    "h2h_fixture_lineup_history",
                 }
             ):
                 specific_position = _observed_role.get("position") or specific_position

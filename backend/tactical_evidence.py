@@ -115,6 +115,21 @@ def infer_grid_position(
         if shape[:4] == [4, 3, 1, 2] and column == 1:
             return "CAM"
 
+    # Forward rows in common formations are exact enough to distinguish the
+    # central striker from wide forwards. API-Football still reports these as
+    # F/FWD in fixture player statistics, so use the formation/grid pair.
+    if provider_category in {"F", "FWD"}:
+        if row == 5 and shape in ([4, 2, 3, 1], [4, 3, 3, 1], [3, 4, 3, 1]):
+            return "ST"
+        if row == 4 and shape[:4] == [4, 2, 3, 1] and column in {1, 2, 3}:
+            return {1: "LW", 2: "CAM", 3: "RW"}[column]
+        if row == 4 and shape[:3] == [4, 3, 3] and column in {1, 2, 3}:
+            return {1: "LW", 2: "ST", 3: "RW"}[column]
+        if row == 4 and shape[:3] == [3, 4, 3] and column in {1, 2, 3}:
+            return {1: "LW", 2: "ST", 3: "RW"}[column]
+        if row == 4 and shape[:3] == [4, 4, 2] and column in {1, 2}:
+            return "ST"
+
     return normalize_observed_position(provider_position)
 
 
@@ -137,6 +152,43 @@ def normalize_observed_position(value: Any) -> str:
     """Normalize API-Football lineup/stat positions without guessing a side."""
     raw = str(value or "").strip().upper().replace(" ", "")
     return _POSITION_ALIASES.get(raw, raw)
+
+
+def exact_position_from_lineup_payload(payload: Any, player_id: Any) -> str | None:
+    """Extract one player's exact position from API-Football lineup grids.
+
+    The player-stat endpoint often returns only F/M/D. A lineup grid plus the
+    team's formation contains the exact tactical band needed for CF/ST/LW/RW
+    and the other comparison positions. This helper is deliberately
+    fixture-scoped so it cannot merge same-name players across clubs.
+    """
+    try:
+        target_id = str(int(player_id))
+    except (TypeError, ValueError):
+        target_id = str(player_id or "").strip()
+    if not target_id:
+        return None
+    teams = payload if isinstance(payload, list) else []
+    for team in teams:
+        if not isinstance(team, dict):
+            continue
+        formation = team.get("formation") or ""
+        for row in team.get("startXI") or []:
+            player = row.get("player") or {}
+            try:
+                row_id = str(int(player.get("id")))
+            except (TypeError, ValueError):
+                row_id = str(player.get("id") or "").strip()
+            if row_id != target_id:
+                continue
+            position = infer_grid_position(
+                player.get("grid"),
+                formation,
+                player.get("pos"),
+            )
+            if position in _EXACT_POSITIONS:
+                return position
+    return None
 
 
 def resolve_observed_role(
