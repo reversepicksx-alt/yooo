@@ -95,7 +95,9 @@ externalPort = 3000
   [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "(while true; do cd /home/runner/workspace/backend && PYTHONUNBUFFERED=1 /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000; sleep 3; done) & cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
-build = ["bash", "-c", "cd mobile && npx expo export -p web --output-dir dist 2>&1 | tail -5 && echo 'Build done'"]
+# Do not pipe the export through tail: without pipefail, a failed Expo
+# export can be reported as a successful build because tail exits 0.
+build = ["bash", "-c", "set -euo pipefail; cd mobile; npx expo export -p web --output-dir dist; test -s dist/index.html; echo 'Build done'"]
 
   [postMerge]
   path = "scripts/post-merge.sh"
