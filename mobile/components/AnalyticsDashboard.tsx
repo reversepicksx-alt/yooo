@@ -683,6 +683,56 @@ export default function AnalyticsDashboard({
                     Walk-forward direction: OVER {ownerData.walkForwardReplay.byDirection.over?.hitRate ?? '—'}% ({ownerData.walkForwardReplay.byDirection.over?.n ?? 0}) · UNDER {ownerData.walkForwardReplay.byDirection.under?.hitRate ?? '—'}% ({ownerData.walkForwardReplay.byDirection.under?.n ?? 0})
                   </Text>
                 )}
+                {ownerData.walkForwardReplay?.bySport && ownerData.walkForwardReplay.bySport.length > 0 && (
+                  <View style={s.ownerPropList}>
+                    <Text style={s.ownerHealthLabel}>WALK-FORWARD ACCURACY BY SPORT</Text>
+                    <View style={s.wfTableHeader}>
+                      <Text style={[s.wfTableCell, s.wfTableCellSport]}>SPORT</Text>
+                      <Text style={[s.wfTableCell, s.wfTableCellN]}>N</Text>
+                      <Text style={[s.wfTableCell, s.wfTableCellNum]}>LOG-LOSS</Text>
+                      <Text style={[s.wfTableCell, s.wfTableCellNum]}>BRIER</Text>
+                      <Text style={[s.wfTableCell, s.wfTableCellNum]}>MAE</Text>
+                    </View>
+                    {ownerData.walkForwardReplay.bySport.map((row) => {
+                      const cls = row.classification;
+                      const prj = row.projection;
+                      const logLossColor =
+                        cls.logLoss == null ? Colors.textTertiary
+                        : cls.logLoss < 0.65 ? Colors.success
+                        : cls.logLoss < 0.693 ? '#F59E0B'
+                        : Colors.error;
+                      return (
+                        <View key={row.sport} style={s.wfTableRow}>
+                          <Text style={[s.wfTableCell, s.wfTableCellSport, { color: Colors.text }]}>
+                            {row.sport.toUpperCase()}
+                          </Text>
+                          <Text style={[s.wfTableCell, s.wfTableCellN, { color: Colors.textSecondary }]}>
+                            {cls.n || prj.n || 0}
+                          </Text>
+                          <Text style={[s.wfTableCell, s.wfTableCellNum, { color: logLossColor }]}>
+                            {cls.logLoss != null ? cls.logLoss.toFixed(3) : '—'}
+                          </Text>
+                          <Text style={[s.wfTableCell, s.wfTableCellNum, { color: Colors.textSecondary }]}>
+                            {cls.brierScore != null ? cls.brierScore.toFixed(3) : '—'}
+                          </Text>
+                          <Text style={[s.wfTableCell, s.wfTableCellNum, { color: Colors.textSecondary }]}>
+                            {prj.mae != null ? prj.mae.toFixed(2) : '—'}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+                {ownerData.walkForwardReplay?.byProp && ownerData.walkForwardReplay.byProp.length > 0 && (
+                  <View style={s.ownerPropList}>
+                    <Text style={s.ownerHealthLabel}>WALK-FORWARD MAE BY PROP TYPE</Text>
+                    {ownerData.walkForwardReplay.byProp.slice(0, 8).map((row) => (
+                      <Text key={`${row.sport}-${row.propType}`} style={s.ownerPropRow}>
+                        {row.sport.toUpperCase()} · {row.propType.replace(/_/g, ' ')} · n={row.n} · MAE {row.mae?.toFixed(2) ?? '—'} · bias {row.meanError != null ? (row.meanError > 0 ? '+' : '') + row.meanError.toFixed(2) : '—'}
+                      </Text>
+                    ))}
+                  </View>
+                )}
                 {ownerData.overall.outcomeCounts?.unknown ? (
                   <Text style={s.ownerHealthMeta}>
                     Unclassified settled rows: {ownerData.overall.outcomeCounts.unknown} · excluded from win rate and probability metrics
@@ -812,6 +862,12 @@ const s = StyleSheet.create({
   ownerPropList: { marginTop: 9, gap: 3 },
   ownerPropRow: { fontSize: 10, color: Colors.textSecondary, lineHeight: 14, textTransform: 'capitalize' },
   ownerHealthReplay: { fontSize: 10, color: Colors.primary, marginTop: 6, fontWeight: '700' },
+  wfTableHeader: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle, paddingBottom: 3, marginBottom: 3 },
+  wfTableRow: { flexDirection: 'row', paddingVertical: 2 },
+  wfTableCell: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
+  wfTableCellSport: { flex: 2 },
+  wfTableCellN: { flex: 1, textAlign: 'right' },
+  wfTableCellNum: { flex: 2, textAlign: 'right' },
   chartCard: {
     backgroundColor: Colors.card,
     borderRadius: 14,

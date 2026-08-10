@@ -2103,6 +2103,19 @@ export interface AnalyticsData {
       logLoss: number | null;
       brierScore: number | null;
     }>;
+    bySport: Array<{
+      sport: string;
+      classification: { n: number; logLoss: number | null; brierScore: number | null };
+      projection: { n: number; mae: number | null; rmse: number | null; meanError: number | null };
+    }>;
+    byProp: Array<{
+      sport: string;
+      propType: string;
+      n: number;
+      mae: number | null;
+      rmse: number | null;
+      meanError: number | null;
+    }>;
   };
   insights?: SystemInsights;
   scope?: {

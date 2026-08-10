@@ -1071,6 +1071,8 @@ async def owner_analytics(payload: dict = Body(...)):
             "evaluatedSamples": walk_forward.get("evaluatedSamples", 0),
             "leakageViolations": walk_forward.get("leakageViolations", 0),
             "byDirection": walk_forward.get("byDirection", {}),
+            "bySport": walk_forward.get("bySport", []),
+            "byProp": walk_forward.get("byProp", []),
         },
         "insights": dashboard_insights,
         "scope": {
