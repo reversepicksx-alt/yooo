@@ -93,6 +93,19 @@ function venueMark(value: unknown) {
   return venue === 'home' ? 'H' : venue === 'away' ? 'A' : '–';
 }
 
+function displayH2HDate(value: unknown, full = false) {
+  const raw = String(value || '');
+  // The backend may encode H/A inside the visible MM-DD slice for older
+  // native bundles: 2026-08H02 renders there as 08H02. Normalize it for
+  // current bundles, which render the dedicated venue marker separately.
+  const encoded = raw.match(/^(\d{4})-(\d{2})([HA])(\d{2})(.*)$/);
+  if (encoded) {
+    const [, year, month, , day] = encoded;
+    return full ? `${year}-${month}-${day}` : `${month}-${day}`;
+  }
+  return full ? raw.slice(0, 10) : raw.slice(5, 10);
+}
+
 function averageForVenue(rows: Array<Record<string, any>>, venue: 'home' | 'away') {
   const values = rows
     .filter((row) => rowVenue(row) === venue && row.value != null)
@@ -278,7 +291,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const maxValue = Math.max(...logs.map((item) => Number(item.value) || 0), prediction.line ?? 0, 1) * 1.18;
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
                   const height = Math.max(10, (value / maxValue) * 112);
-                  const date = game.date ? String(game.date).slice(5, 10) : '—';
+                  const date = game.date ? displayH2HDate(game.date) : '—';
                   const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
                   const minutes = game.minutesPlayed ?? game.minutes;
                   const isSelected = selected?.group === 'recent' && selected.index === index;
@@ -318,7 +331,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               </View>
               {selectedGame && (
                 <Text style={styles.detail}>
-                  {selectedGame.date ? String(selectedGame.date).slice(0, 10) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
+                  {selectedGame.date ? displayH2HDate(selectedGame.date, true) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
                   {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
                   {selectedGame.score ? ` · ${selectedGame.score}` : ''}
                   {prediction.propType === 'saves'
@@ -388,7 +401,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
                   const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
                   const possession = row.possession != null ? `TP ${Number(row.possession).toFixed(0)}%` : 'TP —';
-                  const date = row.date ? String(row.date).slice(5, 10) : '—';
+                  const date = row.date ? displayH2HDate(row.date) : '—';
                   const isSelected = selected?.group === 'h2h' && selected.index === index;
                   return (
                     <TouchableOpacity

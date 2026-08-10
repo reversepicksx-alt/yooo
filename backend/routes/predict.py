@@ -8,6 +8,7 @@ import asyncio as aio
 import statistics as stats_mod
 import traceback
 from datetime import datetime, timezone
+from typing import Any
 from fastapi import APIRouter, HTTPException
 from config import (
     db, CURRENT_SEASON, WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
@@ -193,6 +194,28 @@ def _api_response_list(payload) -> list:
         response = payload.get("response", [])
         return response if isinstance(response, list) else []
     return []
+
+
+def _legacy_h2h_display_date(value: Any, venue: Any) -> str:
+    """Keep H/A inside the date slice rendered by older native bundles.
+
+    The old TestFlight bundle renders ``String(date).slice(5, 10)``. Encoding
+    the marker between month and day makes it visible without a native update:
+    ``2026-02H08`` renders as ``02H08``. Current bundles normalize this back to
+    ``02-08`` and render their dedicated venue marker separately.
+    """
+    date_text = str(value or "").strip()
+    venue_text = str(venue or "").strip().lower()
+    marker = "H" if venue_text == "home" else "A" if venue_text == "away" else ""
+    if not marker or not date_text:
+        return date_text
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})(.*)$", date_text)
+    if not match:
+        return date_text
+    year, month, day, remainder = match.groups()
+    if re.match(rf"^{marker}", remainder):
+        return date_text
+    return f"{year}-{month}{marker}{day}{remainder}"
 
 
 def _normalize_provider_player_id(value):
@@ -6146,7 +6169,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                 )
                                 return {
                                      "fixtureId": fid,
-                                    "date": fixture_info.get("fixture", {}).get("date", ""),
+                                    "date": _legacy_h2h_display_date(
+                                        fixture_info.get("fixture", {}).get("date", ""),
+                                        venue_in_match,
+                                    ),
                                     "opponent": opponent_name,
                                     "venue": venue_in_match,
                                     "minutesPlayed": minutes_played,
@@ -6281,7 +6307,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     home_poss, away_poss = await _read_h2h_possession(fid, player_home) if fid else (None, None)
                     row = {
                          "fixtureId": fid,
-                        "date": (fixture_info.get("fixture") or {}).get("date", ""),
+                        "date": _legacy_h2h_display_date(
+                            (fixture_info.get("fixture") or {}).get("date", ""),
+                            "home" if player_home else "away",
+                        ),
                         "score": f"{fixture_info.get('goals', {}).get('home', '—')}-"
                                  f"{fixture_info.get('goals', {}).get('away', '—')}",
                         "homeTeam": home.get("name", ""),

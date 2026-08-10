@@ -156,3 +156,4 @@
 - [Gaussian live probability](gaussian-live-probability.md) — the elite three-layer design is baseline, matchup likelihood, and live Gaussian remaining-total update; tactical modifiers are separate.
 - [MLB Monte Carlo contract](mlb-monte-carlo-contract.md) — shared probability helper returns seven values; MLB must preserve legacy intervals while consuming the full distribution contract.
 - [Broad position and H2H venue](broad-position-and-h2h-venue-contract.md) — broad provider categories stay role-free; H2H fixture rows preserve and render explicit H/A venue.
+- [Legacy native client compatibility](legacy-native-client-compatibility.md) — when a native bundle lacks OTA updates, preserve urgent display fixes through backward-compatible server payloads before requiring a new binary.
