@@ -1209,6 +1209,285 @@ def validate_weighted_opponent_evidence(rows: list[dict]) -> dict:
     }
 
 
+def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
+    """Compare settled soccer picks where Bzzoiro position data was valid vs unavailable.
+
+    This is a group-comparison replay, not a walk-forward simulation:
+
+    - Group A (bzzoiro_valid): settled picks where
+      ``tacticalContext.bzzoiroEnrichment.positionValidation.valid == True``
+      and the fix-date match was "exact".
+    - Group B (bzzoiro_absent): all other settled soccer picks in the corpus
+      (bzzoiro unavailable, failed validation, or non-exact fixture match).
+
+    For each group we compute:
+      - Hit rate (HIT / (HIT + MISS))
+      - Directional accuracy (implied projection direction vs actual outcome)
+      - Projection MAE vs actualValue when projectedValue is present
+
+    The comparison answers: "do picks where Bzzoiro confirmed the player's
+    position hit more often than picks where we relied on API-Football alone?"
+
+    Promotion criteria (all must pass for a GO verdict):
+      1. Bzzoiro group hit rate ≥ baseline group hit rate − 2 pp  (not harmful)
+      2. ≥ _MIN_ELIGIBLE_FOR_PROMOTION scored bzzoiro-valid picks
+      3. Bzzoiro projection MAE ≤ baseline MAE + 0.1  (within tolerance)
+
+    Note: because we cannot control which picks received bzzoiro enrichment,
+    this is an observational comparison, not a controlled experiment. Confounders
+    (e.g. richer data available for top-league matches) may inflate group A's
+    apparent accuracy. The verdict is therefore an indicator, not a definitive
+    causal proof.
+
+    Leakage policy: all metrics read the fields stored at prediction time
+    (projectedValue, confidenceScore, recommendation, result). No post-hoc
+    recomputation of projections is performed.
+    """
+    deduped = dedupe_prediction_rows(rows)
+    ordered = _sorted_rows(deduped)
+
+    group_a: list[dict] = []  # bzzoiro positionValidation.valid=True, exact fixture match
+    group_b: list[dict] = []  # everything else
+
+    for row in ordered:
+        if not _is_scored_directional_row(row):
+            continue
+        tc = row.get("tacticalContext") or {}
+        bzz = tc.get("bzzoiroEnrichment") or {}
+        pv = bzz.get("positionValidation") or {}
+        bzz_valid = (
+            bool(pv.get("valid"))
+            and pv.get("fixtureDateMatch") == "exact"
+        )
+        if bzz_valid:
+            group_a.append(row)
+        else:
+            group_b.append(row)
+
+    def _group_stats(group: list[dict], label: str) -> dict:
+        n = len(group)
+        if n == 0:
+            return {
+                "n": 0,
+                "hitRate": None,
+                "directionalN": None,
+                "directionalHitRate": None,
+                "projection": {"n": 0, "mae": None, "rmse": None, "meanError": None},
+                "label": label,
+            }
+        hits = sum(1 for r in group if r.get("result") == "hit")
+        hit_rate = round(hits / n * 100, 1)
+
+        # Directional accuracy: implied direction (projectedValue vs line) vs actual
+        dir_correct = 0
+        dir_n = 0
+        proj_errors: list[float] = []
+        for row in group:
+            actual = _number(row.get("actualValue"))
+            projected = _number(row.get("projectedValue"))
+            line = _number(row.get("line"))
+            if actual is not None and projected is not None:
+                proj_errors.append(actual - projected)
+            if actual is not None and line is not None:
+                actual_dir = "over" if actual > line else "under" if actual < line else "tie"
+                if actual_dir == "tie":
+                    continue
+                dir_n += 1
+                if projected is not None:
+                    proj_dir = "over" if projected > line else "under" if projected < line else "tie"
+                    if proj_dir == actual_dir:
+                        dir_correct += 1
+
+        dir_hit_rate = round(dir_correct / dir_n * 100, 1) if dir_n else None
+        mae = round(sum(abs(e) for e in proj_errors) / len(proj_errors), 4) if proj_errors else None
+        rmse_val = (
+            round(math.sqrt(sum(e * e for e in proj_errors) / len(proj_errors)), 4)
+            if proj_errors else None
+        )
+        mean_err = round(sum(proj_errors) / len(proj_errors), 4) if proj_errors else None
+        return {
+            "n": n,
+            "hits": hits,
+            "hitRate": hit_rate,
+            "directionalN": dir_n,
+            "directionalHitRate": dir_hit_rate,
+            "directionalCorrect": dir_correct,
+            "projection": {
+                "n": len(proj_errors),
+                "mae": mae,
+                "rmse": rmse_val,
+                "meanError": mean_err,
+            },
+            "label": label,
+        }
+
+    stats_a = _group_stats(group_a, "bzzoiro_valid")
+    stats_b = _group_stats(group_b, "bzzoiro_absent")
+
+    _MIN_ELIGIBLE_FOR_PROMOTION = 20
+
+    # ── Promotion criteria ────────────────────────────────────────────────────
+    criteria: list[dict] = []
+    issues: list[str] = []
+    passed: list[str] = []
+
+    # 1. Sample size gate
+    n_a = stats_a["n"]
+    if n_a >= _MIN_ELIGIBLE_FOR_PROMOTION:
+        passed.append(
+            f"Bzzoiro-valid group has {n_a} scored picks "
+            f"(≥ {_MIN_ELIGIBLE_FOR_PROMOTION} required)"
+        )
+        criteria.append({"check": "sample_size", "result": "pass",
+                          "bzzoiroValidN": n_a, "minimum": _MIN_ELIGIBLE_FOR_PROMOTION})
+    else:
+        issues.append(
+            f"Only {n_a} bzzoiro-valid scored picks "
+            f"(need ≥ {_MIN_ELIGIBLE_FOR_PROMOTION})"
+        )
+        criteria.append({"check": "sample_size", "result": "insufficient_data",
+                          "bzzoiroValidN": n_a, "minimum": _MIN_ELIGIBLE_FOR_PROMOTION})
+
+    # 2. Hit rate not materially worse than baseline
+    hr_a = stats_a["hitRate"]
+    hr_b = stats_b["hitRate"]
+    _MIN_HIT_N = 10
+    if hr_a is not None and hr_b is not None and n_a >= _MIN_HIT_N:
+        gap = round(hr_a - hr_b, 1)
+        if gap >= -2.0:
+            passed.append(
+                f"Bzzoiro-valid hit rate ({hr_a}%) within 2 pp of "
+                f"absent group ({hr_b}%) — not harmful"
+            )
+            criteria.append({"check": "hit_rate", "result": "pass",
+                              "bzzoiroHitRate": hr_a, "baselineHitRate": hr_b,
+                              "gapPp": gap})
+        else:
+            issues.append(
+                f"Bzzoiro-valid hit rate ({hr_a}%) is {abs(gap):.1f} pp below "
+                f"absent group ({hr_b}%) — position enrichment may degrade calibration"
+            )
+            criteria.append({"check": "hit_rate", "result": "fail",
+                              "bzzoiroHitRate": hr_a, "baselineHitRate": hr_b,
+                              "gapPp": gap})
+    else:
+        note = f"Need ≥{_MIN_HIT_N} picks in bzzoiro-valid group; have {n_a}"
+        criteria.append({"check": "hit_rate", "result": "insufficient_data",
+                          "bzzoiroHitRate": hr_a, "baselineHitRate": hr_b,
+                          "note": note})
+
+    # 3. Projection MAE not materially worse than baseline (within 0.1 tolerance)
+    mae_a = (stats_a["projection"] or {}).get("mae")
+    mae_b = (stats_b["projection"] or {}).get("mae")
+    _MAE_TOLERANCE = 0.1
+    if mae_a is not None and mae_b is not None:
+        if mae_a <= mae_b + _MAE_TOLERANCE:
+            passed.append(
+                f"Bzzoiro-valid MAE ({mae_a}) ≤ absent-group MAE ({mae_b}) + {_MAE_TOLERANCE} tolerance"
+            )
+            criteria.append({"check": "projection_mae", "result": "pass",
+                              "bzzoiroMAE": mae_a, "baselineMAE": mae_b,
+                              "tolerance": _MAE_TOLERANCE})
+        else:
+            issues.append(
+                f"Bzzoiro-valid MAE ({mae_a}) exceeds absent-group MAE ({mae_b}) "
+                f"by more than {_MAE_TOLERANCE} — projection accuracy degraded"
+            )
+            criteria.append({"check": "projection_mae", "result": "fail",
+                              "bzzoiroMAE": mae_a, "baselineMAE": mae_b,
+                              "tolerance": _MAE_TOLERANCE})
+    else:
+        criteria.append({"check": "projection_mae", "result": "insufficient_data",
+                          "bzzoiroMAE": mae_a, "baselineMAE": mae_b,
+                          "tolerance": _MAE_TOLERANCE})
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    has_insufficient = any(c["result"] == "insufficient_data" for c in criteria)
+    has_failures = any(c["result"] == "fail" for c in criteria)
+    all_pass = (
+        not has_failures
+        and not has_insufficient
+        and all(c["result"] == "pass" for c in criteria)
+        and bool(criteria)
+    )
+
+    if n_a < _MIN_ELIGIBLE_FOR_PROMOTION:
+        verdict = "CAUTION"
+        summary = (
+            f"Insufficient data — only {n_a} bzzoiro-valid scored pick(s) "
+            f"(minimum {_MIN_ELIGIBLE_FOR_PROMOTION} required for a GO verdict). "
+            "Accumulate more settled soccer picks with exact Bzzoiro fixture coverage "
+            "before promoting."
+        )
+    elif has_failures:
+        verdict = "NO_GO"
+        summary = (
+            "Bzzoiro position enrichment fails key promotion criteria. "
+            "Keep shadow-only and investigate the flagged issues before promoting."
+        )
+    elif has_insufficient:
+        verdict = "CAUTION"
+        summary = (
+            "One or more promotion criteria could not be evaluated (insufficient data). "
+            "All criteria must fully pass before promoting."
+        )
+    elif all_pass:
+        verdict = "GO"
+        summary = (
+            "Bzzoiro position enrichment passes all out-of-sample promotion criteria. "
+            "Safe to promote from shadow-only to live mode by setting "
+            "BZZOIRO_POSITION_LIVE=live in the backend environment."
+        )
+    else:
+        verdict = "CAUTION"
+        summary = (
+            "Mixed results — some criteria pass, others do not. "
+            "Keep shadow-only; investigate flagged issues before promoting."
+        )
+
+    dates = _date_range(ordered)
+    return {
+        "totalRows": len(ordered),
+        "bzzoiroValidN": n_a,
+        "bzzoiroAbsentN": stats_b["n"],
+        "dateRange": dates,
+        "leakagePolicy": (
+            "Metrics read fields stored at prediction time "
+            "(result, projectedValue, line, actualValue). "
+            "No post-hoc recomputation of projections is performed."
+        ),
+        "observationalCaveat": (
+            "This is an observational group comparison, not a controlled experiment. "
+            "Picks receiving Bzzoiro enrichment may systematically differ from those "
+            "that do not (e.g. top-league coverage bias). Treat verdict as an indicator."
+        ),
+        "bzzoiroValid": stats_a,
+        "bzzoiroAbsent": stats_b,
+        "criteria": criteria,
+        "promotionDecision": {
+            "verdict": verdict,
+            "summary": summary,
+            "issues": issues,
+            "passed": passed,
+            "criteria": criteria,
+            "promotionEnvVar": "BZZOIRO_POSITION_LIVE",
+            "promotionValues": {
+                "shadow": "position_supplement_explanation_only",
+                "live": "position_supplement_also_overrides_generic_api_football_labels",
+            },
+            "promotionCommand": (
+                "Set BZZOIRO_POSITION_LIVE=live in the backend environment, "
+                "then redeploy."
+            ),
+            "note": (
+                "GO = all criteria pass with sufficient data; "
+                "CAUTION = mixed or insufficient evidence; "
+                "NO_GO = one or more criteria fail"
+            ),
+        },
+    }
+
+
 def _walk_forward_projection(ordered: list[dict]) -> dict:
     errors: list[float] = []
     for row in ordered:

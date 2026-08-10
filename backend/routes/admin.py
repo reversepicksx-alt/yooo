@@ -9,7 +9,12 @@ from config import (
 )
 from models import AdminSettingsRequest, AdminTestKeyRequest, ListGrantsRequest
 from pass_projection_calibration import walk_forward_validate
-from model_metrics import build_scorecard, walk_forward_replay, validate_weighted_opponent_evidence
+from model_metrics import (
+    build_scorecard,
+    walk_forward_replay,
+    validate_weighted_opponent_evidence,
+    validate_bzzoiro_position_replay,
+)
 from routes.stripe_pay import checkout_idempotency_key, find_open_stripe_subscriptions
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -1343,6 +1348,190 @@ async def admin_opponent_evidence_replay(req: OpponentEvidenceReplayRequest):
         "success": True,
         "n": n_eligible,
         "sport": sport_filter,
+        "generatedAt": generated_at,
+        "observations": observations,
+        "validation": validation,
+    }
+
+
+# ── Bzzoiro Position Replay ──────────────────────────────────────────────────
+
+class BzzoiroPositionReplayRequest(BaseModel):
+    email: str
+    token: str
+    limit: int = 20000   # server-enforced between 1 and 50 000
+
+    model_config = {"extra": "forbid"}
+
+    def model_post_init(self, __context: object) -> None:  # type: ignore[override]
+        if self.limit < 1:
+            object.__setattr__(self, "limit", 1)
+        elif self.limit > 50_000:
+            object.__setattr__(self, "limit", 50_000)
+
+
+@router.post("/bzzoiro-position-replay")
+async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
+    """Observational replay comparing settled picks with valid Bzzoiro position
+    data against those without.
+
+    Fetches settled soccer picks and splits them into two groups:
+
+    • bzzoiro_valid  — picks where ``tacticalContext.bzzoiroEnrichment
+      .positionValidation.valid == True`` and the fixture date matched exactly.
+    • bzzoiro_absent — all other settled soccer picks (bzzoiro unavailable,
+      validation failed, or non-exact fixture match).
+
+    For each group the endpoint measures hit rate, directional projection
+    accuracy, and MAE versus actualValue. Promotion criteria determine whether
+    Bzzoiro position enrichment is safe to activate beyond shadow-only mode.
+
+    Because bzzoiro enrichment is gated to soccer, the query is soccer-only.
+
+    The replay result is persisted to the ``model_audit`` collection so the
+    promotion decision is auditable without re-running the endpoint.
+
+    Owner-only.
+    """
+    await verify_owner(req.email, req.token)
+
+    import datetime as _dt
+    generated_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    # Fetch all settled soccer picks; split into groups inside the validator.
+    query: dict = {
+        "status": "settled",
+        "result": {"$in": ["hit", "miss"]},
+        "settledAt": {"$ne": None},
+        "voidReason": {"$exists": False},
+        "sport": "soccer",
+    }
+    projection = {
+        "_id": 0,
+        "trackingId": 1,
+        "playerName": 1,
+        "sport": 1,
+        "propType": 1,
+        "line": 1,
+        "recommendation": 1,
+        "venue": 1,
+        "fixtureId": 1,
+        "fixtureDate": 1,
+        "matchDate": 1,
+        "playerId": 1,
+        "timestamp": 1,
+        "settledAt": 1,
+        "result": 1,
+        "actualValue": 1,
+        "projectedValue": 1,
+        "confidenceScore": 1,
+        "tacticalContext": 1,
+    }
+
+    cursor = db.picks.find(query, projection).sort("settledAt", 1).limit(req.limit)
+    rows = await cursor.to_list(length=req.limit)
+
+    if not rows:
+        result_payload = {
+            "success": True,
+            "n": 0,
+            "sport": "soccer",
+            "generatedAt": generated_at,
+            "message": (
+                "No eligible settled soccer picks found. "
+                "Picks must have status='settled' and result in ['hit', 'miss']."
+            ),
+            "validation": None,
+        }
+        await db.model_audit.insert_one({
+            "auditType": "bzzoiro_position_replay",
+            "sport": "soccer",
+            "generatedAt": generated_at,
+            "bzzoiroValidN": 0,
+            "bzzoiroAbsentN": 0,
+            "promotionVerdict": "CAUTION",
+            "result": None,
+        })
+        return result_payload
+
+    validation = validate_bzzoiro_position_replay(rows)
+
+    # Persist audit record.
+    audit_doc = {
+        "auditType": "bzzoiro_position_replay",
+        "sport": "soccer",
+        "generatedAt": generated_at,
+        "bzzoiroValidN": validation.get("bzzoiroValidN", 0),
+        "bzzoiroAbsentN": validation.get("bzzoiroAbsentN", 0),
+        "promotionVerdict": (
+            (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
+        ),
+        "bzzoiroHitRate": (
+            (validation.get("bzzoiroValid") or {}).get("hitRate")
+        ),
+        "baselineHitRate": (
+            (validation.get("bzzoiroAbsent") or {}).get("hitRate")
+        ),
+        "bzzoiroMAE": (
+            (validation.get("bzzoiroValid") or {}).get("projection", {}).get("mae")
+        ),
+        "baselineMAE": (
+            (validation.get("bzzoiroAbsent") or {}).get("projection", {}).get("mae")
+        ),
+        "result": validation,
+    }
+    try:
+        await db.model_audit.insert_one(audit_doc)
+    except Exception as _audit_err:
+        print(f"[BZZOIRO POSITION REPLAY] audit write failed: {_audit_err}")
+
+    verdict = (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
+    n_valid = validation.get("bzzoiroValidN", 0)
+    n_absent = validation.get("bzzoiroAbsentN", 0)
+    total = n_valid + n_absent
+
+    observations = []
+    observations.append(
+        f"ℹ️  {total} settled soccer picks analysed — "
+        f"{n_valid} with valid Bzzoiro position coverage, "
+        f"{n_absent} without."
+    )
+
+    hr_a = (validation.get("bzzoiroValid") or {}).get("hitRate")
+    hr_b = (validation.get("bzzoiroAbsent") or {}).get("hitRate")
+    if hr_a is not None and hr_b is not None:
+        gap = round(hr_a - hr_b, 1)
+        symbol = "✅" if gap >= 0 else ("⚠️" if gap >= -2 else "❌")
+        observations.append(
+            f"{symbol} Hit rate — Bzzoiro-valid: {hr_a}%, absent: {hr_b}% "
+            f"(gap: {gap:+.1f} pp)."
+        )
+    elif hr_a is not None:
+        observations.append(f"ℹ️  Bzzoiro-valid hit rate: {hr_a}% (no baseline to compare).")
+
+    mae_a = (validation.get("bzzoiroValid") or {}).get("projection", {}).get("mae")
+    mae_b = (validation.get("bzzoiroAbsent") or {}).get("projection", {}).get("mae")
+    if mae_a is not None and mae_b is not None:
+        symbol = "✅" if mae_a <= mae_b else "⚠️"
+        observations.append(
+            f"{symbol} Projection MAE — Bzzoiro-valid: {mae_a}, absent: {mae_b}."
+        )
+
+    verdict_emoji = {"GO": "✅", "CAUTION": "⚠️", "NO_GO": "❌"}.get(verdict, "ℹ️")
+    observations.append(
+        f"{verdict_emoji} Promotion verdict: {verdict} — "
+        + (validation.get("promotionDecision") or {}).get("summary", "")
+    )
+    observations.append(
+        "ℹ️  Observational caveat: picks receiving Bzzoiro coverage may differ "
+        "systematically from those that do not (e.g. top-league bias). "
+        "Treat verdict as an indicator, not a causal proof."
+    )
+
+    return {
+        "success": True,
+        "n": n_valid,
+        "sport": "soccer",
         "generatedAt": generated_at,
         "observations": observations,
         "validation": validation,
