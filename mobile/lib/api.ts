@@ -2014,6 +2014,7 @@ export interface ProjectionGroupMetrics extends ProjectionMetrics {
 export interface ModelScorecard {
   n: number;
   rawN?: number;
+  scoredN?: number;
   duplicateRowsRemoved?: number;
   resultCounts?: Record<string, number>;
   calibrationOnlyN?: number;

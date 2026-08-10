@@ -624,9 +624,34 @@ export default function AnalyticsDashboard({
                   <Text style={s.chartTitle}>REVERSEPICKS MODEL HEALTH</Text>
                   <Text style={s.chartSubtitle}>ALL USERS · SOCCER</Text>
                 </View>
-                <Text style={s.ownerHealthScope}>
-                  {ownerData.scope?.rawSettled ?? ownerData.overall.total} raw rows · {ownerData.overall.total} deduplicated settled events · {ownerData.overall.actionable ?? (ownerData.overall.hits + ownerData.overall.misses)} actionable
-                </Text>
+                {/* Deduplication pipeline — raw saves → unique events → scored */}
+                <View style={s.dedupRow}>
+                  <View style={s.dedupCell}>
+                    <Text style={s.dedupNum}>
+                      {ownerData.scorecard.rawN ?? ownerData.scope?.rawSettled ?? ownerData.overall.total}
+                    </Text>
+                    <Text style={s.dedupLabel}>RAW SAVES</Text>
+                  </View>
+                  <Text style={s.dedupArrow}>→</Text>
+                  <View style={s.dedupCell}>
+                    <Text style={[s.dedupNum, { color: Colors.primary }]}>
+                      {ownerData.scorecard.n}
+                    </Text>
+                    <Text style={s.dedupLabel}>UNIQUE EVENTS</Text>
+                  </View>
+                  <Text style={s.dedupArrow}>→</Text>
+                  <View style={s.dedupCell}>
+                    <Text style={[s.dedupNum, { color: Colors.success }]}>
+                      {ownerData.scorecard.scoredN ?? (ownerData.overall.hits + ownerData.overall.misses)}
+                    </Text>
+                    <Text style={s.dedupLabel}>SCORED HIT/MISS</Text>
+                  </View>
+                </View>
+                {(ownerData.scorecard.duplicateRowsRemoved ?? ownerData.scope?.duplicateRowsRemoved ?? 0) > 0 && (
+                  <Text style={s.dedupNote}>
+                    {ownerData.scorecard.duplicateRowsRemoved ?? ownerData.scope?.duplicateRowsRemoved} duplicate rows collapsed
+                  </Text>
+                )}
                 {ownerData.overall.passCalibration?.n ? (
                   <Text style={s.ownerHealthMeta}>
                     Legacy PASS metadata (audit only): {ownerData.overall.passCalibration.hits} avoided-direction hits · {ownerData.overall.passCalibration.misses} misses · {ownerData.overall.passCalibration.winPct}% directional accuracy
@@ -652,9 +677,6 @@ export default function AnalyticsDashboard({
                 </View>
                 <Text style={s.ownerHealthMetrics}>
                   Log loss {ownerData.scorecard.classification.finalConfidence.logLoss?.toFixed(3) ?? '—'} · Brier {ownerData.scorecard.classification.finalConfidence.brierScore?.toFixed(3) ?? '—'} · MAE {ownerData.scorecard.projection.overall.mae?.toFixed(2) ?? '—'} · RMSE {ownerData.scorecard.projection.overall.rmse?.toFixed(2) ?? '—'}
-                </Text>
-                <Text style={s.ownerHealthMeta}>
-                  Duplicate rows removed: {ownerData.scope?.duplicateRowsRemoved ?? ownerData.scorecard.duplicateRowsRemoved ?? 0} · Scorecard events: {ownerData.scorecard.n}
                 </Text>
                 {ownerData.walkForwardReplay?.byDirection && (
                   <Text style={s.ownerHealthMeta}>
@@ -765,6 +787,23 @@ const s = StyleSheet.create({
     borderColor: 'rgba(57,255,20,0.25)',
   },
   ownerHealthScope: { fontSize: 11, lineHeight: 16, color: Colors.textSecondary, marginBottom: 12 },
+  dedupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.12)',
+  },
+  dedupCell: { flex: 1, alignItems: 'center' },
+  dedupNum: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  dedupLabel: { fontSize: 8, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.5, marginTop: 2 },
+  dedupArrow: { fontSize: 14, color: Colors.textTertiary, marginHorizontal: 4 },
+  dedupNote: { fontSize: 10, color: Colors.textTertiary, marginBottom: 8, textAlign: 'center' },
   ownerHealthGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 11 },
   ownerHealthValue: { fontSize: 18, fontWeight: '800', color: Colors.primary },
   ownerHealthLabel: { fontSize: 8, fontWeight: '800', letterSpacing: 0.8, color: Colors.textTertiary, marginTop: 2 },
