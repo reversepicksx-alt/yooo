@@ -148,6 +148,7 @@
 - [Player cohort analysis language](player-cohort-analysis-language.md) — comparable player-event averages are matchup samples, not generic team “allowed” totals.
  - [Prediction latency boundaries](prediction-latency-boundaries.md) — keep verified fixture/player math synchronous; cache-first and independently bound optional historical, grounded, and shadow enrichment.
 - [Owner-only player media](owner-only-media-gating.md) — photos and team crests require server-side owner authorization and stay out of persisted prediction records.
+- [Player identity and context](player-identity-context.md) — verified player IDs are authoritative; fixture team context disambiguates cache media and prevents same-name history merges.
 - [Owner API status indicator](owner-api-status-indicator.md) — quota health is a compact owner-only header dot; regular users see no provider details.
 - [MLB next-game date boundary](mlb-next-game-date-boundary.md) — reject cached or provider-returned games before today at both API and mobile boundaries.
 - [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.

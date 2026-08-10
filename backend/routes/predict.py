@@ -140,17 +140,24 @@ async def _attach_owner_prediction_media(prediction: dict, requester_email: str)
     """Attach cached player/team media to the owner response only."""
     try:
         from config import OWNER_EMAILS
+        from owner_media import select_player_photo
         if (requester_email or "").lower().strip() not in OWNER_EMAILS:
             return
         player_id = prediction.get("playerId") or (prediction.get("player") or {}).get("id")
         team_id = prediction.get("fixtureTeamId") or prediction.get("teamId")
         opponent_id = prediction.get("fixtureOpponentId") or prediction.get("opponentId")
         if player_id:
-            player = await db["cache_players"].find_one(
-                {"playerId": player_id}, {"_id": 0, "photo": 1}
+            player_rows = await db["cache_players"].find(
+                {"playerId": player_id},
+                {"_id": 0, "playerId": 1, "teamId": 1, "photo": 1, "_cachedAt": 1},
+            ).to_list(50)
+            photo = select_player_photo(
+                player_rows,
+                player_id=player_id,
+                team_id=team_id,
             )
-            if player and player.get("photo"):
-                prediction["ownerPlayerPhoto"] = player["photo"]
+            if photo:
+                prediction["ownerPlayerPhoto"] = photo
         team_ids = [tid for tid in (team_id, opponent_id) if tid]
         if team_ids:
             logos = {}

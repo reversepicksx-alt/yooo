@@ -1402,6 +1402,7 @@ export interface Pick {
   id?: string;
   pickId?: string;
   playerName: string;
+  playerId?: number;
   teamName?: string;
   opponentName?: string;
   propType: string;
@@ -1550,6 +1551,11 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     _id: (p.pickId as string) || (p._id as string),
     id: (p.pickId as string) || (p.id as string),
     playerName: (p.playerName as string) || '',
+    playerId: (() => {
+      const value = p.playerId;
+      const numeric = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+    })(),
     teamName: p.teamName as string,
     opponentName: p.opponentName as string,
     propType: (p.propType as string) || '',

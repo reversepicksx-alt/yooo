@@ -16,6 +16,7 @@ interface PlayerProfileCardProps {
   visible: boolean;
   onClose: () => void;
   playerName: string;
+  playerId?: number;
   picks: Pick[];
 }
 
@@ -217,6 +218,7 @@ export default function PlayerProfileCard({
   visible,
   onClose,
   playerName,
+  playerId,
   picks,
 }: PlayerProfileCardProps) {
   const [advancedStats, setAdvancedStats] = React.useState<Awaited<ReturnType<typeof getPlayerAdvancedStats>> | null>(null);
@@ -234,7 +236,22 @@ export default function PlayerProfileCard({
     propBreakdown,
     overUnder,
   } = useMemo(() => {
-    const pPicks = picks.filter((p) => p.playerName?.trim().toLowerCase() === playerName.trim().toLowerCase());
+    const nameMatches = picks.filter(
+      (p) => p.playerName?.trim().toLowerCase() === playerName.trim().toLowerCase(),
+    );
+    // A verified player ID is authoritative. Name-only history is retained
+    // for legacy rows, but never merges two identified players sharing a
+    // display name (for example multiple players named "Reinaldo").
+    const pPicks = playerId
+      ? nameMatches.filter((p) => !p.playerId || p.playerId === playerId)
+      : (() => {
+          const identifiedIds = new Set(
+            nameMatches
+              .map((p) => p.playerId)
+              .filter((id): id is number => typeof id === 'number' && id > 0),
+          );
+          return identifiedIds.size <= 1 ? nameMatches : nameMatches.filter((p) => !p.playerId);
+        })();
 
     const settled = pPicks.filter(
       (p) => isHit(p.result) || isMiss(p.result) || isPush(p.result) || isDnp(p.result)
@@ -320,19 +337,26 @@ export default function PlayerProfileCard({
       propBreakdown: propsList,
       overUnder,
     };
-  }, [picks, playerName]);
+  }, [picks, playerName, playerId]);
 
   // Fetch advanced stats whenever the active player has a known ID
   React.useEffect(() => {
     let cancelled = false;
     setStatsLoading(true);
-    const playerId = (picks.find((p) => p.playerName?.trim().toLowerCase() === playerName.trim().toLowerCase()) as Pick & { playerId?: number } | undefined)?.playerId;
-    if (!playerId) {
+    const nameMatches = picks.filter(
+      (p) => p.playerName?.trim().toLowerCase() === playerName.trim().toLowerCase(),
+    );
+    const resolvedPlayerId = playerId || (
+      new Set(nameMatches.map((p) => p.playerId).filter((id): id is number => typeof id === 'number' && id > 0)).size === 1
+        ? nameMatches.find((p) => p.playerId)?.playerId
+        : undefined
+    );
+    if (!resolvedPlayerId) {
       setAdvancedStats(null);
       setStatsLoading(false);
       return;
     }
-    getPlayerAdvancedStats(playerId)
+    getPlayerAdvancedStats(resolvedPlayerId)
       .then((stats) => {
         if (!cancelled) setAdvancedStats(stats);
       })
@@ -343,7 +367,7 @@ export default function PlayerProfileCard({
         if (!cancelled) setStatsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [picks, playerName]);
+  }, [picks, playerName, playerId]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>

@@ -145,6 +145,21 @@ def test_settle_result_over_miss():
     assert _settle_pick_result(3, 4.5, {"recommendation": "over"}) == ("miss", None)
 
 
+def test_reinaldo_saved_identity_case_remains_a_hit():
+    # Identity/media enrichment must not alter the canonical saved line or
+    # settlement result for the reported Mirassol pick.
+    assert _settle_pick_result(
+        21,
+        34.5,
+        {
+            "recommendation": "under",
+            "playerId": 9946,
+            "teamId": 7848,
+            "playerName": "Reinaldo Manoel da Silva",
+        },
+    ) == ("hit", None)
+
+
 def test_settle_result_push_exact_line():
     assert _settle_pick_result(5, 5.0, {"recommendation": "over"}) == ("push", None)
     assert _settle_pick_result(5, 5.0, {"recommendation": "under"}) == ("push", None)

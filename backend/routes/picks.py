@@ -783,16 +783,16 @@ async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
     opponent_ids = {p.get("opponentId") for p in picks if p.get("opponentId")}
     opponent_names = {p.get("opponentName") for p in picks if p.get("opponentName")}
 
-    player_map: dict[int, str] = {}
+    player_rows: list[dict] = []
     team_map: dict[int, str] = {}
     opp_map: dict[str, str] = {}
 
     if player_ids:
         async for doc in db["cache_players"].find(
             {"playerId": {"$in": list(player_ids)}},
-            {"_id": 0, "playerId": 1, "photo": 1},
+            {"_id": 0, "playerId": 1, "teamId": 1, "photo": 1, "_cachedAt": 1},
         ):
-            player_map.setdefault(doc.get("playerId"), doc.get("photo", "") or "")
+            player_rows.append(doc)
 
     if team_ids:
         async for doc in db["cache_teams"].find(
@@ -825,8 +825,18 @@ async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
             ):
                 opp_map.setdefault(doc.get("nameLower", "").lower(), doc.get("logo", "") or "")
 
+    from owner_media import select_player_photo
+    player_map: dict[int, str] = {}
     for p in picks:
-        p["ownerPlayerPhoto"] = player_map.get(p.get("playerId"), "")
+        pid = p.get("playerId")
+        photo = select_player_photo(
+            player_rows,
+            player_id=pid,
+            team_id=p.get("teamId") or p.get("fixtureTeamId"),
+        )
+        p["ownerPlayerPhoto"] = photo
+        if pid:
+            player_map[pid] = photo
         p["ownerTeamLogo"] = team_map.get(p.get("teamId"), "")
         p["ownerOpponentLogo"] = (
             team_map.get(p.get("opponentId"), "")
