@@ -363,6 +363,79 @@ def normalize_player_name(name: str) -> str:
     return name.lower()
 
 
+async def _resolve_saved_soccer_player_id(
+    player_id: object,
+    player_name: str,
+    team_id: object,
+) -> object:
+    """Keep a saved soccer pick's player ID aligned with its verified team.
+
+    Older clients could send a stale nested ``player.id`` after the player
+    selection had already been corrected.  Persisting that ID made settlement
+    values correct while owner media and history pointed at another player.
+    """
+    if not player_id or not team_id:
+        return player_id
+    try:
+        pid = int(player_id)
+        tid = int(team_id)
+    except (TypeError, ValueError):
+        return player_id
+
+    try:
+        exact = await db["cache_players"].find_one(
+            {
+                "playerId": {"$in": [pid, str(pid)]},
+                "teamId": {"$in": [tid, str(tid)]},
+            },
+            {"_id": 0, "playerId": 1},
+        )
+        if exact and exact.get("playerId") not in (None, ""):
+            return int(exact["playerId"])
+
+        rows = await db["cache_players"].find(
+            {"teamId": {"$in": [tid, str(tid)]}},
+            {"_id": 0, "playerId": 1, "name": 1, "nameLower": 1},
+        ).to_list(100)
+        query = normalize_player_name(player_name)
+        query_tokens = set(query.split())
+        if not query_tokens:
+            return player_id
+
+        scored: list[tuple[int, int]] = []
+        for row in rows:
+            candidate_id = row.get("playerId")
+            candidate_name = normalize_player_name(
+                row.get("name") or row.get("nameLower") or ""
+            )
+            if not candidate_id or not candidate_name:
+                continue
+            candidate_tokens = set(candidate_name.split())
+            overlap = len(query_tokens & candidate_tokens)
+            first_name_match = bool(
+                query.split() and candidate_name.split()
+                and query.split()[0] == candidate_name.split()[0]
+            )
+            score = (100 if candidate_name == query else 0) + overlap * 10
+            if first_name_match:
+                score += 20
+            if score:
+                scored.append((score, int(candidate_id)))
+
+        scored.sort(reverse=True)
+        if scored and (len(scored) == 1 or scored[0][0] > scored[1][0]):
+            resolved_id = scored[0][1]
+            print(
+                f"[SAVE ID REPAIR] {player_name!r}: "
+                f"playerId={pid} does not belong to teamId={tid}; "
+                f"resolved playerId={resolved_id}"
+            )
+            return resolved_id
+    except Exception as exc:
+        print(f"[SAVE ID CHECK] skipped for {player_name!r}: {exc}")
+    return player_id
+
+
 @router.post("/picks/save")
 async def save_pick(req: SavePickRequest):
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
@@ -406,13 +479,20 @@ async def save_pick(req: SavePickRequest):
             int(_save_team_id or 0),
             int(_save_opp_id or 0),
         )
+        _saved_player_id = await _resolve_saved_soccer_player_id(
+            pick.get("player", {}).get("id") or pick.get("playerId"),
+            pick.get("player", {}).get("name") or pick.get("playerName", ""),
+            _save_team_id,
+        )
+    else:
+        _saved_player_id = pick.get("player", {}).get("id") or pick.get("playerId")
 
     doc = {
         "pickId": pick_id,
         "trackingId": tracking_id,
         "email": req.email.lower(),
         "sport": sport,
-        "playerId": pick.get("player", {}).get("id"),
+        "playerId": _saved_player_id,
         "playerName": pick.get("player", {}).get("name") or pick.get("playerName", ""),
         "playerNameKey": normalize_player_name(
             pick.get("player", {}).get("name") or pick.get("playerName", "")
