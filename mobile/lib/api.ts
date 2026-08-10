@@ -426,6 +426,15 @@ export interface PredictionResult {
   historySeasons?: number[];
   historyRange?: { min: number; max: number };
   confidenceInterval?: [number, number];
+  distribution?: {
+    mostLikelyValue?: number;
+    range60?: [number, number];
+    range80?: [number, number];
+    distributionType?: string;
+  };
+  mostLikelyValue?: number;
+  range60?: [number, number];
+  range80?: [number, number];
   priorMean?: number;
   priorWeight?: number;
   momentumWeight?: number;
@@ -815,6 +824,10 @@ interface RawPrediction {
   possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
   possessionSource?: string | null;
   confidenceInterval?: [number, number];
+  distribution?: PredictionResult['distribution'];
+  mostLikelyValue?: number;
+  range60?: [number, number];
+  range80?: [number, number];
   playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   reasoning?: string;
   tacticalBreakdown?: string;
@@ -1231,6 +1244,10 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     reasoning: raw.reasoning || undefined,
     confidenceLevel: raw.confidenceLevel,
     confidenceInterval: raw.confidenceInterval,
+    distribution: (raw as any).distribution ?? (bm as any).distribution,
+    mostLikelyValue: (raw as any).mostLikelyValue ?? (bm as any).mostLikelyValue,
+    range60: (raw as any).range60 ?? (bm as any).range60,
+    range80: (raw as any).range80 ?? (bm as any).range80,
     bayesianProjection: bm.posteriorMean,
     edgeScore: bm.edgeZ,
     priorMean: bm.priorMean,
@@ -1423,6 +1440,28 @@ export interface Pick {
   currentValue?: number | null;
   pace?: number | null;
   hitPct?: number | null;
+  liveGaussian?: {
+    available?: boolean;
+    model?: string;
+    elapsed?: number;
+    currentValue?: number;
+    remainingMinutes?: number;
+    preMatchMean?: number;
+    preMatchStd?: number;
+    observedRate?: number;
+    adjustedRate?: number;
+    drift?: string;
+    driftRatio?: number;
+    uncertainty?: string;
+    projectedValue?: number;
+    remainingProjection?: number;
+    std?: number;
+    pOver?: number;
+    pUnder?: number;
+    recommendationProbability?: number;
+    range60?: [number, number];
+    range80?: [number, number];
+  } | null;
   paceMismatch?: boolean | null;
   paceWarning?: string | null;
   elapsed?: number | null;
@@ -1536,6 +1575,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     currentValue: (p.currentValue as number) ?? null,
     pace: (p.pace as number) ?? null,
     hitPct: (p.hitPct as number) ?? null,
+    liveGaussian: (p.liveGaussian as Pick['liveGaussian']) || null,
     paceMismatch: (p.paceMismatch as boolean) ?? null,
     paceWarning: (p.paceWarning as string) ?? null,
     elapsed: (p.elapsed as number) ?? null,

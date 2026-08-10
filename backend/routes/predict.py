@@ -4594,7 +4594,7 @@ async def predict(req: PredictionRequest):
         _opp_tier_filter_dropped: int = 0
         _opp_tier_filter_kept_tiers: list = []
         try:
-            from bayesian_engine import compute_bayesian_projection
+            from bayesian_engine import compute_bayesian_projection, gaussian_likelihood_update
             if req.sport == "soccer" and req.propType in {"pass_attempts", "passes"}:
                 try:
                     from pressure_response import classify_pressure_response
@@ -7753,6 +7753,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         if real_bayes:
             prediction["bayesianMetrics"] = real_bayes
             prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
+            prediction["distribution"] = real_bayes.get("distribution") or {}
+            prediction["mostLikelyValue"] = real_bayes.get("mostLikelyValue")
+            prediction["range60"] = real_bayes.get("range60")
+            prediction["range80"] = real_bayes.get("range80")
 
         # Expose the key engine inputs the UI needs to show "Model Factors"
         prediction["matchFactors"] = {
@@ -8186,6 +8190,51 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     real_bayes["opponentAllowedSamples"] = _opp_allowed_n
                     real_bayes["opponentAllowedWeight"]  = round(_opp_weight * 100)
                     real_bayes["posteriorMean"] = bayesian_posterior
+                    # Explicit Layer 2: turn the exact same-position opponent
+                    # evidence into a Gaussian likelihood update.  The
+                    # likelihood standard deviation is chosen to preserve the
+                    # established evidence-weight cap, while making the
+                    # calculation auditable as prior × likelihood rather than
+                    # an unexplained arithmetic blend.
+                    try:
+                        _layer1_std = max(
+                            float(real_bayes.get("posteriorStd") or 0),
+                            float(real_bayes.get("priorStd") or 0),
+                            abs(float(_old_bp)) * 0.05,
+                            0.1,
+                        )
+                        _layer2_weight = max(0.01, min(0.30, float(_opp_weight)))
+                        _layer2_std = _layer1_std * math.sqrt(
+                            (1.0 - _layer2_weight) / _layer2_weight
+                        )
+                        real_bayes["threeLayerModel"] = {
+                            "version": "three-layer-gaussian-v1",
+                            "layer1": {
+                                "name": "player_baseline",
+                                "mean": round(float(_old_bp), 1),
+                                "std": round(_layer1_std, 2),
+                                "source": "player_history_and_role_baseline",
+                            },
+                            "layer2": {
+                                **gaussian_likelihood_update(
+                                    prior_mean=_old_bp,
+                                    prior_std=_layer1_std,
+                                    likelihood_mean=_opp_allowed_avg,
+                                    likelihood_std=_layer2_std,
+                                ),
+                                "name": "opponent_same_position_likelihood",
+                                "sampleSize": _opp_allowed_n,
+                                "weightPct": round(_layer2_weight * 100, 1),
+                                "source": "exact_opponent_same_position_same_venue",
+                            },
+                            "layer3": {
+                                "name": "live_gaussian_remaining_total",
+                                "status": "available_when_match_is_live",
+                                "source": "saved_pre_match_distribution_plus_observed_drift",
+                            },
+                        }
+                    except (TypeError, ValueError, ZeroDivisionError) as _layer_err:
+                        print(f"[3-LAYER] opponent likelihood metadata failed: {_layer_err}")
                     if abs(bayesian_posterior - _old_bp) >= 0.2:
                         _dir = "▲" if bayesian_posterior > _old_bp else "▼"
                         print(
@@ -8195,6 +8244,29 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             f"{_dir} {_old_bp:.1f} → {bayesian_posterior:.1f}"
                         )
             # ─────────────────────────────────────────────────────────────────────
+
+            # Keep an explicit three-layer packet even when the opponent cohort
+            # is unavailable. Missing evidence is unavailable, never fabricated.
+            if real_bayes and not real_bayes.get("threeLayerModel"):
+                real_bayes["threeLayerModel"] = {
+                    "version": "three-layer-gaussian-v1",
+                    "layer1": {
+                        "name": "player_baseline",
+                        "mean": real_bayes.get("posteriorMean"),
+                        "std": real_bayes.get("posteriorStd"),
+                        "source": "player_history_and_role_baseline",
+                    },
+                    "layer2": {
+                        "name": "opponent_same_position_likelihood",
+                        "status": "unavailable",
+                        "reason": "No verified exact-position opponent cohort",
+                    },
+                    "layer3": {
+                        "name": "live_gaussian_remaining_total",
+                        "status": "available_when_match_is_live",
+                        "source": "saved_pre_match_distribution_plus_observed_drift",
+                    },
+                }
 
             # ─── SITUATIONAL MULTIPLIER — applied BEFORE final number is locked ───
             # When game state demands different output than seasonal avg, scale the projection.
@@ -11546,6 +11618,46 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         _final_bm["recommendation"] = _final_rec
                 except (TypeError, ValueError, ZeroDivisionError):
                     pass
+
+            # Keep the distribution packet aligned with the final displayed
+            # projection after every late guard/calibration stage. Preserve
+            # the model's original band widths (important for count props)
+            # and translate the bands to the final mean rather than exposing
+            # stale bands around an earlier Bayesian snapshot.
+            try:
+                _old_r60 = _final_bm.get("range60")
+                _old_r80 = _final_bm.get("range80") or _final_bm.get("confidenceInterval")
+                def _translated_band(_old_band, _fallback_z):
+                    if isinstance(_old_band, (list, tuple)) and len(_old_band) >= 2:
+                        _lo, _hi = float(_old_band[0]), float(_old_band[1])
+                        _center = (_lo + _hi) / 2.0
+                        return [
+                            round(max(0.0, _final_pv_num + _lo - _center), 1),
+                            round(max(0.0, _final_pv_num + _hi - _center), 1),
+                        ]
+                    return [
+                        round(max(0.0, _final_pv_num - _fallback_z * _final_std), 1),
+                        round(max(0.0, _final_pv_num + _fallback_z * _final_std), 1),
+                    ]
+                _final_r60 = _translated_band(_old_r60, 0.841621)
+                _final_r80 = _translated_band(_old_r80, 1.281552)
+                _final_bm["mostLikelyValue"] = round(_final_pv_num, 1)
+                _final_bm["range60"] = _final_r60
+                _final_bm["range80"] = _final_r80
+                _final_bm["confidenceInterval"] = _final_r80
+                _final_bm.setdefault("distribution", {})
+                _final_bm["distribution"].update({
+                    "mostLikelyValue": round(_final_pv_num, 1),
+                    "range60": _final_r60,
+                    "range80": _final_r80,
+                })
+                prediction["mostLikelyValue"] = round(_final_pv_num, 1)
+                prediction["range60"] = _final_r60
+                prediction["range80"] = _final_r80
+                prediction["confidenceInterval"] = _final_r80
+                prediction["distribution"] = _final_bm["distribution"]
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
 
             # Reassert the display invariant after every late projection stage.
             # PASS is an intentional suppression state; OVER/UNDER must agree

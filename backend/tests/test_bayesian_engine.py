@@ -7,7 +7,64 @@ import sys
 sys.path.insert(0, '/app/backend')
 
 import pytest
-from bayesian_engine import compute_bayesian_projection
+from bayesian_engine import (
+    compute_bayesian_projection,
+    compute_live_gaussian_update,
+    gaussian_likelihood_update,
+)
+
+
+class TestThreeLayerDistribution:
+    """The elite model contract: baseline, matchup likelihood, live update."""
+
+    def test_prediction_exposes_60_and_80_percent_bands(self):
+        result = compute_bayesian_projection(
+            [{'targetStat': v, 'venue': 'home'} for v in [18, 21, 24, 27, 30, 22, 25, 29, 20, 26]],
+            'pass_attempts',
+            24.5,
+            'home',
+        )
+        assert result['range60'][0] <= result['range60'][1]
+        assert result['range80'][0] <= result['range80'][1]
+        assert result['range80'][0] <= result['range60'][0]
+        assert result['range60'][1] <= result['range80'][1]
+        assert result['confidenceInterval'] == result['range80']
+        assert result['distribution']['distributionType'] == 'gaussian'
+
+    def test_count_props_use_discrete_distribution_metadata(self):
+        result = compute_bayesian_projection(
+            [{'targetStat': v, 'venue': 'home'} for v in [0, 1, 2, 1, 0, 2, 1, 1, 3, 0]],
+            'shots',
+            1.5,
+            'home',
+        )
+        assert result['distribution']['distributionType'] == 'negative_binomial'
+        assert isinstance(result['mostLikelyValue'], (int, float))
+        assert len(result['range60']) == 2
+        assert len(result['range80']) == 2
+
+    def test_opponent_likelihood_is_sample_shrunk(self):
+        result = gaussian_likelihood_update(60, 12, 40, 24)
+        assert result['available'] is True
+        assert result['posteriorMean'] < 60
+        assert result['posteriorMean'] > 40
+        assert result['priorWeight'] > result['likelihoodWeight']
+        assert result['method'] == 'gaussian_precision_update'
+
+    def test_live_update_keeps_prematch_mean_and_adds_remaining_total(self):
+        result = compute_live_gaussian_update(60, 12, 55.5, 'over', 35, 45)
+        assert result['available'] is True
+        assert result['model'] == 'live_gaussian_remaining_total_v1'
+        assert result['preMatchMean'] == 60
+        assert result['currentValue'] == 35
+        assert result['remainingMinutes'] == 45
+        assert result['projectedValue'] > result['currentValue']
+        assert 0 <= result['recommendationProbability'] <= 100
+        assert result['range60'][0] <= result['range60'][1]
+        assert result['range80'][0] <= result['range80'][1]
+
+    def test_live_update_missing_or_zero_elapsed_is_unavailable(self):
+        assert compute_live_gaussian_update(60, 12, 55.5, 'under', 0, 0)['available'] is False
 
 
 class TestBayesianWeightCapping:

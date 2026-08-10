@@ -13,4 +13,4 @@ The pre-match Gaussian probability engine exists, but live `hitPct` must not be 
 
 **Why:** Confusing these structures led to overstating or understating the importance of the original Bayesian design and risks presenting heuristic live pace as mathematically equivalent to a Gaussian update.
 
-**How to apply:** Keep saved pre-match probability immutable; expose a separate live probability, remaining projection/range, and drift status. Validate the live updater in shadow mode before replacing the current pace heuristic.
+**How to apply:** Keep saved pre-match probability immutable; expose a separate live probability, remaining projection/range, and drift status. Validate the live updater in shadow mode before replacing the current pace heuristic. If late safeguards move the displayed pre-match mean, translate the stored 60%/80% bands to that final mean and return them through saved analysis too, so the ledger cannot show stale intervals.

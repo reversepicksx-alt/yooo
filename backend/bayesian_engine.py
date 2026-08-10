@@ -136,11 +136,12 @@ def _monte_carlo_probability(
       eff_std = sqrt(std² + (mean × frac)²)   [Gaussian]
       eff_var = var × (1 + frac)²              [NegBin]
 
-    Returns: (p_over, p_under, ci_low_80, ci_high_80)
+    Returns: (p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80, mode)
     """
     if std <= 0 or mean <= 0:
         p = 1.0 if mean > line else 0.0
-        return p, 1.0 - p, round(mean, 1), round(mean, 1)
+        value = round(mean, 1)
+        return p, 1.0 - p, value, value, value, value, value
 
     if is_count_stat:
         var = variance if variance and variance > 0 else std ** 2
@@ -162,10 +163,152 @@ def _monte_carlo_probability(
 
     # CI uses the original line for display accuracy
     sorted_s = sorted(samples)
-    ci_low  = round(sorted_s[int(0.10 * n_sims)], 1)   # 10th percentile
-    ci_high = round(sorted_s[int(0.90 * n_sims)], 1)   # 90th percentile
+    ci_low_60  = round(sorted_s[int(0.20 * n_sims)], 1)  # 20th percentile
+    ci_high_60 = round(sorted_s[int(0.80 * n_sims)], 1)  # 80th percentile
+    ci_low_80  = round(sorted_s[int(0.10 * n_sims)], 1)  # 10th percentile
+    ci_high_80 = round(sorted_s[int(0.90 * n_sims)], 1)  # 90th percentile
 
-    return p_over, p_under, ci_low, ci_high
+    # For continuous stats the mean is also the mode.  For discrete props,
+    # return the most frequently sampled integer so the UI can distinguish
+    # "expected value" from "most likely landing value".
+    if is_count_stat:
+        counts = {}
+        for sample in samples:
+            counts[sample] = counts.get(sample, 0) + 1
+        mode = max(counts, key=counts.get) if counts else round(mean, 1)
+    else:
+        mode = round(mean, 1)
+
+    return p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80, mode
+
+
+def compute_live_gaussian_update(
+    pre_match_mean: float,
+    pre_match_std: float,
+    line: float,
+    recommendation: str,
+    current_value: float,
+    elapsed: float,
+    total_minutes: float = 90.0,
+) -> dict:
+    """Update the saved pre-match distribution with observed match progress.
+
+    This is deliberately separate from the saved projection.  The prior
+    distribution remains immutable; observed pace only changes the expected
+    *remaining* output.  Early observations are shrunk toward the pre-match
+    rate to avoid treating one or two events as a new player identity.
+    """
+    try:
+        mean = max(0.0, float(pre_match_mean))
+        std = max(0.01, float(pre_match_std))
+        line = float(line)
+        current = max(0.0, float(current_value))
+        elapsed = max(0.0, min(float(total_minutes), float(elapsed)))
+        total = max(1.0, float(total_minutes))
+    except (TypeError, ValueError):
+        return {"available": False, "reason": "invalid live inputs"}
+
+    if elapsed <= 0:
+        return {"available": False, "reason": "match has not started"}
+
+    expected_rate = mean / total
+    observed_rate = current / elapsed
+    # Bayesian-style rate shrinkage: observed evidence earns weight gradually.
+    # Fifteen minutes is the prior-equivalent observation count for this live
+    # update, so a 5' burst cannot swing the full-match distribution.
+    evidence_weight = elapsed / (elapsed + 15.0)
+    adjusted_rate = expected_rate * (1.0 - evidence_weight) + observed_rate * evidence_weight
+    remaining = max(0.0, total - elapsed)
+    live_mean = current + adjusted_rate * remaining
+
+    # Remaining uncertainty tightens with time, but never collapses to zero
+    # before FT. A small floor represents unobserved match-state variance.
+    remaining_fraction = remaining / total
+    live_std = max(0.20 if mean < 5 else mean * 0.035, std * math.sqrt(max(remaining_fraction, 0.02)))
+    z = (line - live_mean) / live_std
+    p_under = _normal_cdf(z)
+    p_over = 1.0 - p_under
+
+    drift_ratio = observed_rate / expected_rate if expected_rate > 0 else 1.0
+    if drift_ratio >= 1.15:
+        drift = "accelerating"
+    elif drift_ratio <= 0.85:
+        drift = "falling behind"
+    else:
+        drift = "stable"
+
+    return {
+        "available": True,
+        "model": "live_gaussian_remaining_total_v1",
+        "elapsed": round(elapsed, 1),
+        "currentValue": round(current, 1),
+        "remainingMinutes": round(remaining, 1),
+        "preMatchMean": round(mean, 1),
+        "preMatchStd": round(std, 2),
+        "observedRate": round(observed_rate * total, 2),
+        "adjustedRate": round(adjusted_rate * total, 2),
+        "drift": drift,
+        "driftRatio": round(drift_ratio, 3),
+        "uncertainty": "low" if live_std <= std * 0.60 else "moderate" if live_std <= std * 0.90 else "high",
+        "projectedValue": round(live_mean, 1),
+        "remainingProjection": round(max(0.0, live_mean - current), 1),
+        "std": round(live_std, 2),
+        "pOver": round(p_over * 100.0, 1),
+        "pUnder": round(p_under * 100.0, 1),
+        "recommendationProbability": round(
+            (p_over if str(recommendation or "").lower() == "over" else p_under) * 100.0,
+            1,
+        ),
+        "range60": [
+            round(max(0.0, live_mean - 0.841621 * live_std), 1),
+            round(max(0.0, live_mean + 0.841621 * live_std), 1),
+        ],
+        "range80": [
+            round(max(0.0, live_mean - 1.281552 * live_std), 1),
+            round(max(0.0, live_mean + 1.281552 * live_std), 1),
+        ],
+    }
+
+
+def gaussian_likelihood_update(
+    prior_mean: float,
+    prior_std: float,
+    likelihood_mean: float,
+    likelihood_std: float,
+) -> dict:
+    """Combine a player baseline and matchup likelihood with Gaussian precision.
+
+    This is the explicit second layer of the product's three-layer model.
+    The returned posterior is pre-live: live observations must be applied by
+    ``compute_live_gaussian_update`` and must never mutate this saved result.
+    """
+    try:
+        pm = float(prior_mean)
+        ps = max(0.01, float(prior_std))
+        lm = float(likelihood_mean)
+        ls = max(0.01, float(likelihood_std))
+    except (TypeError, ValueError):
+        return {"available": False, "reason": "invalid likelihood inputs"}
+
+    prior_precision = 1.0 / (ps * ps)
+    likelihood_precision = 1.0 / (ls * ls)
+    total_precision = prior_precision + likelihood_precision
+    posterior_mean = (
+        prior_precision * pm + likelihood_precision * lm
+    ) / total_precision
+    posterior_std = math.sqrt(1.0 / total_precision)
+    return {
+        "available": True,
+        "priorMean": round(pm, 1),
+        "priorStd": round(ps, 2),
+        "likelihoodMean": round(lm, 1),
+        "likelihoodStd": round(ls, 2),
+        "priorWeight": round(prior_precision / total_precision * 100, 1),
+        "likelihoodWeight": round(likelihood_precision / total_precision * 100, 1),
+        "posteriorMean": round(posterior_mean, 1),
+        "posteriorStd": round(posterior_std, 2),
+        "method": "gaussian_precision_update",
+    }
 
 
 def compute_bayesian_projection(
@@ -2091,7 +2234,12 @@ def compute_bayesian_projection(
     # Count stats (shots, goals, saves etc.) use the negative binomial
     # distribution via gamma-Poisson mixture — naturally discrete and right-skewed.
     # Continuous stats (pass_attempts) use Gaussian.
-    p_over, p_under, ci_low, ci_high = _monte_carlo_probability(
+    (
+        p_over, p_under,
+        ci_low_60, ci_high_60,
+        ci_low_80, ci_high_80,
+        most_likely_value,
+    ) = _monte_carlo_probability(
         mean=_posterior_mean_raw,
         std=_effective_std_raw,
         line=line,
@@ -2154,7 +2302,16 @@ def compute_bayesian_projection(
         "recommendation": _rec_by_prob,
         "pOver": round(p_over * 100, 1),
         "pUnder": round(p_under * 100, 1),
-        "confidenceInterval": [ci_low, ci_high],
+        "confidenceInterval": [ci_low_80, ci_high_80],
+        "distribution": {
+            "mostLikelyValue": most_likely_value,
+            "range60": [ci_low_60, ci_high_60],
+            "range80": [ci_low_80, ci_high_80],
+            "distributionType": "negative_binomial" if is_count_stat else "gaussian",
+        },
+        "mostLikelyValue": most_likely_value,
+        "range60": [ci_low_60, ci_high_60],
+        "range80": [ci_low_80, ci_high_80],
         "edgeZ": edge_z,
 
         # 3 Layers (for transparency) — also in raw units
@@ -2281,6 +2438,15 @@ def _build_club_prior(player_stats: dict, prop_type: str, line: float, expected_
         "pOver": 50.0,
         "pUnder": 50.0,
         "confidenceInterval": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
+        "distribution": {
+            "mostLikelyValue": _prior_mean,
+            "range60": [max(0, _prior_mean - _prior_std * 0.84), _prior_mean + _prior_std * 0.84],
+            "range80": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
+            "distributionType": "club_season_prior",
+        },
+        "mostLikelyValue": _prior_mean,
+        "range60": [max(0, _prior_mean - _prior_std * 0.84), _prior_mean + _prior_std * 0.84],
+        "range80": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
         "edgeZ": 0,
         "priorMean": _prior_mean,
         "priorStd": _prior_std,
@@ -2323,6 +2489,15 @@ def _empty_metrics(line: float) -> dict:
         "pOver": 50.0,
         "pUnder": 50.0,
         "confidenceInterval": [line, line],
+        "distribution": {
+            "mostLikelyValue": line,
+            "range60": [line, line],
+            "range80": [line, line],
+            "distributionType": "unavailable",
+        },
+        "mostLikelyValue": line,
+        "range60": [line, line],
+        "range80": [line, line],
         "edgeZ": 0,
         "priorMean": line,
         "priorStd": 0,

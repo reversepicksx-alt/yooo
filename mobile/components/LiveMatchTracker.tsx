@@ -87,6 +87,7 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
 
   const pace = pick.pace ?? 0;
   const hitPct = pick.hitPct ?? 0;
+  const liveGaussian = pick.liveGaussian;
 
   // Build timeline from real events + inferred match boundaries
   const timeline: LiveEvent[] = [];
@@ -231,7 +232,7 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
               />
             </View>
 
-            {(pace > 0 || hitPct > 0) && (
+            {(pace > 0 || hitPct > 0 || liveGaussian?.available) && (
               <View style={styles.paceRow}>
                 {pace > 0 && (
                   <View style={styles.paceItem}>
@@ -241,8 +242,16 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
                 )}
                 {hitPct > 0 && (
                   <View style={styles.paceItem}>
-                    <Text style={styles.paceLabel}>Live Hit %</Text>
+                    <Text style={styles.paceLabel}>Pace Est. %</Text>
                     <Text style={styles.paceValue}>{Math.round(hitPct)}%</Text>
+                  </View>
+                )}
+                {liveGaussian?.available && liveGaussian.recommendationProbability != null && (
+                  <View style={styles.paceItem}>
+                    <Text style={[styles.paceLabel, { color: Colors.primary }]}>Gaussian Live %</Text>
+                    <Text style={[styles.paceValue, { color: Colors.primary }]}>
+                      {Math.round(liveGaussian.recommendationProbability)}%
+                    </Text>
                   </View>
                 )}
                 {pick.paceMismatch && (
@@ -250,6 +259,24 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
                     <Ionicons name="warning" size={12} color={Colors.warning} />
                     <Text style={styles.paceWarningText}>{pick.paceWarning || 'Pace mismatch'}</Text>
                   </View>
+                )}
+              </View>
+            )}
+            {liveGaussian?.available && (
+              <View style={styles.gaussianLivePanel}>
+                <View style={styles.gaussianLiveHeader}>
+                  <Text style={styles.gaussianLiveTitle}>LIVE GAUSSIAN UPDATE</Text>
+                  <Text style={styles.gaussianLiveDrift}>{liveGaussian.drift || 'stable'}</Text>
+                </View>
+                <Text style={styles.gaussianLiveText}>
+                  Remaining-total projection {liveGaussian.projectedValue?.toFixed(1) ?? '—'}
+                  {liveGaussian.remainingMinutes != null ? ` · ${Math.round(liveGaussian.remainingMinutes)}' left` : ''}
+                </Text>
+                {!!liveGaussian.range60 && (
+                  <Text style={styles.gaussianLiveText}>
+                    60% {liveGaussian.range60[0].toFixed(1)} — {liveGaussian.range60[1].toFixed(1)}
+                    {!!liveGaussian.range80 && `  ·  80% ${liveGaussian.range80[0].toFixed(1)} — ${liveGaussian.range80[1].toFixed(1)}`}
+                  </Text>
                 )}
               </View>
             )}
@@ -543,6 +570,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: 16,
     gap: 12,
+    flexWrap: 'wrap',
   },
   paceItem: {
     backgroundColor: Colors.background,
@@ -562,6 +590,37 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.text,
     fontWeight: '700',
+  },
+  gaussianLivePanel: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(77,166,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(77,166,255,0.25)',
+  },
+  gaussianLiveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  gaussianLiveTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: Colors.primary,
+  },
+  gaussianLiveDrift: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  gaussianLiveText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: Colors.textSecondary,
   },
   paceWarning: {
     backgroundColor: Colors.warningDim,

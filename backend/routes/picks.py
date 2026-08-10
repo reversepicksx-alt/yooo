@@ -13,6 +13,7 @@ from models import (
     CorrectPickRequest, LiveUpdateRequest, SettlePicksRequest,
 )
 from utils import api_football_request, priority_api_football_request
+from bayesian_engine import compute_live_gaussian_update
 import cs2_client as _cs2_client
 import wta_client as _wta_client
 import httpx as _httpx
@@ -460,6 +461,10 @@ async def save_pick(req: SavePickRequest):
         "rawConfidence": pick.get("rawConfidence") or pick.get("confidenceScore") or pick.get("confidence") or 50,
         "confidenceLevel": pick.get("confidenceLevel", "Medium"),
         "confidenceInterval": pick.get("confidenceInterval", []),
+        "distribution": pick.get("distribution") or (pick.get("bayesianMetrics") or {}).get("distribution") or {},
+        "mostLikelyValue": pick.get("mostLikelyValue") or (pick.get("bayesianMetrics") or {}).get("mostLikelyValue"),
+        "range60": pick.get("range60") or (pick.get("bayesianMetrics") or {}).get("range60"),
+        "range80": pick.get("range80") or (pick.get("bayesianMetrics") or {}).get("range80"),
         # Persist Bayesian engine metrics for post-game auditing + model improvement.
         # These are essential for projection accuracy analysis (was model's direction
         # correct? how far was the projection from actual?).
@@ -1417,6 +1422,7 @@ async def list_picks(req: GetPicksRequest):
                     p["minutesPlayed"] = upd.get("minutesPlayed")
                     p["paceMismatch"] = upd.get("paceMismatch")
                     p["paceWarning"] = upd.get("paceWarning")
+                    p["liveGaussian"] = upd.get("liveGaussian")
                     if upd.get("homeTeam"):
                         p["homeTeam"] = upd.get("homeTeam")
                     if upd.get("awayTeam"):
@@ -2021,6 +2027,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "subRisk": 1, "uncertaintyNote": 1, "consensusNote": 1,
         "projectedValue": 1, "recommendation": 1, "confidenceScore": 1,
         "confidenceLevel": 1, "confidenceInterval": 1,
+        "distribution": 1, "mostLikelyValue": 1, "range60": 1, "range80": 1,
         "player": 1, "opponent": 1, "propType": 1, "line": 1,
          "moneyline": 1, "homeTeam": 1, "awayTeam": 1,
         "recentSamples": 1, "bayesianMetrics": 1,
@@ -2073,6 +2080,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs",
                       "homeTeam", "awayTeam",
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
+                      "distribution", "mostLikelyValue", "range60", "range80",
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
                       "streakFlag", "propType", "line", "playerName", "opponentName",
                       "tacticalMetrics", "tacticalContext", "tacticalIntelligence",
@@ -3955,6 +3963,33 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         pace = None
         hit_pct = None
 
+    # Layer 3 of the product model: update the saved pre-match distribution
+    # with observed match progress. This is intentionally a separate field;
+    # `hitPct` remains the legacy pace context until the new live probability
+    # has enough replay evidence to become the only live percentage shown.
+    live_gaussian = None
+    if is_live and current_value is not None and elapsed > 0:
+        try:
+            _bm = pick.get("bayesianMetrics") or {}
+            _pre_mean = pick.get("projectedValue") or _bm.get("posteriorMean")
+            _pre_std = _bm.get("posteriorStd")
+            if not _pre_std:
+                _ci = pick.get("confidenceInterval") or []
+                if isinstance(_ci, (list, tuple)) and len(_ci) >= 2:
+                    _pre_std = (float(_ci[1]) - float(_ci[0])) / (2 * 1.281552)
+            if _pre_mean is not None and _pre_std is not None:
+                live_gaussian = compute_live_gaussian_update(
+                    pre_match_mean=_pre_mean,
+                    pre_match_std=_pre_std,
+                    line=line,
+                    recommendation=recommendation,
+                    current_value=current_value,
+                    elapsed=elapsed,
+                    total_minutes=90.0,
+                )
+        except (TypeError, ValueError, ZeroDivisionError) as _live_bayes_err:
+            print(f"[LIVE GAUSSIAN] unavailable for {pick.get('pickId')}: {_live_bayes_err}")
+
     # Live pace-divergence warning — surfaces when the in-match trend is
     # running strongly against the pre-match recommendation (e.g. a fullback
     # forced into a possession-dominant role after the opponent sits back on
@@ -3981,6 +4016,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         "hitPct": hit_pct,
         "paceMismatch": pace_mismatch,
         "paceWarning": pace_warning,
+        "liveGaussian": live_gaussian,
         "matchScore": match_score,
         "homeTeam": home_team_name,
         "awayTeam": away_team_name,

@@ -3460,17 +3460,34 @@ export default function ScanScreen() {
               )}
 
               {/* Confidence Interval */}
-              {prediction.confidenceInterval && prediction.confidenceInterval[1] > prediction.confidenceInterval[0] && (
+              {(() => {
+                const range60 = prediction.range60 || prediction.distribution?.range60;
+                const range80 = prediction.range80 || prediction.distribution?.range80 || prediction.confidenceInterval;
+                const has60 = !!range60 && range60[1] > range60[0];
+                const has80 = !!range80 && range80[1] > range80[0];
+                if (!has60 && !has80) return null;
+                return (
                 <>
                   <View style={styles.analysisDivider} />
-                  <View style={styles.ciRow}>
-                    <Text style={styles.ciLabel}>80% RANGE</Text>
-                    <Text style={styles.ciVal}>
-                      {prediction.confidenceInterval[0].toFixed(1)} — {prediction.confidenceInterval[1].toFixed(1)}
-                    </Text>
-                  </View>
+                  {has60 && (
+                    <View style={styles.ciRow}>
+                      <Text style={styles.ciLabel}>60% RANGE</Text>
+                      <Text style={styles.ciVal}>
+                        {range60![0].toFixed(1)} — {range60![1].toFixed(1)}
+                      </Text>
+                    </View>
+                  )}
+                  {has80 && (
+                    <View style={styles.ciRow}>
+                      <Text style={styles.ciLabel}>80% RANGE</Text>
+                      <Text style={styles.ciVal}>
+                        {range80![0].toFixed(1)} — {range80![1].toFixed(1)}
+                      </Text>
+                    </View>
+                  )}
                 </>
-              )}
+                );
+              })()}
 
               {/* ── ALGORITHM BREAKDOWN CARD ──────────────────────────────── */}
               {(() => {
