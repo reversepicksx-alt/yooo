@@ -697,6 +697,185 @@ async def search_players(req: PlayerSearchRequest):
             player_list = [p for p in player_list if sort_key(p)[0] == 0]
         return player_list[:15]
 
+    async def _durable_identity_fallback() -> list[dict]:
+        """Recover known player identities when provider/cache search is empty.
+
+        Search cache rows can be regenerated and may be removed during Atlas
+        quota recovery.  Saved soccer pick identity and verified player
+        contexts are durable enough to restore a previously resolved identity
+        without guessing a new player from an unrelated sport.
+        """
+        if not query_parts:
+            return []
+        try:
+            first_word = re.escape(query_parts[0])
+            last_word = re.escape(query_parts[-1])
+            name_filter = {
+                "$or": [
+                    {"playerName": {"$regex": rf"(^|\s){first_word}", "$options": "i"}},
+                    {"playerName": {"$regex": last_word, "$options": "i"}},
+                ]
+            }
+            try:
+                position_docs = await aio.wait_for(
+                    db.player_positions.find(
+                        name_filter,
+                        {
+                            "_id": 0,
+                            "playerId": 1,
+                            "playerName": 1,
+                            "teamId": 1,
+                            "team": 1,
+                            "specificPosition": 1,
+                            "position": 1,
+                        },
+                    ).limit(50).to_list(50),
+                    timeout=0.75,
+                )
+            except (aio.TimeoutError, TimeoutError):
+                position_docs = []
+
+            # player_positions is itself regenerable. The saved-pick ledger is
+            # the durable identity fallback when that optional cache has been
+            # purged. Restrict this to soccer and require both the first and
+            # last query words so a common surname cannot leak unrelated rows.
+            try:
+                pick_filter = {
+                    "sport": "soccer",
+                    "$and": [
+                        {"playerName": {"$regex": rf"(^|\s){first_word}", "$options": "i"}},
+                        {"playerName": {"$regex": last_word, "$options": "i"}},
+                    ],
+                }
+                pick_docs = await aio.wait_for(
+                    db.picks.find(
+                        pick_filter,
+                        {
+                            "_id": 0,
+                            "playerId": 1,
+                            "playerName": 1,
+                            "teamId": 1,
+                            "teamName": 1,
+                            "leagueId": 1,
+                            "position": 1,
+                        },
+                    ).sort("timestamp", -1).limit(50).to_list(50),
+                    timeout=0.75,
+                )
+                pick_docs = pick_docs or []
+            except (aio.TimeoutError, TimeoutError):
+                pick_docs = []
+
+            durable_docs = [
+                *position_docs,
+                *[
+                    {
+                        "playerId": d.get("playerId"),
+                        "playerName": d.get("playerName"),
+                        "teamId": d.get("teamId"),
+                        "team": d.get("teamName"),
+                        "position": d.get("position"),
+                        "leagueId": d.get("leagueId"),
+                    }
+                    for d in pick_docs
+                ],
+            ]
+            if not durable_docs:
+                return []
+
+            player_ids = [
+                d.get("playerId") for d in durable_docs if d.get("playerId")
+            ]
+            context_by_id: dict[int, dict] = {}
+            if player_ids:
+                try:
+                    context_docs = await aio.wait_for(
+                        db.player_ctx_cache.find(
+                            {"playerId": {"$in": player_ids}},
+                            {"_id": 0, "playerId": 1, "contexts": 1},
+                        ).to_list(50),
+                        timeout=1.25,
+                    )
+                except (aio.TimeoutError, TimeoutError):
+                    # Context enrichment is helpful but not required to
+                    # restore a durable identity from the saved-pick ledger.
+                    context_docs = []
+                for context_doc in context_docs or []:
+                    contexts = context_doc.get("contexts") or []
+                    verified = next(
+                        (
+                            c for c in contexts
+                            if c.get("verified") and not c.get("isNational")
+                        ),
+                        None,
+                    )
+                    if verified:
+                        context_by_id[context_doc.get("playerId")] = verified
+
+            recovered = []
+            seen_ids = set()
+            for doc in durable_docs:
+                pid = doc.get("playerId")
+                name = (doc.get("playerName") or "").strip()
+                if not pid or not name or pid in seen_ids:
+                    continue
+                name_norm = _strip(name.lower())
+                name_words = set(name_norm.split())
+                # A provider/cached canonical name may omit middle or surname
+                # components typed by the user. Require the stored first name
+                # and every stored name token to be present in the query.
+                if not name_words.issubset(set(query_parts)):
+                    continue
+                if query_parts[0] != name_norm.split()[0] and not name_norm.startswith(query_parts[0]):
+                    continue
+                seen_ids.add(pid)
+                context = context_by_id.get(pid) or {}
+                recovered.append({
+                    "id": pid,
+                    "name": name,
+                    "firstname": name.split()[0] if name.split() else "",
+                    "lastname": name.split()[-1] if name.split() else "",
+                    "age": 0,
+                    "nationality": "",
+                    "photo": "",
+                    "teamId": context.get("teamId") or doc.get("teamId") or 0,
+                    "teamName": context.get("teamName") or doc.get("team") or "",
+                    "leagueId": context.get("leagueId") or doc.get("leagueId") or 0,
+                    "position": doc.get("specificPosition") or doc.get("position") or "",
+                })
+            verified_ids = set(context_by_id)
+            if verified_ids:
+                recovered = [p for p in recovered if p["id"] in verified_ids]
+            else:
+                # If Atlas is slow for the optional context query, prefer a
+                # saved row whose team is the current durable club context
+                # rather than returning an arbitrary same-name player.
+                current_team_ids = {
+                    c.get("teamId")
+                    for doc in durable_docs
+                    if doc.get("playerId") in player_ids
+                    for c in (context_by_id.get(doc.get("playerId")) or {},)
+                    if c.get("teamId")
+                }
+                if current_team_ids:
+                    recovered = [
+                        p for p in recovered
+                        if p.get("teamId") in current_team_ids
+                    ]
+            # The durable record may intentionally be shorter than the
+            # provider's full legal name (for example, stored
+            # "Jhojan Valencia" while the user types
+            # "Jhojan Manuel Valencia Jimenez").  The containment check above
+            # is the identity gate for this recovery path; do not run the
+            # provider's stricter all-token filter again.
+            recovered.sort(key=sort_key)
+            return recovered[:15]
+        except (aio.TimeoutError, TimeoutError):
+            return []
+        except Exception as exc:
+            print(f"[PLAYER SEARCH] durable identity fallback failed: {exc}")
+            return []
+
     def _mask_unverified_team(player_list):
         """Keep search useful without presenting cache data as current club.
 
@@ -711,6 +890,14 @@ async def search_players(req: PlayerSearchRequest):
             player["leagueId"] = 0
             player["teamVerified"] = False
         return player_list
+
+    # A previously resolved soccer player must remain searchable even when
+    # disposable search cache rows are missing or Atlas/provider lookups are
+    # slow. Do this before the typing-path cache/provider branches so a cache
+    # timeout cannot hide a durable identity.
+    durable_players = await _durable_identity_fallback()
+    if durable_players:
+        return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
 
     async def _resolve_club_for_intl_player(p: dict) -> dict:
         """If a cache hit shows a national team, fetch the player's actual club
@@ -1027,9 +1214,13 @@ async def search_players(req: PlayerSearchRequest):
                     fallback = await _search_players_cache(last_word, req.league_id, relaxed=True)
                     if fallback:
                         fallback_players = _apply_sort_and_quality(fallback)
-                        return {"players": _mask_unverified_team(await _attach_owner_media(fallback_players))}
+                        if fallback_players:
+                            return {"players": _mask_unverified_team(await _attach_owner_media(fallback_players))}
                 except Exception:
                     pass
+        durable_players = await _durable_identity_fallback()
+        if durable_players:
+            return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
         # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
         # UCL, MLS, World Cup without any API-Football dependency. Keep this
         # bounded because it is still on the typing path.
@@ -1044,6 +1235,10 @@ async def search_players(req: PlayerSearchRequest):
         except Exception:
             pass
         return {"players": []}
+
+    durable_players = await _durable_identity_fallback()
+    if durable_players:
+        return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
 
     # Fast interactive provider path. The previous implementation could issue
     # dozens of sequential league/season/profile fallbacks after a cache miss,
@@ -1074,6 +1269,33 @@ async def search_players(req: PlayerSearchRequest):
         p for p in live_players
         if p.get("id") and not (p["id"] in seen_live_ids or seen_live_ids.add(p["id"]))
     ]
+
+    # API-Football's profile search does not reliably understand a full
+    # three-or-more-part name when the provider stores the display name as an
+    # initial (for example, "J. Valencia" for
+    # "Jhojan Manuel Valencia Jiménez").  Retry one bounded surname lookup,
+    # then let the strict multi-word quality filter below select the canonical
+    # full-name profile.  Without this, the empty full-name response returns
+    # immediately and the universal search can only show unrelated MLB/NFL
+    # surname matches.
+    if len(query_parts) > 1 and not _apply_sort_and_quality(list(live_players)):
+        last_word = query_parts[-1]
+        if len(last_word) >= 3:
+            try:
+                fallback_data = await aio.wait_for(
+                    search_api_request("players/profiles", {"search": last_word}),
+                    timeout=1.75,
+                )
+                fallback_players = [extract_player(item) for item in (fallback_data or [])]
+                existing_ids = {p.get("id") for p in live_players}
+                live_players.extend(
+                    p for p in fallback_players
+                    if p.get("id") and p.get("id") not in existing_ids
+                )
+            except (aio.TimeoutError, TimeoutError):
+                print(f"[PLAYER SEARCH] surname fallback exceeded 1750ms for {req.query!r}")
+            except Exception as exc:
+                print(f"[PLAYER SEARCH] surname fallback failed for {req.query!r}: {exc}")
 
     # The profiles endpoint intentionally returns identity data without
     # statistics. Recover the current/best cached club context with one
