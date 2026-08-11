@@ -173,7 +173,7 @@ function scopeIncludesPosition(value: unknown) {
 
 /**
  * Exact-opponent, same-position or same-role evidence. This is deliberately separate from
- * PLAYER PROP HISTORY: the latter is the selected player's own history.
+ * Same-role evidence is kept focused on the comparison cohort shown above.
  */
 export default function SameRoleEvidenceCard({
   data,
@@ -408,19 +408,6 @@ export default function SameRoleEvidenceCard({
            Exact-position evidence is unavailable for this opponent window; broad-category rows are intentionally not relabeled as {position}.
         </Text>
       )}
-      {Object.keys(data.crossPropAverages || {}).filter((key) => key !== data.propType).length > 0 && (
-        <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 3 }}>
-          Role profile:{' '}
-          {Object.entries(data.crossPropAverages || {})
-            .filter(([key]) => key !== data.propType)
-            .slice(0, 4)
-            .map(([key, value]) => `${label(key)} ${Number(value).toFixed(1)}`)
-            .join(' · ')}
-        </Text>
-      )}
-      <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 5 }}>
-        Evidence only; it does not change the projection.
-      </Text>
     </View>
   );
 }

@@ -4135,49 +4135,6 @@ export default function ScanScreen() {
                recommendation={prediction.recommendation}
                line={prediction.line}
              />
-            {(() => {
-              const _hr = (prediction as any).playerGameLogs?.hitRates;
-              const _propHist = (prediction as any).propHistoricalRate;
-              const _lineDevHR = (prediction as any).lineDeviationHitRate;
-              const _rec = String(prediction.recommendation || '').toUpperCase();
-              const _propLabel = String(prediction.propType || '').replace(/_/g, ' ').toUpperCase();
-              if (!(_hr?.total > 0) && _propHist == null && _lineDevHR == null) return null;
-              return (
-                <View style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                    <Ionicons name="bar-chart-outline" size={12} color={Colors.primary} />
-                    <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>PLAYER PROP HISTORY</Text>
-                  </View>
-                  {(_hr?.total ?? 0) > 0 && (
-                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: _propHist != null || _lineDevHR != null ? 8 : 0 }}>
-                      <View style={{ flex: 1, backgroundColor: 'rgba(57,255,20,0.08)', borderRadius: 6, padding: 8, alignItems: 'center' }}>
-                        <Text style={{ fontSize: 18, fontWeight: '900', color: Colors.success }}>{_hr.overPct}%</Text>
-                        <Text style={{ fontSize: 7.5, color: Colors.textTertiary, fontWeight: '800', letterSpacing: 0.5, marginTop: 2 }}>OVER RATE</Text>
-                        <Text style={{ fontSize: 7, color: Colors.textTertiary, marginTop: 1 }}>{_hr.overHits}/{_hr.total} games</Text>
-                      </View>
-                      <View style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.08)', borderRadius: 6, padding: 8, alignItems: 'center' }}>
-                        <Text style={{ fontSize: 18, fontWeight: '900', color: Colors.error }}>{_hr.underPct}%</Text>
-                        <Text style={{ fontSize: 7.5, color: Colors.textTertiary, fontWeight: '800', letterSpacing: 0.5, marginTop: 2 }}>UNDER RATE</Text>
-                        <Text style={{ fontSize: 7, color: Colors.textTertiary, marginTop: 1 }}>{_hr.underHits}/{_hr.total} games</Text>
-                      </View>
-                    </View>
-                  )}
-                  {_propHist != null && (
-                    <Text style={{ fontSize: 11, color: Colors.textSecondary, lineHeight: 17, marginBottom: _lineDevHR != null ? 3 : 0 }}>
-                      {_rec} {_propLabel} picks:{' '}
-                      <Text style={{ fontWeight: '800', color: _rec === 'OVER' ? Colors.success : Colors.error }}>{_propHist}% accuracy</Text>
-                      {' '}system-wide
-                    </Text>
-                  )}
-                  {_lineDevHR != null && (
-                    <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15 }}>
-                      {_rec === 'OVER' || _rec === 'UNDER' ? `${_rec} hit rate in this deviation band` : 'Pick hit rate in this deviation band'}: {_lineDevHR}% historical
-                    </Text>
-                  )}
-                </View>
-              );
-            })()}
-
             {/* ─── MATCHUP OVERVIEW (non-soccer sports) ─── */}
             {false && (<>
             {((prediction as any).matchupOverview) && prediction.sport !== 'soccer' && (() => {

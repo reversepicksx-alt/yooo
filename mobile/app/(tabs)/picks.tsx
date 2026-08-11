@@ -1112,10 +1112,6 @@ export default function PicksScreen() {
     ...(analysisModal?.pick as any),
     ...(analysisModal?.data as any),
   });
-  const modalHR = (analysisModal?.data as any)?.playerGameLogs?.hitRates ?? (analysisModal?.pick as any)?.playerGameLogs?.hitRates;
-  const modalPropHist: number | null = (analysisModal?.data as any)?.propHistoricalRate ?? (analysisModal?.pick as any)?.propHistoricalRate ?? null;
-  const modalLineDevHR: number | null = (analysisModal?.data as any)?.lineDeviationHitRate ?? (analysisModal?.pick as any)?.lineDeviationHitRate ?? null;
-  const modalPropLabel = String((analysisModal?.data as any)?.propType || (analysisModal?.pick as any)?.propType || '').replace(/_/g, ' ').toUpperCase();
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
   const capturedModalFactors = (
     (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]
@@ -1659,46 +1655,8 @@ export default function PicksScreen() {
                />
              )}
 
-            {/* Prop hit-rate history */}
-            {!analysisModal?.loading && ((modalHR?.total ?? 0) > 0 || modalPropHist != null || modalLineDevHR != null) && (
-              <View style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <Ionicons name="bar-chart-outline" size={12} color={Colors.primary} />
-                  <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '800', letterSpacing: 1 }}>
-                     PLAYER PROP HISTORY
-                  </Text>
-                </View>
-                {(modalHR?.total ?? 0) > 0 && (
-                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: modalPropHist != null || modalLineDevHR != null ? 8 : 0 }}>
-                    <View style={{ flex: 1, backgroundColor: 'rgba(57,255,20,0.08)', borderRadius: 6, padding: 8, alignItems: 'center' }}>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: Colors.success }}>{modalHR.overPct}%</Text>
-                      <Text style={{ fontSize: 7.5, color: Colors.textTertiary, fontWeight: '800', letterSpacing: 0.5, marginTop: 2 }}>OVER RATE</Text>
-                      <Text style={{ fontSize: 7, color: Colors.textTertiary, marginTop: 1 }}>{modalHR.overHits}/{modalHR.total} games</Text>
-                    </View>
-                    <View style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.08)', borderRadius: 6, padding: 8, alignItems: 'center' }}>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: Colors.error }}>{modalHR.underPct}%</Text>
-                      <Text style={{ fontSize: 7.5, color: Colors.textTertiary, fontWeight: '800', letterSpacing: 0.5, marginTop: 2 }}>UNDER RATE</Text>
-                      <Text style={{ fontSize: 7, color: Colors.textTertiary, marginTop: 1 }}>{modalHR.underHits}/{modalHR.total} games</Text>
-                    </View>
-                  </View>
-                )}
-                {modalPropHist != null && (
-                  <Text style={{ fontSize: 11, color: Colors.textSecondary, lineHeight: 17, marginBottom: modalLineDevHR != null ? 3 : 0 }}>
-                    {modalRec} {modalPropLabel} picks:{' '}
-                    <Text style={{ fontWeight: '800', color: modalIsOver ? Colors.success : Colors.error }}>{modalPropHist}% accuracy</Text>
-                    {' '}system-wide
-                  </Text>
-                )}
-                {modalLineDevHR != null && (
-                  <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15 }}>
-                    {modalRec === 'OVER' || modalRec === 'UNDER' ? `${modalRec} hit rate in this deviation band` : 'Pick hit rate in this deviation band'}: {modalLineDevHR}% historical
-                  </Text>
-                )}
-              </View>
-            )}
-
-            {/* No hit-rate data yet */}
-            {!analysisModal?.loading && !(modalHR?.total > 0) && modalPropHist == null && modalLineDevHR == null && modalAlerts.length === 0 && (() => {
+            {/* No supporting analysis yet */}
+            {!analysisModal?.loading && modalAlerts.length === 0 && (() => {
               const pick = analysisModal?.pick as any;
               const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
               if (isSettled) return null;
