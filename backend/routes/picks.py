@@ -37,6 +37,92 @@ _SOCCER_STAT_EVIDENCE_PROPS = frozenset({
 })
 
 
+def _is_storage_quota_error(exc: Exception) -> bool:
+    error_text = str(exc).lower()
+    return "space quota" in error_text or "storage" in error_text
+
+
+async def _emergency_cache_cleanup_for_save() -> int:
+    """Free only regenerable cache data before retrying a required pick save.
+
+    Atlas can reject inserts while still allowing deletes. Never include user,
+    session, subscription, or picks collections here: those are durable data.
+    """
+    now = datetime.now(timezone.utc)
+    deleted = 0
+
+    async def _delete(collection, query: dict) -> None:
+        nonlocal deleted
+        try:
+            result = await collection.delete_many(query)
+            deleted += int(result.deleted_count or 0)
+        except Exception as exc:
+            print(f"[SAVE CLEANUP] skipped cache delete: {exc}")
+
+    # These collections are regenerated on demand and already have the same
+    # retention windows as the scheduled cleanup loop.
+    await _delete(db.predictions, {"_ts": {"$lt": now - timedelta(days=7)}})
+    await _delete(db.fixture_player_cache, {"_ts": {"$lt": now - timedelta(days=21)}})
+    await _delete(db.mlb_cache, {"ts": {"$lt": now - timedelta(days=7)}})
+    await _delete(db.cs2_cache, {"_ts": {"$lt": now - timedelta(days=14)}})
+    await _delete(db.first_goal_cache, {"ts": {"$lt": now - timedelta(days=7)}})
+    await _delete(db.player_positions, {"resolvedAt": {"$lt": now - timedelta(days=30)}})
+    await _delete(
+        db.cache_transfers,
+        {"detectedAt": {"$lt": (now - timedelta(days=90)).isoformat()}},
+    )
+
+    # Keep only the newest 2,000 fixture-history rows. This collection is
+    # cache-like and is re-fetched when a future prediction needs it.
+    try:
+        history_count = await db.team_fixture_history.count_documents({})
+        if history_count > 2000:
+            cursor = (
+                db.team_fixture_history.find({}, {"_id": 1})
+                .sort("_id", -1)
+                .skip(2000)
+                .limit(1)
+            )
+            pivot = await cursor.to_list(1)
+            if pivot:
+                result = await db.team_fixture_history.delete_many(
+                    {"_id": {"$lte": pivot[0]["_id"]}}
+                )
+                deleted += int(result.deleted_count or 0)
+    except Exception as exc:
+        print(f"[SAVE CLEANUP] skipped team fixture history delete: {exc}")
+
+    print(f"[SAVE CLEANUP] deleted {deleted} regenerable cache records")
+    return deleted
+
+
+async def _purge_regenerable_cache_collections_for_save() -> int:
+    """Drop only disposable cache collections when deletes cannot free space.
+
+    MongoDB may retain allocated space after deleting documents. These
+    collections are rebuilt on demand; durable subscriber and prediction
+    history collections are intentionally excluded.
+    """
+    dropped = 0
+    for collection_name in (
+        "predictions",
+        "fixture_player_cache",
+        "mlb_cache",
+        "mlb_predictions",
+        "cache_players",
+        "cache_teams",
+        "cache_leagues",
+        "cache_national",
+    ):
+        try:
+            await db[collection_name].drop()
+            dropped += 1
+            print(f"[SAVE CLEANUP] dropped disposable cache collection: {collection_name}")
+        except Exception as exc:
+            print(f"[SAVE CLEANUP] could not drop {collection_name}: {exc}")
+    return dropped
+
+
 def _has_soccer_stat_evidence(pick: dict) -> bool:
     """Return true when a settled soccer count stat proves participation."""
     if pick.get("sport", "soccer") != "soccer":
@@ -730,27 +816,39 @@ async def save_pick(req: SavePickRequest):
             )
         )
 
-    try:
+    async def _write_pick() -> None:
         await db.picks.update_one(
             {"pickId": pick_id, "email": req.email.lower()},
             {"$set": doc},
             upsert=True,
         )
+
+    try:
+        await _write_pick()
     except Exception as exc:
         # A pick cannot be treated as saved unless this required write
         # succeeds. Atlas storage exhaustion used to leak as an opaque 500.
-        # Return an actionable response instead of claiming success or
-        # silently falling back to process-local storage.
-        error_text = str(exc)
-        if "space quota" in error_text.lower() or "storage" in error_text.lower():
-            raise HTTPException(
-                status_code=507,
-                detail=(
-                    "Pick was not saved because database storage is full. "
-                    "Free Atlas storage or increase the cluster tier, then try again."
-                ),
-            ) from exc
-        raise
+        # Free expired cache data and retry once before returning an actionable
+        # error. Never fall back to process-local storage.
+        if _is_storage_quota_error(exc):
+            await _emergency_cache_cleanup_for_save()
+            await _purge_regenerable_cache_collections_for_save()
+            try:
+                await _write_pick()
+            except Exception as retry_exc:
+                if not _is_storage_quota_error(retry_exc):
+                    raise
+                raise HTTPException(
+                    status_code=507,
+                    detail=(
+                        "Pick was not saved because database storage is full. "
+                        "Free Atlas storage or increase the cluster tier, then try again."
+                    ),
+                ) from retry_exc
+            # The emergency cleanup freed enough space; the retry succeeded.
+            # Continue through the normal post-save correlation response.
+        else:
+            raise
 
     # Automatic Community posting happens from the Picks screen after the
     # highest-confidence card has been rendered and captured. Do not create a
