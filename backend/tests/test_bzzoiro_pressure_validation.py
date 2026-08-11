@@ -17,6 +17,7 @@ from bzzoiro_client import (
     evaluate_bzzoiro_pressure_evidence,
     compute_press_proxy,
     _is_eligible_row,
+    _is_coverage_row,
     PROMOTION_MIN_COVERED_FIXTURES,
     PROMOTION_MIN_PASS_PROP_OUTCOMES,
     PROMOTION_MIN_SIGNAL_AGREEMENT_RATE,
@@ -611,3 +612,261 @@ def test_end_to_end_proxy_compare_evaluate():
     assert eval_result["gatePassed"] is False
     assert eval_result["promotionStatus"] == "shadow_only"
     assert eval_result["nCovered"] == 5
+
+
+# ── _is_coverage_row ──────────────────────────────────────────────────────────
+
+
+def test_coverage_row_accepts_hit():
+    assert _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": "HIT"})
+
+
+def test_coverage_row_accepts_miss():
+    assert _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": "MISS"})
+
+
+def test_coverage_row_accepts_void():
+    """Voided picks carry a real Bzzoiro-covered fixture and must be counted."""
+    assert _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": "VOID"})
+
+
+def test_coverage_row_accepts_void_case_insensitive():
+    assert _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": "void"})
+
+
+def test_coverage_row_rejects_missing_bzzoiro_label():
+    assert not _is_coverage_row({"bzzoiro_label": None, "apifootball_label": "High", "outcome": "VOID"})
+
+
+def test_coverage_row_rejects_unknown_apifootball_label():
+    assert not _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "Unknown", "outcome": "VOID"})
+
+
+def test_coverage_row_rejects_unrecognised_outcome():
+    assert not _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": "PUSH"})
+    assert not _is_coverage_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": None})
+
+
+def test_coverage_row_rejects_non_dict():
+    assert not _is_coverage_row(None)
+    assert not _is_coverage_row("High")
+
+
+def test_eligible_row_still_rejects_void():
+    """_is_eligible_row is unchanged: VOID must still be rejected (direction accuracy requires HIT/MISS)."""
+    assert not _is_eligible_row({"bzzoiro_label": "High", "apifootball_label": "High", "outcome": "VOID"})
+
+
+# ── evaluate_bzzoiro_pressure_evidence — VOID / voided-pick behaviour ─────────
+
+
+def _make_void_outcome(
+    *,
+    bzzoiro_label: str = "High",
+    apifootball_label: str = "High",
+    prop_type: str = "passes",
+) -> dict:
+    """A row representing a voided pick (DNP, insufficient minutes, etc.)."""
+    return {
+        "bzzoiro_label": bzzoiro_label,
+        "apifootball_label": apifootball_label,
+        "prop_type": prop_type,
+        "outcome": "VOID",
+    }
+
+
+def test_void_rows_count_towards_n_covered():
+    """VOID rows with valid labels must be counted in nCovered."""
+    rows = [
+        _make_outcome(bzzoiro_label="High", apifootball_label="High"),  # HIT
+        _make_void_outcome(bzzoiro_label="High", apifootball_label="High"),  # VOID
+    ]
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+    assert result["nSupplied"] == 2
+    assert result["nCovered"] == 2
+
+
+def test_void_rows_excluded_from_pass_prop_direction_accuracy():
+    """VOID rows must not contribute to nPassProps or directionAccuracyWithBzzoiro."""
+    rows = [
+        _make_outcome(prop_type="passes", direction="UNDER", outcome="HIT"),
+        _make_void_outcome(prop_type="passes"),  # voided pass prop — no direction outcome
+    ]
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+    assert result["nCovered"] == 2       # both count for coverage
+    assert result["nPassProps"] == 1    # only the HIT row has a direction outcome
+    assert result["directionAccuracyWithBzzoiro"] == 1.0   # 1/1
+
+
+def test_void_rows_count_for_signal_agreement():
+    """Signal-agreement rate must include VOID rows (their labels are real signal)."""
+    rows = [
+        _make_outcome(bzzoiro_label="High", apifootball_label="High"),  # agree, HIT
+        _make_void_outcome(bzzoiro_label="Low", apifootball_label="Elite"),  # contradict, VOID
+    ]
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+    assert result["nCovered"] == 2
+    # 1 agree + 1 contradict → 50%
+    assert result["signalAgreementRate"] == 0.5
+
+
+def test_void_only_corpus_counts_coverage_but_no_direction():
+    """A corpus of only VOID rows: nCovered is non-zero, direction accuracy is None."""
+    rows = [_make_void_outcome() for _ in range(5)]
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+    assert result["nSupplied"] == 5
+    assert result["nCovered"] == 5
+    assert result["nPassProps"] == 0
+    assert result["directionAccuracyWithBzzoiro"] is None
+    assert result["gatePassed"] is False  # still fails: no pass-prop direction outcomes
+
+
+def test_void_rows_can_help_meet_covered_fixture_gate():
+    """VOID rows count towards the nCovered threshold even though they don't improve direction accuracy."""
+    n = PROMOTION_MIN_COVERED_FIXTURES
+    # Mix: mostly VOID rows to pad coverage, plus enough HIT rows for direction accuracy.
+    n_void = n // 2
+    n_hit = n - n_void
+    rows = (
+        [_make_void_outcome(bzzoiro_label="High", apifootball_label="High") for _ in range(n_void)]
+        + [_make_outcome(bzzoiro_label="High", apifootball_label="High",
+                         prop_type="passes", direction="UNDER", outcome="HIT",
+                         baseline_correct=False) for _ in range(n_hit)]
+    )
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+    # Total coverage reaches the threshold.
+    assert result["nCovered"] == n
+    # Direction accuracy computed on HIT rows only.
+    assert result["nPassProps"] == n_hit
+    assert result["directionAccuracyWithBzzoiro"] == 1.0
+
+
+def test_missing_bzzoiro_enrichment_void_row_excluded():
+    """A voided pick with an unrecognised Bzzoiro label must still be excluded from nCovered."""
+    rows = [
+        _make_outcome(),                                          # eligible
+        _make_void_outcome(bzzoiro_label=None),                   # excluded — no Bzzoiro label
+        _make_void_outcome(bzzoiro_label="Unknown"),              # excluded — unrecognised label
+    ]
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+    assert result["nSupplied"] == 3
+    assert result["nCovered"] == 1   # only the HIT row qualifies
+
+
+# ── bzzoiroEnrichment snapshot survives void + unvoid cycle ──────────────────
+
+
+def test_bzzoiro_enrichment_snapshot_survives_void_unvoid_cycle():
+    """Simulates what the DB update operations do: void then unvoid a pick.
+
+    The void path writes ``voidReason`` and clears settlement fields but must
+    NOT touch ``tacticalContext.bzzoiroEnrichment``.  The unvoid path removes
+    ``voidReason`` and also must NOT touch ``tacticalContext.bzzoiroEnrichment``.
+    Both are verified by simulating the MongoDB ``$set``/``$unset`` operations
+    in pure Python so the test runs without a live database.
+    """
+
+    def _apply_update(doc: dict, update: dict) -> dict:
+        """Apply a minimal MongoDB-style {$set: ..., $unset: ...} update."""
+        import copy
+        doc = copy.deepcopy(doc)
+        for key, val in (update.get("$set") or {}).items():
+            # Support nested dotted keys (e.g. "tacticalContext.bzzoiroEnrichment").
+            parts = key.split(".")
+            target = doc
+            for p in parts[:-1]:
+                target = target.setdefault(p, {})
+            target[parts[-1]] = val
+        for key in (update.get("$unset") or {}):
+            parts = key.split(".")
+            target = doc
+            for p in parts[:-1]:
+                target = target.get(p, {})
+            target.pop(parts[-1], None)
+        return doc
+
+    enrichment_snapshot = {
+        "available": True,
+        "provider": "bzzoiro",
+        "pressIntensity": {"label": "High", "score": 0.72},
+    }
+
+    # Initial settled pick with Bzzoiro enrichment.
+    pick = {
+        "pickId": "test-pick-001",
+        "status": "settled",
+        "result": "hit",
+        "actualValue": 72,
+        "hitPct": 100,
+        "settledAt": "2026-08-01T12:00:00Z",
+        "settledBy": "auto",
+        "tacticalContext": {
+            "bzzoiroEnrichment": enrichment_snapshot,
+        },
+    }
+
+    # Step 1: Void the pick (as unsettle-picks endpoint does).
+    void_update = {
+        "$set": {"status": "live", "result": None, "actualValue": None, "hitPct": None},
+        "$unset": {"settledAt": "", "settledBy": "", "voidReason": ""},
+    }
+    voided = _apply_update(pick, void_update)
+
+    # Enrichment must still be present.
+    assert voided["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "bzzoiroEnrichment was lost during void — the void update must not touch tacticalContext."
+    )
+
+    # Step 2: Re-settle with a voidReason (e.g. DNP settlement).
+    dnp_update = {
+        "$set": {
+            "status": "settled",
+            "result": "dnp",
+            "voidReason": "Player only played 12 min (min 30 required)",
+            "settledAt": "2026-08-01T14:00:00Z",
+            "settledBy": "auto_dnp",
+        },
+    }
+    dnp_settled = _apply_update(voided, dnp_update)
+
+    # Enrichment still present after DNP re-settlement.
+    assert dnp_settled["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "bzzoiroEnrichment was lost during DNP re-settlement."
+    )
+
+    # Step 3: Repair the settlement (as regrade-dnp-picks endpoint does).
+    repair_update = {
+        "$set": {
+            "result": "hit",
+            "hitPct": 100,
+            "settledBy": "admin_regrade_dnp",
+        },
+        "$unset": {"voidReason": ""},
+    }
+    repaired = _apply_update(dnp_settled, repair_update)
+
+    # Enrichment still present after repair.
+    assert repaired["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "bzzoiroEnrichment was lost during settlement repair."
+    )
+
+
+def test_bzzoiro_enrichment_preserved_when_voidreason_unset():
+    """Unsetting voidReason (the repair path) must not clobber tacticalContext."""
+
+    def _unset(doc: dict, *keys: str) -> dict:
+        import copy
+        doc = copy.deepcopy(doc)
+        for key in keys:
+            doc.pop(key, None)
+        return doc
+
+    pick = {
+        "voidReason": "Player not in matchday squad",
+        "tacticalContext": {
+            "bzzoiroEnrichment": {"available": True, "provider": "bzzoiro"},
+        },
+    }
+    repaired = _unset(pick, "voidReason")
+    assert "voidReason" not in repaired
+    assert repaired["tacticalContext"]["bzzoiroEnrichment"]["available"] is True

@@ -579,6 +579,30 @@ def _is_eligible_row(row: Any) -> bool:
     )
 
 
+def _is_coverage_row(row: Any) -> bool:
+    """Return True when a settled-outcome row has usable Bzzoiro evidence for
+    signal-agreement counting.  This is a superset of ``_is_eligible_row``:
+    it also accepts rows whose outcome is "VOID" (picks voided for DNP,
+    insufficient minutes, stale fixture, etc.) so that legitimate
+    Bzzoiro-covered fixtures are not silently dropped from the validation
+    corpus when the pick itself could not be settled as a normal HIT/MISS.
+
+    Voided rows contribute to ``nCovered`` and the signal-agreement rate only.
+    They are excluded from direction-accuracy and pass-prop calculations
+    because those require a known HIT/MISS directional outcome.
+    """
+    if not isinstance(row, dict):
+        return False
+    bz_label = str(row.get("bzzoiro_label") or "").strip()
+    af_label = str(row.get("apifootball_label") or "").strip()
+    outcome = str(row.get("outcome") or "").strip().upper()
+    return (
+        bz_label in _PRESS_TIERS
+        and af_label in _PRESS_TIERS
+        and outcome in {"HIT", "MISS", "VOID"}
+    )
+
+
 def evaluate_bzzoiro_pressure_evidence(
     covered_outcomes: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -590,17 +614,27 @@ def evaluate_bzzoiro_pressure_evidence(
       apifootball_label (str)   — API-Football press label (or "Unknown")
       prop_type         (str)   — e.g. "passes", "pass_attempts"
       direction         (str)   — predicted direction: "OVER" or "UNDER"
-      outcome           (str)   — settled result: "HIT" or "MISS"
+      outcome           (str)   — settled result: "HIT", "MISS", or "VOID"
 
-    Only rows that pass ``_is_eligible_row()`` (recognised Bzzoiro label,
-    recognised API-Football label, and valid settled outcome) contribute to
-    any count or calculation.  Rows with missing or unrecognised Bzzoiro labels
-    are silently excluded and tallied in ``nSupplied`` so callers can see the
-    coverage gap.
+    Two filtering tiers are applied:
 
-    The function computes on eligible rows:
-      - Signal agreement rate between Bzzoiro and API-Football.
-      - Direction accuracy on pass props where Bzzoiro was available.
+    - Coverage-eligible rows (``_is_coverage_row``): recognised Bzzoiro and
+      API-Football labels plus outcome in {HIT, MISS, VOID}.  These rows
+      contribute to ``nCovered`` and the signal-agreement rate.  Voided picks
+      (DNP, insufficient minutes, etc.) carry real Bzzoiro-covered fixtures and
+      must not be silently excluded from the corpus just because a HIT/MISS
+      direction outcome is unavailable.
+
+    - Direction-eligible rows (``_is_eligible_row``): a strict subset requiring
+      outcome in {HIT, MISS}.  Only these rows feed direction-accuracy and
+      pass-prop calculations because VOID outcomes carry no direction signal.
+
+    Rows with missing or unrecognised Bzzoiro labels are excluded from both
+    tiers and tallied only in ``nSupplied`` so callers can see the gap.
+
+    The function computes on the two row sets:
+      - Signal agreement rate between Bzzoiro and API-Football (coverage rows).
+      - Direction accuracy on pass props where Bzzoiro was available (direction rows).
       - Comparison against a baseline direction accuracy (``baseline_correct``
         field, if supplied per row; defaults to the actual outcome so no
         phantom improvement is ever invented).
@@ -631,16 +665,22 @@ def evaluate_bzzoiro_pressure_evidence(
     if not covered_outcomes or not isinstance(covered_outcomes, list):
         return _empty_result
 
-    # Filter to eligible rows FIRST — the same set is used for every metric.
-    eligible = [r for r in covered_outcomes if _is_eligible_row(r)]
-    if not eligible:
+    # Coverage-eligible rows: recognised labels + HIT/MISS/VOID.
+    # Voided picks count for nCovered and signal-agreement but NOT for
+    # direction accuracy (no direction outcome is known for a voided pick).
+    coverage_rows = [r for r in covered_outcomes if _is_coverage_row(r)]
+    if not coverage_rows:
         return {**_empty_result, "nSupplied": n_supplied}
 
-    n_covered = len(eligible)
+    n_covered = len(coverage_rows)
 
-    # ── 1. Signal agreement across eligible fixtures ─────────────────────────
+    # Direction-eligible rows: strict subset — HIT/MISS only, no VOID.
+    direction_rows = [r for r in coverage_rows if _is_eligible_row(r)]
+
+    # ── 1. Signal agreement across coverage-eligible fixtures ─────────────────
+    # Includes voided picks: their Bzzoiro/API-Football labels are real signal.
     agreement_decisions: list[bool] = []
-    for row in eligible:
+    for row in coverage_rows:
         cmp = compare_press_signals(
             {"label": row.get("bzzoiro_label")},
             {"label": row.get("apifootball_label")},
@@ -649,7 +689,7 @@ def evaluate_bzzoiro_pressure_evidence(
             agreement_decisions.append(True)
         elif cmp["agreement"] == "contradict":
             agreement_decisions.append(False)
-        # "unavailable" cannot occur here because _is_eligible_row already
+        # "unavailable" cannot occur here because _is_coverage_row already
         # required both labels to be in _PRESS_TIERS, but guard defensively.
 
     agreement_rate = (
@@ -658,9 +698,10 @@ def evaluate_bzzoiro_pressure_evidence(
         else None
     )
 
-    # ── 2. Direction accuracy on eligible pass props ──────────────────────────
+    # ── 2. Direction accuracy on direction-eligible pass props ────────────────
+    # Voided rows are excluded here — they carry no HIT/MISS direction signal.
     PASS_PROPS = {"pass_attempts", "passes"}
-    pass_rows = [r for r in eligible if r.get("prop_type") in PASS_PROPS]
+    pass_rows = [r for r in direction_rows if r.get("prop_type") in PASS_PROPS]
     n_pass_props = len(pass_rows)
 
     correct_with_bz: list[bool] = []

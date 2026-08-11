@@ -3,6 +3,7 @@ from model_metrics import (
     dedupe_prediction_rows,
     _event_key,
     validate_weighted_opponent_evidence,
+    validate_bzzoiro_position_replay,
 )
 
 
@@ -534,3 +535,164 @@ def test_validate_weighted_promotion_env_var_documented_in_decision():
     assert decision.get("promotionEnvVar") == "WEIGHTED_OPPONENT_EVIDENCE_MODE"
     assert "shadow" in (decision.get("promotionValues") or {})
     assert "live" in (decision.get("promotionValues") or {})
+
+
+# ── validate_bzzoiro_position_replay — voided-pick coverage ──────────────────
+
+
+def _bzz_pick(i, *, result="hit", bzz_valid=True, voided=False):
+    """Build a minimal settled-pick row for Bzzoiro position replay tests."""
+    pos_validation = (
+        {"valid": True, "fixtureDateMatch": "exact"} if bzz_valid else {"valid": False}
+    )
+    row = {
+        "trackingId": f"bzz-pick-{i}",
+        "playerName": f"Player {i}",
+        "sport": "soccer",
+        "propType": "passes",
+        "recommendation": "under",
+        "confidenceScore": 65,
+        "rawConfidence": 65,
+        "actualValue": 55,
+        "projectedValue": 48,
+        "line": 58.5,
+        "result": result,
+        "settledAt": f"2026-02-{i:02d}T12:00:00+00:00",
+        "tacticalContext": {
+            "bzzoiroEnrichment": {
+                "available": True,
+                "provider": "bzzoiro",
+                "positionValidation": pos_validation,
+            }
+        },
+    }
+    if voided:
+        row["voidReason"] = "Player only played 12 min (min 30 required)"
+        row["result"] = "dnp"
+    return row
+
+
+def test_bzzoiro_replay_voided_picks_not_in_hit_rate_groups():
+    """Voided picks must never appear in group_a or group_b — they have no HIT/MISS outcome."""
+    rows = [
+        _bzz_pick(1, result="hit", bzz_valid=True),   # group_a
+        _bzz_pick(2, result="miss", bzz_valid=False),  # group_b
+        _bzz_pick(3, bzz_valid=True, voided=True),     # voided — must be excluded from groups
+    ]
+    result = validate_bzzoiro_position_replay(rows)
+    # Only 2 rows have a scored directional outcome.
+    assert result["bzzoiroValidN"] == 1   # only pick-1 qualifies for group_a
+    assert result["bzzoiroAbsentN"] == 1  # only pick-2 qualifies for group_b
+
+
+def test_bzzoiro_replay_voided_covered_count_is_non_zero():
+    """Voided picks with valid bzzoiroEnrichment must be reported in nVoidedCovered."""
+    rows = [
+        _bzz_pick(1, result="hit", bzz_valid=True),
+        _bzz_pick(2, bzz_valid=True, voided=True),   # voided + valid bzz
+        _bzz_pick(3, bzz_valid=True, voided=True),   # voided + valid bzz
+    ]
+    result = validate_bzzoiro_position_replay(rows)
+    assert result["nVoidedCovered"] == 2
+
+
+def test_bzzoiro_replay_voided_without_bzz_not_counted():
+    """Voided picks without a valid Bzzoiro snapshot must not inflate nVoidedCovered."""
+    rows = [
+        _bzz_pick(1, result="hit", bzz_valid=True),
+        _bzz_pick(2, bzz_valid=False, voided=True),  # voided but bzz_valid=False
+    ]
+    result = validate_bzzoiro_position_replay(rows)
+    assert result["nVoidedCovered"] == 0
+
+
+def test_bzzoiro_replay_nvoided_covered_key_always_present():
+    """nVoidedCovered must always be present in the return value, even when zero."""
+    result = validate_bzzoiro_position_replay([])
+    assert "nVoidedCovered" in result
+    assert result["nVoidedCovered"] == 0
+
+
+def test_bzzoiro_replay_mixed_corpus_preserves_hit_rate_accuracy():
+    """Adding voided picks to the corpus must not change hit-rate or MAE for the scored groups."""
+    scored_rows = [_bzz_pick(i, result="hit", bzz_valid=True) for i in range(1, 6)]
+    result_without_void = validate_bzzoiro_position_replay(scored_rows)
+
+    voided_rows = [_bzz_pick(10 + i, bzz_valid=True, voided=True) for i in range(3)]
+    result_with_void = validate_bzzoiro_position_replay(scored_rows + voided_rows)
+
+    # Hit rate and MAE for group_a must be identical whether or not voided rows are present.
+    assert result_without_void["bzzoiroValidN"] == result_with_void["bzzoiroValidN"]
+    assert (result_without_void.get("bzzoiroValid") or {}).get("hitRate") == (
+        result_with_void.get("bzzoiroValid") or {}
+    ).get("hitRate")
+    assert result_with_void["nVoidedCovered"] == 3
+
+
+def test_bzzoiro_replay_voided_row_missing_voidreason_field_not_counted():
+    """Regression: a voided pick whose voidReason field was not projected from MongoDB
+    must NOT be counted in nVoidedCovered — the validator must not guess from result alone.
+
+    This covers the admin endpoint projection path: the Mongo projection now includes
+    'voidReason: 1' so this case is correctly populated. The test confirms that a row
+    which arrives without the voidReason key (e.g. from an old projection or a bug)
+    is not counted as a voided-covered fixture.
+    """
+    # Row that looks voided (result=dnp) but lacks the voidReason key.
+    row_missing_voidreason = {
+        "trackingId": "bzz-pick-missing-vr",
+        "playerName": "Player X",
+        "sport": "soccer",
+        "propType": "passes",
+        "recommendation": "under",
+        "confidenceScore": 65,
+        "result": "dnp",            # would be a voided pick
+        # voidReason key is ABSENT — as if it wasn't projected from MongoDB
+        "settledAt": "2026-02-10T12:00:00+00:00",
+        "tacticalContext": {
+            "bzzoiroEnrichment": {
+                "available": True,
+                "provider": "bzzoiro",
+                "positionValidation": {"valid": True, "fixtureDateMatch": "exact"},
+            }
+        },
+    }
+    result = validate_bzzoiro_position_replay([row_missing_voidreason])
+    # Without voidReason key, this row cannot be classified as a voided-covered fixture.
+    assert result["nVoidedCovered"] == 0
+    # And it must not appear in any scored group (result=dnp fails _is_scored_directional_row).
+    assert result["bzzoiroValidN"] == 0
+    assert result["bzzoiroAbsentN"] == 0
+
+
+def test_bzzoiro_replay_voided_row_with_voidreason_projected_counts_correctly():
+    """Regression: a voided pick that has voidReason projected (the corrected path)
+    must be counted in nVoidedCovered and excluded from scored accuracy groups.
+
+    This confirms the admin endpoint projection fix ('voidReason: 1' added to the
+    Mongo projection) flows correctly through to the validator.
+    """
+    row_with_voidreason = {
+        "trackingId": "bzz-pick-with-vr",
+        "playerName": "Player Y",
+        "sport": "soccer",
+        "propType": "passes",
+        "recommendation": "under",
+        "confidenceScore": 65,
+        "result": "dnp",
+        "voidReason": "Player only played 12 min (min 30 required)",
+        "settledAt": "2026-02-11T12:00:00+00:00",
+        "tacticalContext": {
+            "bzzoiroEnrichment": {
+                "available": True,
+                "provider": "bzzoiro",
+                "positionValidation": {"valid": True, "fixtureDateMatch": "exact"},
+            }
+        },
+    }
+    result = validate_bzzoiro_position_replay([row_with_voidreason])
+    # voidReason present → counts as a voided-covered fixture.
+    assert result["nVoidedCovered"] == 1
+    # Must not enter either scored accuracy group.
+    assert result["bzzoiroValidN"] == 0
+    assert result["bzzoiroAbsentN"] == 0

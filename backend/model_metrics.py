@@ -1248,10 +1248,13 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
 
     group_a: list[dict] = []  # bzzoiro positionValidation.valid=True, exact fixture match
     group_b: list[dict] = []  # everything else
+    # Voided picks (DNP, insufficient minutes, etc.) with a valid bzzoiroEnrichment
+    # snapshot are real Bzzoiro-covered fixtures.  They cannot contribute to
+    # hit-rate or MAE metrics — no direction outcome is known — but they are
+    # counted separately so the promotion corpus size is correctly reported.
+    n_voided_covered: int = 0
 
     for row in ordered:
-        if not _is_scored_directional_row(row):
-            continue
         tc = row.get("tacticalContext") or {}
         bzz = tc.get("bzzoiroEnrichment") or {}
         pv = bzz.get("positionValidation") or {}
@@ -1259,6 +1262,12 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
             bool(pv.get("valid"))
             and pv.get("fixtureDateMatch") == "exact"
         )
+        if not _is_scored_directional_row(row):
+            # Count voided picks that carry a valid Bzzoiro snapshot separately
+            # so the coverage corpus size is not under-reported.
+            if bzz_valid and bool(row.get("voidReason")):
+                n_voided_covered += 1
+            continue
         if bzz_valid:
             group_a.append(row)
         else:
@@ -1450,6 +1459,9 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
         "totalRows": len(ordered),
         "bzzoiroValidN": n_a,
         "bzzoiroAbsentN": stats_b["n"],
+        # Voided picks (DNP, etc.) with a valid Bzzoiro snapshot: counted for
+        # corpus-size purposes only.  Not included in hit-rate/MAE groups.
+        "nVoidedCovered": n_voided_covered,
         "dateRange": dates,
         "leakagePolicy": (
             "Metrics read fields stored at prediction time "

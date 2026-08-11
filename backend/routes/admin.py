@@ -1399,12 +1399,20 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     generated_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
     # Fetch all settled soccer picks; split into groups inside the validator.
+    # Include voided picks (voidReason present) that carry a valid
+    # bzzoiroEnrichment snapshot — those fixtures still count as Bzzoiro-covered
+    # for signal-agreement purposes even though no HIT/MISS outcome is available.
     query: dict = {
         "status": "settled",
-        "result": {"$in": ["hit", "miss"]},
         "settledAt": {"$ne": None},
-        "voidReason": {"$exists": False},
         "sport": "soccer",
+        "$or": [
+            # Normal settled picks with a direction outcome.
+            {"result": {"$in": ["hit", "miss"]}, "voidReason": {"$exists": False}},
+            # Voided picks that still carry a Bzzoiro enrichment snapshot.
+            {"voidReason": {"$exists": True},
+             "tacticalContext.bzzoiroEnrichment.available": True},
+        ],
     }
     projection = {
         "_id": 0,
@@ -1426,6 +1434,8 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "projectedValue": 1,
         "confidenceScore": 1,
         "tacticalContext": 1,
+        # Required so the validator can identify voided picks for nVoidedCovered.
+        "voidReason": 1,
     }
 
     cursor = db.picks.find(query, projection).sort("settledAt", 1).limit(req.limit)
@@ -1463,6 +1473,8 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "generatedAt": generated_at,
         "bzzoiroValidN": validation.get("bzzoiroValidN", 0),
         "bzzoiroAbsentN": validation.get("bzzoiroAbsentN", 0),
+        # Voided picks with a valid Bzzoiro snapshot — coverage corpus only.
+        "nVoidedCovered": validation.get("nVoidedCovered", 0),
         "promotionVerdict": (
             (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
         ),
@@ -1488,6 +1500,7 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     verdict = (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
     n_valid = validation.get("bzzoiroValidN", 0)
     n_absent = validation.get("bzzoiroAbsentN", 0)
+    n_voided = validation.get("nVoidedCovered", 0)
     total = n_valid + n_absent
 
     observations = []
@@ -1496,6 +1509,12 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         f"{n_valid} with valid Bzzoiro position coverage, "
         f"{n_absent} without."
     )
+    if n_voided:
+        observations.append(
+            f"ℹ️  {n_voided} additional voided pick(s) (DNP, insufficient minutes, etc.) "
+            f"carry a valid Bzzoiro snapshot and count toward the coverage corpus "
+            f"but are excluded from hit-rate and MAE metrics."
+        )
 
     hr_a = (validation.get("bzzoiroValid") or {}).get("hitRate")
     hr_b = (validation.get("bzzoiroAbsent") or {}).get("hitRate")
