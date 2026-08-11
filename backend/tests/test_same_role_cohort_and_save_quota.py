@@ -131,3 +131,13 @@ def test_required_pick_save_reports_storage_full_explicitly():
     assert "status_code=507" in PICKS_SOURCE
     assert "Pick was not saved because database storage is full." in PICKS_SOURCE
     assert "await db.picks.update_one(" in PICKS_SOURCE
+
+
+def test_required_pick_save_reclaims_only_regenerable_cache_before_retry():
+    assert "await _emergency_cache_cleanup_for_save()" in PICKS_SOURCE
+    assert "await _purge_regenerable_cache_collections_for_save()" in PICKS_SOURCE
+    assert "Continue through the normal post-save correlation response." in PICKS_SOURCE
+    assert '"picks"' not in PICKS_SOURCE[
+        PICKS_SOURCE.index("async def _purge_regenerable_cache_collections_for_save")
+        : PICKS_SOURCE.index("def _has_soccer_stat_evidence")
+    ]

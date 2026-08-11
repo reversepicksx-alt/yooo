@@ -778,17 +778,47 @@ async def send_code(req: SendCodeRequest):
     code = _gen_code()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
-    await db.auth_codes.update_one(
-        {"email": email_lower},
-        {"$set": {
-            "email":      email_lower,
-            "code":       code,
-            "expiresAt":  expires_at.isoformat(),
-            "used":       False,
-            "createdAt":  datetime.now(timezone.utc).isoformat(),
-        }},
-        upsert=True,
-    )
+    otp_doc = {
+        "email":      email_lower,
+        "code":       code,
+        "expiresAt":  expires_at.isoformat(),
+        "used":       False,
+        "createdAt":  datetime.now(timezone.utc).isoformat(),
+    }
+
+    async def _store_code() -> None:
+        await db.auth_codes.update_one(
+            {"email": email_lower},
+            {"$set": otp_doc},
+            upsert=True,
+        )
+
+    try:
+        await _store_code()
+    except Exception as exc:
+        # Login must not surface an opaque 500 when Atlas is full. Reclaim
+        # disposable caches and retry the durable OTP write once.
+        if "space quota" in str(exc).lower() or "storage" in str(exc).lower():
+            try:
+                from routes.picks import (
+                    _emergency_cache_cleanup_for_save,
+                    _purge_regenerable_cache_collections_for_save,
+                )
+                await _emergency_cache_cleanup_for_save()
+                await _purge_regenerable_cache_collections_for_save()
+                await _store_code()
+            except Exception as retry_exc:
+                if "space quota" in str(retry_exc).lower() or "storage" in str(retry_exc).lower():
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Login is temporarily unavailable because the database "
+                            "storage is full. Please try again shortly."
+                        ),
+                    ) from retry_exc
+                raise
+        else:
+            raise
 
     email_sent = False
     try:
