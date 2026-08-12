@@ -30,4 +30,7 @@ def test_analysis_endpoint_projects_and_repairs_recent_log_shapes():
 
     assert '"playerGameLogs": 1, "gameLogs": 1' in endpoint_source
     assert "_pick_games = _pick_logs.get(\"games\")" in endpoint_source
-    assert 'prediction["gameLogs"] = _prediction_games' in endpoint_source
+    assert 'prediction["gameLogs"] = _normalized_saved_games' in endpoint_source
+    assert '"pass_attempts": ("passes_total", "pass_attempts", "passes")' in endpoint_source
+    assert '"targetStat")' in endpoint_source
+    assert 'prediction["playerGameLogs"] = _normalized_player_logs' in endpoint_source

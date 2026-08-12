@@ -2415,8 +2415,62 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         prediction["playerGameLogs"] = _pick_logs
         _prediction_logs = _pick_logs
         _prediction_games = _pick_games
-    if not isinstance(prediction.get("gameLogs"), list) and isinstance(_prediction_games, list):
-        prediction["gameLogs"] = _prediction_games
+
+    # Normalize the saved-analysis row contract before it crosses the API
+    # boundary.  Live predictions are normalized by mobile/lib/api.ts, but
+    # saved analysis bypasses that predict() adapter.  Vitinha's pass rows can
+    # contain the stat under passes_total/pass_attempts/targetStat without a
+    # generic value field; the UI intentionally drops rows with no value.
+    _saved_prop = str(prediction.get("propType") or prop_type or "").lower()
+    _saved_field_candidates = {
+        "pass_attempts": ("passes_total", "pass_attempts", "passes"),
+        "passes": ("passes_total", "pass_attempts", "passes"),
+        "shots": ("shots_total", "shots"),
+        "shots_on_target": ("shots_on", "shots_on_target"),
+        "goals": ("goals_total", "goals"),
+        "assists": ("goals_assists", "assists"),
+        "key_passes": ("passes_key", "key_passes"),
+        "tackles": ("tackles_total", "tackles"),
+        "saves": ("goals_saves", "saves"),
+        "goalie_saves": ("goals_saves", "saves"),
+    }.get(_saved_prop, ())
+    _source_games = (
+        _prediction_games
+        if isinstance(_prediction_games, list) and _prediction_games
+        else prediction.get("gameLogs")
+        if isinstance(prediction.get("gameLogs"), list) and prediction.get("gameLogs")
+        else prediction.get("recentSamples")
+        if isinstance(prediction.get("recentSamples"), list)
+        else []
+    )
+    _normalized_saved_games = []
+    for _game in _source_games:
+        if not isinstance(_game, dict):
+            continue
+        _normalized_game = dict(_game)
+        if _normalized_game.get("value") is None:
+            _value = next(
+                (_normalized_game.get(_field) for _field in _saved_field_candidates
+                 if _normalized_game.get(_field) is not None),
+                None,
+            )
+            if _value is None:
+                _value = (
+                    _normalized_game.get("targetStat")
+                    if _normalized_game.get("targetStat") is not None
+                    else _normalized_game.get("statValue")
+                    if _normalized_game.get("statValue") is not None
+                    else _normalized_game.get("stat")
+                )
+            if _value is not None:
+                _normalized_game["value"] = _value
+        _normalized_saved_games.append(_normalized_game)
+    if _normalized_saved_games:
+        prediction["gameLogs"] = _normalized_saved_games
+        if isinstance(_prediction_logs, dict):
+            _normalized_player_logs = dict(_prediction_logs)
+            _normalized_player_logs["games"] = _normalized_saved_games
+            prediction["playerGameLogs"] = _normalized_player_logs
     prediction["propType"] = prediction.get("propType") or prop_type
     if prediction.get("line") is None:
         prediction["line"] = pick.get("line")
