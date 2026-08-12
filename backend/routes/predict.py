@@ -199,25 +199,18 @@ def _api_response_list(payload) -> list:
 
 
 def _legacy_h2h_display_date(value: Any, venue: Any) -> str:
-    """Keep H/A inside the date slice rendered by older native bundles.
+    """Return a plain provider date for H2H rows.
 
-    The old TestFlight bundle renders ``String(date).slice(5, 10)``. Encoding
-    the marker between month and day makes it visible without a native update:
-    ``2026-02H08`` renders as ``02H08``. Current bundles normalize this back to
-    ``02-08`` and render their dedicated venue marker separately.
+    Older native bundles once needed H/A encoded into the date string, but the
+    current client renders the venue marker separately. Keeping the API value
+    as a normal ISO date prevents the legacy workaround from leaking into
+    current cards and into saved analysis payloads.
     """
     date_text = str(value or "").strip()
-    venue_text = str(venue or "").strip().lower()
-    marker = "H" if venue_text == "home" else "A" if venue_text == "away" else ""
-    if not marker or not date_text:
-        return date_text
-    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})(.*)$", date_text)
-    if not match:
-        return date_text
-    year, month, day, remainder = match.groups()
-    if re.match(rf"^{marker}", remainder):
-        return date_text
-    return f"{year}-{month}{marker}{day}{remainder}"
+    # ``venue`` remains in the signature for compatibility with callers that
+    # already pass it; it must never be embedded into the date.
+    _ = venue
+    return date_text
 
 
 def _normalize_provider_player_id(value):

@@ -429,6 +429,110 @@ function renderModelFactors(factors: AnalysisFactor[]) {
   );
 }
 
+function renderProjectionLedger(ledger: any) {
+  const factors = Array.isArray(ledger?.factors) ? ledger.factors : [];
+  const final = ledger?.final && typeof ledger.final === 'object' ? ledger.final : null;
+  if (!factors.length && !final) return null;
+
+  const statusColor: Record<string, string> = {
+    applied: Colors.primary,
+    measured: '#60A5FA',
+    warning: '#F59E0B',
+    unavailable: Colors.textTertiary,
+  };
+  const formatNumber = (value: unknown) => {
+    if (value == null || !Number.isFinite(Number(value))) return '—';
+    const number = Number(value);
+    return Number.isInteger(number)
+      ? String(number)
+      : number.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  };
+  const formatInput = (key: string, value: unknown) => {
+    if (value == null || value === '' || typeof value === 'object') return null;
+    const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
+    const rendered = typeof value === 'number'
+      ? formatNumber(value)
+      : typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value);
+    return `${label} ${rendered}`;
+  };
+
+  return (
+    <View style={mStyles.factorSection}>
+      <View style={mStyles.factorSectionHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={mStyles.factorSectionTitle}>PROJECTION LEDGER</Text>
+          <Text style={mStyles.factorSectionSubtitle}>
+            Every numeric step in order; confidence controls are shown separately.
+          </Text>
+        </View>
+        <Ionicons name="git-branch-outline" size={16} color={Colors.primary} />
+      </View>
+
+      {final && (
+        <View style={mStyles.ledgerFinal}>
+          <View style={mStyles.ledgerFinalMetric}>
+            <Text style={mStyles.ledgerFinalLabel}>FINAL PROJECTION</Text>
+            <Text style={mStyles.ledgerFinalValue}>{formatNumber(final.projectedValue)}</Text>
+          </View>
+          <View style={mStyles.ledgerFinalMetric}>
+            <Text style={mStyles.ledgerFinalLabel}>LINE</Text>
+            <Text style={mStyles.ledgerFinalSecondary}>{formatNumber(final.line)}</Text>
+          </View>
+          <View style={mStyles.ledgerFinalMetric}>
+            <Text style={mStyles.ledgerFinalLabel}>DIRECTION</Text>
+            <Text style={[mStyles.ledgerFinalSecondary, {
+              color: final.recommendation === 'OVER'
+                ? Colors.success
+                : final.recommendation === 'UNDER' ? Colors.error : Colors.textSecondary,
+            }]}>{final.recommendation || 'PASS'}</Text>
+          </View>
+        </View>
+      )}
+
+      <View style={mStyles.ledgerList}>
+        {factors.map((factor: any, index: number) => {
+          const status = String(factor.status || 'measured').toLowerCase();
+          const color = statusColor[status] || Colors.textSecondary;
+          const isConfidence = factor.kind === 'confidence';
+          const inputSummary = Object.entries(factor.inputs || {})
+            .map(([key, value]) => formatInput(key, value))
+            .filter(Boolean)
+            .slice(0, 4)
+            .join(' · ');
+          const before = formatNumber(factor.before);
+          const after = formatNumber(factor.after);
+          const delta = factor.delta != null
+            ? `${Number(factor.delta) >= 0 ? '+' : ''}${formatNumber(factor.delta)}`
+            : null;
+          return (
+            <View key={`${factor.id || 'factor'}-${factor.sequence || index}`} style={mStyles.ledgerRow}>
+              <View style={mStyles.ledgerRowTop}>
+                <View style={mStyles.ledgerSequence}>
+                  <Text style={mStyles.ledgerSequenceText}>{factor.sequence || index + 1}</Text>
+                </View>
+                <Text style={mStyles.ledgerTitle}>{factor.title || factor.id || 'Projection factor'}</Text>
+                <Text style={[mStyles.ledgerStatus, { color }]}>
+                  {isConfidence ? 'CONFIDENCE' : status.toUpperCase()}
+                </Text>
+              </View>
+              <View style={mStyles.ledgerNumbers}>
+                <Text style={mStyles.ledgerTransition}>{before} → {after}</Text>
+                {delta ? <Text style={[mStyles.ledgerDelta, { color }]}>{delta}</Text> : null}
+                {factor.multiplier != null ? (
+                  <Text style={mStyles.ledgerMultiplier}>×{formatNumber(factor.multiplier)}</Text>
+                ) : null}
+                {factor.sampleSize != null ? <Text style={mStyles.ledgerSample}>n={factor.sampleSize}</Text> : null}
+              </View>
+              {inputSummary ? <Text style={mStyles.ledgerInputs}>{inputSummary}</Text> : null}
+              {factor.reason ? <Text style={mStyles.ledgerReason}>{factor.reason}</Text> : null}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function renderRoleEvidence(data: unknown) {
   const packet = data && typeof data === 'object' && !Array.isArray(data)
     ? data as Record<string, any>
@@ -1221,6 +1325,10 @@ export default function PicksScreen() {
   const modalFactors = capturedModalFactors.length > 0
     ? capturedModalFactors
     : (!analysisModal?.loading ? LEGACY_MODEL_FACTORS : []);
+  const modalLedger = (
+    (analysisModal?.data as any)?.factorLedger
+      ?? (analysisModal?.pick as any)?.factorLedger
+  );
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -1776,6 +1884,7 @@ export default function PicksScreen() {
               return data?.roleEvidencePacket ?? pick?.roleEvidencePacket;
             })())}
             {!analysisModal?.loading && modalFactors.length > 0 && renderModelFactors(modalFactors)}
+            {!analysisModal?.loading && renderProjectionLedger(modalLedger)}
 
             {/* ── RECENT + H2H BAR HISTORY ── */}
             {!analysisModal?.loading && analysisModal?.data && (
@@ -2150,6 +2259,118 @@ const mStyles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textTertiary,
     lineHeight: 15,
+  },
+  ledgerFinal: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    backgroundColor: 'rgba(57,255,20,0.05)',
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.22)',
+    padding: 10,
+    gap: 8,
+  },
+  ledgerFinalMetric: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+  },
+  ledgerFinalLabel: {
+    fontSize: 7,
+    color: Colors.textTertiary,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+    textAlign: 'center',
+  },
+  ledgerFinalValue: {
+    fontSize: 19,
+    color: Colors.primary,
+    fontWeight: '900',
+  },
+  ledgerFinalSecondary: {
+    fontSize: 13,
+    color: Colors.text,
+    fontWeight: '900',
+  },
+  ledgerList: {
+    gap: 6,
+  },
+  ledgerRow: {
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 9,
+    gap: 4,
+  },
+  ledgerRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  ledgerSequence: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(57,255,20,0.12)',
+  },
+  ledgerSequenceText: {
+    fontSize: 9,
+    color: Colors.primary,
+    fontWeight: '900',
+  },
+  ledgerTitle: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  ledgerStatus: {
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.55,
+  },
+  ledgerNumbers: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 27,
+  },
+  ledgerTransition: {
+    color: Colors.text,
+    fontSize: 11,
+    fontWeight: '800',
+    fontFamily: 'JetBrainsMono_700Bold',
+  },
+  ledgerDelta: {
+    fontSize: 10,
+    fontWeight: '900',
+    fontFamily: 'JetBrainsMono_700Bold',
+  },
+  ledgerMultiplier: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+    fontFamily: 'JetBrainsMono_700Bold',
+  },
+  ledgerSample: {
+    color: Colors.textTertiary,
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  ledgerInputs: {
+    paddingLeft: 27,
+    color: Colors.textSecondary,
+    fontSize: 9,
+    lineHeight: 14,
+  },
+  ledgerReason: {
+    paddingLeft: 27,
+    color: Colors.textTertiary,
+    fontSize: 9.5,
+    lineHeight: 14,
   },
   // ── Game Script Banner (analysis modal)
   gsBanner: {

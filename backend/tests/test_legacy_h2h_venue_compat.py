@@ -10,9 +10,9 @@ PREDICT_SOURCE = (ROOT / "routes" / "predict.py").read_text()
 COMPACT_SOURCE = (ROOT.parent / "mobile" / "components" / "CompactAnalysisBars.tsx").read_text()
 
 
-def test_legacy_h2h_date_carries_home_or_away_marker():
-    assert _legacy_h2h_display_date("2026-08-02T00:00:00Z", "home") == "2026-08H02T00:00:00Z"
-    assert _legacy_h2h_display_date("2026-08-09T00:00:00Z", "away") == "2026-08A09T00:00:00Z"
+def test_h2h_date_stays_plain_and_venue_is_a_separate_field():
+    assert _legacy_h2h_display_date("2026-08-02T00:00:00Z", "home") == "2026-08-02T00:00:00Z"
+    assert _legacy_h2h_display_date("2026-08-09T00:00:00Z", "away") == "2026-08-09T00:00:00Z"
     assert _legacy_h2h_display_date("", "home") == ""
     assert _legacy_h2h_display_date("2026-08H02T00:00:00Z", "home") == "2026-08H02T00:00:00Z"
 
@@ -25,4 +25,4 @@ def test_h2h_player_and_team_meeting_rows_use_legacy_compatible_date():
 def test_current_bundle_still_uses_dedicated_marker_and_date_prefix():
     assert "venueMark(rowVenue(row))" in COMPACT_SOURCE
     assert "displayH2HDate(row.date)" in COMPACT_SOURCE
-    assert "2026-08H02" in COMPACT_SOURCE
+    assert "encoded = raw.match" in COMPACT_SOURCE

@@ -891,13 +891,13 @@ async def search_players(req: PlayerSearchRequest):
             player["teamVerified"] = False
         return player_list
 
-    # A previously resolved soccer player must remain searchable even when
-    # disposable search cache rows are missing or Atlas/provider lookups are
-    # slow. Do this before the typing-path cache/provider branches so a cache
-    # timeout cannot hide a durable identity.
+    # A previously resolved soccer player remains a bounded fallback when
+    # disposable search cache rows are missing. Do not return it before the
+    # normal cache/provider paths: durable rows intentionally have their club
+    # fields masked, and returning them first made a valid player such as
+    # Vitinha look like an unverified, context-free result even when a live
+    # profile could resolve the current club.
     durable_players = await _durable_identity_fallback()
-    if durable_players:
-        return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
 
     async def _resolve_club_for_intl_player(p: dict) -> dict:
         """If a cache hit shows a national team, fetch the player's actual club
@@ -1218,7 +1218,6 @@ async def search_players(req: PlayerSearchRequest):
                             return {"players": _mask_unverified_team(await _attach_owner_media(fallback_players))}
                 except Exception:
                     pass
-        durable_players = await _durable_identity_fallback()
         if durable_players:
             return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
         # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
@@ -1236,7 +1235,6 @@ async def search_players(req: PlayerSearchRequest):
             pass
         return {"players": []}
 
-    durable_players = await _durable_identity_fallback()
     if durable_players:
         return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
 
