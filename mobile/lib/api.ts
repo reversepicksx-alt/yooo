@@ -402,6 +402,7 @@ export interface PredictionResult {
   tacticalBreakdown?: string;
   playerGameLogs?: {
     games?: Record<string, unknown>[];
+    allGames?: Record<string, unknown>[];
     historyContext?: {
       mode?: string;
       venue?: string;
@@ -937,6 +938,7 @@ interface RawPrediction {
   };
   playerGameLogs?: {
     games?: Record<string, unknown>[];
+    allGames?: Record<string, unknown>[];
     historyContext?: {
       mode?: string;
       venue?: string;
@@ -1274,6 +1276,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
   // versions. Keep the live UI tolerant at this boundary instead of making
   // the chart depend on one backend field name.
   const rawGameSources = [
+    raw.playerGameLogs?.allGames,
     raw.playerGameLogs?.games,
     (raw as any).gameLogs,
     (raw as any).recentSamples,

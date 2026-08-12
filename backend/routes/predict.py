@@ -1587,7 +1587,7 @@ async def predict(req: PredictionRequest):
         async def fetch_player_game_logs(
             fixture_list,
             player_id,
-            limit=35,
+            limit=100,
             extra_fixture_list=None,
         ):
             """Fetch player's individual stats — always live from API, all competitions."""
@@ -2119,12 +2119,27 @@ async def predict(req: PredictionRequest):
                     # time out, replacing real logs with synthetic season
                     # averages. Passing safeguards already keep absent
                     # possession neutral and expose its provenance.
+                    _home_count = sum(
+                        1 for _g in collected
+                        if _g.get("venue") == "home"
+                        and _g.get(target_field) is not None
+                    )
+                    _away_count = sum(
+                        1 for _g in collected
+                        if _g.get("venue") == "away"
+                        and _g.get(target_field) is not None
+                    )
+                    _venue_history_complete = (
+                        req.sport != "soccer"
+                        or (_home_count >= 50 and _away_count >= 50)
+                    )
                     if (
                         len(collected) >= 15
                         and len(good) >= len(collected) // 2
                         and _saves_ok
                         and _tp_complete
                         and _competition_meta_complete
+                        and _venue_history_complete
                         and not extra_fixture_list
                     ):
                         _poss_note = (
@@ -2141,18 +2156,19 @@ async def predict(req: PredictionRequest):
                             f"[CACHE-STAGE0] Only {len(collected)} games "
                             f"(venue ok: {len(good)}, saves_ok={_saves_ok}, tp_complete={_tp_complete}, "
                             f"competition_meta={_competition_meta_complete}, "
-                            f"historical_poss={_pressure_possession_count}) — "
+                            f"historical_poss={_pressure_possession_count}, "
+                            f"home={_home_count}, away={_away_count}) — "
                             "falling through to Stage 1 for more data"
                         )
             except Exception as _ce:
                 print(f"[CACHE-STAGE0] Error: {_ce}")
 
             try:
-                # Fetch the team's last 40 finished fixtures across ALL competitions from API.
-                # 20 was too shallow — for GKs (and any player on a busy team), 20 games
-                # may only yield 6-8 venue-specific samples once home/away are split,
-                # causing the venue-split prior to fall back to combined and mix
-                # home/away stats. 40 games gives enough coverage for proper venue splits.
+                # Fetch a deep finished-fixture pool across ALL competitions. We
+                # target 50 real player appearances at each venue, so a 40-game
+                # team feed is not enough once home/away, DNPs, and missing stats
+                # are removed.
+                _player_history_fixture_lookback = 100
 
                 # ── On-demand cache: check team_fixture_history before calling API ──
                 team_fixtures_raw = None
@@ -2164,7 +2180,10 @@ async def predict(req: PredictionRequest):
                     if _tfh_doc and _tfh_doc.get("fixtures"):
                         import time as _t2
                         _age = _t2.time() - _tfh_doc.get("_ts", 0)
-                        if _age < _tfh_cache_ttl:
+                        if (
+                            _age < _tfh_cache_ttl
+                            and len(_tfh_doc.get("fixtures") or []) >= _player_history_fixture_lookback
+                        ):
                             team_fixtures_raw = _tfh_doc["fixtures"]
                             print(f"[API-DIRECT] {req.playerName}: {len(team_fixtures_raw)} team fixtures from CACHE (age {int(_age/3600)}h)")
                 except Exception:
@@ -2172,12 +2191,21 @@ async def predict(req: PredictionRequest):
 
                 if team_fixtures_raw is None and not _is_bdl_league:
                     team_fixtures_raw = await api_football_request(
-                        "fixtures", {"team": actual_team_id, "last": 40, "status": "FT"}
+                        "fixtures",
+                        {
+                            "team": actual_team_id,
+                            "last": _player_history_fixture_lookback,
+                            "status": "FT",
+                        },
                     )
                     if not team_fixtures_raw:
                         print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
                         return collected
-                    print(f"[API-DIRECT] {req.playerName}: {len(team_fixtures_raw)} team fixtures from API")
+                    print(
+                        f"[API-DIRECT] {req.playerName}: "
+                        f"{len(team_fixtures_raw)} team fixtures from API "
+                        f"(target={_player_history_fixture_lookback})"
+                    )
                     # Write-back: cache for next prediction on same team
                     import time as _t3
                     try:
@@ -3323,7 +3351,9 @@ async def predict(req: PredictionRequest):
         )
         # Player game logs: VENUE-PRIORITIZED ordering
         # For neutral: use all fixtures equally (no venue priority — WC/tournament game)
-        # For home/away: search venue-matching fixtures first (target: 15-20 venue-matched games)
+        # For home/away: search venue-matching fixtures first. The deep player
+        # history fetch targets 50 real appearances per venue before returning
+        # a cache-only result.
         venue_first_fixtures = (
             all_team_fixtures if _is_neutral
             else venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
@@ -3333,7 +3363,7 @@ async def predict(req: PredictionRequest):
             return await fetch_player_game_logs(
                 venue_first_fixtures,
                 req.playerId,
-                35,
+                100,
                 extra_fixture_list=historical_knockout_fixtures,
             )
 
@@ -3561,7 +3591,7 @@ async def predict(req: PredictionRequest):
         required_wave2 = aio.gather(
             _bounded_required(team_fixture_stats_task, "team fixture stats", 18),
             _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 18),
-            _bounded_required(player_game_logs_task, "player game logs", 25),
+            _bounded_required(player_game_logs_task, "player game logs", 60),
             _bounded_required(situation_task, "match situation", 10),
             _bounded_required(
                 team_schedule_possession_task,
@@ -5103,6 +5133,15 @@ async def predict(req: PredictionRequest):
 
             game_log_summary = {
                 "games": _history_view_logs,
+                # Keep the venue-scoped view for model/context calculations,
+                # but expose the complete verified archive for the customer
+                # Recent Matches card. The UI can then show both venues
+                # without relabeling mixed rows as the selected venue.
+                "allGames": sorted(
+                    player_game_logs,
+                    key=lambda g: str(g.get("date") or ""),
+                    reverse=True,
+                ),
                 "targetProp": req.propType,
                 "sampleSize": len(values),
                 "last10Count": len(_last10_logs),
@@ -5124,19 +5163,45 @@ async def predict(req: PredictionRequest):
                     game_log_summary["homeAvg"] = round(sum(home_vals) / len(home_vals), 2)
                 if away_vals:
                     game_log_summary["awayAvg"] = round(sum(away_vals) / len(away_vals), 2)
+            # The split values shown in Recent Matches must describe the full
+            # verified archive, not only the selected prediction venue.
+            _all_home_values = [
+                g.get(target_field)
+                for g in player_game_logs
+                if g.get("venue") == "home" and g.get(target_field) is not None
+            ]
+            _all_away_values = [
+                g.get(target_field)
+                for g in player_game_logs
+                if g.get("venue") == "away" and g.get(target_field) is not None
+            ]
+            if _all_home_values:
+                game_log_summary["homeAvg"] = round(
+                    sum(_all_home_values) / len(_all_home_values), 2
+                )
+            if _all_away_values:
+                game_log_summary["awayAvg"] = round(
+                    sum(_all_away_values) / len(_all_away_values), 2
+                )
+            game_log_summary["venueSampleSizes"] = {
+                "home": len(_all_home_values),
+                "away": len(_all_away_values),
+            }
             if per90_values:
                 game_log_summary["per90Avg"] = round(sum(per90_values) / len(per90_values), 2)
             if minutes_list:
                 game_log_summary["avgMinutes"] = round(sum(minutes_list) / len(minutes_list), 1)
-            if values and req.line:
-                over_hits = sum(1 for v in values if v > req.line)
-                under_hits = sum(1 for v in values if v < req.line)
+            if _all_history_values and req.line:
+                over_hits = sum(1 for v in _all_history_values if v > req.line)
+                under_hits = sum(1 for v in _all_history_values if v < req.line)
+                push_hits = len(_all_history_values) - over_hits - under_hits
                 game_log_summary["hitRates"] = {
                     "overHits": over_hits,
                     "underHits": under_hits,
-                    "overPct": round(over_hits / len(values) * 100, 1),
-                    "underPct": round(under_hits / len(values) * 100, 1),
-                    "total": len(values),
+                    "pushHits": push_hits,
+                    "overPct": round(over_hits / len(_all_history_values) * 100, 1),
+                    "underPct": round(under_hits / len(_all_history_values) * 100, 1),
+                    "total": len(_all_history_values),
                 }
 
             # ── Annotate each game log with opponent league rank ────────────────
@@ -11593,6 +11658,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             ]
             _pgl_summary = {
                 "games": player_game_logs,
+                "allGames": player_game_logs,
                 "targetProp": req.propType,
                 "sampleSize": len(_pgl_vals),
                 "last10Count": len(_pgl_last10),
@@ -11610,8 +11676,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             if _pgl_vals and req.line:
                 _pgl_over = sum(1 for v in _pgl_vals if v > req.line)
                 _pgl_under = sum(1 for v in _pgl_vals if v < req.line)
+                _pgl_push = len(_pgl_vals) - _pgl_over - _pgl_under
                 _pgl_summary["hitRates"] = {
                     "overHits": _pgl_over, "underHits": _pgl_under,
+                    "pushHits": _pgl_push,
                     "overPct": round(_pgl_over / len(_pgl_vals) * 100, 1),
                     "underPct": round(_pgl_under / len(_pgl_vals) * 100, 1),
                     "total": len(_pgl_vals),

@@ -10,7 +10,16 @@ type CompactPrediction = {
   gameLogs?: Array<Record<string, any>> | null;
   playerGameLogs?: {
     games?: Array<Record<string, any>> | null;
+    allGames?: Array<Record<string, any>> | null;
     targetProp?: string | null;
+    hitRates?: {
+      overPct?: number | null;
+      underPct?: number | null;
+      overHits?: number | null;
+      underHits?: number | null;
+      pushHits?: number | null;
+      total?: number | null;
+    } | null;
   } | null;
   h2hPlayerStats?: Record<string, any> | null;
   matchupVolume?: Record<string, any> | null;
@@ -208,9 +217,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       ?? (typeof prediction.playerIsHome === 'boolean' ? prediction.playerIsHome : null),
   );
   const historyVenue = preferredVenue ?? normalizeVenue(historyContext?.venue);
-  // The backend supplies a venue-scoped, newest-first archive. Keep the
-  // boundary defensive as saved/older responses can still contain the
-  // broader historical payload.
+  // The backend supplies a complete, newest-first archive for both venues.
+  // Keep the boundary defensive because saved/older responses can still
+  // contain only the venue-scoped `games` payload.
   // Live predictions are normalized by api.ts into gameLogs. Saved-pick
   // analysis responses retain the backend's playerGameLogs.games shape.
   // Accept both so the analysis modal cannot show H2H while silently hiding
@@ -218,7 +227,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const rawLogs: Array<Record<string, any>> = (
     Array.isArray(prediction.gameLogs) && prediction.gameLogs.length > 0
       ? prediction.gameLogs
-      : prediction.playerGameLogs?.games ?? []
+      : prediction.playerGameLogs?.allGames
+        ?? prediction.playerGameLogs?.games
+        ?? []
   );
   const targetField = RECENT_LOG_VALUE_FIELDS[
     String(prediction.propType || prediction.playerGameLogs?.targetProp || '')
@@ -235,11 +246,26 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     })) as Array<Record<string, any>>;
   const logs = normalizedLogs
     .filter((game) => !game.synthetic && game.value != null)
-    .filter((game) => !historyVenue || rowVenue(game) === historyVenue)
     .sort(newestFirst)
-    .slice(0, 20);
+    .slice(0, 100);
+  const historicalHitRates = (prediction as any).hitRates
+    ?? prediction.playerGameLogs?.hitRates
+    ?? null;
+  const settledRate = Number.isFinite(Number((prediction as any).propHistoricalRate))
+    ? Number((prediction as any).propHistoricalRate)
+    : null;
+  const settledSample = Number((prediction as any).propHistoricalN) > 0
+    ? Number((prediction as any).propHistoricalN)
+    : null;
+  const recommendation = String(prediction.recommendation || '').toUpperCase();
+  const settledDirection = recommendation === 'OVER' || recommendation === 'UNDER'
+    ? recommendation
+    : null;
   const h2h = prediction.h2hPlayerStats ?? {};
-  const showSelectedVenueOnly = historyVenue === 'home' || historyVenue === 'away';
+  // Recent history intentionally shows both venue pools. The selected venue
+  // remains highlighted on each row, but the archive must not hide the
+  // opposite venue when the customer is checking sample depth.
+  const showSelectedVenueOnly = false;
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
   const isGkProp = prediction.propType === 'saves' || prediction.propType === 'goalie_saves';
@@ -407,7 +433,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 <Text style={styles.title}>RECENT MATCHES · {logs.length}</Text>
                 {historyVenue && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                    {historyVenue.toUpperCase()} VENUE MATCHES
+                    HOME + AWAY VENUE MATCHES
                   </Text>
                 )}
               </View>
@@ -453,11 +479,6 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                         OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
                       </Text>
                     )}
-                    {isPassProp && (
-                      <Text style={styles.possessionLabel}>
-                        OPP PASS {game.opponentPassAttempts != null ? Number(game.opponentPassAttempts).toFixed(0) : '—'}
-                      </Text>
-                    )}
                       <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
                         {venueMark(rowVenue(game))}
                       </Text>
@@ -475,11 +496,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                    {selectedGame.competitionName
                      ? ` · ${selectedGame.competitionName} · ${stageLabelForRow(selectedGame)}`
                      : ''}
-                  {showSotEvidence
-                    ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
-                    : isPassProp
-                      ? ` · OPP PASS ${selectedGame.opponentPassAttempts != null ? Number(selectedGame.opponentPassAttempts).toFixed(0) : 'unavailable'}`
-                      : ''}
+                   {showSotEvidence
+                     ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
+                     : ''}
                 </Text>
               )}
             </View>
@@ -648,6 +667,51 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 )}
               </View>
             </View>
+          )}
+        </View>
+      )}
+
+      {(historicalHitRates || settledRate != null) && (
+        <View style={styles.card}>
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Ionicons name="stats-chart-outline" size={11} color={Colors.primary} />
+              <Text style={styles.title}>HISTORICAL HIT RATE</Text>
+            </View>
+            {historicalHitRates?.total != null && (
+              <Text style={styles.meta}>LINE · n={historicalHitRates.total}</Text>
+            )}
+          </View>
+          <View style={styles.splitRow}>
+            <View style={styles.splitItem}>
+              <Text style={styles.splitLabel}>OVER</Text>
+              <Text style={[styles.splitValue, { color: Colors.success }]}>
+                {historicalHitRates?.overPct != null ? `${Number(historicalHitRates.overPct).toFixed(1)}%` : '—'}
+              </Text>
+              <Text style={styles.splitMeta}>
+                {historicalHitRates?.overHits != null
+                  ? `${historicalHitRates.overHits} HITS`
+                  : 'NO SAMPLE'}
+              </Text>
+            </View>
+            <View style={styles.splitDivider} />
+            <View style={styles.splitItem}>
+              <Text style={styles.splitLabel}>UNDER</Text>
+              <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
+                {historicalHitRates?.underPct != null ? `${Number(historicalHitRates.underPct).toFixed(1)}%` : '—'}
+              </Text>
+              <Text style={styles.splitMeta}>
+                {historicalHitRates?.underHits != null
+                  ? `${historicalHitRates.underHits} HITS`
+                  : 'NO SAMPLE'}
+              </Text>
+            </View>
+          </View>
+          {settledRate != null && settledDirection && (
+            <Text style={[styles.detail, { marginTop: 0 }]}>
+              SAVED SETTLED PICKS · {settledDirection} {settledRate.toFixed(1)}%
+              {settledSample ? ` · n=${settledSample}` : ''}
+            </Text>
           )}
         </View>
       )}

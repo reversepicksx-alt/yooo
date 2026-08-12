@@ -2411,6 +2411,21 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     _pick_logs = pick.get("playerGameLogs")
     _prediction_games = _prediction_logs.get("games") if isinstance(_prediction_logs, dict) else None
     _pick_games = _pick_logs.get("games") if isinstance(_pick_logs, dict) else None
+    _prediction_all_games = (
+        _prediction_logs.get("allGames")
+        if isinstance(_prediction_logs, dict)
+        else None
+    )
+    _pick_all_games = (
+        _pick_logs.get("allGames")
+        if isinstance(_pick_logs, dict)
+        else None
+    )
+    if (
+        not isinstance(_prediction_all_games, list)
+        or not _prediction_all_games
+    ) and isinstance(_pick_all_games, list) and _pick_all_games:
+        _prediction_all_games = _pick_all_games
     if (not isinstance(_prediction_games, list) or not _prediction_games) and isinstance(_pick_games, list) and _pick_games:
         prediction["playerGameLogs"] = _pick_logs
         _prediction_logs = _pick_logs
@@ -2435,7 +2450,9 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "goalie_saves": ("goals_saves", "saves"),
     }.get(_saved_prop, ())
     _source_games = (
-        _prediction_games
+        _prediction_all_games
+        if isinstance(_prediction_all_games, list) and _prediction_all_games
+        else _prediction_games
         if isinstance(_prediction_games, list) and _prediction_games
         else prediction.get("gameLogs")
         if isinstance(prediction.get("gameLogs"), list) and prediction.get("gameLogs")
@@ -2470,6 +2487,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         if isinstance(_prediction_logs, dict):
             _normalized_player_logs = dict(_prediction_logs)
             _normalized_player_logs["games"] = _normalized_saved_games
+            _normalized_player_logs["allGames"] = _normalized_saved_games
             prediction["playerGameLogs"] = _normalized_player_logs
     prediction["propType"] = prediction.get("propType") or prop_type
     if prediction.get("line") is None:
