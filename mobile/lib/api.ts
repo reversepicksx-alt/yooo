@@ -337,6 +337,8 @@ export interface GameLog {
   opponentPossession?: number | null;
   /** Exact opponent team shots on target in this fixture; populated for soccer saves logs. */
   opponentShotsOnTarget?: number | null;
+  /** Exact opponent team pass attempts in this fixture, when provider data exists. */
+  opponentPassAttempts?: number | null;
   blocks?: number | null;
   interceptions?: number | null;
   tackles?: number | null;
@@ -403,6 +405,18 @@ export interface PredictionResult {
     tpAwayCount?: number;
     last10Count?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  };
+  matchupVolume?: {
+    available?: boolean;
+    status?: string;
+    projectionAdjustmentStatus?: string;
+    minimumRecommendedSample?: number;
+    venue?: string;
+    opponentVenue?: string;
+    shotsOnTarget?: Record<string, unknown>;
+    passes?: Record<string, unknown>;
+    recentMatchRows?: Record<string, unknown>[];
+    opponentRecentMatchRows?: Record<string, unknown>[];
   };
   /** Explanation source. Active predictions use the deterministic model. */
   aiSource?: 'model' | 'deterministic_model' | string;

@@ -39,6 +39,7 @@ from tactical_evidence import (
     build_position_cohort_statement,
 )
 from role_evidence import build_role_evidence_packet
+from matchup_volume import build_matchup_volume_packet
 from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
@@ -1384,6 +1385,110 @@ async def predict(req: PredictionRequest):
             tasks = [fetch_one(fix) for fix in fixture_list[:limit]]
             results_raw = await aio.gather(*tasks, return_exceptions=True)
             return [r for r in results_raw if r and not isinstance(r, Exception)]
+
+        async def fetch_fixture_matchup_volume(fixture_list, team_id, limit=10):
+            """Fetch exact team/opponent SOT and pass totals for venue samples.
+
+            Unlike fetch_fixture_team_stats, this deliberately makes one
+            team-level request per fixture and returns both sides. It avoids
+            player-level enrichment because this packet is descriptive
+            matchup evidence, not a new projection input.
+            """
+            def _num(value):
+                try:
+                    parsed = float(str(value).replace("%", "").strip())
+                    return parsed if math.isfinite(parsed) else None
+                except (TypeError, ValueError):
+                    return None
+
+            async def fetch_one(fix):
+                fid = fix.get("fixtureId")
+                if not fid or not team_id:
+                    return None
+                cache_key = f"fxt_matchup_volume_{fid}"
+                cached = None
+                try:
+                    cached_doc = await db.fixture_player_cache.find_one(
+                        {"_k": cache_key}, {"_id": 0, "d": 1}
+                    )
+                    cached = (cached_doc or {}).get("d") or {}
+                except Exception:
+                    cached = None
+
+                sides = cached.get("sides") if isinstance(cached, dict) else None
+                if not isinstance(sides, dict) or not sides.get("home") or not sides.get("away"):
+                    try:
+                        stats_rows = await api_football_request(
+                            "fixtures/statistics", {"fixture": fid}
+                        )
+                        sides = {}
+                        for team_stats in stats_rows or []:
+                            side_id = (team_stats.get("team") or {}).get("id")
+                            if side_id is None:
+                                continue
+                            raw_stats = {
+                                str(item.get("type") or ""): item.get("value")
+                                for item in (team_stats.get("statistics") or [])
+                            }
+                            side = {
+                                "teamId": side_id,
+                                "shotsOnTarget": _num(raw_stats.get("Shots on Goal")),
+                                "passes": _num(raw_stats.get("Total passes")),
+                            }
+                            # The normalized fixture rows carry the
+                            # perspective team's venue, not always both raw
+                            # team IDs. Assign the provider rows relative to
+                            # that verified perspective.
+                            perspective_venue = (
+                                "home" if fix.get("venue") == "home" else "away"
+                            )
+                            side_key = (
+                                perspective_venue
+                                if side_id == team_id
+                                else ("away" if perspective_venue == "home" else "home")
+                            )
+                            sides[side_key] = side
+                        if not sides.get("home") or not sides.get("away"):
+                            return None
+                        try:
+                            await db.fixture_player_cache.update_one(
+                                {"_k": cache_key},
+                                {"$set": {"_k": cache_key, "d": {"sides": sides}}},
+                                upsert=True,
+                            )
+                        except Exception as cache_err:
+                            print(f"[MATCHUP VOLUME CACHE] skipped: {cache_err}")
+                    except Exception as volume_err:
+                        print(
+                            f"[MATCHUP VOLUME] fixture={fid} unavailable: "
+                            f"{type(volume_err).__name__}"
+                        )
+                        return None
+
+                is_home = fix.get("venue") == "home" or (
+                    sides.get("home", {}).get("teamId") == team_id
+                )
+                team_side = sides.get("home" if is_home else "away") or {}
+                opponent_side = sides.get("away" if is_home else "home") or {}
+                return {
+                    "fixtureId": fid,
+                    "date": str(fix.get("date") or "")[:10],
+                    "opponent": fix.get("opponent", ""),
+                    "venue": "home" if is_home else "away",
+                    "teamShotsOnTarget": team_side.get("shotsOnTarget"),
+                    "opponentShotsOnTarget": opponent_side.get("shotsOnTarget"),
+                    "teamPasses": team_side.get("passes"),
+                    "opponentPasses": opponent_side.get("passes"),
+                }
+
+            results = await aio.gather(
+                *(fetch_one(fix) for fix in fixture_list[:limit]),
+                return_exceptions=True,
+            )
+            return [
+                row for row in results
+                if isinstance(row, dict) and row.get("fixtureId")
+            ]
 
         async def fetch_team_possession_average(fixture_list, team_id, limit=20):
             """Average possession from a team's full fixture schedule.
@@ -2925,6 +3030,19 @@ async def predict(req: PredictionRequest):
             opponent_fixture_list[:5] if _is_neutral else (venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5]),
             req.opponentId, 5
         )
+        # Matchup-volume evidence uses exact venue samples and can work with
+        # fewer than ten verified rows, but never pads a venue split with the
+        # opposite venue. It remains shadow-only until replay validation.
+        team_matchup_volume_task = fetch_fixture_matchup_volume(
+            venue_filtered_team_fixtures[:10] if not _is_neutral else all_team_fixtures[:10],
+            actual_team_id or 40,
+            10,
+        )
+        opponent_matchup_volume_task = fetch_fixture_matchup_volume(
+            venue_filtered_opp_fixtures[:10] if not _is_neutral else opponent_fixture_list[:10],
+            req.opponentId,
+            10,
+        )
         # Player game logs: VENUE-PRIORITIZED ordering
         # For neutral: use all fixtures equally (no venue priority — WC/tournament game)
         # For home/away: search venue-matching fixtures first (target: 15-20 venue-matched games)
@@ -3168,6 +3286,16 @@ async def predict(req: PredictionRequest):
                 "opponent schedule possession",
                 18,
             ),
+            _bounded_required(
+                team_matchup_volume_task,
+                "team matchup volume",
+                18,
+            ),
+            _bounded_required(
+                opponent_matchup_volume_task,
+                "opponent matchup volume",
+                18,
+            ),
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(
@@ -3177,7 +3305,7 @@ async def predict(req: PredictionRequest):
         try:
             required_results = await aio.wait_for(required_wave2, timeout=27)
         except aio.TimeoutError:
-            required_results = [None, None, None, None, None, None]
+            required_results = [None, None, None, None, None, None, None, None]
             print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 27s for {req.playerName}")
 
         try:
@@ -3202,6 +3330,48 @@ async def predict(req: PredictionRequest):
             and not isinstance(required_results[5], (Exception, type(None)))
             else {"average": None, "sampleSize": 0, "fixtureIds": [], "source": None}
         )
+        team_matchup_volume_rows = (
+            required_results[6]
+            if len(required_results) > 6
+            and not isinstance(required_results[6], (Exception, type(None)))
+            else []
+        )
+        opponent_matchup_volume_rows = (
+            required_results[7]
+            if len(required_results) > 7
+            and not isinstance(required_results[7], (Exception, type(None)))
+            else []
+        )
+        matchup_volume = build_matchup_volume_packet(
+            player_venue=player_venue,
+            team_rows=team_matchup_volume_rows,
+            opponent_rows=opponent_matchup_volume_rows,
+            team_name=corrected_team_name or req.teamName,
+            opponent_name=_canonical_opponent_name or req.opponentName,
+        )
+        # Carry the exact opponent team totals onto the player-history rows
+        # when the fixture identity/date joins. This keeps the recent-match
+        # chart auditable without making the player stat equal to the team
+        # stat, and leaves missing provider values unavailable.
+        _volume_by_fixture = {
+            str(row.get("fixtureId")): row
+            for row in team_matchup_volume_rows
+            if isinstance(row, dict) and row.get("fixtureId") is not None
+        }
+        _volume_by_date = {
+            str(row.get("date"))[:10]: row
+            for row in team_matchup_volume_rows
+            if isinstance(row, dict) and row.get("date")
+        }
+        for _gl in player_game_logs or []:
+            _volume_row = _volume_by_fixture.get(str(_gl.get("_fid")))
+            if _volume_row is None and _gl.get("date"):
+                _volume_row = _volume_by_date.get(str(_gl.get("date"))[:10])
+            if _volume_row:
+                if _volume_row.get("opponentShotsOnTarget") is not None:
+                    _gl["opponentShotsOnTarget"] = _volume_row["opponentShotsOnTarget"]
+                if _volume_row.get("opponentPasses") is not None:
+                    _gl["opponentPassAttempts"] = _volume_row["opponentPasses"]
         bzzoiro_enrichment = (
             optional_results[0]
             if len(optional_results) > 0 and not isinstance(optional_results[0], (Exception, type(None)))
@@ -4497,6 +4667,8 @@ async def predict(req: PredictionRequest):
             historical_data["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
             historical_data["opponentMatchStats"] = opponent_fixture_stats
+        if matchup_volume.get("available"):
+            historical_data["matchupVolume"] = matchup_volume
         if player_game_logs:
             # Add summary stats for the game logs
             target_field_map = {
@@ -10941,6 +11113,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
             prediction["opponentMatchStats"] = opponent_fixture_stats
+        if matchup_volume.get("available"):
+            prediction["matchupVolume"] = matchup_volume
         if historical_data.get("h2hPlayerStats"):
             prediction["h2hPlayerStats"] = historical_data["h2hPlayerStats"]
         if position_comp_data:

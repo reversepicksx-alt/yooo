@@ -9,6 +9,7 @@ type CompactPrediction = {
   recommendation?: string | null;
   gameLogs?: Array<Record<string, any>> | null;
   h2hPlayerStats?: Record<string, any> | null;
+  matchupVolume?: Record<string, any> | null;
   [key: string]: any;
 };
 
@@ -122,6 +123,69 @@ function compactTeamName(value: unknown, fallback: string) {
   return name.length > 16 ? `${name.slice(0, 15)}…` : name;
 }
 
+function VolumeMetric({
+  label,
+  value,
+  sample,
+  color,
+}: {
+  label: string;
+  value: unknown;
+  sample: unknown;
+  color: string;
+}) {
+  const numericValue = Number(value);
+  const hasValue = Number.isFinite(numericValue);
+  return (
+    <View style={styles.volumeMetric}>
+      <Text style={styles.volumeMetricLabel} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.volumeMetricValue, { color }]}>
+        {hasValue ? numericValue.toFixed(1) : '—'}
+      </Text>
+      <Text style={styles.volumeMetricSample}>
+        {hasValue && Number(sample) > 0 ? `N=${Number(sample)}` : 'UNAVAILABLE'}
+      </Text>
+    </View>
+  );
+}
+
+function VolumeExpected({
+  label,
+  teamValue,
+  opponentValue,
+  teamName,
+  opponentName,
+}: {
+  label: string;
+  teamValue: unknown;
+  opponentValue: unknown;
+  teamName: string;
+  opponentName: string;
+}) {
+  const team = Number(teamValue);
+  const opponent = Number(opponentValue);
+  return (
+    <View style={styles.volumeExpected}>
+      <Text style={styles.volumeSectionTitle}>{label}</Text>
+      <View style={styles.volumeExpectedRow}>
+        <View style={styles.volumeExpectedItem}>
+          <Text style={[styles.volumeExpectedValue, { color: Colors.success }]}>
+            {Number.isFinite(team) ? team.toFixed(1) : '—'}
+          </Text>
+          <Text style={styles.volumeExpectedLabel} numberOfLines={1}>{compactTeamName(teamName, 'TEAM')}</Text>
+        </View>
+        <Text style={styles.volumeExpectedVs}>VS</Text>
+        <View style={styles.volumeExpectedItem}>
+          <Text style={[styles.volumeExpectedValue, { color: '#60A5FA' }]}>
+            {Number.isFinite(opponent) ? opponent.toFixed(1) : '—'}
+          </Text>
+          <Text style={styles.volumeExpectedLabel} numberOfLines={1}>{compactTeamName(opponentName, 'OPP')}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export function CompactAnalysisBars({ prediction }: { prediction: CompactPrediction }) {
   const logs = (prediction.gameLogs ?? [])
     .filter((game) => !game.synthetic && game.value != null)
@@ -132,6 +196,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       ?? (typeof prediction.playerIsHome === 'boolean' ? prediction.playerIsHome : null),
   );
   const h2h = prediction.h2hPlayerStats ?? {};
+  const matchupVolume = prediction.matchupVolume ?? null;
+  const isSotProp = prediction.propType === 'shots_on_target';
+  const isPassProp = prediction.propType === 'pass_attempts' || prediction.propType === 'passes';
+  const [showMatchupVolume, setShowMatchupVolume] = useState(false);
   const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
   const meetingsByVenue = h2h.teamMeetingsByVenue ?? {};
   const teamMeetings = [
@@ -317,9 +385,14 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       <Text style={styles.possessionLabel}>
                         MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
                       </Text>
-                    {prediction.propType === 'saves' && (
+                    {isSotProp && (
                       <Text style={styles.possessionLabel}>
                         OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
+                      </Text>
+                    )}
+                    {isPassProp && (
+                      <Text style={styles.possessionLabel}>
+                        OPP PASS {game.opponentPassAttempts != null ? Number(game.opponentPassAttempts).toFixed(0) : '—'}
                       </Text>
                     )}
                       <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
@@ -334,9 +407,11 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   {selectedGame.date ? displayH2HDate(selectedGame.date, true) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
                   {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
                   {selectedGame.score ? ` · ${selectedGame.score}` : ''}
-                  {prediction.propType === 'saves'
+                  {isSotProp
                     ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
-                    : ''}
+                    : isPassProp
+                      ? ` · OPP PASS ${selectedGame.opponentPassAttempts != null ? Number(selectedGame.opponentPassAttempts).toFixed(0) : 'unavailable'}`
+                      : ''}
                 </Text>
               )}
             </View>
@@ -375,6 +450,136 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 </Text>
                 <Text style={styles.splitMeta}>{tpAwaySplit ? `${tpAwaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
               </View>
+            </View>
+          )}
+        </View>
+      )}
+
+      {matchupVolume?.available && (isSotProp || isPassProp) && (
+        <View style={styles.card}>
+          <TouchableOpacity
+            style={styles.volumeHeader}
+            onPress={() => setShowMatchupVolume((visible) => !visible)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`${isSotProp ? 'Shots on target' : 'Pass'} matchup volume evidence`}
+          >
+            <View style={styles.headerLeft}>
+              <Ionicons name="git-compare-outline" size={11} color={Colors.primary} />
+              <Text style={styles.title}>MATCHUP VOLUME</Text>
+            </View>
+            <View style={styles.volumeHeaderRight}>
+              <Text style={styles.shadowBadge}>SHADOW</Text>
+              <Ionicons
+                name={showMatchupVolume ? 'chevron-up' : 'chevron-down'}
+                size={13}
+                color="#7D8796"
+              />
+            </View>
+          </TouchableOpacity>
+          <Text style={styles.volumeIntro}>
+            Venue-matched team and opponent evidence · last {matchupVolume.minimumRecommendedSample ?? 10} target matches
+          </Text>
+          {showMatchupVolume && (
+            <View style={styles.volumeBody}>
+              {isSotProp && (
+                <>
+                  <Text style={styles.volumeSectionTitle}>SHOTS ON TARGET</Text>
+                  <View style={styles.volumeGrid}>
+                    <VolumeMetric
+                      label={`${prediction.teamName || 'TEAM'} SOT`}
+                      value={matchupVolume.shotsOnTarget?.teamCreated?.average}
+                      sample={matchupVolume.shotsOnTarget?.teamCreated?.sampleSize}
+                      color={Colors.success}
+                    />
+                    <VolumeMetric
+                      label="TEAM SOT ALLOWED"
+                      value={matchupVolume.shotsOnTarget?.teamAllowed?.average}
+                      sample={matchupVolume.shotsOnTarget?.teamAllowed?.sampleSize}
+                      color="#F59E0B"
+                    />
+                    <VolumeMetric
+                      label={`${prediction.opponentName || 'OPPONENT'} SOT`}
+                      value={matchupVolume.shotsOnTarget?.opponentCreated?.average}
+                      sample={matchupVolume.shotsOnTarget?.opponentCreated?.sampleSize}
+                      color="#60A5FA"
+                    />
+                    <VolumeMetric
+                      label="OPP SOT ALLOWED"
+                      value={matchupVolume.shotsOnTarget?.opponentAllowed?.average}
+                      sample={matchupVolume.shotsOnTarget?.opponentAllowed?.sampleSize}
+                      color="#F59E0B"
+                    />
+                  </View>
+                  <VolumeExpected
+                    label="EXPECTED MATCHUP SOT"
+                    teamValue={matchupVolume.shotsOnTarget?.expectedTeam?.average}
+                    opponentValue={matchupVolume.shotsOnTarget?.expectedOpponent?.average}
+                    teamName={prediction.teamName || 'TEAM'}
+                    opponentName={prediction.opponentName || 'OPPONENT'}
+                  />
+                </>
+              )}
+              {isPassProp && (
+                <>
+                  <Text style={styles.volumeSectionTitle}>PASS VOLUME</Text>
+                  <View style={styles.volumeGrid}>
+                    <VolumeMetric
+                      label={`${prediction.teamName || 'TEAM'} PASSES`}
+                      value={matchupVolume.passes?.teamCreated?.average}
+                      sample={matchupVolume.passes?.teamCreated?.sampleSize}
+                      color={Colors.success}
+                    />
+                    <VolumeMetric
+                      label="TEAM PASSES ALLOWED"
+                      value={matchupVolume.passes?.teamAllowed?.average}
+                      sample={matchupVolume.passes?.teamAllowed?.sampleSize}
+                      color="#F59E0B"
+                    />
+                    <VolumeMetric
+                      label={`${prediction.opponentName || 'OPPONENT'} PASSES`}
+                      value={matchupVolume.passes?.opponentCreated?.average}
+                      sample={matchupVolume.passes?.opponentCreated?.sampleSize}
+                      color="#60A5FA"
+                    />
+                    <VolumeMetric
+                      label="OPP PASSES ALLOWED"
+                      value={matchupVolume.passes?.opponentAllowed?.average}
+                      sample={matchupVolume.passes?.opponentAllowed?.sampleSize}
+                      color="#F59E0B"
+                    />
+                  </View>
+                  <VolumeExpected
+                    label="EXPECTED MATCHUP PASSES"
+                    teamValue={matchupVolume.passes?.expectedTeam?.average}
+                    opponentValue={matchupVolume.passes?.expectedOpponent?.average}
+                    teamName={prediction.teamName || 'TEAM'}
+                    opponentName={prediction.opponentName || 'OPPONENT'}
+                  />
+                </>
+              )}
+              <Text style={styles.volumeSubhead}>RECENT OPPONENT VOLUME</Text>
+              {(matchupVolume.recentMatchRows || []).length > 0 ? (
+                <View style={styles.volumeRows}>
+                  {(matchupVolume.recentMatchRows || []).slice(0, 10).map((row: any, index: number) => (
+                    <View style={styles.volumeRow} key={`${row.fixtureId || row.date || 'row'}-${index}`}>
+                      <Text style={styles.volumeRowOpponent} numberOfLines={1}>
+                        {row.opponent || 'Opponent'} · {row.venue === 'home' ? 'H' : 'A'}
+                      </Text>
+                      <Text style={styles.volumeRowValue}>
+                        {isSotProp
+                          ? `OPP SOT ${row.opponentShotsOnTarget ?? '—'}`
+                          : `OPP PASS ATT ${row.opponentPassAttempts ?? '—'}`}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.volumeUnavailable}>No verified venue-matched rows</Text>
+              )}
+              <Text style={styles.volumeNote}>
+                Recency-weighted by venue and blended by effective sample size. Shadow-only: this evidence does not yet change the projection.
+              </Text>
             </View>
           )}
         </View>
@@ -540,6 +745,101 @@ const styles = {
   splitLabel: { fontSize: 7, color: '#7D8796', fontWeight: '800' as const, letterSpacing: 0.7 },
   splitValue: { fontSize: 14, fontWeight: '900' as const, marginTop: 2 },
   splitMeta: { fontSize: 6.5, color: '#555', fontWeight: '800' as const, marginTop: 1 },
+  volumeHeader: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+  },
+  volumeHeaderRight: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
+  shadowBadge: {
+    color: '#F59E0B',
+    fontSize: 6.5,
+    fontWeight: '900' as const,
+    letterSpacing: 0.7,
+  },
+  volumeIntro: {
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    color: '#687385',
+    fontSize: 8,
+    lineHeight: 11,
+  },
+  volumeBody: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
+  },
+  volumeSectionTitle: {
+    marginTop: 10,
+    marginBottom: 7,
+    color: '#7D8796',
+    fontSize: 7,
+    fontWeight: '900' as const,
+    letterSpacing: 0.8,
+  },
+  volumeGrid: {
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: 7,
+  },
+  volumeMetric: {
+    width: '48%' as const,
+    minHeight: 48,
+    padding: 8,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+  },
+  volumeMetricLabel: {
+    color: '#7D8796',
+    fontSize: 6.5,
+    fontWeight: '900' as const,
+    letterSpacing: 0.35,
+  },
+  volumeMetricValue: { fontSize: 15, fontWeight: '900' as const, marginTop: 2 },
+  volumeMetricSample: { color: '#555', fontSize: 6.5, fontWeight: '800' as const, marginTop: 1 },
+  volumeExpected: {
+    marginTop: 9,
+    padding: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.14)',
+    backgroundColor: 'rgba(57,255,20,0.025)',
+  },
+  volumeExpectedRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+  },
+  volumeExpectedItem: { flex: 1, alignItems: 'center' as const },
+  volumeExpectedValue: { fontSize: 18, fontWeight: '900' as const },
+  volumeExpectedLabel: { color: '#7D8796', fontSize: 7, fontWeight: '900' as const, marginTop: 2 },
+  volumeExpectedVs: { color: '#555', fontSize: 8, fontWeight: '900' as const, marginHorizontal: 8 },
+  volumeSubhead: {
+    marginTop: 12,
+    marginBottom: 5,
+    color: '#7D8796',
+    fontSize: 7,
+    fontWeight: '900' as const,
+    letterSpacing: 0.8,
+  },
+  volumeRows: { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  volumeRow: {
+    minHeight: 27,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.045)',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    gap: 8,
+  },
+  volumeRowOpponent: { flex: 1, color: '#9CA3AF', fontSize: 8, fontWeight: '700' as const },
+  volumeRowValue: { color: '#D1D5DB', fontSize: 7, fontWeight: '900' as const },
+  volumeUnavailable: { color: '#687385', fontSize: 8, paddingVertical: 4 },
+  volumeNote: { color: '#555', fontSize: 7, lineHeight: 10, marginTop: 9 },
   legend: { marginTop: 5, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 5 },
   legendDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#4A6CFF' },
   legendText: { fontSize: 7, color: '#555' },

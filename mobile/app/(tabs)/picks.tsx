@@ -2017,10 +2017,6 @@ const mStyles = StyleSheet.create({
   aiSection: { gap: 5 },
   aiSectionTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
   aiSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
-  tacticalSection: {
-    marginTop: 16,
-    gap: 12,
-  },
   tacticalHeader: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
