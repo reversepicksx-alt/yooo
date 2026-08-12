@@ -67,6 +67,19 @@ KNOCKOUT_STAGES = {
     "round_of_32",
     "playoff",
 }
+KNOCKOUT_STAGE_CLASSES = {"knockout", "elite_knockout"}
+
+
+def _stage_display_label(stage: Optional[str], stage_class: Optional[str]) -> str:
+    if stage_class in KNOCKOUT_STAGE_CLASSES:
+        return "KNOCKOUT STAGES"
+    if stage_class == "group_stage":
+        return "LEAGUE GROUP"
+    if stage_class == "regular_season":
+        return "REGULAR SEASON"
+    if stage_class == "friendly":
+        return "FRIENDLY"
+    return str(stage_class or stage or "COMPETITION").replace("_", " ").upper()
 
 
 def _number(value: Any) -> Optional[float]:
@@ -190,6 +203,73 @@ def _target_context(
         "venue": str(venue or "").lower().strip() or None,
         "position": str(position or "").upper().strip() or None,
         "role": str(role or "").lower().strip() or None,
+    }
+
+
+def select_contextual_history(
+    logs: Iterable[dict],
+    *,
+    competition_id: Any = None,
+    competition_name: Any = None,
+    round_value: Any = None,
+    venue: Any = None,
+) -> tuple[list[dict], dict]:
+    """Select customer-visible history for the exact match context.
+
+    Venue is always required.  Knockout targets additionally require the same
+    comparable knockout stage class; rows with missing competition metadata are
+    excluded rather than guessed into the display sample.
+    """
+    target = _target_context(
+        competition_id,
+        competition_name,
+        round_value,
+        venue,
+        None,
+        None,
+    )
+    target_venue = target.get("venue")
+    target_stage_class = target.get("stageClass")
+    stage_label = _stage_display_label(target.get("stage"), target_stage_class)
+    is_knockout_target = target_stage_class in KNOCKOUT_STAGE_CLASSES
+    selected = []
+    venue_matches = 0
+    stage_matches = 0
+    candidates = [log for log in (logs or []) if isinstance(log, dict)]
+    for log in candidates:
+        row = _row_context(log)
+        if target_venue and row.get("venue") != target_venue:
+            continue
+        venue_matches += 1
+        if is_knockout_target and row.get("stageClass") != target_stage_class:
+            continue
+        stage_matches += 1
+        selected.append({
+            **log,
+            "competitionName": row.get("competitionName") or log.get("league"),
+            "stage": row.get("stage"),
+            "stageClass": row.get("stageClass"),
+            "stageLabel": _stage_display_label(row.get("stage"), row.get("stageClass")),
+        })
+
+    return selected, {
+        "mode": "venue_and_knockout_stage" if is_knockout_target else "venue",
+        "venue": target_venue,
+        "stage": target.get("stage"),
+        "stageClass": target_stage_class,
+        "stageLabel": stage_label,
+        "competitionName": target.get("competitionName"),
+        "candidateCount": len(candidates),
+        "venueMatchCount": venue_matches,
+        "includedCount": len(selected),
+        "excludedCount": len(candidates) - len(selected),
+        "metadataRequired": is_knockout_target,
+        "label": (
+            f"{str(target.get('competitionName') or 'COMPETITION').upper()} · "
+            f"{stage_label} · {target_venue.upper()}"
+            if target_venue
+            else f"{str(target.get('competitionName') or 'COMPETITION').upper()} · {stage_label}"
+        ),
     }
 
 

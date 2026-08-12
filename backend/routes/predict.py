@@ -4889,6 +4889,46 @@ async def predict(req: PredictionRequest):
         if matchup_volume.get("available"):
             historical_data["matchupVolume"] = matchup_volume
         if player_game_logs:
+            # Customer-visible recent history must match the current fixture
+            # context. Venue is always required; knockout fixtures additionally
+            # use equivalent knockout-stage history (for example, a Super Cup
+            # final with Champions League knockout matches). The full log set
+            # remains available to deterministic math and shadow evidence.
+            _history_view_logs = player_game_logs
+            _history_view_context = {
+                "mode": "unfiltered",
+                "candidateCount": len(player_game_logs),
+                "includedCount": len(player_game_logs),
+                "excludedCount": 0,
+                "label": "ALL HISTORY",
+            }
+            try:
+                from competition_context import select_contextual_history
+
+                _history_view_logs, _history_view_context = select_contextual_history(
+                    player_game_logs,
+                    competition_id=(
+                        (match_odds or {}).get("matchLeagueId")
+                        or league_id
+                    ),
+                    competition_name=(match_odds or {}).get("matchLeague") or "",
+                    round_value=(match_odds or {}).get("matchRound") or "",
+                    venue=player_venue,
+                )
+                if not _history_view_logs:
+                    print(
+                        f"[HISTORY CONTEXT] {req.playerName}: no matching "
+                        f"{_history_view_context.get('label')} rows; display sample is unavailable"
+                    )
+                else:
+                    print(
+                        f"[HISTORY CONTEXT] {req.playerName}: "
+                        f"{_history_view_context.get('label')} "
+                        f"n={len(_history_view_logs)}/{len(player_game_logs)}"
+                    )
+            except Exception as _history_context_err:
+                print(f"[HISTORY CONTEXT] unavailable: {_history_context_err}")
+
             # Add summary stats for the game logs
             target_field_map = {
                 "pass_attempts":          "passes_total",
@@ -4909,11 +4949,11 @@ async def predict(req: PredictionRequest):
                 "yellow_cards":           "cards_yellow",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
-            values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
-            minutes_list = [g.get("minutes", 0) for g in player_game_logs if g.get("minutes")]
-            per90_values = [g.get("targetStatPer90") for g in player_game_logs if g.get("targetStatPer90") is not None]
+            values = [g.get(target_field) for g in _history_view_logs if g.get(target_field) is not None]
+            minutes_list = [g.get("minutes", 0) for g in _history_view_logs if g.get("minutes")]
+            per90_values = [g.get("targetStatPer90") for g in _history_view_logs if g.get("targetStatPer90") is not None]
             _last10_logs = sorted(
-                player_game_logs,
+                _history_view_logs,
                 key=lambda g: g.get("date", ""),
                 reverse=True,
             )[:10]
@@ -4927,7 +4967,7 @@ async def predict(req: PredictionRequest):
             ]
 
             game_log_summary = {
-                "games": player_game_logs,
+                "games": _history_view_logs,
                 "targetProp": req.propType,
                 "sampleSize": len(values),
                 "last10Count": len(_last10_logs),
@@ -4943,8 +4983,8 @@ async def predict(req: PredictionRequest):
                 if len(values) >= 3:
                     game_log_summary["stdDev"] = round(stats_mod.stdev(values), 2)
                 # Home/away splits
-                home_vals = [g.get(target_field) for g in player_game_logs if g.get("venue") == "home" and g.get(target_field) is not None]
-                away_vals = [g.get(target_field) for g in player_game_logs if g.get("venue") == "away" and g.get(target_field) is not None]
+                home_vals = [g.get(target_field) for g in _history_view_logs if g.get("venue") == "home" and g.get(target_field) is not None]
+                away_vals = [g.get(target_field) for g in _history_view_logs if g.get("venue") == "away" and g.get(target_field) is not None]
                 if home_vals:
                     game_log_summary["homeAvg"] = round(sum(home_vals) / len(home_vals), 2)
                 if away_vals:
@@ -5024,6 +5064,7 @@ async def predict(req: PredictionRequest):
                     game_log_summary["hitRates"]["qualityOverPct"] = round(_q_over / len(_qual_vals) * 100, 1)
 
             historical_data["playerGameLogs"] = game_log_summary
+            historical_data["playerGameLogs"]["historyContext"] = _history_view_context
 
         # ── COMPETITION-AWARE HISTORICAL EVIDENCE ─────────────────────────────
         # This packet is built for every supported soccer prop type from the

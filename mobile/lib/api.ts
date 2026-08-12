@@ -328,6 +328,9 @@ export interface GameLog {
   season?: number | null;
   minutes: number;
   minutesPlayed?: number | null;
+  competitionName?: string | null;
+  round?: string | null;
+  stageClass?: string | null;
   tp?: number | null;
   score?: string;
   oppRank?: number | null;
@@ -397,6 +400,19 @@ export interface PredictionResult {
   tacticalBreakdown?: string;
   playerGameLogs?: {
     games?: Record<string, unknown>[];
+    historyContext?: {
+      mode?: string;
+      venue?: string;
+      stage?: string | null;
+      stageClass?: string | null;
+      stageLabel?: string;
+      competitionName?: string | null;
+      label?: string;
+      candidateCount?: number;
+      includedCount?: number;
+      excludedCount?: number;
+      metadataRequired?: boolean;
+    };
     homeAvg?: number;
     awayAvg?: number;
     tpHomeAvg?: number | null;
@@ -405,6 +421,17 @@ export interface PredictionResult {
     tpAwayCount?: number;
     last10Count?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  };
+  historyContext?: {
+    mode?: string;
+    venue?: string;
+    stage?: string | null;
+    stageClass?: string | null;
+    label?: string;
+    candidateCount?: number;
+    includedCount?: number;
+    excludedCount?: number;
+    metadataRequired?: boolean;
   };
   matchupVolume?: {
     available?: boolean;
@@ -908,6 +935,19 @@ interface RawPrediction {
   };
   playerGameLogs?: {
     games?: Record<string, unknown>[];
+    historyContext?: {
+      mode?: string;
+      venue?: string;
+      stage?: string | null;
+      stageClass?: string | null;
+      stageLabel?: string;
+      competitionName?: string | null;
+      label?: string;
+      candidateCount?: number;
+      includedCount?: number;
+      excludedCount?: number;
+      metadataRequired?: boolean;
+    };
     homeAvg?: number;
     awayAvg?: number;
     tpHomeAvg?: number | null;
@@ -1242,6 +1282,14 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
             value,
             minutes: (g.minutes as number) || 0,
             minutesPlayed: (g.minutesPlayed as number | null) ?? (g.minutes as number) ?? null,
+            competitionName: (
+              (g.competitionName as string | null)
+              ?? (g.league as string | null)
+              ?? (g.leagueName as string | null)
+              ?? null
+            ),
+            round: (g.round as string | null) ?? (g.matchRound as string | null) ?? null,
+            stageClass: (g.stageClass as string | null) ?? null,
             tp: (g.tp as number | null) ?? (g.teamPossession as number | null) ?? null,
             score: (g.score as string) || undefined,
             oppRank: (g.oppRank as number | null) ?? undefined,
@@ -1309,6 +1357,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     tpHomeCount: raw.playerGameLogs?.tpHomeCount,
     tpAwayCount: raw.playerGameLogs?.tpAwayCount,
     last10Count: raw.playerGameLogs?.last10Count,
+    historyContext: raw.playerGameLogs?.historyContext,
     sampleSize: rawGames.length || undefined,
     hitRates: raw.playerGameLogs?.hitRates
       ? {

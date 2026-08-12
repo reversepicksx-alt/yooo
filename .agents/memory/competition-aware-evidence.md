@@ -7,4 +7,4 @@ Competition-aware evidence must back off from competition + stage + venue to equ
 
 **Why:** A current competition can have no player history at all even when the player has relevant Champions League knockout history. Treating a Super Cup final as an isolated competition loses the high-stakes match context, while letting a tiny tournament bucket drive the Reverse Formula would overfit.
 
-**How to apply:** Preserve verified competition ID/name and provider round on each historical fixture log. Map elite European knockout stages to a shared stage class, keep raw competition buckets auditable, and keep all evidence projection-neutral until leakage-safe settled-pick replay demonstrates out-of-sample value.
+**How to apply:** Preserve verified competition ID/name and provider round on each historical fixture log. Map elite European knockout stages to a shared stage class, filter customer-visible history by venue plus stage class, label the target competition/stage explicitly, keep raw competition buckets auditable, and keep all evidence projection-neutral until leakage-safe settled-pick replay demonstrates out-of-sample value.

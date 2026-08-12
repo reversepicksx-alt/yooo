@@ -107,6 +107,17 @@ function displayH2HDate(value: unknown, full = false) {
   return full ? raw.slice(0, 10) : raw.slice(5, 10);
 }
 
+function stageLabelForRow(row: Record<string, any>) {
+  const stageClass = String(row.stageClass || '').toLowerCase();
+  if (stageClass.includes('knockout')) return 'KNOCKOUT STAGES';
+  if (stageClass === 'group_stage') return 'LEAGUE GROUP';
+  if (stageClass === 'regular_season') return 'REGULAR SEASON';
+  const round = String(row.round || '').toLowerCase();
+  if (/(final|semi|quarter|round of|playoff|knockout)/.test(round)) return 'KNOCKOUT STAGES';
+  if (round.includes('group')) return 'LEAGUE GROUP';
+  return row.round || 'COMPETITION';
+}
+
 function averageForVenue(rows: Array<Record<string, any>>, venue: 'home' | 'away') {
   const values = rows
     .filter((row) => rowVenue(row) === venue && row.value != null)
@@ -153,6 +164,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const logs = (prediction.gameLogs ?? [])
     .filter((game) => !game.synthetic && game.value != null)
     .slice(0, 20);
+  const historyContext = prediction.historyContext ?? null;
   const preferredVenue = normalizeVenue(
     prediction.venue
       ?? (typeof prediction.isHome === 'boolean' ? prediction.isHome : null)
@@ -319,7 +331,14 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Ionicons name="pulse" size={11} color={Colors.primary} />
-              <Text style={styles.title}>RECENT MATCHES · {logs.length}</Text>
+              <View style={styles.headerStack}>
+                <Text style={styles.title}>RECENT MATCHES · {logs.length}</Text>
+                {historyContext?.label && (
+                  <Text style={styles.contextLabel} numberOfLines={1}>
+                    {historyContext.label}
+                  </Text>
+                )}
+              </View>
             </View>
             {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
           </View>
@@ -380,7 +399,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                    {showPossessionContext
                      ? detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'
                      : ''}
-                  {selectedGame.score ? ` · ${selectedGame.score}` : ''}
+                   {selectedGame.score ? ` · ${selectedGame.score}` : ''}
+                   {selectedGame.competitionName
+                     ? ` · ${selectedGame.competitionName} · ${stageLabelForRow(selectedGame)}`
+                     : ''}
                   {showSotEvidence
                     ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
                     : isPassProp
@@ -612,7 +634,9 @@ const styles = {
     alignItems: 'center' as const,
   },
   headerLeft: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
+  headerStack: { flex: 1, minWidth: 0 },
   title: { fontSize: 9, color: Colors.textSecondary, fontWeight: '800' as const, letterSpacing: 1 },
+  contextLabel: { marginTop: 3, fontSize: 7, color: Colors.primary, fontWeight: '900' as const, letterSpacing: 0.45 },
   meta: { marginLeft: 'auto' as const, fontSize: 9, color: Colors.textTertiary, fontFamily: 'JetBrainsMono_700Bold' },
   expectedPossessionBar: {
     height: 7,

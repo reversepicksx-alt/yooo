@@ -3,7 +3,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from competition_context import build_competition_context, normalize_stage
+from competition_context import (
+    build_competition_context,
+    normalize_stage,
+    select_contextual_history,
+)
 
 
 def test_stage_normalization_is_stable():
@@ -88,3 +92,45 @@ def test_super_cup_final_uses_elite_knockout_backoff():
     )
     assert stage_peer["sampleSize"] == 1
     assert stage_peer["stageEquivalent"] is True
+
+
+def test_display_history_requires_matching_venue_and_knockout_class():
+    logs = [
+        {
+            "date": "2026-04-08",
+            "passes_total": 139,
+            "minutes": 90,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Quarter-finals",
+            "venue": "home",
+        },
+        {
+            "date": "2026-04-14",
+            "passes_total": 60,
+            "minutes": 90,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Quarter-finals",
+            "venue": "away",
+        },
+        {
+            "date": "2026-05-17",
+            "passes_total": 111,
+            "minutes": 90,
+            "leagueId": 61,
+            "league": "Ligue 1",
+            "round": "Regular Season - 34",
+            "venue": "home",
+        },
+    ]
+    selected, context = select_contextual_history(
+        logs,
+        competition_id=531,
+        competition_name="UEFA Super Cup",
+        round_value="Final",
+        venue="home",
+    )
+    assert [row["date"] for row in selected] == ["2026-04-08"]
+    assert context["mode"] == "venue_and_knockout_stage"
+    assert context["label"] == "UEFA SUPER CUP · KNOCKOUT STAGES · HOME"
