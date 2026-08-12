@@ -1636,17 +1636,28 @@ async def admin_quota_status(email: str, token: str):
 
     # Last manual reset timestamp — in-memory first, then /tmp fast-path,
     # then MongoDB (deployment-persistent) as the authoritative fallback.
+    # Any timestamp from a prior UTC day is discarded: the quota resets
+    # automatically at midnight, so a yesterday reset is no longer relevant.
     last_reset_at: str | None = None
     try:
-        last_reset_at = _utils._last_quota_reset_at
+        candidate = _utils._last_quota_reset_at
+        # Guard in-memory value against staleness (e.g. server ran overnight).
+        if candidate and candidate[:10] != today:
+            _utils._last_quota_reset_at = None
+            candidate = None
+        last_reset_at = candidate
+
         if not last_reset_at:
+            # _load_reset_timestamp_from_disk already expires stale files.
             last_reset_at = _utils._load_reset_timestamp_from_disk()
+
         if not last_reset_at:
             doc = await db.settings.find_one({"key": "QUOTA_LAST_RESET_AT"}, {"_id": 0})
-            if doc and doc.get("value"):
+            if doc and doc.get("value") and str(doc["value"])[:10] == today:
                 last_reset_at = doc["value"]
+
         if last_reset_at:
-            # Populate in-memory so subsequent calls skip DB/disk reads
+            # Populate in-memory so subsequent calls skip DB/disk reads.
             _utils._last_quota_reset_at = last_reset_at
     except Exception:
         pass

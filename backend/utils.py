@@ -133,11 +133,32 @@ def _load_breaker_from_disk() -> str | None:
 
 
 def _load_reset_timestamp_from_disk() -> str | None:
-    """Read the persisted last-reset ISO-8601 timestamp from disk (survives process restart)."""
+    """Read the persisted last-reset ISO-8601 timestamp from disk (survives process restart).
+
+    If the timestamp is from a prior UTC day it is no longer meaningful — the
+    API quota resets automatically at midnight UTC, so any manual reset from
+    yesterday cannot be the cause of today's breaker state.  The stale file is
+    deleted and None is returned so the owner dashboard shows no last-reset time
+    rather than a misleading one.
+    """
     try:
         if _os.path.exists(_RESET_TIMESTAMP_FILE):
             with open(_RESET_TIMESTAMP_FILE) as f:
-                return f.read().strip() or None
+                raw = f.read().strip() or None
+            if not raw:
+                return None
+            # Check whether the reset happened today (UTC).  If not, the
+            # timestamp is stale: the new day's automatic midnight reset has
+            # superseded any manual reset from prior days.
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            reset_date = raw[:10]  # ISO-8601 starts with YYYY-MM-DD
+            if reset_date != today:
+                try:
+                    _os.remove(_RESET_TIMESTAMP_FILE)
+                except Exception:
+                    pass
+                return None
+            return raw
     except Exception:
         pass
     return None
