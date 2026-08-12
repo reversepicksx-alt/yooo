@@ -8,7 +8,10 @@ type CompactPrediction = {
   line?: number | null;
   recommendation?: string | null;
   gameLogs?: Array<Record<string, any>> | null;
-  playerGameLogs?: { games?: Array<Record<string, any>> | null } | null;
+  playerGameLogs?: {
+    games?: Array<Record<string, any>> | null;
+    targetProp?: string | null;
+  } | null;
   h2hPlayerStats?: Record<string, any> | null;
   matchupVolume?: Record<string, any> | null;
   [key: string]: any;
@@ -93,9 +96,11 @@ function shortOpponent(value: unknown) {
 }
 
 function normalizeVenue(value: unknown): 'home' | 'away' | null {
-  if (value === 'home' || value === 'away') return value;
   if (value === true) return 'home';
   if (value === false) return 'away';
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'home' || normalized === 'h') return 'home';
+  if (normalized === 'away' || normalized === 'a') return 'away';
   return null;
 }
 
@@ -206,11 +211,18 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       ? prediction.gameLogs
       : prediction.playerGameLogs?.games ?? []
   );
-  const targetField = RECENT_LOG_VALUE_FIELDS[String(prediction.propType || '')];
+  const targetField = RECENT_LOG_VALUE_FIELDS[
+    String(prediction.propType || prediction.playerGameLogs?.targetProp || '')
+  ];
   const normalizedLogs: Array<Record<string, any>> = rawLogs
     .map((game: Record<string, any>) => ({
       ...game,
-      value: game.value ?? (targetField ? game[targetField] : undefined) ?? game.targetStat ?? null,
+      value: game.value
+        ?? (targetField ? game[targetField] : undefined)
+        ?? game.targetStat
+        ?? game.statValue
+        ?? game.stat
+        ?? null,
     })) as Array<Record<string, any>>;
   const logs = normalizedLogs
     .filter((game) => !game.synthetic && game.value != null)

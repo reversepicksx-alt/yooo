@@ -2286,7 +2286,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "player": 1, "opponent": 1, "propType": 1, "line": 1,
          "moneyline": 1, "homeTeam": 1, "awayTeam": 1,
         "recentSamples": 1, "bayesianMetrics": 1,
-        "playerGameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
+        "playerGameLogs": 1, "gameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
          "positionComparison": 1, "h2hPlayerStats": 1,
         "gameScript": 1, "matchFactors": 1,
           "tacticalContext": 1, "tacticalIntelligence": 1,
@@ -2332,7 +2332,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     pick_sport = pick.get("sport", "soccer")
     if not prediction and pick_sport in ("cs2", "soccer", "wta"):
         inline_analysis = {}
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs",
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs", "gameLogs",
                       "homeTeam", "awayTeam",
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
                       "distribution", "mostLikelyValue", "range60", "range80",
@@ -2401,6 +2401,25 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
 
     if not prediction:
         return {"found": False}
+
+    # Saved analysis can be read from a prediction record created before the
+    # recent-log field was persisted, while the pick itself may still contain
+    # the complete packet. Prefer a non-empty saved packet over an empty one.
+    # Keep both shapes in the response because live predictions use gameLogs
+    # while older saved records use playerGameLogs.games.
+    _prediction_logs = prediction.get("playerGameLogs")
+    _pick_logs = pick.get("playerGameLogs")
+    _prediction_games = _prediction_logs.get("games") if isinstance(_prediction_logs, dict) else None
+    _pick_games = _pick_logs.get("games") if isinstance(_pick_logs, dict) else None
+    if (not isinstance(_prediction_games, list) or not _prediction_games) and isinstance(_pick_games, list) and _pick_games:
+        prediction["playerGameLogs"] = _pick_logs
+        _prediction_logs = _pick_logs
+        _prediction_games = _pick_games
+    if not isinstance(prediction.get("gameLogs"), list) and isinstance(_prediction_games, list):
+        prediction["gameLogs"] = _prediction_games
+    prediction["propType"] = prediction.get("propType") or prop_type
+    if prediction.get("line") is None:
+        prediction["line"] = pick.get("line")
 
     prediction.pop("_id", None)
     # Merge the pick-level refresh timestamp so the client can render the
