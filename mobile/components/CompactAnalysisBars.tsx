@@ -8,9 +8,33 @@ type CompactPrediction = {
   line?: number | null;
   recommendation?: string | null;
   gameLogs?: Array<Record<string, any>> | null;
+  playerGameLogs?: { games?: Array<Record<string, any>> | null } | null;
   h2hPlayerStats?: Record<string, any> | null;
   matchupVolume?: Record<string, any> | null;
   [key: string]: any;
+};
+
+const RECENT_LOG_VALUE_FIELDS: Record<string, string> = {
+  pass_attempts: 'passes_total',
+  passes: 'passes_total',
+  shots: 'shots_total',
+  shots_on_target: 'shots_on',
+  goals: 'goals_total',
+  assists: 'goals_assists',
+  key_passes: 'passes_key',
+  shots_assisted: 'passes_key',
+  tackles: 'tackles_total',
+  saves: 'goals_saves',
+  goalie_saves: 'goals_saves',
+  dribbles: 'dribbles_attempts',
+  crosses: 'passes_crosses',
+  interceptions: 'tackles_interceptions',
+  blocks: 'tackles_blocks',
+  fouls_drawn: 'fouls_drawn',
+  fouls_committed: 'fouls_committed',
+  clearances: 'tackles_clearances',
+  yellow_cards: 'cards_yellow',
+  duels_won: 'duels_won',
 };
 
 /**
@@ -173,7 +197,22 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   // The backend supplies a venue-scoped, newest-first archive. Keep the
   // boundary defensive as saved/older responses can still contain the
   // broader historical payload.
-  const logs = (prediction.gameLogs ?? [])
+  // Live predictions are normalized by api.ts into gameLogs. Saved-pick
+  // analysis responses retain the backend's playerGameLogs.games shape.
+  // Accept both so the analysis modal cannot show H2H while silently hiding
+  // the recent player archive.
+  const rawLogs: Array<Record<string, any>> = (
+    Array.isArray(prediction.gameLogs) && prediction.gameLogs.length > 0
+      ? prediction.gameLogs
+      : prediction.playerGameLogs?.games ?? []
+  );
+  const targetField = RECENT_LOG_VALUE_FIELDS[String(prediction.propType || '')];
+  const normalizedLogs: Array<Record<string, any>> = rawLogs
+    .map((game: Record<string, any>) => ({
+      ...game,
+      value: game.value ?? (targetField ? game[targetField] : undefined) ?? game.targetStat ?? null,
+    })) as Array<Record<string, any>>;
+  const logs = normalizedLogs
     .filter((game) => !game.synthetic && game.value != null)
     .filter((game) => !historyVenue || rowVenue(game) === historyVenue)
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))

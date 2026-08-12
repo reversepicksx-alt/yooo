@@ -154,3 +154,4 @@
 - [Competition-aware evidence](competition-aware-evidence.md) — competition/stage/venue history backoffs stay auditable and shadow-only until leakage-safe replay validates live influence.
 - [Deployment VM readiness](deployment-vm-readiness.md) — a publish that builds and scans successfully but stalls at VM readiness is usually promote/provisioning; compare with the last successful build before changing code.
 - [API-Football player fixture fallback](api-football-player-fixture-fallback.md) — `/fixtures` rejects `player`; query the verified club team, then match exact player ID within fixture payloads.
+- [Saved analysis log normalization](saved-analysis-log-normalization.md) — saved analysis uses `playerGameLogs.games`; shared history UI must normalize it alongside live `gameLogs`.
