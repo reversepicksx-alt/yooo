@@ -917,6 +917,7 @@ interface RawPrediction {
     last10Count?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number; summary?: string };
   };
+  matchupVolume?: PredictionResult['matchupVolume'];
   h2hPlayerStats?: {
     matches?: Array<{
       date?: string;
@@ -1300,6 +1301,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     covariateAdjustment: bm.covariateAdjustment,
     reversalFlag: bm.reversalFlag,
     gameLogs: gameLogs.length > 0 ? gameLogs : undefined,
+    matchupVolume: raw.matchupVolume ?? undefined,
     homeAvg: raw.playerGameLogs?.homeAvg,
     awayAvg: raw.playerGameLogs?.awayAvg,
     tpHomeAvg: raw.playerGameLogs?.tpHomeAvg,
