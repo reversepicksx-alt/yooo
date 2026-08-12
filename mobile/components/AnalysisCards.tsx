@@ -722,6 +722,11 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
   const cohortMinimum = Number(positionCohort?.minimumRecommendedSample ?? 10);
   const hasOpponentHistory = Number(opponentHistory?.sampleSize ?? 0) > 0;
   const hasCohort = cohortSample > 0;
+  const positionSource = String(player.positionSource ?? '');
+  const isBzzoiroPosition =
+    positionSource === 'bzzoiro_live_confirmed_lineup' ||
+    positionSource === 'bzzoiro_shadow_confirmed_lineup';
+  const isLiveBzzoiroPosition = positionSource === 'bzzoiro_live_confirmed_lineup';
 
   return (
     <View style={[aStyles.proCard, { borderColor: accent + '55' }]}>
@@ -738,6 +743,27 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
         <View style={aStyles.tacticalCell}>
           <Text style={aStyles.tacticalValue}>{roleLabel || 'Role unavailable'}</Text>
           <Text style={aStyles.proCardMetricLabel}>PLAYER ROLE</Text>
+          {isBzzoiroPosition && (
+            <View
+              style={[
+                aStyles.proCardPill,
+                {
+                  alignSelf: 'flex-start',
+                  marginTop: 3,
+                  backgroundColor: isLiveBzzoiroPosition ? '#60A5FA20' : Colors.borderSubtle,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  aStyles.proCardPillText,
+                  { color: isLiveBzzoiroPosition ? '#60A5FA' : Colors.textTertiary },
+                ]}
+              >
+                Lineup partner
+              </Text>
+            </View>
+          )}
         </View>
         <View style={aStyles.tacticalCell}>
           <Text style={aStyles.tacticalValue}>
