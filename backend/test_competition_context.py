@@ -60,3 +60,31 @@ def test_competition_backoff_and_pass_share_are_auditable():
     assert packet["passShare"]["available"] is True
     assert packet["passShare"]["buckets"][1]["sampleSize"] == 2
     assert packet["passShare"]["buckets"][1]["average"] > 17.0
+
+
+def test_super_cup_final_uses_elite_knockout_backoff():
+    logs = [
+        {
+            "minutes": 90,
+            "passes_total": 139,
+            "teamPassAttempts": 746,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Quarter-finals",
+            "venue": "home",
+        }
+    ]
+    packet = build_competition_context(
+        logs,
+        prop_type="pass_attempts",
+        competition_id=531,
+        competition_name="UEFA Super Cup",
+        round_value="Final",
+        venue="home",
+    )
+    stage_peer = next(
+        bucket for bucket in packet["buckets"]
+        if bucket["level"] == "stage_class_venue"
+    )
+    assert stage_peer["sampleSize"] == 1
+    assert stage_peer["stageEquivalent"] is True

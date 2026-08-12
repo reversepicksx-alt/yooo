@@ -9,6 +9,8 @@ The hierarchy is:
 
     competition + stage + venue
     competition + stage
+    equivalent high-stakes stage + venue
+    equivalent high-stakes stage
     competition
     venue
     all verified history
@@ -51,6 +53,20 @@ PROP_FIELDS = {
 }
 
 PASS_PROPS = {"pass_attempts", "passes", "passes_attempted"}
+
+# API-Football competition IDs whose knockout/final matches are comparable
+# high-stakes European fixtures.  A Super Cup final is intentionally grouped
+# with Champions League/Europa knockout evidence rather than treated as a
+# regular-season match.  The raw competition buckets remain visible too.
+ELITE_KNOCKOUT_COMPETITIONS = {2, 3, 848, 531}
+KNOCKOUT_STAGES = {
+    "final",
+    "semi_final",
+    "quarter_final",
+    "round_of_16",
+    "round_of_32",
+    "playoff",
+}
 
 
 def _number(value: Any) -> Optional[float]:
@@ -104,6 +120,19 @@ def _competition_key(competition_id: Any, competition_name: Any) -> Optional[str
     return f"name:{slug}" if slug else None
 
 
+def _stage_class(stage: Optional[str], competition_id: Any) -> Optional[str]:
+    """Return a comparable stage family without erasing raw competition data."""
+    if stage in KNOCKOUT_STAGES:
+        numeric_id = _number(competition_id)
+        if (
+            numeric_id is not None
+            and int(numeric_id) in ELITE_KNOCKOUT_COMPETITIONS
+        ):
+            return "elite_knockout"
+        return "knockout"
+    return stage
+
+
 def _row_context(row: dict) -> dict:
     competition_id = (
         row.get("competitionId")
@@ -118,13 +147,15 @@ def _row_context(row: dict) -> dict:
         or row.get("competition")
     )
     round_value = row.get("round") or row.get("stage") or row.get("matchRound")
+    stage = normalize_stage(round_value)
     return {
         "competitionKey": _competition_key(competition_id, competition_name),
         "competitionId": int(_number(competition_id))
         if _number(competition_id) is not None
         else None,
         "competitionName": str(competition_name).strip() if competition_name else None,
-        "stage": normalize_stage(round_value),
+        "stage": stage,
+        "stageClass": _stage_class(stage, competition_id),
         "round": str(round_value).strip() if round_value else None,
         "venue": str(row.get("venue") or "").lower().strip() or None,
         "position": str(
@@ -146,13 +177,15 @@ def _target_context(
     position: Any,
     role: Any,
 ) -> dict:
+    stage = normalize_stage(round_value)
     return {
         "competitionKey": _competition_key(competition_id, competition_name),
         "competitionId": int(_number(competition_id))
         if _number(competition_id) is not None
         else None,
         "competitionName": str(competition_name).strip() if competition_name else None,
-        "stage": normalize_stage(round_value),
+        "stage": stage,
+        "stageClass": _stage_class(stage, competition_id),
         "round": str(round_value).strip() if round_value else None,
         "venue": str(venue or "").lower().strip() or None,
         "position": str(position or "").upper().strip() or None,
@@ -264,6 +297,16 @@ def _bucket_rows(rows: list[dict], target: dict, level: str) -> list[dict]:
             row for row in rows
             if _matches(row, target, fields=("competitionKey", "stage"))
         ]
+    if level == "stage_class_venue":
+        return [
+            row for row in rows
+            if _matches(row, target, fields=("stageClass", "venue"))
+        ]
+    if level == "stage_class":
+        return [
+            row for row in rows
+            if _matches(row, target, fields=("stageClass",))
+        ]
     if level == "competition":
         return [
             row for row in rows
@@ -303,6 +346,8 @@ def build_competition_context(
     levels = [
         "competition_stage_venue",
         "competition_stage",
+        "stage_class_venue",
+        "stage_class",
         "competition",
         "venue",
         "all",
@@ -314,12 +359,13 @@ def build_competition_context(
         summary = _summarize(bucket, prop_type, field, line)
         summary["level"] = level
         summary["competitionSpecific"] = level.startswith("competition")
+        summary["stageEquivalent"] = level.startswith("stage_class")
         buckets.append(summary)
         summaries.append((level, summary))
 
     selected = _blend_summaries(summaries)
     packet = {
-        "version": "competition-context-v1",
+        "version": "competition-context-v2",
         "available": bool(rows and selected.get("average") is not None),
         "shadowOnly": True,
         "projectionAdjustmentStatus": "shadow_only",
@@ -349,6 +395,7 @@ def build_competition_context(
             summary = _summarize(bucket, prop_type, "playerPassSharePct", None)
             summary["level"] = level
             summary["competitionSpecific"] = level.startswith("competition")
+            summary["stageEquivalent"] = level.startswith("stage_class")
             share_buckets.append(summary)
             share_summaries.append((level, summary))
         packet["passShare"] = {
