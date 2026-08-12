@@ -1,0 +1,62 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from competition_context import build_competition_context, normalize_stage
+
+
+def test_stage_normalization_is_stable():
+    assert normalize_stage("Quarter-finals") == "quarter_final"
+    assert normalize_stage("Regular Season - 26") == "regular_season"
+    assert normalize_stage("Group Stage - 3") == "group_stage"
+
+
+def test_competition_backoff_and_pass_share_are_auditable():
+    logs = [
+        {
+            "minutes": 90,
+            "passes_total": 152,
+            "teamPassAttempts": 841,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Quarter-finals",
+            "venue": "home",
+        },
+        {
+            "minutes": 90,
+            "passes_total": 139,
+            "teamPassAttempts": 746,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Quarter-finals",
+            "venue": "away",
+        },
+        {
+            "minutes": 90,
+            "passes_total": 90,
+            "teamPassAttempts": 600,
+            "leagueId": 39,
+            "league": "Premier League",
+            "round": "Regular Season - 1",
+            "venue": "home",
+        },
+    ]
+
+    packet = build_competition_context(
+        logs,
+        prop_type="pass_attempts",
+        competition_id=2,
+        competition_name="UEFA Champions League",
+        round_value="Quarter-finals",
+        venue="home",
+        line=108,
+    )
+
+    assert packet["available"] is True
+    assert packet["projectionAdjustment"] == 0.0
+    assert packet["selected"]["sourceLevel"] == "competition_stage_venue"
+    assert packet["buckets"][1]["sampleSize"] == 2
+    assert packet["passShare"]["available"] is True
+    assert packet["passShare"]["buckets"][1]["sampleSize"] == 2
+    assert packet["passShare"]["buckets"][1]["average"] > 17.0

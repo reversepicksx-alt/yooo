@@ -1626,6 +1626,7 @@ async def predict(req: PredictionRequest):
                     "penalty_missed": stats.get("penalty", {}).get("missed"),
                     "offsides": stats.get("offsides"),
                     "cards_red": stats.get("cards", {}).get("red"),
+                    "providerPosition": stats.get("games", {}).get("position"),
                 }
                 return gl
 
@@ -1987,6 +1988,9 @@ async def predict(req: PredictionRequest):
                         gl["date"] = ""
                         gl["score"] = ""
                         gl["league"] = ""
+                        gl["leagueId"] = None
+                        gl["competitionId"] = None
+                        gl["competitionName"] = None
                         gl["round"] = ""
 
                         # Populate venue and opponent from fixture metadata if available
@@ -2007,6 +2011,13 @@ async def predict(req: PredictionRequest):
                             is_home = (home_id_meta == actual_team_id)
                             gl["venue"] = "home" if is_home else "away"
                             gl["opponent"] = meta.get("away_name", "") if is_home else meta.get("home_name", "")
+                            gl["leagueId"] = meta.get("league_id") or meta.get("competition_id")
+                            gl["competitionId"] = gl["leagueId"]
+                            gl["competitionName"] = (
+                                meta.get("league_name")
+                                or meta.get("competition_name")
+                            )
+                            gl["round"] = meta.get("round") or meta.get("stage") or ""
                             if req.sport == "soccer":
                                 poss = poss_docs.get(fid_str, {})
                                 try:
@@ -2091,6 +2102,18 @@ async def predict(req: PredictionRequest):
                             for g in collected
                         )
                     )
+                    # Competition/stage evidence needs permanent fixture
+                    # metadata. Older prefetched rows may have player stats
+                    # but only IDs/venue, so let Stage 1 rejoin them to the
+                    # team's verified fixture schedule before short-circuiting.
+                    _competition_meta_complete = (
+                        req.sport != "soccer"
+                        or all(
+                            g.get("leagueId") is not None
+                            or g.get("competitionName")
+                            for g in collected
+                        )
+                    )
                     # Historical possession is optional context, not a
                     # prerequisite for the player's stat prior. Requiring 12
                     # possession rows here made an otherwise complete cache
@@ -2103,6 +2126,7 @@ async def predict(req: PredictionRequest):
                         and len(good) >= len(collected) // 2
                         and _saves_ok
                         and _tp_complete
+                        and _competition_meta_complete
                     ):
                         _poss_note = (
                             f"; historical possession={_pressure_possession_count}"
@@ -2117,6 +2141,7 @@ async def predict(req: PredictionRequest):
                         print(
                             f"[CACHE-STAGE0] Only {len(collected)} games "
                             f"(venue ok: {len(good)}, saves_ok={_saves_ok}, tp_complete={_tp_complete}, "
+                            f"competition_meta={_competition_meta_complete}, "
                             f"historical_poss={_pressure_possession_count}) — "
                             "falling through to Stage 1 for more data"
                         )
@@ -2179,6 +2204,7 @@ async def predict(req: PredictionRequest):
                         fix_venue = "home" if home_id == actual_team_id else "away"
                         fix_date = fix_raw.get("fixture", {}).get("date", "")[:10]
                         fix_league = fix_raw.get("league", {}).get("name", "")
+                        fix_league_id = fix_raw.get("league", {}).get("id")
                         fix_round = fix_raw.get("league", {}).get("round", "")
                         opp_key = "away" if home_id == actual_team_id else "home"
                         fix_opponent = fix_raw.get("teams", {}).get(opp_key, {}).get("name", "")
@@ -2261,6 +2287,9 @@ async def predict(req: PredictionRequest):
                                     gl["venue"] = fix_venue
                                     gl["score"] = f"{home_goals}-{away_goals}"
                                     gl["league"] = fix_league
+                                    gl["leagueId"] = fix_league_id
+                                    gl["competitionId"] = fix_league_id
+                                    gl["competitionName"] = fix_league
                                     gl["round"] = fix_round
                                     raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                                     if raw_val is not None and minutes > 0:
@@ -2317,7 +2346,17 @@ async def predict(req: PredictionRequest):
                         _fix_away_id = fix_raw.get("teams", {}).get("away", {}).get("id")
                         _fix_home_name = fix_raw.get("teams", {}).get("home", {}).get("name", "")
                         _fix_away_name = fix_raw.get("teams", {}).get("away", {}).get("name", "")
-                        async def _cache_fix(fid_c, logs_c, fhid=_fix_home_id, faid=_fix_away_id, fhn=_fix_home_name, fan=_fix_away_name):
+                        async def _cache_fix(
+                            fid_c,
+                            logs_c,
+                            fhid=_fix_home_id,
+                            faid=_fix_away_id,
+                            fhn=_fix_home_name,
+                            fan=_fix_away_name,
+                            fli=fix_league_id,
+                            fln=fix_league,
+                            fr=fix_round,
+                        ):
                             ops = [
                                 db.fixture_player_cache.update_one(
                                     {"_k": f"fxp_{fid_c}_{pk}"},
@@ -2333,6 +2372,11 @@ async def predict(req: PredictionRequest):
                                     {"$set": {"_k": fxm_k, "d": {
                                         "home_id": fhid, "away_id": faid,
                                         "home_name": fhn, "away_name": fan,
+                                        "league_id": fli,
+                                        "competition_id": fli,
+                                        "league_name": fln,
+                                        "competition_name": fln,
+                                        "round": fr,
                                     }}},
                                     upsert=True
                                 ))
@@ -2349,6 +2393,9 @@ async def predict(req: PredictionRequest):
                         gl["venue"] = fix_venue
                         gl["score"] = f"{home_goals}-{away_goals}"
                         gl["league"] = fix_league
+                        gl["leagueId"] = fix_league_id
+                        gl["competitionId"] = fix_league_id
+                        gl["competitionName"] = fix_league
                         gl["round"] = fix_round
                         minutes = gl.get("minutes", 0)
                         raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
@@ -4977,6 +5024,53 @@ async def predict(req: PredictionRequest):
                     game_log_summary["hitRates"]["qualityOverPct"] = round(_q_over / len(_qual_vals) * 100, 1)
 
             historical_data["playerGameLogs"] = game_log_summary
+
+        # ── COMPETITION-AWARE HISTORICAL EVIDENCE ─────────────────────────────
+        # This packet is built for every supported soccer prop type from the
+        # same verified player-game logs used by the Reverse Formula.  It is
+        # intentionally shadow-only: competition/stage evidence is auditable
+        # now, but cannot alter the projection before leakage-safe replay.
+        competition_context = {
+            "version": "competition-context-v1",
+            "available": False,
+            "shadowOnly": True,
+            "projectionAdjustmentStatus": "shadow_only",
+            "projectionAdjustment": 0.0,
+            "reason": "No verified player history was available.",
+        }
+        try:
+            from competition_context import build_competition_context
+
+            _cc_match = match_odds or {}
+            competition_context = build_competition_context(
+                player_game_logs,
+                prop_type=req.propType,
+                competition_id=(
+                    _cc_match.get("matchLeagueId")
+                    or league_id
+                ),
+                competition_name=(
+                    _cc_match.get("matchLeague")
+                    or ""
+                ),
+                round_value=_cc_match.get("matchRound") or "",
+                venue=player_venue,
+                position=locals().get("specific_position") or "",
+                role=locals().get("player_role") or "",
+                line=req.line,
+            )
+            historical_data["competitionContext"] = competition_context
+            _cc_selected = competition_context.get("selected") or {}
+            print(
+                f"[COMPETITION CONTEXT] {req.playerName}/{req.propType}: "
+                f"target={(_cc_match.get('matchLeague') or league_id)!r} "
+                f"stage={_cc_match.get('matchRound') or 'unknown'!r} "
+                f"source={_cc_selected.get('sourceLevel')} "
+                f"n={_cc_selected.get('sampleSize', 0)}"
+            )
+        except Exception as _cc_err:
+            # Evidence enrichment must never block a deterministic prediction.
+            print(f"[COMPETITION CONTEXT] unavailable: {_cc_err}")
 
         # =============================================
         # EARLY BAYESIAN — Compute math BEFORE structured evidence assembly
@@ -11347,6 +11441,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "total": len(_pgl_vals),
                 }
             prediction["playerGameLogs"] = _pgl_summary
+        if historical_data.get("competitionContext"):
+            prediction["competitionContext"] = historical_data["competitionContext"]
             print(f"[SAFETY NET] playerGameLogs rebuilt from {len(player_game_logs)} logs for {req.playerName}")
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
