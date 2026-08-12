@@ -690,33 +690,71 @@ export default function AnalyticsDashboard({
                   <Text style={s.chartTitle}>REVERSEPICKS MODEL HEALTH</Text>
                   <Text style={s.chartSubtitle}>ALL USERS · SOCCER</Text>
                 </View>
-                {/* Deduplication pipeline — raw saves → unique events → scored */}
-                <View style={s.dedupRow}>
-                  <View style={s.dedupCell}>
-                    <Text style={s.dedupNum}>
-                      {ownerData.scorecard.rawN ?? ownerData.scope?.rawSettled ?? ownerData.overall.total}
+                {/* Deduplication pipeline — raw saves → unique events → scored.
+                    Show all-sports totals when available so the owner sees the full
+                    corpus, not just soccer. Soccer-only numbers are used for the
+                    scorecard metrics below (calibration is sport-specific). */}
+                {ownerData.allSportsDedup ? (
+                  <>
+                    <View style={s.dedupRow}>
+                      <View style={s.dedupCell}>
+                        <Text style={s.dedupNum}>{ownerData.allSportsDedup.rawN}</Text>
+                        <Text style={s.dedupLabel}>RAW SAVES</Text>
+                      </View>
+                      <Text style={s.dedupArrow}>→</Text>
+                      <View style={s.dedupCell}>
+                        <Text style={[s.dedupNum, { color: Colors.primary }]}>
+                          {ownerData.allSportsDedup.n}
+                        </Text>
+                        <Text style={s.dedupLabel}>UNIQUE EVENTS</Text>
+                      </View>
+                      <Text style={s.dedupArrow}>→</Text>
+                      <View style={s.dedupCell}>
+                        <Text style={[s.dedupNum, { color: Colors.success }]}>
+                          {ownerData.allSportsDedup.scoredN}
+                        </Text>
+                        <Text style={s.dedupLabel}>SCORED HIT/MISS</Text>
+                      </View>
+                    </View>
+                    {ownerData.allSportsDedup.duplicateRowsRemoved > 0 && (
+                      <Text style={s.dedupNote}>
+                        {ownerData.allSportsDedup.duplicateRowsRemoved} duplicate rows collapsed
+                      </Text>
+                    )}
+                    <Text style={[s.dedupNote, { color: Colors.textTertiary, marginTop: 2 }]}>
+                      All sports{ownerData.allSportsDedup.sports.length > 0 ? ` · ${ownerData.allSportsDedup.sports.join(', ')}` : ''} · Soccer scorecard metrics below
                     </Text>
-                    <Text style={s.dedupLabel}>RAW SAVES</Text>
-                  </View>
-                  <Text style={s.dedupArrow}>→</Text>
-                  <View style={s.dedupCell}>
-                    <Text style={[s.dedupNum, { color: Colors.primary }]}>
-                      {ownerData.scorecard.n}
-                    </Text>
-                    <Text style={s.dedupLabel}>UNIQUE EVENTS</Text>
-                  </View>
-                  <Text style={s.dedupArrow}>→</Text>
-                  <View style={s.dedupCell}>
-                    <Text style={[s.dedupNum, { color: Colors.success }]}>
-                      {ownerData.scorecard.scoredN ?? (ownerData.overall.hits + ownerData.overall.misses)}
-                    </Text>
-                    <Text style={s.dedupLabel}>SCORED HIT/MISS</Text>
-                  </View>
-                </View>
-                {(ownerData.scorecard.duplicateRowsRemoved ?? ownerData.scope?.duplicateRowsRemoved ?? 0) > 0 && (
-                  <Text style={s.dedupNote}>
-                    {ownerData.scorecard.duplicateRowsRemoved ?? ownerData.scope?.duplicateRowsRemoved} duplicate rows collapsed
-                  </Text>
+                  </>
+                ) : (
+                  <>
+                    <View style={s.dedupRow}>
+                      <View style={s.dedupCell}>
+                        <Text style={s.dedupNum}>
+                          {ownerData.scorecard.rawN ?? ownerData.scope?.rawSettled ?? ownerData.overall.total}
+                        </Text>
+                        <Text style={s.dedupLabel}>RAW SAVES</Text>
+                      </View>
+                      <Text style={s.dedupArrow}>→</Text>
+                      <View style={s.dedupCell}>
+                        <Text style={[s.dedupNum, { color: Colors.primary }]}>
+                          {ownerData.scorecard.n}
+                        </Text>
+                        <Text style={s.dedupLabel}>UNIQUE EVENTS</Text>
+                      </View>
+                      <Text style={s.dedupArrow}>→</Text>
+                      <View style={s.dedupCell}>
+                        <Text style={[s.dedupNum, { color: Colors.success }]}>
+                          {ownerData.scorecard.scoredN ?? (ownerData.overall.hits + ownerData.overall.misses)}
+                        </Text>
+                        <Text style={s.dedupLabel}>SCORED HIT/MISS</Text>
+                      </View>
+                    </View>
+                    {(ownerData.scorecard.duplicateRowsRemoved ?? ownerData.scope?.duplicateRowsRemoved ?? 0) > 0 && (
+                      <Text style={s.dedupNote}>
+                        {ownerData.scorecard.duplicateRowsRemoved ?? ownerData.scope?.duplicateRowsRemoved} duplicate rows collapsed
+                      </Text>
+                    )}
+                  </>
                 )}
                 {ownerData.overall.passCalibration?.n ? (
                   <Text style={s.ownerHealthMeta}>

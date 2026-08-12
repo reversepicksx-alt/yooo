@@ -724,28 +724,32 @@ async def owner_analytics(payload: dict = Body(...)):
             "actualValue": 1, "passOutcome": 1, "isCalibrationOnly": 1,
         },
     ).to_list(100000)
+    _period_cutoff = None
     if period != "all":
         now_utc = datetime.now(timezone.utc)
         if period == "today":
-            cutoff = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            _period_cutoff = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             days = 30 if period == "30d" else 7
-            cutoff = now_utc - timedelta(days=days)
+            _period_cutoff = now_utc - timedelta(days=days)
 
-        def in_period(row: dict) -> bool:
-            raw_date = row.get("settledAt") or row.get("timestamp") or row.get("createdAt")
-            if not raw_date:
-                return False
-            try:
-                parsed = raw_date if isinstance(raw_date, datetime) else datetime.fromisoformat(
-                    str(raw_date).replace("Z", "+00:00")
-                )
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                return parsed >= cutoff
-            except (TypeError, ValueError):
-                return False
+    def in_period(row: dict) -> bool:
+        if _period_cutoff is None:
+            return True
+        raw_date = row.get("settledAt") or row.get("timestamp") or row.get("createdAt")
+        if not raw_date:
+            return False
+        try:
+            parsed = raw_date if isinstance(raw_date, datetime) else datetime.fromisoformat(
+                str(raw_date).replace("Z", "+00:00")
+            )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed >= _period_cutoff
+        except (TypeError, ValueError):
+            return False
 
+    if period != "all":
         raw_rows = [row for row in raw_rows if in_period(row)]
     deduped_rows = dedupe_prediction_rows(raw_rows)
     actionable_rows = [
@@ -1030,6 +1034,35 @@ async def owner_analytics(payload: dict = Body(...)):
             "roi": roi,
         })
 
+    # ── All-sports dedup counts (separate lightweight query) ─────────────────
+    # The scorecard above is soccer-only (calibration is sport-specific).
+    # For the deduplication row we also want the full-corpus picture so the
+    # owner can see how many duplicates exist across ALL sports.
+    all_sports_raw = await db.picks.find(
+        {"status": "settled"},
+        {
+            "_id": 0, "trackingId": 1, "playerName": 1, "sport": 1,
+            "propType": 1, "line": 1, "recommendation": 1, "passLeaning": 1,
+            "venue": 1,
+            # Identity fields used by _event_key / dedupe_prediction_rows —
+            # must match the soccer query above; omitting any of these causes
+            # same-name / different-ID rows to collapse as false duplicates.
+            "playerId": 1, "teamId": 1, "opponentId": 1,
+            "fixtureId": 1, "fixtureDate": 1, "matchDate": 1,
+            "timestamp": 1, "createdAt": 1, "settledAt": 1,
+            "result": 1, "confidenceScore": 1, "rawConfidence": 1,
+        },
+    ).to_list(200000)
+    if period != "all":
+        all_sports_raw = [row for row in all_sports_raw if in_period(row)]
+    all_sports_deduped = dedupe_prediction_rows(all_sports_raw)
+    all_sports_scored = sum(1 for row in all_sports_deduped if _is_scored_directional_row(row))
+    sports_seen: set = set()
+    for row in all_sports_raw:
+        s = str(row.get("sport") or "unknown")
+        if s:
+            sports_seen.add(s)
+
     return {
         "overall": {
             "hits": total_hits,
@@ -1089,6 +1122,16 @@ async def owner_analytics(payload: dict = Body(...)):
             "settled": total_settled,
             "scoredEvents": sum(1 for row in deduped_rows if _is_scored_directional_row(row)),
             "duplicateRowsRemoved": len(raw_rows) - total_settled,
+        },
+        # All-sports dedup summary: covers the full pick history across every sport.
+        # Use this for the deduplication row in the dashboard so the owner sees
+        # the complete corpus, not just soccer.
+        "allSportsDedup": {
+            "rawN": len(all_sports_raw),
+            "n": len(all_sports_deduped),
+            "scoredN": all_sports_scored,
+            "duplicateRowsRemoved": len(all_sports_raw) - len(all_sports_deduped),
+            "sports": sorted(sports_seen),
         },
     }
 

@@ -2222,6 +2222,14 @@ export interface AnalyticsData {
     settled: number;
     duplicateRowsRemoved: number;
   };
+  /** All-sports dedup counts — covers the full pick history across every sport. */
+  allSportsDedup?: {
+    rawN: number;
+    n: number;
+    scoredN: number;
+    duplicateRowsRemoved: number;
+    sports: string[];
+  };
 }
 
 export interface SystemInsightDimension {
