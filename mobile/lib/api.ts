@@ -413,8 +413,15 @@ export interface PredictionResult {
     minimumRecommendedSample?: number;
     venue?: string;
     opponentVenue?: string;
+    team?: string | null;
+    opponent?: string | null;
+    homeTeam?: string | null;
+    awayTeam?: string | null;
     shotsOnTarget?: Record<string, unknown>;
     passes?: Record<string, unknown>;
+    fixtureSplits?: Record<string, unknown>;
+    playerPassInvolvement?: Record<string, unknown>;
+    goalkeeperSaveRate?: Record<string, unknown>;
     recentMatchRows?: Record<string, unknown>[];
     opponentRecentMatchRows?: Record<string, unknown>[];
   };

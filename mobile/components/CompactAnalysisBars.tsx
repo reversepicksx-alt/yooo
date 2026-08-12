@@ -186,6 +186,44 @@ function VolumeExpected({
   );
 }
 
+function VolumeInlineSplit({
+  leftLabel,
+  leftValue,
+  leftSample,
+  rightLabel,
+  rightValue,
+  rightSample,
+}: {
+  leftLabel: string;
+  leftValue: unknown;
+  leftSample: unknown;
+  rightLabel: string;
+  rightValue: unknown;
+  rightSample: unknown;
+}) {
+  const left = Number(leftValue);
+  const right = Number(rightValue);
+  return (
+    <View style={styles.volumeInlineRow}>
+      <View style={styles.volumeInlineItem}>
+        <Text style={styles.volumeInlineLabel} numberOfLines={1}>{leftLabel}</Text>
+        <Text style={[styles.volumeInlineValue, { color: Colors.success }]}>
+          {Number.isFinite(left) ? left.toFixed(1) : '—'}
+        </Text>
+        <Text style={styles.volumeMetricSample}>{Number.isFinite(left) ? `N=${Number(leftSample) || 0}` : 'UNAVAILABLE'}</Text>
+      </View>
+      <View style={styles.splitDivider} />
+      <View style={styles.volumeInlineItem}>
+        <Text style={styles.volumeInlineLabel} numberOfLines={1}>{rightLabel}</Text>
+        <Text style={[styles.volumeInlineValue, { color: '#60A5FA' }]}>
+          {Number.isFinite(right) ? right.toFixed(1) : '—'}
+        </Text>
+        <Text style={styles.volumeMetricSample}>{Number.isFinite(right) ? `N=${Number(rightSample) || 0}` : 'UNAVAILABLE'}</Text>
+      </View>
+    </View>
+  );
+}
+
 export function CompactAnalysisBars({ prediction }: { prediction: CompactPrediction }) {
   const logs = (prediction.gameLogs ?? [])
     .filter((game) => !game.synthetic && game.value != null)
@@ -198,7 +236,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const h2h = prediction.h2hPlayerStats ?? {};
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
+  const isGkProp = prediction.propType === 'saves' || prediction.propType === 'goalie_saves';
   const isPassProp = prediction.propType === 'pass_attempts' || prediction.propType === 'passes';
+  const showSotEvidence = isSotProp || isGkProp;
   const [showMatchupVolume, setShowMatchupVolume] = useState(false);
   const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
   const meetingsByVenue = h2h.teamMeetingsByVenue ?? {};
@@ -385,7 +425,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       <Text style={styles.possessionLabel}>
                         MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
                       </Text>
-                    {isSotProp && (
+                    {showSotEvidence && (
                       <Text style={styles.possessionLabel}>
                         OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
                       </Text>
@@ -407,7 +447,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   {selectedGame.date ? displayH2HDate(selectedGame.date, true) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
                   {detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'}
                   {selectedGame.score ? ` · ${selectedGame.score}` : ''}
-                  {isSotProp
+                  {showSotEvidence
                     ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
                     : isPassProp
                       ? ` · OPP PASS ${selectedGame.opponentPassAttempts != null ? Number(selectedGame.opponentPassAttempts).toFixed(0) : 'unavailable'}`
@@ -452,17 +492,75 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               </View>
             </View>
           )}
+          {matchupVolume?.available && showSotEvidence && (
+            <>
+              <VolumeInlineSplit
+                leftLabel={`${matchupVolume.homeTeam || 'HOME'} HOME SOT`}
+                leftValue={matchupVolume.fixtureSplits?.home?.sotCreated?.average}
+                leftSample={matchupVolume.fixtureSplits?.home?.sotCreated?.sampleSize}
+                rightLabel={`${matchupVolume.awayTeam || 'AWAY'} AWAY SOT`}
+                rightValue={matchupVolume.fixtureSplits?.away?.sotCreated?.average}
+                rightSample={matchupVolume.fixtureSplits?.away?.sotCreated?.sampleSize}
+              />
+              <VolumeInlineSplit
+                leftLabel={`${matchupVolume.homeTeam || 'HOME'} SOT ALLOWED`}
+                leftValue={matchupVolume.fixtureSplits?.home?.sotAllowed?.average}
+                leftSample={matchupVolume.fixtureSplits?.home?.sotAllowed?.sampleSize}
+                rightLabel={`${matchupVolume.awayTeam || 'AWAY'} SOT ALLOWED`}
+                rightValue={matchupVolume.fixtureSplits?.away?.sotAllowed?.average}
+                rightSample={matchupVolume.fixtureSplits?.away?.sotAllowed?.sampleSize}
+              />
+              {isGkProp && (
+                <VolumeInlineSplit
+                  leftLabel={`${matchupVolume.homeTeam || 'HOME'} SAVE RATE`}
+                  leftValue={matchupVolume.goalkeeperSaveRate?.byVenue?.home?.average}
+                  leftSample={matchupVolume.goalkeeperSaveRate?.byVenue?.home?.sampleSize}
+                  rightLabel={`${matchupVolume.awayTeam || 'AWAY'} SAVE RATE`}
+                  rightValue={matchupVolume.goalkeeperSaveRate?.byVenue?.away?.average}
+                  rightSample={matchupVolume.goalkeeperSaveRate?.byVenue?.away?.sampleSize}
+                />
+              )}
+            </>
+          )}
+          {matchupVolume?.available && isPassProp && (
+            <>
+              <VolumeInlineSplit
+                leftLabel={`${matchupVolume.homeTeam || 'HOME'} HOME PASSES`}
+                leftValue={matchupVolume.fixtureSplits?.home?.passesCreated?.average}
+                leftSample={matchupVolume.fixtureSplits?.home?.passesCreated?.sampleSize}
+                rightLabel={`${matchupVolume.awayTeam || 'AWAY'} AWAY PASSES`}
+                rightValue={matchupVolume.fixtureSplits?.away?.passesCreated?.average}
+                rightSample={matchupVolume.fixtureSplits?.away?.passesCreated?.sampleSize}
+              />
+              <VolumeInlineSplit
+                leftLabel={`${matchupVolume.homeTeam || 'HOME'} PASSES ALLOWED`}
+                leftValue={matchupVolume.fixtureSplits?.home?.passesAllowed?.average}
+                leftSample={matchupVolume.fixtureSplits?.home?.passesAllowed?.sampleSize}
+                rightLabel={`${matchupVolume.awayTeam || 'AWAY'} PASSES ALLOWED`}
+                rightValue={matchupVolume.fixtureSplits?.away?.passesAllowed?.average}
+                rightSample={matchupVolume.fixtureSplits?.away?.passesAllowed?.sampleSize}
+              />
+              <VolumeInlineSplit
+                leftLabel={`${prediction.teamName || 'PLAYER TEAM'} HOME SHARE`}
+                leftValue={matchupVolume.playerPassInvolvement?.byVenue?.home?.average}
+                leftSample={matchupVolume.playerPassInvolvement?.byVenue?.home?.sampleSize}
+                rightLabel={`${prediction.teamName || 'PLAYER TEAM'} AWAY SHARE`}
+                rightValue={matchupVolume.playerPassInvolvement?.byVenue?.away?.average}
+                rightSample={matchupVolume.playerPassInvolvement?.byVenue?.away?.sampleSize}
+              />
+            </>
+          )}
         </View>
       )}
 
-      {matchupVolume?.available && (isSotProp || isPassProp) && (
+      {matchupVolume?.available && (showSotEvidence || isPassProp) && (
         <View style={styles.card}>
           <TouchableOpacity
             style={styles.volumeHeader}
             onPress={() => setShowMatchupVolume((visible) => !visible)}
             activeOpacity={0.8}
             accessibilityRole="button"
-            accessibilityLabel={`${isSotProp ? 'Shots on target' : 'Pass'} matchup volume evidence`}
+            accessibilityLabel={`${showSotEvidence ? 'Shots on target' : 'Pass'} matchup volume evidence`}
           >
             <View style={styles.headerLeft}>
               <Ionicons name="git-compare-outline" size={11} color={Colors.primary} />
@@ -482,32 +580,32 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           </Text>
           {showMatchupVolume && (
             <View style={styles.volumeBody}>
-              {isSotProp && (
+              {showSotEvidence && (
                 <>
-                  <Text style={styles.volumeSectionTitle}>SHOTS ON TARGET</Text>
+                  <Text style={styles.volumeSectionTitle}>FIXTURE VENUE SOT</Text>
                   <View style={styles.volumeGrid}>
                     <VolumeMetric
-                      label={`${prediction.teamName || 'TEAM'} SOT`}
-                      value={matchupVolume.shotsOnTarget?.teamCreated?.average}
-                      sample={matchupVolume.shotsOnTarget?.teamCreated?.sampleSize}
+                      label={`${matchupVolume.homeTeam || 'HOME'} HOME SOT`}
+                      value={matchupVolume.fixtureSplits?.home?.sotCreated?.average}
+                      sample={matchupVolume.fixtureSplits?.home?.sotCreated?.sampleSize}
                       color={Colors.success}
                     />
                     <VolumeMetric
-                      label="TEAM SOT ALLOWED"
-                      value={matchupVolume.shotsOnTarget?.teamAllowed?.average}
-                      sample={matchupVolume.shotsOnTarget?.teamAllowed?.sampleSize}
+                      label={`${matchupVolume.homeTeam || 'HOME'} SOT ALLOWED`}
+                      value={matchupVolume.fixtureSplits?.home?.sotAllowed?.average}
+                      sample={matchupVolume.fixtureSplits?.home?.sotAllowed?.sampleSize}
                       color="#F59E0B"
                     />
                     <VolumeMetric
-                      label={`${prediction.opponentName || 'OPPONENT'} SOT`}
-                      value={matchupVolume.shotsOnTarget?.opponentCreated?.average}
-                      sample={matchupVolume.shotsOnTarget?.opponentCreated?.sampleSize}
+                      label={`${matchupVolume.awayTeam || 'AWAY'} AWAY SOT`}
+                      value={matchupVolume.fixtureSplits?.away?.sotCreated?.average}
+                      sample={matchupVolume.fixtureSplits?.away?.sotCreated?.sampleSize}
                       color="#60A5FA"
                     />
                     <VolumeMetric
-                      label="OPP SOT ALLOWED"
-                      value={matchupVolume.shotsOnTarget?.opponentAllowed?.average}
-                      sample={matchupVolume.shotsOnTarget?.opponentAllowed?.sampleSize}
+                      label={`${matchupVolume.awayTeam || 'AWAY'} SOT ALLOWED`}
+                      value={matchupVolume.fixtureSplits?.away?.sotAllowed?.average}
+                      sample={matchupVolume.fixtureSplits?.away?.sotAllowed?.sampleSize}
                       color="#F59E0B"
                     />
                   </View>
@@ -518,35 +616,75 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                     teamName={prediction.teamName || 'TEAM'}
                     opponentName={prediction.opponentName || 'OPPONENT'}
                   />
+                  {isGkProp && (
+                    <>
+                      <Text style={styles.volumeSectionTitle}>GOALKEEPER SAVE RATE BY VENUE</Text>
+                      <View style={styles.volumeGrid}>
+                        <VolumeMetric
+                          label={`${matchupVolume.homeTeam || 'HOME'} SAVE RATE`}
+                          value={matchupVolume.goalkeeperSaveRate?.byVenue?.home?.average}
+                          sample={matchupVolume.goalkeeperSaveRate?.byVenue?.home?.sampleSize}
+                          color={Colors.success}
+                        />
+                        <VolumeMetric
+                          label={`${matchupVolume.awayTeam || 'AWAY'} SAVE RATE`}
+                          value={matchupVolume.goalkeeperSaveRate?.byVenue?.away?.average}
+                          sample={matchupVolume.goalkeeperSaveRate?.byVenue?.away?.sampleSize}
+                          color="#60A5FA"
+                        />
+                      </View>
+                    </>
+                  )}
                 </>
               )}
               {isPassProp && (
                 <>
-                  <Text style={styles.volumeSectionTitle}>PASS VOLUME</Text>
+                  <Text style={styles.volumeSectionTitle}>FIXTURE VENUE PASS VOLUME</Text>
                   <View style={styles.volumeGrid}>
                     <VolumeMetric
-                      label={`${prediction.teamName || 'TEAM'} PASSES`}
-                      value={matchupVolume.passes?.teamCreated?.average}
-                      sample={matchupVolume.passes?.teamCreated?.sampleSize}
+                      label={`${matchupVolume.homeTeam || 'HOME'} HOME PASSES`}
+                      value={matchupVolume.fixtureSplits?.home?.passesCreated?.average}
+                      sample={matchupVolume.fixtureSplits?.home?.passesCreated?.sampleSize}
                       color={Colors.success}
                     />
                     <VolumeMetric
-                      label="TEAM PASSES ALLOWED"
-                      value={matchupVolume.passes?.teamAllowed?.average}
-                      sample={matchupVolume.passes?.teamAllowed?.sampleSize}
+                      label={`${matchupVolume.homeTeam || 'HOME'} PASSES ALLOWED`}
+                      value={matchupVolume.fixtureSplits?.home?.passesAllowed?.average}
+                      sample={matchupVolume.fixtureSplits?.home?.passesAllowed?.sampleSize}
                       color="#F59E0B"
                     />
                     <VolumeMetric
-                      label={`${prediction.opponentName || 'OPPONENT'} PASSES`}
-                      value={matchupVolume.passes?.opponentCreated?.average}
-                      sample={matchupVolume.passes?.opponentCreated?.sampleSize}
+                      label={`${matchupVolume.awayTeam || 'AWAY'} AWAY PASSES`}
+                      value={matchupVolume.fixtureSplits?.away?.passesCreated?.average}
+                      sample={matchupVolume.fixtureSplits?.away?.passesCreated?.sampleSize}
                       color="#60A5FA"
                     />
                     <VolumeMetric
-                      label="OPP PASSES ALLOWED"
-                      value={matchupVolume.passes?.opponentAllowed?.average}
-                      sample={matchupVolume.passes?.opponentAllowed?.sampleSize}
+                      label={`${matchupVolume.awayTeam || 'AWAY'} PASSES ALLOWED`}
+                      value={matchupVolume.fixtureSplits?.away?.passesAllowed?.average}
+                      sample={matchupVolume.fixtureSplits?.away?.passesAllowed?.sampleSize}
                       color="#F59E0B"
+                    />
+                  </View>
+                  <Text style={styles.volumeSectionTitle}>PLAYER PASS INVOLVEMENT</Text>
+                  <View style={styles.volumeGrid}>
+                    <VolumeMetric
+                      label={`${prediction.teamName || 'PLAYER TEAM'} HOME SHARE`}
+                      value={matchupVolume.playerPassInvolvement?.byVenue?.home?.average}
+                      sample={matchupVolume.playerPassInvolvement?.byVenue?.home?.sampleSize}
+                      color={Colors.success}
+                    />
+                    <VolumeMetric
+                      label={`${prediction.teamName || 'PLAYER TEAM'} AWAY SHARE`}
+                      value={matchupVolume.playerPassInvolvement?.byVenue?.away?.average}
+                      sample={matchupVolume.playerPassInvolvement?.byVenue?.away?.sampleSize}
+                      color="#60A5FA"
+                    />
+                    <VolumeMetric
+                      label="EXPECTED PLAYER PASSES"
+                      value={matchupVolume.playerPassInvolvement?.selectedVenue?.expectedPlayerPasses}
+                      sample={matchupVolume.playerPassInvolvement?.selectedVenue?.sampleSize}
+                      color={Colors.primary}
                     />
                   </View>
                   <VolumeExpected
@@ -561,13 +699,13 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               <Text style={styles.volumeSubhead}>RECENT OPPONENT VOLUME</Text>
               {(matchupVolume.recentMatchRows || []).length > 0 ? (
                 <View style={styles.volumeRows}>
-                  {(matchupVolume.recentMatchRows || []).slice(0, 10).map((row: any, index: number) => (
+                  {(matchupVolume.recentMatchRows || []).map((row: any, index: number) => (
                     <View style={styles.volumeRow} key={`${row.fixtureId || row.date || 'row'}-${index}`}>
                       <Text style={styles.volumeRowOpponent} numberOfLines={1}>
                         {row.opponent || 'Opponent'} · {row.venue === 'home' ? 'H' : 'A'}
                       </Text>
                       <Text style={styles.volumeRowValue}>
-                        {isSotProp
+                        {showSotEvidence
                           ? `OPP SOT ${row.opponentShotsOnTarget ?? '—'}`
                           : `OPP PASS ATT ${row.opponentPassAttempts ?? '—'}`}
                       </Text>
@@ -818,6 +956,18 @@ const styles = {
   volumeExpectedValue: { fontSize: 18, fontWeight: '900' as const },
   volumeExpectedLabel: { color: '#7D8796', fontSize: 7, fontWeight: '900' as const, marginTop: 2 },
   volumeExpectedVs: { color: '#555', fontSize: 8, fontWeight: '900' as const, marginHorizontal: 8 },
+  volumeInlineRow: {
+    marginHorizontal: 14,
+    marginBottom: 12,
+    paddingTop: 9,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+  },
+  volumeInlineItem: { flex: 1, alignItems: 'center' as const },
+  volumeInlineLabel: { color: '#7D8796', fontSize: 6.5, fontWeight: '900' as const, letterSpacing: 0.35 },
+  volumeInlineValue: { fontSize: 14, fontWeight: '900' as const, marginTop: 2 },
   volumeSubhead: {
     marginTop: 12,
     marginBottom: 5,

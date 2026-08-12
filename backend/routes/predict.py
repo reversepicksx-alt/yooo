@@ -1760,6 +1760,85 @@ async def predict(req: PredictionRequest):
                     )
                     return None
 
+            async def _fetch_fixture_opponent_context(
+                fid,
+                home_id,
+                away_id,
+                player_team_id,
+            ):
+                """Return exact-fixture opponent SOT and total pass attempts.
+
+                The same context belongs beside every soccer player log, not
+                only goalkeeper saves. It is fetched from the two-team
+                fixture-statistics response and cached as a fixture-level
+                artifact.
+                """
+                cache_key = f"fxt_opponent_context_{fid}"
+                try:
+                    cached = await db.fixture_player_cache.find_one(
+                        {"_k": cache_key}, {"_id": 0, "d": 1}
+                    )
+                    cached_data = (cached or {}).get("d") or {}
+                    if cached_data.get("home") and cached_data.get("away"):
+                        opponent_id = away_id if player_team_id == home_id else home_id
+                        opponent_side = (
+                            cached_data["away"] if opponent_id == away_id
+                            else cached_data["home"]
+                        )
+                        return {
+                            "shotsOnTarget": opponent_side.get("shotsOnTarget"),
+                            "passes": opponent_side.get("passes"),
+                        }
+                except Exception:
+                    pass
+                try:
+                    stats_rows = await api_football_request(
+                        "fixtures/statistics", {"fixture": fid}
+                    )
+                    sides = {}
+                    for team_stats in stats_rows or []:
+                        team_id = (team_stats.get("team") or {}).get("id")
+                        if team_id not in {home_id, away_id}:
+                            continue
+                        raw_stats = {
+                            str(item.get("type") or ""): item.get("value")
+                            for item in (team_stats.get("statistics") or [])
+                        }
+
+                        def _safe_stat(value):
+                            try:
+                                parsed = float(str(value).replace("%", "").strip())
+                                return parsed if math.isfinite(parsed) else None
+                            except (TypeError, ValueError):
+                                return None
+
+                        sides["home" if team_id == home_id else "away"] = {
+                            "shotsOnTarget": _safe_stat(raw_stats.get("Shots on Goal")),
+                            "passes": _safe_stat(raw_stats.get("Total passes")),
+                        }
+                    if not sides.get("home") or not sides.get("away"):
+                        return {}
+                    try:
+                        await db.fixture_player_cache.update_one(
+                            {"_k": cache_key},
+                            {"$set": {"_k": cache_key, "d": sides}},
+                            upsert=True,
+                        )
+                    except Exception as cache_err:
+                        print(f"[PLAYER OPP CONTEXT CACHE] skipped: {cache_err}")
+                    opponent_id = away_id if player_team_id == home_id else home_id
+                    opponent_side = sides["away"] if opponent_id == away_id else sides["home"]
+                    return {
+                        "shotsOnTarget": opponent_side.get("shotsOnTarget"),
+                        "passes": opponent_side.get("passes"),
+                    }
+                except Exception as context_err:
+                    print(
+                        f"[PLAYER OPP CONTEXT] fixture={fid} unavailable: "
+                        f"{type(context_err).__name__}"
+                    )
+                    return {}
+
             collected = []
             if not player_id or not actual_team_id:
                 return collected
@@ -1844,37 +1923,35 @@ async def predict(req: PredictionRequest):
                                         "away_poss": _result[1],
                                     }
 
-                    # Saves need the opponent's exact-fixture SOT beside each
-                    # player save total. Hydrate only saves rows so other props
-                    # do not incur this extra provider work.
-                    sot_docs: dict[str, float] = {}
-                    if (
-                        req.sport == "soccer"
-                        and req.propType in {"saves", "goalie_saves"}
-                    ):
-                        _sot_tasks = []
-                        _sot_fids = []
+                    # Every soccer player row gets the opponent's exact
+                    # fixture SOT and total passes. Goalkeeper saves need SOT
+                    # faced, but the same observed opponent volume is also
+                    # required for SOT and pass-prop context.
+                    context_docs: dict[str, dict] = {}
+                    if req.sport == "soccer":
+                        _context_tasks = []
+                        _context_fids = []
                         for _fid, _meta in fxm_docs.items():
                             if (
                                 _meta.get("home_id") is not None
                                 and _meta.get("away_id") is not None
                             ):
-                                _sot_fids.append(_fid)
-                                _sot_tasks.append(
-                                    _fetch_fixture_opponent_sot(
+                                _context_fids.append(_fid)
+                                _context_tasks.append(
+                                    _fetch_fixture_opponent_context(
                                         _fid,
                                         _meta["home_id"],
                                         _meta["away_id"],
                                         actual_team_id,
                                     )
                                 )
-                        if _sot_tasks:
-                            _sot_results = await aio.gather(
-                                *_sot_tasks, return_exceptions=True
+                        if _context_tasks:
+                            _context_results = await aio.gather(
+                                *_context_tasks, return_exceptions=True
                             )
-                            for _fid, _result in zip(_sot_fids, _sot_results):
-                                if isinstance(_result, (int, float)):
-                                    sot_docs[_fid] = float(_result)
+                            for _fid, _result in zip(_context_fids, _context_results):
+                                if isinstance(_result, dict):
+                                    context_docs[_fid] = _result
 
                     for fid_str, entry in fid_map.items():
                         d = entry.get("d", {})
@@ -1932,11 +2009,12 @@ async def predict(req: PredictionRequest):
                                     # Do not expose a cached row with no
                                     # verified TP. Stage 1 can fetch it.
                                     continue
-                                if (
-                                    req.propType in {"saves", "goalie_saves"}
-                                    and fid_str in sot_docs
-                                ):
-                                    gl["opponentShotsOnTarget"] = sot_docs[fid_str]
+                                if fid_str in context_docs:
+                                    _context = context_docs[fid_str]
+                                    if _context.get("shotsOnTarget") is not None:
+                                        gl["opponentShotsOnTarget"] = _context["shotsOnTarget"]
+                                    if _context.get("passes") is not None:
+                                        gl["opponentPassAttempts"] = _context["passes"]
                         else:
                             if req.sport == "soccer":
                                 # Without permanent fixture metadata we cannot
@@ -2107,17 +2185,16 @@ async def predict(req: PredictionRequest):
                             return gl_dict
 
                         async def _enrich_opponent_sot(gl_dict: dict) -> dict:
-                            if (
-                                req.sport == "soccer"
-                                and req.propType in {"saves", "goalie_saves"}
-                            ):
+                            if req.sport == "soccer":
                                 home_id = fix_raw.get("teams", {}).get("home", {}).get("id")
                                 away_id = fix_raw.get("teams", {}).get("away", {}).get("id")
-                                opponent_sot = await _fetch_fixture_opponent_sot(
+                                opponent_context = await _fetch_fixture_opponent_context(
                                     fid, home_id, away_id, actual_team_id
                                 )
-                                if opponent_sot is not None:
-                                    gl_dict["opponentShotsOnTarget"] = opponent_sot
+                                if opponent_context.get("shotsOnTarget") is not None:
+                                    gl_dict["opponentShotsOnTarget"] = opponent_context["shotsOnTarget"]
+                                if opponent_context.get("passes") is not None:
+                                    gl_dict["opponentPassAttempts"] = opponent_context["passes"]
                             return gl_dict
 
                         # Check prefetch cache first — avoids extra API call if already cached
@@ -2143,7 +2220,10 @@ async def predict(req: PredictionRequest):
                                     return None
                                 # For saves prop: bypass cache if saves value is None
                                 # (pre-fetch cache often misses saves for GKs — always fetch fresh)
-                                saves_cache_miss = req.propType == "saves" and gl.get("goals_saves") is None
+                                saves_cache_miss = (
+                                    req.propType in {"saves", "goalie_saves"}
+                                    and gl.get("goals_saves") is None
+                                )
                                 if not saves_cache_miss:
                                     gl["date"] = fix_date
                                     gl["opponent"] = fix_opponent
@@ -3030,16 +3110,27 @@ async def predict(req: PredictionRequest):
             opponent_fixture_list[:5] if _is_neutral else (venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5]),
             req.opponentId, 5
         )
-        # Matchup-volume evidence uses exact venue samples and can work with
-        # fewer than ten verified rows, but never pads a venue split with the
-        # opposite venue. It remains shadow-only until replay validation.
-        team_matchup_volume_task = fetch_fixture_matchup_volume(
-            venue_filtered_team_fixtures[:10] if not _is_neutral else all_team_fixtures[:10],
+        # Matchup-volume evidence uses exact venue samples. Fetch both home
+        # and away pools for both clubs so the UI can show, for example,
+        # "PSG home SOT" and "Aston Villa away SOT" with no label inversion.
+        # A venue is never padded with the opposite venue.
+        team_home_volume_task = fetch_fixture_matchup_volume(
+            [f for f in all_team_fixtures if f.get("venue") == "home"][:10],
             actual_team_id or 40,
             10,
         )
-        opponent_matchup_volume_task = fetch_fixture_matchup_volume(
-            venue_filtered_opp_fixtures[:10] if not _is_neutral else opponent_fixture_list[:10],
+        team_away_volume_task = fetch_fixture_matchup_volume(
+            [f for f in all_team_fixtures if f.get("venue") == "away"][:10],
+            actual_team_id or 40,
+            10,
+        )
+        opponent_home_volume_task = fetch_fixture_matchup_volume(
+            [f for f in opponent_fixture_list if f.get("venue") == "home"][:10],
+            req.opponentId,
+            10,
+        )
+        opponent_away_volume_task = fetch_fixture_matchup_volume(
+            [f for f in opponent_fixture_list if f.get("venue") == "away"][:10],
             req.opponentId,
             10,
         )
@@ -3286,16 +3377,13 @@ async def predict(req: PredictionRequest):
                 "opponent schedule possession",
                 18,
             ),
-            _bounded_required(
-                team_matchup_volume_task,
-                "team matchup volume",
-                18,
-            ),
-            _bounded_required(
-                opponent_matchup_volume_task,
-                "opponent matchup volume",
-                18,
-            ),
+            return_exceptions=True,
+        )
+        matchup_volume_wave = aio.gather(
+            _bounded_required(team_home_volume_task, "team home volume", 18),
+            _bounded_required(team_away_volume_task, "team away volume", 18),
+            _bounded_required(opponent_home_volume_task, "opponent home volume", 18),
+            _bounded_required(opponent_away_volume_task, "opponent away volume", 18),
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(
@@ -3305,8 +3393,14 @@ async def predict(req: PredictionRequest):
         try:
             required_results = await aio.wait_for(required_wave2, timeout=27)
         except aio.TimeoutError:
-            required_results = [None, None, None, None, None, None, None, None]
+            required_results = [None] * 6
             print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 27s for {req.playerName}")
+
+        try:
+            matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=22)
+        except aio.TimeoutError:
+            matchup_volume_results = [None] * 4
+            print(f"[MATCHUP VOLUME TIMEOUT] venue evidence exceeded 22s for {req.playerName}")
 
         try:
             optional_results = await aio.wait_for(optional_wave2, timeout=3)
@@ -3314,6 +3408,7 @@ async def predict(req: PredictionRequest):
             optional_results = [None, None]
             print(f"[WAVE2 OPTIONAL TIMEOUT] shadow enrichment exceeded 3s for {req.playerName}")
 
+        required_results = required_results + matchup_volume_results
         team_fixture_stats = required_results[0] if not isinstance(required_results[0], (Exception, type(None))) else []
         opponent_fixture_stats = required_results[1] if not isinstance(required_results[1], (Exception, type(None))) else []
         player_game_logs = required_results[2] if not isinstance(required_results[2], (Exception, type(None))) else []
@@ -3330,24 +3425,19 @@ async def predict(req: PredictionRequest):
             and not isinstance(required_results[5], (Exception, type(None)))
             else {"average": None, "sampleSize": 0, "fixtureIds": [], "source": None}
         )
-        team_matchup_volume_rows = (
-            required_results[6]
-            if len(required_results) > 6
-            and not isinstance(required_results[6], (Exception, type(None)))
-            else []
-        )
-        opponent_matchup_volume_rows = (
-            required_results[7]
-            if len(required_results) > 7
-            and not isinstance(required_results[7], (Exception, type(None)))
-            else []
-        )
+        def _wave_rows(index):
+            value = required_results[index] if len(required_results) > index else None
+            return value if not isinstance(value, (Exception, type(None))) else []
+
+        team_matchup_volume_rows = _wave_rows(6) + _wave_rows(7)
+        opponent_matchup_volume_rows = _wave_rows(8) + _wave_rows(9)
         matchup_volume = build_matchup_volume_packet(
             player_venue=player_venue,
             team_rows=team_matchup_volume_rows,
             opponent_rows=opponent_matchup_volume_rows,
             team_name=corrected_team_name or req.teamName,
             opponent_name=_canonical_opponent_name or req.opponentName,
+            player_logs=player_game_logs,
         )
         # Carry the exact opponent team totals onto the player-history rows
         # when the fixture identity/date joins. This keeps the recent-match
