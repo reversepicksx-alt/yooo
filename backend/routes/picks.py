@@ -2340,7 +2340,8 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                       "streakFlag", "propType", "line", "playerName", "opponentName",
                       "tacticalMetrics", "tacticalContext", "tacticalIntelligence",
                        "positionComparison",
-                      "matchScript", "positionalReality", "gameScript", "moneyline", "homeTeam", "awayTeam"):
+                      "matchScript", "positionalReality", "gameScript", "moneyline", "homeTeam", "awayTeam",
+                      "tacticalBreakdownRefreshedAt", "tacticalBreakdownSource"):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val
@@ -2402,6 +2403,11 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         return {"found": False}
 
     prediction.pop("_id", None)
+    # Merge the pick-level refresh timestamp so the client can render the
+    # cooldown hint correctly after reopening the analysis modal.
+    _pick_refreshed_at = pick.get("tacticalBreakdownRefreshedAt")
+    if _pick_refreshed_at:
+        prediction["tacticalBreakdownRefreshedAt"] = _pick_refreshed_at
     return {"found": True, "analysis": prediction}
 
 
@@ -2427,9 +2433,60 @@ async def refresh_pick_analysis(pick_id: str, payload: dict):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    pick = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0})
-    if not pick:
-        raise HTTPException(status_code=404, detail="Pick not found")
+    # ── Rate limit: 1 refresh per pick per hour (atomic) ─────────────────
+    # We stamp the timestamp BEFORE AI generation using a conditional
+    # findOneAndUpdate.  The filter only matches when the stored timestamp is
+    # absent, null, or older than the cooldown window, so concurrent requests
+    # cannot each see an unset timestamp and both proceed to generate.
+    from fastapi.responses import JSONResponse
+    from pymongo import ReturnDocument
+
+    _REFRESH_COOLDOWN_SECONDS = 3600
+    _now_dt = datetime.now(timezone.utc)
+    _now_iso = _now_dt.isoformat()
+    _cooldown_cutoff_iso = (_now_dt - timedelta(seconds=_REFRESH_COOLDOWN_SECONDS)).isoformat()
+
+    pick = await db.picks.find_one_and_update(
+        {
+            "pickId": pick_id,
+            "email": email,
+            # Matches when refreshedAt is missing, null, or old enough
+            "tacticalBreakdownRefreshedAt": {"$not": {"$gt": _cooldown_cutoff_iso}},
+        },
+        {"$set": {"tacticalBreakdownRefreshedAt": _now_iso}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.BEFORE,
+    )
+
+    if pick is None:
+        # Either the pick doesn't exist or the cooldown is active — distinguish.
+        _existing = await db.picks.find_one(
+            {"pickId": pick_id, "email": email},
+            {"_id": 0, "tacticalBreakdownRefreshedAt": 1},
+        )
+        if not _existing:
+            raise HTTPException(status_code=404, detail="Pick not found")
+        # On cooldown — compute the remaining wait from the stored timestamp.
+        _last_refreshed = _existing.get("tacticalBreakdownRefreshedAt") or _now_iso
+        try:
+            _last_dt = datetime.fromisoformat(_last_refreshed.replace("Z", "+00:00"))
+            _elapsed = (_now_dt - _last_dt).total_seconds()
+        except Exception:
+            _elapsed = 0.0
+        _retry_after = max(0, int(_REFRESH_COOLDOWN_SECONDS - _elapsed))
+        _elapsed_min = int(_elapsed // 60)
+        _wait_min = max(1, round(_retry_after / 60))
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(_retry_after)},
+            content={
+                "detail": f"Analysis refreshed {_elapsed_min}m ago — please wait {_wait_min} more minute(s).",
+                "retryAfter": _retry_after,
+                "refreshedAt": _last_refreshed,
+            },
+        )
+    # `pick` is the document as it was BEFORE the timestamp was stamped.
+    # The cooldown slot is now reserved for this request.
 
     # Build the evidence packet from the stored pick.  Try to enrich it with
     # the latest cached prediction data (which carries more complete evidence
@@ -2492,6 +2549,16 @@ async def refresh_pick_analysis(pick_id: str, payload: dict):
     ledger = prediction_data.get("factorLedger") or {}
     ledger_fingerprint = prediction_data.get("factorLedgerFingerprint") or ""
 
+    async def _release_slot() -> None:
+        """Clear the reserved timestamp so the user can retry after a failure."""
+        try:
+            await db.picks.update_one(
+                {"pickId": pick_id, "email": email},
+                {"$unset": {"tacticalBreakdownRefreshedAt": ""}},
+            )
+        except Exception as _rel_exc:
+            print(f"[REFRESH ANALYSIS] could not release cooldown slot: {_rel_exc}")
+
     try:
         from compact_explanation import build_compact_explanation
         text, source, cache_key = await build_compact_explanation(
@@ -2502,9 +2569,11 @@ async def refresh_pick_analysis(pick_id: str, payload: dict):
         )
     except Exception as exc:
         print(f"[REFRESH ANALYSIS] build_compact_explanation failed: {exc}")
+        await _release_slot()
         raise HTTPException(status_code=500, detail="Failed to generate analysis")
 
     if not text:
+        await _release_slot()
         raise HTTPException(status_code=503, detail="Analysis generation unavailable; try again later")
 
     # Persist the refreshed explanation back to the pick document.

@@ -916,6 +916,9 @@ export default function PicksScreen() {
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
   const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Record<string, string>>({});
+  // Tick every minute while the modal is open so the "X min ago" hint updates
+  const [, setRefreshTick] = useState(0);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [liveTrackerPick, setLiveTrackerPick] = useState<Pick | null>(null);
   const [streaksOpen, setStreaksOpen] = useState(false);
@@ -930,6 +933,13 @@ export default function PicksScreen() {
   const modalScrollRef = useRef<ScrollView>(null);
   const managerLayoutY = useRef<number>(0);
   const pendingScrollToManager = useRef<boolean>(false);
+
+  // Tick every minute while the analysis modal is open so "X min ago" stays current
+  React.useEffect(() => {
+    if (!analysisModal) return;
+    const id = setInterval(() => setRefreshTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, [!!analysisModal]);
 
   // Scroll to manager context card once analysis finishes loading
   React.useEffect(() => {
@@ -1113,6 +1123,7 @@ export default function PicksScreen() {
     try {
       const result = await refreshPickAnalysis(session.email, session.token, id);
       if (result.ok && result.text) {
+        const now = new Date().toISOString();
         // Merge the refreshed text into the modal data so it renders immediately
         setAnalysisModal((prev) => {
           if (!prev) return prev;
@@ -1121,13 +1132,22 @@ export default function PicksScreen() {
             data: {
               ...(prev.data ?? {}),
               tacticalBreakdown: result.text,
+              tacticalBreakdownRefreshedAt: now,
             },
           };
         });
+        // Record locally so the cooldown hint shows without reopening the modal
+        setLastRefreshedAt((prev) => ({ ...prev, [id]: now }));
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (e: any) {
-      Alert.alert('Refresh failed', e?.message || 'Could not refresh analysis. Try again later.');
+      const msg: string = e?.message || '';
+      // 429 — show the server's friendly message directly
+      if (msg.includes('minute') || msg.includes('refreshed')) {
+        Alert.alert('Too soon', msg);
+      } else {
+        Alert.alert('Refresh failed', msg || 'Could not refresh analysis. Try again later.');
+      }
     } finally {
       setRefreshingAnalysis(false);
     }
@@ -1427,20 +1447,39 @@ export default function PicksScreen() {
                 const wordCount = String(existingText || '').split(/\s+/).filter(Boolean).length;
                 const hasLongForm = wordCount >= 380;
                 if (isSettled && hasLongForm) return null;
+                // Cooldown: server enforces 1 h; client reflects that with a hint
+                const pickId = pick?.pickId ?? '';
+                const refreshedAtStr: string | undefined =
+                  lastRefreshedAt[pickId]
+                  ?? (analysisModal?.data as any)?.tacticalBreakdownRefreshedAt
+                  ?? pick?.tacticalBreakdownRefreshedAt;
+                const refreshedMinAgo = refreshedAtStr
+                  ? Math.floor((Date.now() - new Date(refreshedAtStr).getTime()) / 60_000)
+                  : null;
+                const onCooldown = refreshedMinAgo !== null && refreshedMinAgo < 60;
+                const isDisabled = refreshingAnalysis || analysisModal?.loading || onCooldown;
+                const iconColor = onCooldown ? Colors.textTertiary : Colors.primary;
                 return (
-                  <TouchableOpacity
-                    onPress={handleRefreshAnalysis}
-                    style={[mStyles.modalClose, { marginRight: 4 }]}
-                    disabled={refreshingAnalysis || analysisModal?.loading}
-                    accessibilityLabel="Update analysis"
-                    accessibilityRole="button"
-                  >
-                    {refreshingAnalysis ? (
-                      <ActivityIndicator size="small" color={Colors.primary} />
-                    ) : (
-                      <Ionicons name="refresh" size={18} color={Colors.primary} />
-                    )}
-                  </TouchableOpacity>
+                  <View style={{ alignItems: 'center' }}>
+                    <TouchableOpacity
+                      onPress={handleRefreshAnalysis}
+                      style={[mStyles.modalClose, { marginRight: 4 }]}
+                      disabled={isDisabled}
+                      accessibilityLabel={onCooldown ? `Refreshed ${refreshedMinAgo}m ago` : 'Update analysis'}
+                      accessibilityRole="button"
+                    >
+                      {refreshingAnalysis ? (
+                        <ActivityIndicator size="small" color={Colors.primary} />
+                      ) : (
+                        <Ionicons name="refresh" size={18} color={iconColor} />
+                      )}
+                    </TouchableOpacity>
+                    {onCooldown && !refreshingAnalysis ? (
+                      <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: -2, marginRight: 4 }}>
+                        {refreshedMinAgo}m ago
+                      </Text>
+                    ) : null}
+                  </View>
                 );
               })()}
               <TouchableOpacity onPress={() => setAnalysisModal(null)} style={mStyles.modalClose}>
