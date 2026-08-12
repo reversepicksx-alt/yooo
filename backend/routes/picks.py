@@ -668,6 +668,9 @@ async def save_pick(req: SavePickRequest):
             or (pick.get("tacticalIntelligence") or {}).get("positionCohort")
             or {}
         ),
+        # Role-first evidence is captured at prediction time so replay and
+        # saved analysis do not need to infer a role from rotated caches.
+        "roleEvidence": pick.get("roleEvidence") or (pick.get("player") or {}).get("roleEvidencePacket") or {},
     }
 
     # Persist the model's projected ball-possession split so we can compare
@@ -708,7 +711,7 @@ async def save_pick(req: SavePickRequest):
         for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
                       "analysisFactors", "modelInputSnapshot", "factorLedger",
                        "tacticalContext", "tacticalIntelligence", "matchScript",
-                       "positionalReality",
+                        "positionalReality", "roleEvidence",
                       "factorLedgerVersion", "factorLedgerFingerprint"):
             val = pick.get(field)
             if val is not None:
@@ -1633,6 +1636,14 @@ async def list_picks(req: GetPicksRequest):
                     p["minutesPlayed"] = upd.get("minutesPlayed")
                     p["paceMismatch"] = upd.get("paceMismatch")
                     p["paceWarning"] = upd.get("paceWarning")
+                    p["liveConfidenceScore"] = upd.get("liveConfidenceScore")
+                    p["liveConfidenceLevel"] = upd.get("liveConfidenceLevel")
+                    p["preMatchProjection"] = upd.get("preMatchProjection") or p.get("projectedValue")
+                    p["preMatchConfidenceScore"] = (
+                        upd.get("preMatchConfidenceScore")
+                        or p.get("confidenceScore")
+                        or p.get("confidence")
+                    )
                     p["liveGaussian"] = upd.get("liveGaussian")
                     if upd.get("homeTeam"):
                         p["homeTeam"] = upd.get("homeTeam")
@@ -4220,10 +4231,29 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
     # tiny early-game samples, and only fires while the pick is still live.
     pace_mismatch = False
     pace_warning = None
+    live_confidence_score = None
+    live_confidence_level = None
     if is_live and not is_finished and elapsed >= 15 and hit_pct is not None and hit_pct <= 25:
         opposite = "UNDER" if (recommendation or "").lower() == "over" else "OVER"
         pace_mismatch = True
         pace_warning = f"Pace trending {opposite} — on pace for {pace:.0f} ({hit_pct}% chance {(recommendation or '').upper()} still hits)"
+        # This is a live-state control only.  Never overwrite the saved
+        # pre-match confidence or projection: a live event can change pace and
+        # role without invalidating the original audit snapshot.
+        try:
+            _pre_match_confidence = float(
+                pick.get("confidenceScore")
+                or pick.get("confidence")
+                or 50
+            )
+        except (TypeError, ValueError):
+            _pre_match_confidence = 50.0
+        live_confidence_score = int(max(35, min(_pre_match_confidence, _pre_match_confidence - 20)))
+        live_confidence_level = (
+            "High" if live_confidence_score >= 70
+            else "Medium" if live_confidence_score >= 55
+            else "Low"
+        )
 
     update = {
         "pickId": pick["pickId"],
@@ -4237,6 +4267,10 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         "hitPct": hit_pct,
         "paceMismatch": pace_mismatch,
         "paceWarning": pace_warning,
+        "liveConfidenceScore": live_confidence_score,
+        "liveConfidenceLevel": live_confidence_level,
+        "preMatchProjection": pick.get("projectedValue"),
+        "preMatchConfidenceScore": pick.get("confidenceScore") or pick.get("confidence"),
         "liveGaussian": live_gaussian,
         "matchScore": match_score,
         "homeTeam": home_team_name,

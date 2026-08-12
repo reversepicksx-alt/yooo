@@ -1481,6 +1481,10 @@ export interface Pick {
   } | null;
   paceMismatch?: boolean | null;
   paceWarning?: string | null;
+  liveConfidenceScore?: number | null;
+  liveConfidenceLevel?: string | null;
+  preMatchProjection?: number | null;
+  preMatchConfidenceScore?: number | null;
   elapsed?: number | null;
   period?: string;
   matchStatus?: string;
@@ -1502,6 +1506,7 @@ export interface Pick {
   trackingId?: string;
   position?: string;
   role?: string;
+  roleEvidence?: Record<string, unknown> | string[];
   leagueId?: number;
   leagueName?: string;
   coinFlip?: boolean;
@@ -1600,6 +1605,10 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     liveGaussian: (p.liveGaussian as Pick['liveGaussian']) || null,
     paceMismatch: (p.paceMismatch as boolean) ?? null,
     paceWarning: (p.paceWarning as string) ?? null,
+    liveConfidenceScore: (p.liveConfidenceScore as number) ?? null,
+    liveConfidenceLevel: (p.liveConfidenceLevel as string) ?? null,
+    preMatchProjection: (p.preMatchProjection as number) ?? null,
+    preMatchConfidenceScore: (p.preMatchConfidenceScore as number) ?? null,
     elapsed: (p.elapsed as number) ?? null,
     period: p.period as string,
     matchStatus: p.matchStatus as string,
@@ -1612,6 +1621,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     trackingId: p.trackingId as string,
     position: (p.position as string) || undefined,
     role: customerRole(p.position, p.role),
+    roleEvidence: (p.roleEvidence as Pick['roleEvidence']) || undefined,
     coinFlip: (p.coinFlip as boolean) || undefined,
     matchScore: (p.matchScore as string) || undefined,
     finalHomeGoals: (p.finalHomeGoals as number) ?? null,

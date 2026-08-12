@@ -102,6 +102,7 @@ def evaluate_prediction_quality(
     match_odds: dict[str, Any] | None = None,
     position: str | None = None,
     role: str | None = None,
+    role_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assess independent evidence groups without changing model math."""
     real_logs = _usable_player_logs(player_logs or [], prop_type)
@@ -120,6 +121,8 @@ def evaluate_prediction_quality(
         or odds.get("americanOdds")
         or odds.get("favorite")
     )
+    role_packet = role_evidence or {}
+    role_status = str(role_packet.get("status") or "").lower()
 
     groups: dict[str, dict[str, Any]] = {
         "player_history": {
@@ -149,6 +152,15 @@ def evaluate_prediction_quality(
             "status": "applied" if lineup in {"confirmed", "starting"} else "warning" if lineup in {"predicted", "substitute"} or position or role else "unavailable",
             "sampleSize": None,
             "detail": f"lineup={lineup_status or 'unknown'} position={position or 'unknown'} role={role or 'unknown'}",
+        },
+        "role_first_evidence": {
+            "status": "applied" if role_status == "verified" else "warning" if role_status == "partial" else "unavailable",
+            "sampleSize": int((role_packet.get("evidenceCounts") or {}).get("exactRole") or 0),
+            "detail": (
+                "Exact role and fixture observation are available."
+                if role_status == "verified"
+                else "Exact role/opportunity packet is incomplete; broad position is not same-role evidence."
+            ),
         },
         "fixture_identity": {
             "status": "applied" if fixture_id is not None else "warning",
@@ -191,6 +203,10 @@ def evaluate_prediction_quality(
         caps.append((62, f"Independent evidence quality is limited ({score}/100)."))
     if warnings >= 4:
         caps.append((64, f"{warnings} evidence groups require caution."))
+    if role_status == "unavailable":
+        caps.append((60, "The player's exact role and prop opportunity could not be verified."))
+    elif role_status == "partial":
+        caps.append((68, "The player's role or fixture-specific role evidence is incomplete."))
 
     confidence_cap = min((cap for cap, _ in caps), default=None)
     cap_reasons = [reason for _, reason in caps]
@@ -207,6 +223,7 @@ def evaluate_prediction_quality(
         "confidenceCap": confidence_cap,
         "capReasons": cap_reasons,
         "thinEvidence": score < 58 or len(real_logs) < 3,
+        "roleEvidence": role_packet,
     }
 
 

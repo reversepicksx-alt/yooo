@@ -254,6 +254,14 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
                     </Text>
                   </View>
                 )}
+                {pick.liveConfidenceScore != null && (
+                  <View style={styles.paceItem}>
+                    <Text style={[styles.paceLabel, { color: Colors.warning }]}>Live confidence</Text>
+                    <Text style={[styles.paceValue, { color: Colors.warning }]}>
+                      {Math.round(pick.liveConfidenceScore)}%
+                    </Text>
+                  </View>
+                )}
                 {pick.paceMismatch && (
                   <View style={[styles.paceItem, styles.paceWarning]}>
                     <Ionicons name="warning" size={12} color={Colors.warning} />

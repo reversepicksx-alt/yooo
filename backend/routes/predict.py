@@ -38,6 +38,7 @@ from tactical_evidence import (
     summarize_position_cohort,
     build_position_cohort_statement,
 )
+from role_evidence import build_role_evidence_packet
 from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
@@ -467,7 +468,39 @@ def _fixture_matchup(fixture: dict, team_id: int) -> dict | None:
         "fixtureOpponentId": opponent.get("id"),
         "fixtureOpponentName": opponent.get("name", ""),
         "playerIsHome": player_is_home,
+        "fixtureHomeId": home.get("id"),
+        "fixtureHomeName": home.get("name", ""),
+        "fixtureAwayId": away.get("id"),
+        "fixtureAwayName": away.get("name", ""),
+        "venue": "home" if player_is_home else "away",
     }
+
+
+def _validate_fixture_identity(matchup: dict | None, *, team_id: int, opponent_id: int | None = None) -> tuple[bool, str]:
+    """Reject contradictory team/venue identity before calculations begin."""
+    if not isinstance(matchup, dict):
+        return False, "fixture matchup missing"
+    player_id = matchup.get("fixtureTeamId")
+    fixture_opp_id = matchup.get("fixtureOpponentId")
+    player_is_home = matchup.get("playerIsHome")
+    if not player_id or not fixture_opp_id or player_id == fixture_opp_id:
+        return False, "fixture team IDs are incomplete or identical"
+    if team_id and player_id != team_id:
+        return False, "fixture team does not match requested player team"
+    if opponent_id and fixture_opp_id != opponent_id:
+        # Opponent is intentionally allowed to be repaired from a stale request.
+        # The canonical fixture still has to be internally consistent.
+        pass
+    if not isinstance(player_is_home, bool):
+        return False, "fixture home/away assignment is missing"
+    expected_venue = "home" if player_is_home else "away"
+    if matchup.get("venue") not in {None, expected_venue}:
+        return False, "fixture venue disagrees with playerIsHome"
+    if player_is_home and matchup.get("fixtureHomeId") != player_id:
+        return False, "home team ID disagrees with playerIsHome"
+    if not player_is_home and matchup.get("fixtureAwayId") != player_id:
+        return False, "away team ID disagrees with playerIsHome"
+    return True, ""
 
 
 def _select_player_context_for_league(
@@ -938,6 +971,14 @@ async def predict(req: PredictionRequest):
                     # Never attach odds/context from a fixture that does not
                     # actually contain the requested player's team.
                     return None
+                _fixture_ok, _fixture_reason = _validate_fixture_identity(
+                    canonical_matchup,
+                    team_id=actual_team_id,
+                    opponent_id=req.opponentId,
+                )
+                if not _fixture_ok:
+                    print(f"[FIXTURE INTEGRITY] rejected odds fixture: {_fixture_reason}")
+                    return None
                 result.update(canonical_matchup)
                 if fid:
                     result["fixtureId"] = fid
@@ -1046,6 +1087,16 @@ async def predict(req: PredictionRequest):
                     "venue": "home" if (match_odds_prefetched or {}).get("playerIsHome") else "away",
                 })
                 actual_team_id = (match_odds_prefetched or {}).get("fixtureTeamId") or actual_team_id
+            _fixture_ok, _fixture_reason = _validate_fixture_identity(
+                match_odds_prefetched,
+                team_id=actual_team_id,
+                opponent_id=req.opponentId,
+            )
+            if not _fixture_ok:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Verified fixture identity was inconsistent: {_fixture_reason}",
+                )
             if req.sport == "soccer":
                 _sgo_fixture = {
                     **match_odds_prefetched,
@@ -7699,6 +7750,31 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             except Exception:
                 pass
 
+        # ── ROLE-FIRST EVIDENCE CONTRACT ────────────────────────────────────
+        # This packet is built after the category safety valve so the persisted
+        # role cannot disagree with the provider category.  It is descriptive
+        # and auditable; projection math remains Bayesian and deterministic.
+        role_evidence_packet = build_role_evidence_packet(
+            position=specific_position or display_position or player_position,
+            role=display_role or player_role,
+            source=(_observed_role or {}).get("source") or _position_resolution_source,
+            confidence=(_observed_role or {}).get("confidence"),
+            lineup_status=_lineup_status,
+            fixture_id=(match_odds or {}).get("fixtureId"),
+            venue=player_venue,
+            role_stats=_role_stats,
+            player_logs=player_game_logs,
+            comparable_players=position_comparison,
+            prop_type=req.propType,
+        )
+        print(
+            f"[ROLE EVIDENCE] {req.playerName}: "
+            f"status={role_evidence_packet.get('status')} "
+            f"position={role_evidence_packet.get('position')} "
+            f"role={role_evidence_packet.get('role') or 'unknown'} "
+            f"fixture={role_evidence_packet.get('fixtureId')}"
+        )
+
         # ── First-Goal Profile (both teams, concurrent) ──────────────────────────
         _fg_team: dict = {}
         _fg_opp:  dict = {}
@@ -9254,6 +9330,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "roleSource": _observed_role.get("source") if _observed_role else None,
             "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
             "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
+            "roleEvidencePacket": role_evidence_packet,
             "roleIsInferred": bool(
                 display_role
                 and _observed_role
@@ -9263,6 +9340,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         prediction["opponent"] = req.opponentName
         prediction["propType"] = req.propType
         prediction["line"] = req.line
+        prediction["roleEvidence"] = role_evidence_packet
         # Optional market reference only. This never feeds projection,
         # recommendation, confidence, calibration, or settlement.
         if sgo_market_context:
@@ -11596,6 +11674,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     match_odds=match_odds,
                     position=_af_position,
                     role=_af_role,
+                    role_evidence=role_evidence_packet,
                 )
                 _quality_before_conf = prediction.get("confidenceScore")
                 _quality_before_rec = prediction.get("recommendation")
