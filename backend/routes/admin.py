@@ -1438,6 +1438,10 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "leagueId": 1,
         # Required so the validator can identify voided picks for nVoidedCovered.
         "voidReason": 1,
+        # Required so the validator can count picks repaired by admin_regrade_dnp
+        # or other manual correction paths (nRepairedInCorpus audit counter).
+        "settledBy": 1,
+        "correctedManually": 1,
     }
 
     cursor = db.picks.find(query, projection).sort("settledAt", 1).limit(req.limit)
@@ -1487,6 +1491,7 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     n_valid = validation.get("bzzoiroValidN", 0)
     n_absent = validation.get("bzzoiroAbsentN", 0)
     n_voided = validation.get("nVoidedCovered", 0)
+    n_repaired = validation.get("nRepairedInCorpus", 0)
     n_live_refined = validation.get("liveRefinedN", 0)
     live_refined_hr = validation.get("liveRefinedHitRate")
     hr_a = (validation.get("bzzoiroValid") or {}).get("hitRate")
@@ -1507,6 +1512,11 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "bzzoiroAbsentN": n_absent,
         # Voided picks with a valid Bzzoiro snapshot — coverage corpus only.
         "nVoidedCovered": n_voided,
+        # Picks that were originally voided and later repaired by admin_regrade_dnp
+        # (settledBy=admin_regrade_dnp or correctedManually=True).  After repair
+        # these picks carry a real HIT/MISS outcome and are counted inside the
+        # bzzoiro_valid / bzzoiro_absent metric groups, not in nVoidedCovered.
+        "nRepairedInCorpus": n_repaired,
         # Live-mode refined: picks where BZZOIRO_POSITION_LIVE=live actively
         # overrode a generic API-Football label.
         "liveRefinedN": n_live_refined,
@@ -1531,11 +1541,18 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         f"{n_valid} with valid Bzzoiro position coverage, "
         f"{n_absent} without."
     )
+    if n_repaired:
+        observations.append(
+            f"ℹ️  {n_repaired} pick(s) in the corpus were originally voided (DNP / "
+            f"insufficient minutes) and later repaired by the settlement repair bot "
+            f"(settledBy=admin_regrade_dnp or correctedManually). They are counted "
+            f"with their corrected HIT/MISS outcome in the hit-rate and MAE metrics."
+        )
     if n_voided:
         observations.append(
-            f"ℹ️  {n_voided} additional voided pick(s) (DNP, insufficient minutes, etc.) "
-            f"carry a valid Bzzoiro snapshot and count toward the coverage corpus "
-            f"but are excluded from hit-rate and MAE metrics."
+            f"ℹ️  {n_voided} additional genuinely-voided pick(s) (DNP, insufficient "
+            f"minutes, etc.) carry a valid Bzzoiro snapshot and count toward the "
+            f"coverage corpus but are excluded from hit-rate and MAE metrics."
         )
     if n_live_refined:
         lr_note = (
@@ -1598,6 +1615,9 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "bzzoiroValidN": n_valid,
         "bzzoiroAbsentN": n_absent,
         "nVoidedCovered": n_voided,
+        # Picks originally voided then repaired by the settlement repair bot;
+        # counted with their corrected HIT/MISS outcome inside the metric groups.
+        "nRepairedInCorpus": n_repaired,
         "liveRefinedN": n_live_refined,
         "liveRefinedHitRate": live_refined_hr,
         "bzzoiroHitRate": hr_a,
@@ -1645,6 +1665,7 @@ async def admin_bzzoiro_position_replay_last(email: str, token: str):
     n_valid = doc.get("bzzoiroValidN", 0)
     n_absent = doc.get("bzzoiroAbsentN", 0)
     n_voided = doc.get("nVoidedCovered", 0)
+    n_repaired = doc.get("nRepairedInCorpus", 0)
     n_live_refined = doc.get("liveRefinedN", 0)
     live_refined_hr = doc.get("liveRefinedHitRate")
     skew_detected = doc.get("topLeagueSkewDetected", False)
@@ -1655,9 +1676,15 @@ async def admin_bzzoiro_position_replay_last(email: str, token: str):
             f"ℹ️  {total} settled soccer picks — "
             f"{n_valid} with valid Bzzoiro coverage, {n_absent} without."
         )
+        if n_repaired:
+            observations.append(
+                f"ℹ️  {n_repaired} of those pick(s) were originally voided (DNP) "
+                f"and later repaired by the settlement repair bot — counted with "
+                f"their corrected HIT/MISS outcome in the metrics."
+            )
         if n_voided:
             observations.append(
-                f"ℹ️  {n_voided} voided pick(s) carry a Bzzoiro snapshot "
+                f"ℹ️  {n_voided} genuinely-voided pick(s) carry a Bzzoiro snapshot "
                 f"(excluded from hit-rate metrics)."
             )
     if n_live_refined:
@@ -1709,6 +1736,8 @@ async def admin_bzzoiro_position_replay_last(email: str, token: str):
         "bzzoiroValidN": n_valid,
         "bzzoiroAbsentN": n_absent,
         "nVoidedCovered": n_voided,
+        # Picks originally voided then repaired; counted with corrected HIT/MISS outcome.
+        "nRepairedInCorpus": n_repaired,
         "liveRefinedN": n_live_refined,
         "liveRefinedHitRate": live_refined_hr,
         "bzzoiroHitRate": hr_a,

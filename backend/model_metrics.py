@@ -1365,6 +1365,20 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
     # hit-rate or MAE metrics — no direction outcome is known — but they are
     # counted separately so the promotion corpus size is correctly reported.
     n_voided_covered: int = 0
+    # Picks that were originally voided (DNP) and subsequently repaired by the
+    # admin regrade endpoint.  After repair voidReason is unset and result is
+    # set to "hit"/"miss" with settledBy="admin_regrade_dnp" (or
+    # correctedManually=True for other manual repairs).  These picks contribute
+    # to hit-rate and MAE metrics via group_a/group_b — this counter lets the
+    # audit log distinguish repaired picks from picks that were never voided.
+    n_repaired_in_corpus: int = 0
+
+    def _is_repaired_pick(row: dict) -> bool:
+        """Return True when a pick was originally voided but later corrected."""
+        return (
+            str(row.get("settledBy") or "") == "admin_regrade_dnp"
+            or bool(row.get("correctedManually"))
+        )
 
     for row in ordered:
         tc = row.get("tacticalContext") or {}
@@ -1375,11 +1389,16 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
             and pv.get("fixtureDateMatch") == "exact"
         )
         if not _is_scored_directional_row(row):
-            # Count voided picks that carry a valid Bzzoiro snapshot separately
-            # so the coverage corpus size is not under-reported.
+            # Count genuinely-voided picks that carry a valid Bzzoiro snapshot
+            # separately so the coverage corpus size is not under-reported.
+            # Repaired picks never reach this branch because after repair their
+            # result is "hit"/"miss" and _is_scored_directional_row returns True.
             if bzz_valid and bool(row.get("voidReason")):
                 n_voided_covered += 1
             continue
+        # Row has a scored directional outcome (hit/miss) — goes into a metric group.
+        if _is_repaired_pick(row):
+            n_repaired_in_corpus += 1
         if bzz_valid:
             group_a.append(row)
         else:
@@ -1700,6 +1719,11 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
         # Voided picks (DNP, etc.) with a valid Bzzoiro snapshot: counted for
         # corpus-size purposes only.  Not included in hit-rate/MAE groups.
         "nVoidedCovered": n_voided_covered,
+        # Picks that were originally voided then repaired by the admin regrade
+        # endpoint (settledBy=admin_regrade_dnp or correctedManually=True).
+        # After repair they carry a real HIT/MISS outcome and are counted inside
+        # bzzoiro_valid / bzzoiro_absent metric groups, not in nVoidedCovered.
+        "nRepairedInCorpus": n_repaired_in_corpus,
         "dateRange": dates,
         "topLeagueSkew": {
             "detected": top_league_skew_detected,
