@@ -3319,9 +3319,14 @@ async def predict(req: PredictionRequest):
                 )
                 return []
 
+        # The customer-facing archive must use the same effective venue as the
+        # prediction. This is especially important for a market-labelled HOME
+        # fixture whose provider metadata may describe a neutral/host venue
+        # differently. The fixture's playerIsHome normalization above is the
+        # single source of truth for this effective venue.
         historical_knockout_fixtures_task = fetch_historical_knockout_fixtures(
             actual_team_id,
-            None,
+            player_venue,
         )
         # Player game logs: VENUE-PRIORITIZED ordering
         # For neutral: use all fixtures equally (no venue priority — WC/tournament game)
@@ -5034,7 +5039,7 @@ async def predict(req: PredictionRequest):
                     competition_name=(match_odds or {}).get("matchLeague") or "",
                     round_value=(match_odds or {}).get("matchRound") or "",
                     venue=player_venue,
-                    include_all_venues=True,
+                    include_all_venues=False,
                 )
                 if not _history_view_logs:
                     print(

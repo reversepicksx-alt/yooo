@@ -134,3 +134,49 @@ def test_display_history_requires_matching_venue_and_knockout_class():
     assert [row["date"] for row in selected] == ["2026-04-08"]
     assert context["mode"] == "venue_and_knockout_stage"
     assert context["label"] == "UEFA SUPER CUP · KNOCKOUT STAGES · HOME"
+
+
+def test_display_history_can_be_explicitly_scoped_to_home_and_is_newest_first():
+    logs = [
+        {
+            "date": "2025-05-07",
+            "passes_total": 128,
+            "minutes": 90,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Semi-finals",
+            "venue": "home",
+        },
+        {
+            "date": "2026-05-06",
+            "passes_total": 112,
+            "minutes": 90,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Semi-finals",
+            "venue": "home",
+        },
+        {
+            "date": "2025-04-29",
+            "passes_total": 99,
+            "minutes": 90,
+            "leagueId": 2,
+            "league": "UEFA Champions League",
+            "round": "Semi-finals",
+            "venue": "away",
+        },
+    ]
+
+    selected, context = select_contextual_history(
+        logs,
+        competition_id=531,
+        competition_name="UEFA Super Cup",
+        round_value="Final",
+        venue="home",
+        include_all_venues=False,
+    )
+
+    assert [row["date"] for row in selected] == ["2026-05-06", "2025-05-07"]
+    assert all(row["venue"] == "home" for row in selected)
+    assert context["scope"] == "selected_venue"
+    assert context["label"] == "UEFA SUPER CUP · KNOCKOUT STAGES · HOME"

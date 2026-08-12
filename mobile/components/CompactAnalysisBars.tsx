@@ -94,7 +94,7 @@ function venueMark(value: unknown) {
   return venue === 'home' ? 'H' : venue === 'away' ? 'A' : '–';
 }
 
-function displayH2HDate(value: unknown, full = false) {
+function displayH2HDate(value: unknown) {
   const raw = String(value || '');
   // The backend may encode H/A inside the visible MM-DD slice for older
   // native bundles: 2026-08H02 renders there as 08H02. Normalize it for
@@ -102,9 +102,9 @@ function displayH2HDate(value: unknown, full = false) {
   const encoded = raw.match(/^(\d{4})-(\d{2})([HA])(\d{2})(.*)$/);
   if (encoded) {
     const [, year, month, , day] = encoded;
-    return full ? `${year}-${month}-${day}` : `${month}-${day}`;
+    return `${year}-${month}-${day}`;
   }
-  return full ? raw.slice(0, 10) : raw.slice(5, 10);
+  return raw.slice(0, 10);
 }
 
 function stageLabelForRow(row: Record<string, any>) {
@@ -161,17 +161,22 @@ function VolumeMetric({
 }
 
 export function CompactAnalysisBars({ prediction }: { prediction: CompactPrediction }) {
-  const logs = (prediction.gameLogs ?? [])
-    .filter((game) => !game.synthetic && game.value != null)
-    .slice(0, 20);
   const historyContext = prediction.historyContext ?? null;
   const preferredVenue = normalizeVenue(
     prediction.venue
       ?? (typeof prediction.isHome === 'boolean' ? prediction.isHome : null)
       ?? (typeof prediction.playerIsHome === 'boolean' ? prediction.playerIsHome : null),
   );
+  const historyVenue = preferredVenue ?? normalizeVenue(historyContext?.venue);
+  // The backend supplies a venue-scoped, newest-first archive. Keep the
+  // boundary defensive as saved/older responses can still contain the
+  // broader historical payload.
+  const logs = (prediction.gameLogs ?? [])
+    .filter((game) => !game.synthetic && game.value != null)
+    .filter((game) => !historyVenue || rowVenue(game) === historyVenue)
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+    .slice(0, 20);
   const h2h = prediction.h2hPlayerStats ?? {};
-  const historyVenue = preferredVenue ?? normalizeVenue(prediction.historyContext?.venue);
   const showSelectedVenueOnly = historyVenue === 'home' || historyVenue === 'away';
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
@@ -345,7 +350,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-            <View style={{ width: logs.length * 39 + 10 }}>
+              <View style={{ width: logs.length * 53 + 10 }}>
               <View style={styles.chart}>
                 {logs.map((game, index) => {
                   const value = Number(game.value);
@@ -397,7 +402,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               </View>
               {selectedGame && (
                 <Text style={styles.detail}>
-                   {selectedGame.date ? displayH2HDate(selectedGame.date, true) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {selectedGame.venue === 'home' ? 'HOME' : 'AWAY'}
+                    {selectedGame.date ? displayH2HDate(selectedGame.date) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {rowVenue(selectedGame) === 'home' ? 'HOME' : 'AWAY'}
                    {showPossessionContext
                      ? detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'
                      : ''}
@@ -712,7 +717,7 @@ const styles = {
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
   chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
-  barColumn: { width: 34, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
+  barColumn: { width: 48, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
   // H2H is intentionally a little taller than the old strip. Each column has
   // reserved rows for value → bar → date → possession/venue, so the bar can
   // never cover the customer-facing numbers.
@@ -729,7 +734,7 @@ const styles = {
   possession: { position: 'absolute' as const, bottom: 4, color: '#FFF', fontSize: 6.5, fontWeight: '900' as const },
   possessionLabel: { fontSize: 6.5, color: '#7D8796', lineHeight: 9, fontWeight: '800' as const },
   venueLabel: { fontSize: 7, lineHeight: 9, fontWeight: '900' as const, letterSpacing: 0.5 },
-  date: { fontSize: 7, color: '#555', lineHeight: 10, marginTop: 4 },
+  date: { fontSize: 6.5, color: '#777', lineHeight: 10, marginTop: 4 },
   opponent: { fontSize: 7, fontWeight: '700' as const, lineHeight: 10 },
   detail: { paddingHorizontal: 2, paddingTop: 4, paddingBottom: 2, color: '#9CA3AF', fontSize: 8, lineHeight: 12 },
   splitRow: {
