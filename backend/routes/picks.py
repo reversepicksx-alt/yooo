@@ -1131,10 +1131,28 @@ async def list_picks(req: GetPicksRequest):
     # still be loaded here because this endpoint also drives pull-based live
     # settlement; they are removed only from the response after processing.
     # Calibration and analytics independently read the full collection.
-    picks = await db.picks.find(
-        {"email": requester_email},
-        {"_id": 0},
-    ).sort("timestamp", -1).to_list(None)
+    _atlas_read_blocked = False
+    try:
+        picks = await db.picks.find(
+            {"email": requester_email},
+            {"_id": 0},
+        ).sort("timestamp", -1).to_list(None)
+    except Exception as _read_exc:
+        _atlas_read_blocked = True
+        _read_is_quota = _is_storage_quota_error(_read_exc)
+        print(
+            f"[PICKS-LIST READ FAIL] Atlas picks read blocked for {requester_email} "
+            f"({'storage quota' if _read_is_quota else 'connection/timeout'}) — "
+            f"settlement refresh queue will be skipped; returning stale cache if available. "
+            f"Error: {_read_exc}"
+        )
+        if _cached and _cached.get("picks"):
+            stale_picks = [
+                {**p, "settlementDelayed": True}
+                for p in _cached["picks"]
+            ]
+            return {"picks": stale_picks, "settlementDelayed": True}
+        return {"picks": [], "settlementDelayed": True}
 
     def _pick_email(p: dict) -> str:
         return requester_email
@@ -1459,8 +1477,13 @@ async def list_picks(req: GetPicksRequest):
                             {"pickId": p["pickId"], "email": pick_email},
                             {"$set": {"projectedValue": pred["projectedValue"]}}
                         )
-            except Exception:
-                pass
+            except Exception as _proj_exc:
+                _proj_is_quota = _is_storage_quota_error(_proj_exc)
+                print(
+                    f"[PICKS-LIST PROJ BACKFILL] Atlas prediction read blocked for "
+                    f"{p.get('playerName', '?')} "
+                    f"({'storage quota' if _proj_is_quota else 'error'}): {_proj_exc}"
+                )
 
     # Live settle: ONLY process picks belonging to the requester's own email
     live_picks = [p for p in picks if p.get("status") in ("live", "pending") and _should_process(p)]
@@ -1828,9 +1851,19 @@ async def list_picks(req: GetPicksRequest):
                             except Exception as _we:
                                 print(f"[PICKS-LIST WRITE FAIL] final-refresh {p.get('playerName','')}: {_we}")
                 except Exception as _re:
-                    print(f"[FINAL REFRESH] Error for {p.get('playerName','?')}: {_re}")
+                    _re_is_quota = _is_storage_quota_error(_re)
+                    print(
+                        f"[FINAL REFRESH] {'Atlas read blocked (storage quota)' if _re_is_quota else 'Error'} "
+                        f"for {p.get('playerName','?')} — settlement temporarily delayed: {_re}"
+                    )
+                    if _re_is_quota:
+                        p["settlementDelayed"] = True
     except Exception as _fe:
-        print(f"[FINAL REFRESH] Outer error: {_fe}")
+        _fe_is_quota = _is_storage_quota_error(_fe)
+        print(
+            f"[FINAL REFRESH] Outer {'Atlas read block (storage quota)' if _fe_is_quota else 'error'} "
+            f"— settlement refresh queue skipped: {_fe}"
+        )
     # ───────────────────────────────────────────────────────────────────────
 
     # Owner-only: attach player photos and team crests from API-Football cache.
