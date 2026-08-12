@@ -222,6 +222,87 @@ def test_very_old_record_without_any_fixture_date_uses_timestamp_bucket():
     assert len(deduped) == 2, "Same-minute duplicate must collapse; different-day record must remain separate"
 
 
+def test_timestamp_bucket_different_players_same_minute_remain_distinct():
+    """Two different players saved in the same minute without fixtureId or fixtureDate
+    must NOT collapse — player identity (playerId/playerName) keeps them apart."""
+    shared_minute = "2025-06-01T14:05:00+00:00"
+    player_a = {
+        "trackingId": "TRK-PA-1",
+        "sport": "soccer",
+        # No fixtureId, no fixtureDate — falls through to timestamp bucket
+        "playerId": 101,
+        "playerName": "Alpha Player",
+        "teamId": 7,
+        "opponentId": 8,
+        "propType": "passes",
+        "line": 30.5,
+        "recommendation": "over",
+        "result": "hit",
+        "timestamp": shared_minute,
+        "settledAt": shared_minute,
+    }
+    player_b = {
+        "trackingId": "TRK-PB-1",
+        "sport": "soccer",
+        # Same minute, same prop/team/opponent, but a genuinely different player
+        "playerId": 202,
+        "playerName": "Beta Player",
+        "teamId": 7,
+        "opponentId": 8,
+        "propType": "passes",
+        "line": 30.5,
+        "recommendation": "over",
+        "result": "hit",
+        "timestamp": shared_minute,
+        "settledAt": shared_minute,
+    }
+
+    deduped = dedupe_prediction_rows([player_a, player_b])
+
+    assert len(deduped) == 2, (
+        "Two different players saved in the same minute without fixtureId/fixtureDate "
+        "must remain as two distinct events — they should not collapse into one"
+    )
+    player_ids = {row["playerId"] for row in deduped}
+    assert player_ids == {101, 202}
+
+
+def test_timestamp_bucket_same_player_same_minute_collapses():
+    """Two saves of the same player within the same minute without fixtureId or fixtureDate
+    must collapse to one event (the later save wins)."""
+    base = {
+        "trackingId": "TRK-SP-1",
+        "sport": "soccer",
+        # No fixtureId, no fixtureDate
+        "playerId": 55,
+        "playerName": "Gamma Player",
+        "teamId": 9,
+        "opponentId": 10,
+        "propType": "shots",
+        "line": 2.5,
+        "recommendation": "under",
+        "result": "miss",
+        "timestamp": "2025-07-15T09:22:00+00:00",
+        "settledAt": "2025-07-15T09:22:00+00:00",
+    }
+    second_save_same_minute = dict(
+        base,
+        trackingId="TRK-SP-2",
+        # Different second within the same minute → same 16-char bucket
+        timestamp="2025-07-15T09:22:45+00:00",
+        settledAt="2025-07-15T09:22:45+00:00",
+    )
+
+    deduped = dedupe_prediction_rows([base, second_save_same_minute])
+
+    assert len(deduped) == 1, (
+        "Two saves of the same player in the same minute without fixtureId/fixtureDate "
+        "must collapse to one unique event"
+    )
+    # The newer save wins
+    assert deduped[0]["settledAt"] == "2025-07-15T09:22:45+00:00"
+
+
 def test_build_scorecard_labels_raw_unique_and_scored_counts_separately():
     """Scorecard must expose rawN (rows), n (unique events), and scoredN (HIT/MISS events)."""
     rows = [
