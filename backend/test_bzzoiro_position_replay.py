@@ -6,6 +6,8 @@ Covers:
 3. Top-league skew confirmed → stricter hit-rate threshold (+2 pp)
 4. Top-league skew NOT confirmed → standard threshold (-2 pp)
 5. GO verdict requires liveRefinedN >= 30, not just bzzoiro_valid cohort size
+6. Multi-round void/repair/re-void cycles: nVoidedCovered and nRepairedInCorpus
+   stay accurate at every stage of the pick lifecycle.
 """
 from __future__ import annotations
 
@@ -95,6 +97,110 @@ def _make_unique(rows: list[dict]) -> list[dict]:
         row["playerName"] = f"Player {i}"
         row["playerId"] = f"pid_{i}"
     return rows
+
+
+def _bzz_valid_tc() -> dict:
+    """Return a tacticalContext dict with a valid Bzzoiro positionValidation snapshot."""
+    return {
+        "bzzoiroEnrichment": {
+            "available": True,
+            "positionValidation": {
+                "valid": True,
+                "lineupValid": True,
+                "fixtureDateMatch": "exact",
+            },
+        },
+        "player": {
+            "positionSource": "bzzoiro_shadow_confirmed_lineup",
+        },
+    }
+
+
+def _voided_bzz_row(void_reason: str = "Player only played 12 min (min 30 required)") -> dict:
+    """A pick that is currently voided (no HIT/MISS result) with valid Bzzoiro coverage.
+
+    This represents a pick at Step 1 (initial void) or Step 3 (re-void after repair)
+    of a multi-round void/repair cycle.  The pick is NOT scored directionally.
+    """
+    return {
+        "sport": "soccer",
+        "status": "settled",
+        "result": "dnp",          # not "hit" or "miss" → _is_scored_directional_row=False
+        "voidReason": void_reason,
+        "recommendation": "over",
+        "fixtureId": "fv1",
+        "fixtureDate": "2026-01-01",
+        "playerId": "pv1",
+        "playerName": "Voided Player",
+        "teamId": "t1",
+        "opponentId": "t2",
+        "propType": "passes",
+        "line": 3.5,
+        "projectedValue": 3.0,
+        "actualValue": None,
+        "confidenceScore": 65.0,
+        "settledAt": "2026-01-02T00:00:00Z",
+        "leagueId": 88,
+        "tacticalContext": _bzz_valid_tc(),
+    }
+
+
+def _repaired_bzz_row(
+    result: str = "hit",
+    settled_by: str = "admin_regrade_dnp",
+) -> dict:
+    """A pick that was originally voided and later repaired to a terminal HIT/MISS.
+
+    This represents Step 2 (round-1 repair) or Step 4 (final repair) of a multi-round
+    cycle.  The pick IS scored directionally and carries the repair provenance marker.
+    _is_repaired_pick() returns True → nRepairedInCorpus is incremented.
+    """
+    return {
+        "sport": "soccer",
+        "status": "settled",
+        "result": result,          # "hit" or "miss" → _is_scored_directional_row=True
+        "settledBy": settled_by,   # "admin_regrade_dnp" → _is_repaired_pick=True
+        "recommendation": "over",
+        "fixtureId": "fr1",
+        "fixtureDate": "2026-01-01",
+        "playerId": "pr1",
+        "playerName": "Repaired Player",
+        "teamId": "t1",
+        "opponentId": "t2",
+        "propType": "passes",
+        "line": 3.5,
+        "projectedValue": 3.0,
+        "actualValue": 4.0 if result == "hit" else 2.5,
+        "confidenceScore": 65.0,
+        "settledAt": "2026-01-02T12:00:00Z",
+        "leagueId": 88,
+        "tacticalContext": _bzz_valid_tc(),
+    }
+
+
+def _absent_voided_row(void_reason: str = "DNP") -> dict:
+    """A voided pick WITHOUT Bzzoiro coverage — must not appear in nVoidedCovered."""
+    return {
+        "sport": "soccer",
+        "status": "settled",
+        "result": "dnp",
+        "voidReason": void_reason,
+        "recommendation": "over",
+        "fixtureId": "fav1",
+        "fixtureDate": "2026-01-01",
+        "playerId": "pav1",
+        "playerName": "Absent Voided",
+        "teamId": "t3",
+        "opponentId": "t4",
+        "propType": "passes",
+        "line": 3.5,
+        "projectedValue": None,
+        "actualValue": None,
+        "confidenceScore": 60.0,
+        "settledAt": "2026-01-02T00:00:00Z",
+        "leagueId": 88,
+        "tacticalContext": {},    # no Bzzoiro coverage
+    }
 
 
 # ── Test 1: Zero live-mode picks → CAUTION ────────────────────────────────────
@@ -310,3 +416,212 @@ def test_shadow_skew_does_not_block_balanced_live_cohort():
         f"Expected GO: balanced live cohort with +15 pp hit-rate advantage at standard threshold; "
         f"got {pd['verdict']}: {pd['summary']}"
     )
+
+
+# ── Tests 8–13: Multi-round void / repair / re-void lifecycle ────────────────
+#
+# Each test simulates a single pick's DB state at one point in the lifecycle and
+# asserts that validate_bzzoiro_position_replay classifies it correctly.
+#
+# nVoidedCovered: picks with valid Bzzoiro coverage that are currently voided
+#                 (result not "hit"/"miss", voidReason present)
+# nRepairedInCorpus: picks that are now scored (result="hit"/"miss") and carry
+#                    the repair provenance marker (settledBy="admin_regrade_dnp"
+#                    or correctedManually=True) — goes into a metric group too.
+#
+# A single pick can never be counted in both counters at the same time because
+# the two checks are mutually exclusive (one requires _is_scored_directional_row=False,
+# the other requires it to be True).
+
+
+def test_currently_voided_bzz_pick_counted_in_n_voided_covered():
+    """Step 1 of cycle: pick is voided → appears in nVoidedCovered, not nRepairedInCorpus."""
+    rows = _make_unique([_voided_bzz_row(void_reason="Player only played 12 min (min 30 required)")])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nVoidedCovered"] == 1, (
+        "A voided pick with valid Bzzoiro coverage must be counted in nVoidedCovered."
+    )
+    assert result["nRepairedInCorpus"] == 0, (
+        "A voided pick (no HIT/MISS result) must not appear in nRepairedInCorpus."
+    )
+    # The voided pick has no scored direction, so it must not enter either metric group.
+    assert result["bzzoiroValidN"] == 0, (
+        "A voided pick must not contribute to the bzzoiro_valid scored metric group."
+    )
+
+
+def test_repaired_after_first_void_counted_in_n_repaired():
+    """Step 2 of cycle: pick repaired (settledBy=admin_regrade_dnp, result=hit) →
+    counted in nRepairedInCorpus and enters group_a; NOT in nVoidedCovered.
+    """
+    rows = _make_unique([_repaired_bzz_row(result="hit", settled_by="admin_regrade_dnp")])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nRepairedInCorpus"] == 1, (
+        "A pick repaired from a void (settledBy=admin_regrade_dnp) must be counted in nRepairedInCorpus."
+    )
+    assert result["nVoidedCovered"] == 0, (
+        "A repaired pick (has HIT result, no voidReason) must not appear in nVoidedCovered."
+    )
+    # Repaired pick has a valid Bzzoiro snapshot and result=hit → enters group_a.
+    assert result["bzzoiroValidN"] == 1, (
+        "A repaired pick with valid Bzzoiro coverage must contribute to the bzzoiro_valid metric group."
+    )
+
+
+def test_revoid_after_repair_counted_in_n_voided_covered_not_repaired():
+    """Step 3 of cycle: pick repaired then voided again (new voidReason, no result) →
+    appears in nVoidedCovered only.  The previous repair provenance is irrelevant because
+    settledBy was unset during the re-void and the pick has no scored result.
+    """
+    # After the re-void: settledBy is unset, result is not "hit"/"miss", voidReason is set again.
+    row = _voided_bzz_row(void_reason="Stat correction: official box score revised")
+    rows = _make_unique([row])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nVoidedCovered"] == 1, (
+        "A re-voided pick (after a prior repair cycle) must appear in nVoidedCovered."
+    )
+    assert result["nRepairedInCorpus"] == 0, (
+        "A pick with no HIT/MISS result must not appear in nRepairedInCorpus, "
+        "even if it was previously repaired."
+    )
+    assert result["bzzoiroValidN"] == 0, (
+        "A re-voided pick must not contribute to the bzzoiro_valid scored metric group."
+    )
+
+
+def test_final_repair_after_two_rounds_counted_once_in_n_repaired():
+    """Step 4 of cycle (final state): pick has been through two void-repair rounds.
+    Final state: result='miss', settledBy='admin_regrade_dnp', no voidReason.
+    Must appear exactly once in nRepairedInCorpus and the appropriate metric group.
+    """
+    row = _repaired_bzz_row(result="miss", settled_by="admin_regrade_dnp")
+    rows = _make_unique([row])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nRepairedInCorpus"] == 1, (
+        "Final repaired pick (after two void-repair rounds) must be counted exactly once "
+        "in nRepairedInCorpus — pick history does not create duplicate entries."
+    )
+    assert result["nVoidedCovered"] == 0, (
+        "Final repaired pick has no voidReason; must not appear in nVoidedCovered."
+    )
+    assert result["bzzoiroValidN"] == 1, (
+        "Final repaired pick must contribute to the bzzoiro_valid scored metric group."
+    )
+
+
+def test_corrected_manually_flag_also_counts_as_repaired():
+    """correctedManually=True is an alternative repair provenance marker.
+    A pick with correctedManually=True + result=hit must appear in nRepairedInCorpus.
+    """
+    row = _repaired_bzz_row(result="hit", settled_by="admin_manual")
+    row["correctedManually"] = True
+    row.pop("settledBy", None)  # remove settledBy to confirm the flag alone is sufficient
+    rows = _make_unique([row])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nRepairedInCorpus"] == 1, (
+        "correctedManually=True must be treated as a repair provenance marker, "
+        "counting the pick in nRepairedInCorpus."
+    )
+    assert result["nVoidedCovered"] == 0
+
+
+def test_multi_round_batch_counts_each_pick_in_correct_bucket():
+    """A batch containing picks at every stage of the void/repair cycle must
+    count each pick in exactly one bucket with no double-counting.
+
+    Corpus:
+      - 2 normal scored picks (bzz_valid) → bzzoiroValidN+=2
+      - 1 pick currently voided (round-1 void) → nVoidedCovered+=1
+      - 1 pick repaired after round-1 void → nRepairedInCorpus+=1, bzzoiroValidN+=1
+      - 1 pick re-voided after round-1 repair (round-2 void) → nVoidedCovered+=1
+      - 1 pick at final repair after two rounds → nRepairedInCorpus+=1, bzzoiroValidN+=1
+      - 1 absent voided pick (no Bzzoiro coverage) → counted nowhere
+      - 2 absent normal picks → bzzoiroAbsentN+=2
+    """
+    rows = _make_unique([
+        # Normal bzzoiro-valid scored picks
+        _bzz_valid_row("hit", league_id=88),
+        _bzz_valid_row("miss", league_id=88),
+        # Round-1 void
+        _voided_bzz_row("Player not in lineup"),
+        # Round-1 repair
+        _repaired_bzz_row("hit", "admin_regrade_dnp"),
+        # Round-2 void (re-voided after first repair)
+        _voided_bzz_row("Stat correction after rematch"),
+        # Final repair (after two rounds)
+        _repaired_bzz_row("miss", "admin_regrade_dnp"),
+        # Absent voided — no Bzzoiro coverage, must not count
+        _absent_voided_row("DNP"),
+        # Absent normal picks
+        _absent_row("hit"),
+        _absent_row("miss"),
+    ])
+    result = validate_bzzoiro_position_replay(rows)
+
+    # Voided picks with valid Bzzoiro coverage (round-1 + round-2 void)
+    assert result["nVoidedCovered"] == 2, (
+        f"Expected nVoidedCovered=2 (two picks currently voided with Bzzoiro coverage); "
+        f"got {result['nVoidedCovered']}"
+    )
+    # Repaired picks that are now scored (round-1 repair + final repair)
+    assert result["nRepairedInCorpus"] == 2, (
+        f"Expected nRepairedInCorpus=2 (two picks repaired from voids); "
+        f"got {result['nRepairedInCorpus']}"
+    )
+    # bzzoiroValidN = 2 normal + 2 repaired (all have valid Bzzoiro positionValidation)
+    assert result["bzzoiroValidN"] == 4, (
+        f"Expected bzzoiroValidN=4 (2 normal + 2 repaired); got {result['bzzoiroValidN']}"
+    )
+    # Absent scored picks (no Bzzoiro coverage)
+    assert result["bzzoiroAbsentN"] == 2, (
+        f"Expected bzzoiroAbsentN=2; got {result['bzzoiroAbsentN']}"
+    )
+    # The absent voided pick must not appear anywhere
+    total_accounted = (
+        result["bzzoiroValidN"]     # scored bzzoiro-valid (normal + repaired)
+        + result["bzzoiroAbsentN"]  # scored absent
+        + result["nVoidedCovered"]  # voided bzzoiro-valid (not scored)
+    )
+    # Total = 4 + 2 + 2 = 8; the absent voided pick is not in any counter
+    assert total_accounted == 8, (
+        f"Total accounted picks should be 8 (absent voided not counted); got {total_accounted}"
+    )
+
+
+def test_void_without_bzzoiro_coverage_excluded_from_n_voided_covered():
+    """A voided pick that lacks valid Bzzoiro positionValidation must not appear in
+    nVoidedCovered — absence of coverage is not a covered fixture.
+    """
+    rows = _make_unique([_absent_voided_row("Player not in squad")])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nVoidedCovered"] == 0, (
+        "A voided pick without Bzzoiro coverage must NOT be counted in nVoidedCovered."
+    )
+    assert result["nRepairedInCorpus"] == 0
+    assert result["bzzoiroValidN"] == 0
+    assert result["bzzoiroAbsentN"] == 0  # no scored result, so absent group is also empty
+
+
+def test_no_double_counting_repaired_pick_not_in_voided_and_scored():
+    """A repaired pick (result=hit, settledBy=admin_regrade_dnp) must appear in
+    nRepairedInCorpus and bzzoiroValidN, but nVoidedCovered must stay 0.
+    Verifies the two counters are mutually exclusive for any single pick state.
+    """
+    rows = _make_unique([
+        _repaired_bzz_row("hit", "admin_regrade_dnp"),
+        _repaired_bzz_row("miss", "admin_regrade_dnp"),
+    ])
+    result = validate_bzzoiro_position_replay(rows)
+
+    assert result["nRepairedInCorpus"] == 2
+    assert result["nVoidedCovered"] == 0, (
+        "Repaired picks (HIT/MISS result) can never simultaneously appear in nVoidedCovered."
+    )
+    # Sanity: both repaired picks are scored bzzoiro-valid
+    assert result["bzzoiroValidN"] == 2

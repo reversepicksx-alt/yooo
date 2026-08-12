@@ -870,3 +870,255 @@ def test_bzzoiro_enrichment_preserved_when_voidreason_unset():
     repaired = _unset(pick, "voidReason")
     assert "voidReason" not in repaired
     assert repaired["tacticalContext"]["bzzoiroEnrichment"]["available"] is True
+
+
+# ── multi-round void / repair / re-void cycles ────────────────────────────────
+
+
+def _make_mongo_update_helper():
+    """Return a minimal MongoDB-style $set/$unset update applier (no live DB required)."""
+    import copy
+
+    def _apply(doc: dict, update: dict) -> dict:
+        doc = copy.deepcopy(doc)
+        for key, val in (update.get("$set") or {}).items():
+            parts = key.split(".")
+            target = doc
+            for p in parts[:-1]:
+                target = target.setdefault(p, {})
+            target[parts[-1]] = val
+        for key in (update.get("$unset") or {}):
+            parts = key.split(".")
+            target = doc
+            for p in parts[:-1]:
+                target = target.get(p, {})
+            target.pop(parts[-1], None)
+        return doc
+
+    return _apply
+
+
+def test_bzzoiro_enrichment_survives_full_multi_round_cycle():
+    """void → repair → re-void → final repair: enrichment must be intact at every step.
+
+    Production picks sometimes go through multiple settlement corrections when a
+    stat is first voided (player did not play), then repaired (minutes corrected),
+    then voided again (second stat correction), and finally repaired to a terminal
+    HIT/MISS.  This test confirms that bzzoiroEnrichment is preserved across all
+    four transitions.
+    """
+    _apply = _make_mongo_update_helper()
+
+    enrichment_snapshot = {
+        "available": True,
+        "provider": "bzzoiro",
+        "pressIntensity": {"label": "Moderate", "score": 0.51},
+    }
+
+    # ── Initial settled pick ─────────────────────────────────────────────────
+    pick = {
+        "pickId": "multi-round-001",
+        "status": "settled",
+        "result": "hit",
+        "actualValue": 55,
+        "hitPct": 100,
+        "settledAt": "2026-08-01T10:00:00Z",
+        "settledBy": "auto",
+        "tacticalContext": {"bzzoiroEnrichment": enrichment_snapshot},
+    }
+
+    # ── Round 1: void ────────────────────────────────────────────────────────
+    voided_r1 = _apply(pick, {
+        "$set": {"status": "live", "result": None, "actualValue": None, "hitPct": None},
+        "$unset": {"settledAt": "", "settledBy": ""},
+    })
+    assert voided_r1["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "Round 1 void: bzzoiroEnrichment must not be touched."
+    )
+    assert voided_r1["result"] is None
+
+    # ── Round 1: repair (re-settle as HIT) ──────────────────────────────────
+    repaired_r1 = _apply(voided_r1, {
+        "$set": {
+            "status": "settled",
+            "result": "hit",
+            "actualValue": 57,
+            "hitPct": 100,
+            "settledAt": "2026-08-01T11:00:00Z",
+            "settledBy": "admin_repair_r1",
+        },
+        "$unset": {"voidReason": ""},
+    })
+    assert repaired_r1["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "Round 1 repair: bzzoiroEnrichment must survive re-settlement."
+    )
+    assert repaired_r1["result"] == "hit"
+    assert "voidReason" not in repaired_r1
+
+    # ── Round 2: re-void ─────────────────────────────────────────────────────
+    voided_r2 = _apply(repaired_r1, {
+        "$set": {
+            "status": "live",
+            "result": None,
+            "actualValue": None,
+            "hitPct": None,
+            "voidReason": "Stat correction: official box score revised",
+        },
+        "$unset": {"settledAt": "", "settledBy": ""},
+    })
+    assert voided_r2["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "Round 2 void: bzzoiroEnrichment must survive the second void."
+    )
+    assert voided_r2["result"] is None
+    assert voided_r2.get("voidReason") == "Stat correction: official box score revised"
+
+    # ── Round 2: final repair ─────────────────────────────────────────────────
+    final = _apply(voided_r2, {
+        "$set": {
+            "status": "settled",
+            "result": "miss",
+            "actualValue": 48,
+            "hitPct": 0,
+            "settledAt": "2026-08-01T13:00:00Z",
+            "settledBy": "admin_repair_r2",
+        },
+        "$unset": {"voidReason": ""},
+    })
+    assert final["tacticalContext"]["bzzoiroEnrichment"] == enrichment_snapshot, (
+        "Final repair: bzzoiroEnrichment must survive the full multi-round cycle."
+    )
+    assert final["result"] == "miss"
+    assert "voidReason" not in final
+
+
+def test_coverage_count_accurate_across_multi_round_void_repair_cycle():
+    """_is_coverage_row and _is_eligible_row track a pick correctly through
+    void → repair → re-void → final repair transitions.
+
+    The pick has valid Bzzoiro labels throughout.  Coverage count (_is_coverage_row)
+    must be True for VOID and both terminal outcomes.  Eligibility (_is_eligible_row)
+    must be False for VOID and True only for HIT/MISS terminal states.
+    """
+    base_labels = {
+        "bzzoiro_label": "High",
+        "apifootball_label": "Moderate",
+        "prop_type": "passes",
+        "direction": "UNDER",
+    }
+
+    # ── Step 0: settled HIT (initial state) ──────────────────────────────────
+    row_hit = {**base_labels, "outcome": "HIT"}
+    assert _is_coverage_row(row_hit), "Initial HIT: must count for coverage."
+    assert _is_eligible_row(row_hit), "Initial HIT: must be eligible for direction accuracy."
+
+    # ── Step 1: voided (round 1) ─────────────────────────────────────────────
+    row_void_r1 = {**base_labels, "outcome": "VOID"}
+    assert _is_coverage_row(row_void_r1), (
+        "Round 1 VOID: fixture is real; must still count for coverage."
+    )
+    assert not _is_eligible_row(row_void_r1), (
+        "Round 1 VOID: no direction outcome; must be excluded from direction accuracy."
+    )
+
+    # ── Step 2: repaired to HIT (round 1 repair) ─────────────────────────────
+    row_repaired_r1 = {**base_labels, "outcome": "HIT"}
+    assert _is_coverage_row(row_repaired_r1), "Round 1 repair HIT: must count for coverage."
+    assert _is_eligible_row(row_repaired_r1), "Round 1 repair HIT: must be eligible."
+
+    # ── Step 3: re-voided (round 2) ──────────────────────────────────────────
+    row_void_r2 = {**base_labels, "outcome": "VOID"}
+    assert _is_coverage_row(row_void_r2), (
+        "Round 2 VOID: still a real Bzzoiro-covered fixture; must count for coverage."
+    )
+    assert not _is_eligible_row(row_void_r2), (
+        "Round 2 VOID: no direction outcome; must be excluded from direction accuracy."
+    )
+
+    # ── Step 4: final repair to MISS ─────────────────────────────────────────
+    row_final_miss = {**base_labels, "outcome": "MISS"}
+    assert _is_coverage_row(row_final_miss), "Final MISS: must count for coverage."
+    assert _is_eligible_row(row_final_miss), "Final MISS: must be eligible for direction accuracy."
+
+
+def test_nCovered_stays_accurate_across_multi_round_batch():
+    """Simulate a corpus containing picks at every stage of the void/repair cycle.
+
+    A realistic batch might contain one pick per state simultaneously (e.g. during
+    a bulk repair run).  The coverage count must reflect only the real Bzzoiro
+    fixtures, regardless of which settlement state each pick is in.
+    """
+    base = {"bzzoiro_label": "High", "apifootball_label": "High", "prop_type": "passes"}
+
+    rows = [
+        # Picks in their initial settled state — both correct predictions
+        {**base, "direction": "UNDER", "outcome": "HIT"},    # eligible, correct
+        {**base, "direction": "OVER",  "outcome": "HIT"},    # eligible, correct
+        # Pick currently in void (round 1)
+        {**base, "outcome": "VOID"},                          # coverage only, no direction
+        # Pick re-settled after round-1 repair — correct prediction
+        {**base, "direction": "UNDER", "outcome": "HIT"},    # eligible, correct
+        # Pick in round-2 void
+        {**base, "outcome": "VOID"},                          # coverage only, no direction
+        # Pick at final repair — correct prediction
+        {**base, "direction": "UNDER", "outcome": "HIT"},    # eligible, correct
+        # Ineligible: missing Bzzoiro label (coverage gap)
+        {"bzzoiro_label": None, "apifootball_label": "High", "prop_type": "passes",
+         "outcome": "HIT"},
+    ]
+
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+
+    # 6 rows have valid labels (2 VOID + 4 HIT); 1 row has no Bzzoiro label.
+    assert result["nSupplied"] == 7
+    assert result["nCovered"] == 6, (
+        "All rows with valid Bzzoiro labels count for coverage, "
+        "including those currently in a VOID state."
+    )
+    # VOID rows do not contribute to direction accuracy.
+    assert result["nPassProps"] == 4, (
+        "Only the 4 HIT rows contribute to direction accuracy."
+    )
+    # All 4 direction rows are correct predictions (UNDER+HIT or OVER+HIT).
+    assert result["directionAccuracyWithBzzoiro"] == 1.0
+
+
+def test_void_outcome_case_variants_all_count_for_coverage():
+    """Outcome strings returned by settlement paths can be mixed-case.
+    All recognised VOID variants must count for coverage and be excluded from
+    direction accuracy, matching the single-void tests for 'VOID' and 'void'.
+    """
+    base = {"bzzoiro_label": "High", "apifootball_label": "High",
+            "prop_type": "passes", "direction": "UNDER"}
+
+    for variant in ("VOID", "void", "Void"):
+        row = {**base, "outcome": variant}
+        assert _is_coverage_row(row), (
+            f"outcome={variant!r} must count for coverage (_is_coverage_row)."
+        )
+        assert not _is_eligible_row(row), (
+            f"outcome={variant!r} must be excluded from direction accuracy (_is_eligible_row)."
+        )
+
+
+def test_multi_round_void_rows_cannot_inflate_direction_accuracy():
+    """A corpus padded with VOID rows must show the correct direction accuracy.
+
+    If VOID rows were incorrectly treated as eligible, they could silently inflate
+    or deflate directionAccuracyWithBzzoiro.  This test constructs a corpus where
+    the void rows would produce an incorrect accuracy if counted.
+    """
+    base_eligible = {"bzzoiro_label": "High", "apifootball_label": "High",
+                     "prop_type": "passes"}
+
+    # 3 correct HIT rows + 5 VOID rows (which have no direction to count)
+    rows = (
+        [{**base_eligible, "direction": "UNDER", "outcome": "HIT"} for _ in range(3)]
+        + [{"bzzoiro_label": "High", "apifootball_label": "High",
+            "prop_type": "passes", "outcome": "VOID"} for _ in range(5)]
+    )
+    result = evaluate_bzzoiro_pressure_evidence(rows)
+
+    assert result["nSupplied"] == 8
+    assert result["nCovered"] == 8       # all 8 have valid labels
+    assert result["nPassProps"] == 3     # only the 3 HIT rows have a direction outcome
+    assert result["directionAccuracyWithBzzoiro"] == 1.0  # 3/3 correct
