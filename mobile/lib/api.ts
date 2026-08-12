@@ -3612,6 +3612,7 @@ export interface DescriptiveScorecardResult {
   description: string;
   n: number;
   rawN: number;
+  scoredN?: number;
   duplicateRowsRemoved: number;
   resultCounts: Record<string, number>;
   calibrationOnlyN: number;

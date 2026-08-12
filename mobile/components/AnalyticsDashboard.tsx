@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, getBzzoiroStatus, resetQuotaBreaker, triggerStorageCleanup, Pick, AnalyticsData, BzzoiroStatus } from '@/lib/api';
+import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, getBzzoiroStatus, resetQuotaBreaker, triggerStorageCleanup, runModelReplay, Pick, AnalyticsData, BzzoiroStatus, ModelReplayResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -244,6 +244,9 @@ export default function AnalyticsDashboard({
     staleTime: 10 * 60_000,  // 10 minutes — env vars change rarely
   });
   const [quotaResetting, setQuotaResetting] = React.useState(false);
+  const [replayRunning, setReplayRunning] = React.useState(false);
+  const [replayResult, setReplayResult] = React.useState<ModelReplayResult | null>(null);
+  const [replayError, setReplayError] = React.useState<string | null>(null);
 
   const handleQuotaReset = async () => {
     if (!session || quotaResetting) return;
@@ -256,6 +259,21 @@ export default function AnalyticsDashboard({
       Alert.alert('Reset Failed', err?.message ?? 'Unknown error');
     } finally {
       setQuotaResetting(false);
+    }
+  };
+
+  const handleRunReplay = async () => {
+    if (!session || replayRunning) return;
+    setReplayRunning(true);
+    setReplayError(null);
+    setReplayResult(null);
+    try {
+      const result = await runModelReplay(session.email, session.token);
+      setReplayResult(result);
+    } catch (err: any) {
+      setReplayError(err?.message ?? 'Replay failed');
+    } finally {
+      setReplayRunning(false);
     }
   };
 
@@ -807,6 +825,66 @@ export default function AnalyticsDashboard({
                 <Text style={s.ownerHealthReplay}>
                   Replay: {ownerData.scorecard.chronologicalHoldout.n > 0 ? 'historical holdout available' : 'not enough settled events'}
                 </Text>
+
+                {/* ── Model Replay button + deduplication breakdown ── */}
+                <TouchableOpacity
+                  style={[s.replayBtn, replayRunning && s.cleanupBtnDisabled]}
+                  onPress={handleRunReplay}
+                  disabled={replayRunning}
+                >
+                  <Ionicons name="refresh-circle-outline" size={13} color={replayRunning ? Colors.textTertiary : Colors.primary} />
+                  <Text style={[s.cleanupBtnText, { color: replayRunning ? Colors.textTertiary : Colors.primary }]}>
+                    {replayRunning ? 'Running replay…' : 'Run model replay'}
+                  </Text>
+                </TouchableOpacity>
+
+                {replayError ? (
+                  <Text style={[s.ownerHealthMeta, { color: Colors.error, marginTop: 4 }]}>
+                    Replay error: {replayError}
+                  </Text>
+                ) : null}
+
+                {replayResult?.descriptiveScorecard ? (
+                  <View style={s.replayDedupCard}>
+                    <Text style={[s.ownerHealthLabel, { marginBottom: 6 }]}>REPLAY SCORECARD · {(replayResult.sport || 'all').toUpperCase()}</Text>
+                    {/* Deduplication pipeline */}
+                    <View style={s.dedupRow}>
+                      <View style={s.dedupCell}>
+                        <Text style={s.dedupNum}>{replayResult.descriptiveScorecard.rawN ?? replayResult.n}</Text>
+                        <Text style={s.dedupLabel}>RAW SAVES</Text>
+                      </View>
+                      <Text style={s.dedupArrow}>→</Text>
+                      <View style={s.dedupCell}>
+                        <Text style={[s.dedupNum, { color: Colors.primary }]}>{replayResult.descriptiveScorecard.n}</Text>
+                        <Text style={s.dedupLabel}>UNIQUE EVENTS</Text>
+                      </View>
+                      <Text style={s.dedupArrow}>→</Text>
+                      <View style={s.dedupCell}>
+                        <Text style={[s.dedupNum, { color: Colors.success }]}>
+                          {replayResult.descriptiveScorecard.scoredN ?? replayResult.n}
+                        </Text>
+                        <Text style={s.dedupLabel}>SCORED HIT/MISS</Text>
+                      </View>
+                    </View>
+                    {(replayResult.descriptiveScorecard.duplicateRowsRemoved ?? 0) > 0 && (
+                      <Text style={s.dedupNote}>
+                        {replayResult.descriptiveScorecard.duplicateRowsRemoved} duplicate rows collapsed
+                      </Text>
+                    )}
+                    {replayResult.observations?.length > 0 && (
+                      <View style={{ marginTop: 6, gap: 3 }}>
+                        {replayResult.observations.map((obs, i) => (
+                          <Text key={i} style={s.ownerHealthMeta}>{obs}</Text>
+                        ))}
+                      </View>
+                    )}
+                    {replayResult.generatedAt ? (
+                      <Text style={[s.ownerHealthMeta, { marginTop: 4 }]}>
+                        Generated: {new Date(replayResult.generatedAt).toLocaleString()}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             )}
             {renderTrendChart()}
@@ -910,6 +988,27 @@ const s = StyleSheet.create({
   ownerPropList: { marginTop: 9, gap: 3 },
   ownerPropRow: { fontSize: 10, color: Colors.textSecondary, lineHeight: 14, textTransform: 'capitalize' },
   ownerHealthReplay: { fontSize: 10, color: Colors.primary, marginTop: 6, fontWeight: '700' },
+  replayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.18)',
+    alignSelf: 'flex-start',
+  },
+  replayDedupCard: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.15)',
+  },
   wfTableHeader: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle, paddingBottom: 3, marginBottom: 3 },
   wfTableRow: { flexDirection: 'row', paddingVertical: 2 },
   wfTableCell: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
