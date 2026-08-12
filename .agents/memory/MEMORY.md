@@ -153,3 +153,4 @@
 - [Matchup-volume transport](matchup-volume-transport.md) — new venue evidence must survive backend response normalization and use a versioned cache identity when its coverage contract changes.
 - [Competition-aware evidence](competition-aware-evidence.md) — competition/stage/venue history backoffs stay auditable and shadow-only until leakage-safe replay validates live influence.
 - [Deployment VM readiness](deployment-vm-readiness.md) — a publish that builds and scans successfully but stalls at VM readiness is usually promote/provisioning; compare with the last successful build before changing code.
+- [API-Football player fixture fallback](api-football-player-fixture-fallback.md) — `/fixtures` rejects `player`; query the verified club team, then match exact player ID within fixture payloads.

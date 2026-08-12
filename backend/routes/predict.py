@@ -3872,30 +3872,46 @@ async def predict(req: PredictionRequest):
             }
             _gl_key2 = _gl_field_map2.get(req.propType, "passes_total")
 
-            # Stage 1: Pull the player's last 20 fixtures directly from API by player ID.
-            # 20 is sufficient: after home/away split we get ~10 venue-specific samples,
-            # which is plenty for the Bayesian engine. Reduced from 40 to save API quota.
+            # Stage 1: Pull the player's recent club fixtures from API-Football.
+            # API-Football's /fixtures endpoint does not support a `player`
+            # parameter (it returns "The Player field do not exist"). Use the
+            # verified club team instead, then keep the exact player-ID match
+            # inside each fixture below. This is the same identity-safe route
+            # used by the primary team-history loader, but remains a bounded
+            # recovery path when its cache is unavailable.
             try:
-                print(f"[PLAYER-DIRECT] {req.playerName}: fetching fixtures directly by playerId={req.playerId}")
-                _player_fixtures_raw = await api_football_request(
-                    "fixtures", {"player": req.playerId, "last": 20}
-                )
-                if _player_fixtures_raw and actual_team_id and not _is_wc:
-                    # Filter to ONLY fixtures where the player's club team appears.
-                    # Fetching by player ID returns ALL competitions including national
-                    # team games — strip those out so we only analyse club fixtures.
-                    # For WC (leagueId=1), skip this filter: we WANT club fixtures
-                    # since WC stats are not yet available from API-Football.
-                    _before_filter = len(_player_fixtures_raw)
+                if not actual_team_id:
+                    print(
+                        f"[PLAYER-DIRECT] {req.playerName}: missing verified teamId; "
+                        "cannot fetch club fixtures"
+                    )
+                    _player_fixtures_raw = []
+                else:
+                    print(
+                        f"[PLAYER-DIRECT] {req.playerName}: fetching recent club "
+                        f"fixtures by verified teamId={actual_team_id} "
+                        f"(playerId={req.playerId})"
+                    )
+                    _player_fixtures_raw = await api_football_request(
+                        "fixtures",
+                        {"team": actual_team_id, "last": 40, "status": "FT"},
+                    )
+                if _player_fixtures_raw and actual_team_id:
+                    # Keep the explicit team-ID guard even though the provider
+                    # was queried by team. It protects against stale or
+                    # malformed cached responses being reused here.
                     _player_fixtures_raw = [
                         fx for fx in _player_fixtures_raw
-                        if (fx.get("teams", {}).get("home", {}).get("id") == actual_team_id
-                            or fx.get("teams", {}).get("away", {}).get("id") == actual_team_id)
+                        if (
+                            (fx.get("teams", {}).get("home", {}).get("id") == actual_team_id)
+                            or (fx.get("teams", {}).get("away", {}).get("id") == actual_team_id)
+                        )
                     ]
-                    if len(_player_fixtures_raw) < _before_filter:
-                        print(f"[PLAYER-DIRECT] {req.playerName}: filtered {_before_filter} → {len(_player_fixtures_raw)} club fixtures (dropped national-team games)")
-                elif _player_fixtures_raw and _is_wc:
-                    print(f"[WC MODE] {req.playerName}: keeping all {len(_player_fixtures_raw)} fixtures as club-stat prior for WC")
+                if _player_fixtures_raw and _is_wc:
+                    print(
+                        f"[WC MODE] {req.playerName}: using {len(_player_fixtures_raw)} "
+                        "verified club fixtures as the player-stat prior"
+                    )
 
                 if _player_fixtures_raw:
                     # For each fixture, fetch per-game stats
