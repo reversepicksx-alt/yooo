@@ -263,6 +263,58 @@ async def _candidate_records(limit: int) -> list[dict]:
     return list(by_id.values())[:limit]
 
 
+async def verify_affected_pick_positions(
+    changed: list[dict],
+) -> list[dict]:
+    """Check saved picks and predictions for players whose position changed.
+
+    For each (playerId, newPosition) pair this scans the picks and predictions
+    collections and reports rows whose stored position field differs from the
+    newly resolved value.  The results are informational only — this function
+    never writes to those collections.
+    """
+    if not changed:
+        return []
+    stale: list[dict] = []
+    for item in changed:
+        pid = item.get("playerId")
+        new_pos = item.get("newPosition") or ""
+        player_name = item.get("playerName") or ""
+        if not new_pos:
+            continue
+        try:
+            int_pid = int(pid)
+        except (TypeError, ValueError):
+            int_pid = None
+        query: dict = {}
+        if int_pid is not None:
+            query = {"$or": [{"playerId": int_pid}, {"playerId": str(int_pid)}]}
+        elif player_name:
+            query = {"playerName": player_name}
+        else:
+            continue
+        for collection in ("picks", "predictions"):
+            docs = await db[collection].find(
+                query,
+                {"_id": 0, "pickId": 1, "trackingId": 1, "playerName": 1,
+                 "playerId": 1, "position": 1, "sport": 1, "propType": 1},
+            ).to_list(50)
+            for doc in docs:
+                stored_pos = str(doc.get("position") or "").strip().upper()
+                if stored_pos and stored_pos != new_pos.upper():
+                    stale.append({
+                        "collection": collection,
+                        "pickId": doc.get("pickId") or doc.get("trackingId"),
+                        "playerName": doc.get("playerName"),
+                        "playerId": doc.get("playerId"),
+                        "storedPosition": stored_pos,
+                        "newPosition": new_pos,
+                        "sport": doc.get("sport"),
+                        "propType": doc.get("propType"),
+                    })
+    return stale
+
+
 async def backfill_api_sports_positions(
     *,
     limit: int = 250,
@@ -270,12 +322,23 @@ async def backfill_api_sports_positions(
     min_observations: int = 2,
     concurrency: int = 3,
 ) -> dict:
-    """Repair weak position profiles from repeated API-Sports lineup grids."""
+    """Repair weak position profiles from repeated API-Sports lineup grids.
+
+    The summary returned by this function includes:
+    - ``changed``: profiles whose ``specificPosition`` value actually changed
+      (i.e. the old value differed from the new grid-derived value).  Only
+      profiles previously written by ``api_sports_lineup_history`` can change;
+      ``manual_override`` and ``gemini_web_grounded`` profiles are preserved.
+    - ``stalePickPositions``: saved picks / predictions whose stored position
+      field differs from the newly resolved value for that player.  These rows
+      are reported but never automatically modified.
+    """
     records = await _candidate_records(limit)
     summary = {
         "startedAt": datetime.now(timezone.utc).isoformat(),
         "scanned": len(records),
         "updated": 0,
+        "changed": 0,
         "alreadyTrusted": 0,
         "noFixtureHistory": 0,
         "noExactLineupEvidence": 0,
@@ -283,6 +346,8 @@ async def backfill_api_sports_positions(
         "categoryMismatch": 0,
         "errors": 0,
         "results": [],
+        "changedProfiles": [],
+        "stalePickPositions": [],
     }
     sem = aio.Semaphore(max(1, concurrency))
 
@@ -299,6 +364,10 @@ async def backfill_api_sports_positions(
         ):
             summary["alreadyTrusted"] += 1
             return {"playerId": pid, "playerName": record["playerName"], "status": "trusted"}
+
+        # Record the position that was stored before this run so the report can
+        # show which profiles actually changed (not just which were re-written).
+        previous_position = str(current.get("specificPosition") or "").strip() if current else ""
 
         async with sem:
             team_ids = list(record.get("teamIds") or [])
@@ -384,17 +453,39 @@ async def backfill_api_sports_positions(
             upsert=True,
         )
         summary["updated"] += 1
-        return {
+        result: dict = {
             "playerId": pid, "playerName": record["playerName"],
             "status": "updated", "position": position,
             "observations": len(observations), "positionCounts": dict(counts),
         }
+        # Detect a genuine position change caused by the corrected grid mapping.
+        if previous_position and previous_position != position:
+            result["previousPosition"] = previous_position
+            result["positionChanged"] = True
+        return result
 
     results = await aio.gather(*(process(record) for record in records), return_exceptions=True)
+    changed_items: list[dict] = []
     for result in results:
         if isinstance(result, Exception):
             summary["errors"] += 1
             continue
         summary["results"].append(result)
+        if result.get("positionChanged"):
+            summary["changed"] += 1
+            entry = {
+                "playerId": result["playerId"],
+                "playerName": result["playerName"],
+                "previousPosition": result.get("previousPosition"),
+                "newPosition": result["position"],
+            }
+            summary["changedProfiles"].append(entry)
+            changed_items.append(entry)
+
+    # Verify saved-pick and prediction position fields for every player whose
+    # profile was corrected by the grid-mapping fix.
+    if changed_items:
+        summary["stalePickPositions"] = await verify_affected_pick_positions(changed_items)
+
     summary["finishedAt"] = datetime.now(timezone.utc).isoformat()
     return summary

@@ -116,6 +116,34 @@ def test_lineup_grid_resolves_unambiguous_midfield_bands():
     assert infer_grid_position("4:4", "3-1-4-2", "M") == "RM"
 
 
+def test_lineup_grid_resolves_4231_attacking_row_for_forward_category():
+    """4-2-3-1 row-four players reported as F/FWD must map to LW/CAM/RW.
+
+    This is the exact formation/category combination that produced the
+    overly-central CAM label for wide attackers such as Doku (Man City, col 1)
+    before the attacking-grid column mapping was corrected.
+    """
+    # Column 1 = left winger
+    assert infer_grid_position("4:1", "4-2-3-1", "F") == "LW"
+    # Column 2 = central attacking midfielder
+    assert infer_grid_position("4:2", "4-2-3-1", "F") == "CAM"
+    # Column 3 = right winger
+    assert infer_grid_position("4:3", "4-2-3-1", "F") == "RW"
+
+
+def test_lineup_grid_4231_row4_midfield_and_forward_categories_agree():
+    """M and F provider categories must resolve identically on 4-2-3-1 row 4.
+
+    API-Football sometimes labels the same player as M in lineup data and F in
+    the player-stats payload.  The corrected mapping must be consistent across
+    both provider categories.
+    """
+    for provider_cat in ("M", "F"):
+        assert infer_grid_position("4:1", "4-2-3-1", provider_cat) == "LW", provider_cat
+        assert infer_grid_position("4:2", "4-2-3-1", provider_cat) == "CAM", provider_cat
+        assert infer_grid_position("4:3", "4-2-3-1", provider_cat) == "RW", provider_cat
+
+
 def test_player_opponent_history_reports_hit_rate_from_valid_values():
     result = summarize_player_opponent_history([4, 7, 2, None], 3.5)
     assert result == {
