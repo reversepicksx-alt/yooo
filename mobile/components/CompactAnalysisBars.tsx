@@ -107,6 +107,8 @@ function displayH2HDate(value: unknown) {
   return raw.slice(0, 10);
 }
 
+const H2H_COLUMN_WIDTH = 68;
+
 function stageLabelForRow(row: Record<string, any>) {
   const stageClass = String(row.stageClass || '').toLowerCase();
   if (stageClass.includes('knockout')) return 'KNOCKOUT STAGES';
@@ -599,7 +601,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         </View>
         {h2hRows.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
-            <View style={{ width: h2hRows.length * 46 + 10 }}>
+            <View style={{ width: h2hRows.length * (H2H_COLUMN_WIDTH + 5) + 10 }}>
               <View style={styles.h2hChart}>
                 {h2hRows.map((row: any, index: number) => {
                   const value = typeof row.displayValue === 'number' ? row.displayValue : null;
@@ -628,8 +630,12 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                         {value != null && !row.teamOnly ? value : row.teamOnly && value != null ? `${value}%` : '—'}
                       </Text>
                       <View style={[styles.h2hBar, { height, backgroundColor: color + 'B8' }]} />
-                      <Text style={styles.h2hDate}>{date}</Text>
-                      <Text style={[styles.h2hMeta, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}>
+                      <Text style={styles.h2hDate} numberOfLines={1} ellipsizeMode="clip">{date}</Text>
+                      <Text
+                        style={[styles.h2hMeta, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}
+                        numberOfLines={1}
+                        ellipsizeMode="clip"
+                      >
                         {possession ? `${possession} · ` : ''}{venueMark(rowVenue(row))}
                       </Text>
                     </TouchableOpacity>
@@ -722,11 +728,11 @@ const styles = {
   // reserved rows for value → bar → date → possession/venue, so the bar can
   // never cover the customer-facing numbers.
   h2hChart: { height: 78, flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: 5 },
-  h2hBarColumn: { width: 43, height: 74, alignItems: 'center' as const, justifyContent: 'flex-start' as const, borderRadius: 5, paddingTop: 1 },
+  h2hBarColumn: { width: H2H_COLUMN_WIDTH, height: 74, alignItems: 'center' as const, justifyContent: 'flex-start' as const, borderRadius: 5, paddingTop: 1 },
   h2hValue: { fontSize: 11, fontWeight: '900' as const, lineHeight: 14, height: 14, marginBottom: 2 },
   h2hBar: { width: 26, minHeight: 4, borderRadius: 2 },
-  h2hDate: { fontSize: 9, color: '#888', lineHeight: 11, height: 11, marginTop: 3 },
-  h2hMeta: { fontSize: 9, lineHeight: 11, height: 11, fontWeight: '900' as const, marginTop: 1 },
+  h2hDate: { fontSize: 8, color: '#888', lineHeight: 11, height: 11, marginTop: 3, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
+  h2hMeta: { fontSize: 8, lineHeight: 11, height: 11, fontWeight: '900' as const, marginTop: 1, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
   value: { fontSize: 8, fontWeight: '800' as const, marginBottom: 2 },

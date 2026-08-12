@@ -25,6 +25,12 @@ Analytics hit rates must display their scored numerator/denominator and excluded
 
 `H` / `A` venue marker appears as its own `<Text>` element (`styles.venueLabel`) directly beneath the `possessionLabel` row — NOT beside the abbreviated opponent name. Both Recent Matches and H2H bars follow this layout. Color: green for home, blue for away.
 
+H2H bars must reserve enough horizontal space for the full `YYYY-MM-DD` date and the combined possession/venue line, with both rows forced to one line.
+
+**Why:** A narrow H2H column wrapped those rows into the same fixed-height area, making valid dates and H/A markers look corrupted or overlapped on mobile.
+
+**How to apply:** Keep H2H columns materially wider than Recent Matches columns, use one-line clipped text for date and metadata, and size the horizontal scroll content to the wider columns.
+
 ## Prop History card (replaces Tactical Read / AI explanation)
 
 Gemini tactical explanation was removed entirely. No AI calls happen on prediction.
