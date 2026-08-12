@@ -693,6 +693,7 @@ async def owner_analytics(payload: dict = Body(...)):
     email = str(payload.get("email") or "").lower().strip()
     token = str(payload.get("token") or "")
     period = str(payload.get("period") or "all").lower()
+    sport_filter = str(payload.get("sport") or "").lower().strip() or None
     if period not in {"all", "today", "30d", "7d"}:
         raise HTTPException(status_code=400, detail="Invalid analytics period")
     if email not in OWNER_EMAILS:
@@ -907,7 +908,7 @@ async def owner_analytics(payload: dict = Body(...)):
     # Keep these metrics separate from the legacy hit-rate breakdown above.
     # Numeric errors are grouped by sport/prop because their units differ.
     scorecard = build_scorecard(deduped_rows)
-    walk_forward = walk_forward_replay(deduped_rows)
+    # walk_forward is computed below after all_sports_deduped is available
 
     def dashboard_groups(field: str, labeler=None):
         buckets: dict = defaultdict(lambda: {
@@ -1071,6 +1072,14 @@ async def owner_analytics(payload: dict = Body(...)):
         s = str(row.get("sport") or "unknown")
         if s:
             sports_seen.add(s)
+
+    # Walk-forward replay: use all-sports corpus, filtered to the requested sport when specified.
+    # This ensures the bySport table reflects all sports (not just soccer) and that tapping a
+    # sport row in the dashboard drills into that sport's accuracy in isolation.
+    wf_rows = all_sports_deduped
+    if sport_filter:
+        wf_rows = [r for r in all_sports_deduped if str(r.get("sport") or "").lower() == sport_filter]
+    walk_forward = walk_forward_replay(wf_rows)
 
     return {
         "overall": {

@@ -2322,10 +2322,11 @@ export async function getOwnerAnalytics(
   email: string,
   token: string,
   period: 'all' | 'today' | '30d' | '7d' = 'all',
+  sport?: string | null,
 ): Promise<AnalyticsData> {
   return apiCall('/api/admin/analytics', {
     method: 'POST',
-    body: JSON.stringify({ email, token, period }),
+    body: JSON.stringify({ email, token, period, sport: sport ?? null }),
   });
 }
 

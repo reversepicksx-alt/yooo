@@ -216,12 +216,13 @@ export default function AnalyticsDashboard({
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const [period, setPeriod] = useState<Period>('all');
+  const [sportFilter, setSportFilter] = useState<string | null>(null);
   const [cleanupRunning, setCleanupRunning] = useState(false);
   const queryClient = useQueryClient();
   const localStats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
   const { data: ownerData } = useQuery<AnalyticsData>({
-    queryKey: ['ownerAnalytics', 'pick-insights', session?.email, period],
-    queryFn: () => getOwnerAnalytics(session!.email, session!.token, period),
+    queryKey: ['ownerAnalytics', 'pick-insights', session?.email, period, sportFilter],
+    queryFn: () => getOwnerAnalytics(session!.email, session!.token, period, sportFilter),
     enabled: visible && !!session,
     staleTime: 60_000,
   });
@@ -789,7 +790,24 @@ export default function AnalyticsDashboard({
                 )}
                 {ownerData.walkForwardReplay?.bySport && ownerData.walkForwardReplay.bySport.length > 0 && (
                   <View style={s.ownerPropList}>
-                    <Text style={s.ownerHealthLabel}>WALK-FORWARD ACCURACY BY SPORT</Text>
+                    <View style={s.wfSportHeaderRow}>
+                      <Text style={s.ownerHealthLabel}>WALK-FORWARD ACCURACY BY SPORT</Text>
+                      {sportFilter && (
+                        <TouchableOpacity
+                          style={s.wfSportFilterBadge}
+                          onPress={() => setSportFilter(null)}
+                        >
+                          <Text style={s.wfSportFilterBadgeText}>
+                            {sportFilter.toUpperCase()} ✕
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    {!sportFilter && (
+                      <Text style={[s.ownerHealthMeta, { marginBottom: 4 }]}>
+                        Tap a row to drill into that sport
+                      </Text>
+                    )}
                     <View style={s.wfTableHeader}>
                       <Text style={[s.wfTableCell, s.wfTableCellSport]}>SPORT</Text>
                       <Text style={[s.wfTableCell, s.wfTableCellN]}>N</Text>
@@ -800,14 +818,20 @@ export default function AnalyticsDashboard({
                     {ownerData.walkForwardReplay.bySport.map((row) => {
                       const cls = row.classification;
                       const prj = row.projection;
+                      const isSelected = sportFilter === row.sport;
                       const logLossColor =
                         cls.logLoss == null ? Colors.textTertiary
                         : cls.logLoss < 0.65 ? Colors.success
                         : cls.logLoss < 0.693 ? '#F59E0B'
                         : Colors.error;
                       return (
-                        <View key={row.sport} style={s.wfTableRow}>
-                          <Text style={[s.wfTableCell, s.wfTableCellSport, { color: Colors.text }]}>
+                        <TouchableOpacity
+                          key={row.sport}
+                          style={[s.wfTableRow, isSelected && s.wfTableRowSelected]}
+                          onPress={() => setSportFilter(isSelected ? null : row.sport)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[s.wfTableCell, s.wfTableCellSport, { color: isSelected ? Colors.primary : Colors.text }]}>
                             {row.sport.toUpperCase()}
                           </Text>
                           <Text style={[s.wfTableCell, s.wfTableCellN, { color: Colors.textSecondary }]}>
@@ -822,15 +846,20 @@ export default function AnalyticsDashboard({
                           <Text style={[s.wfTableCell, s.wfTableCellNum, { color: Colors.textSecondary }]}>
                             {prj.mae != null ? prj.mae.toFixed(2) : '—'}
                           </Text>
-                        </View>
+                        </TouchableOpacity>
                       );
                     })}
                   </View>
                 )}
                 {ownerData.walkForwardReplay?.byProp && ownerData.walkForwardReplay.byProp.length > 0 && (
                   <View style={s.ownerPropList}>
-                    <Text style={s.ownerHealthLabel}>WALK-FORWARD MAE BY PROP TYPE</Text>
-                    {ownerData.walkForwardReplay.byProp.slice(0, 8).map((row) => (
+                    <Text style={s.ownerHealthLabel}>
+                      WALK-FORWARD MAE BY PROP TYPE{sportFilter ? ` · ${sportFilter.toUpperCase()}` : ''}
+                    </Text>
+                    {(sportFilter
+                      ? ownerData.walkForwardReplay.byProp.filter(r => r.sport === sportFilter)
+                      : ownerData.walkForwardReplay.byProp
+                    ).slice(0, 8).map((row) => (
                       <Text key={`${row.sport}-${row.propType}`} style={s.ownerPropRow}>
                         {row.sport.toUpperCase()} · {row.propType.replace(/_/g, ' ')} · n={row.n} · MAE {row.mae?.toFixed(2) ?? '—'} · bias {row.meanError != null ? (row.meanError > 0 ? '+' : '') + row.meanError.toFixed(2) : '—'}
                       </Text>
@@ -1126,11 +1155,15 @@ const s = StyleSheet.create({
     borderColor: 'rgba(57,255,20,0.15)',
   },
   wfTableHeader: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle, paddingBottom: 3, marginBottom: 3 },
-  wfTableRow: { flexDirection: 'row', paddingVertical: 2 },
+  wfTableRow: { flexDirection: 'row', paddingVertical: 3, borderRadius: 4 },
+  wfTableRowSelected: { backgroundColor: 'rgba(99,102,241,0.12)' },
   wfTableCell: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
   wfTableCellSport: { flex: 2 },
   wfTableCellN: { flex: 1, textAlign: 'right' },
   wfTableCellNum: { flex: 2, textAlign: 'right' },
+  wfSportHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
+  wfSportFilterBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.18)', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  wfSportFilterBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.primary, letterSpacing: 0.5 },
   // Walk-forward trend comparison table
   trendTableHeader: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle, paddingBottom: 3, marginBottom: 3 },
   trendTableRow: { flexDirection: 'row', paddingVertical: 3 },
