@@ -171,6 +171,8 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       ?? (typeof prediction.playerIsHome === 'boolean' ? prediction.playerIsHome : null),
   );
   const h2h = prediction.h2hPlayerStats ?? {};
+  const historyVenue = preferredVenue ?? normalizeVenue(prediction.historyContext?.venue);
+  const showSelectedVenueOnly = historyVenue === 'home' || historyVenue === 'away';
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
   const isGkProp = prediction.propType === 'saves' || prediction.propType === 'goalie_saves';
@@ -413,39 +415,77 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             </View>
           </ScrollView>
           <View style={styles.splitRow}>
-            <View style={styles.splitItem}>
-              <Text style={styles.splitLabel}>HOME SPLIT</Text>
-              <Text style={[styles.splitValue, { color: Colors.success }]}>
-                {homeSplit ? homeSplit.average.toFixed(1) : '—'}
-              </Text>
-              <Text style={styles.splitMeta}>{homeSplit ? `${homeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-            </View>
-            <View style={styles.splitDivider} />
-            <View style={styles.splitItem}>
-              <Text style={styles.splitLabel}>AWAY SPLIT</Text>
-              <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
-                {awaySplit ? awaySplit.average.toFixed(1) : '—'}
-              </Text>
-              <Text style={styles.splitMeta}>{awaySplit ? `${awaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-            </View>
+            {showSelectedVenueOnly ? (
+              <View style={styles.splitItem}>
+                <Text style={styles.splitLabel}>{historyVenue === 'home' ? 'HOME SPLIT' : 'AWAY SPLIT'}</Text>
+                <Text style={[styles.splitValue, { color: historyVenue === 'home' ? Colors.success : '#60A5FA' }]}>
+                  {(historyVenue === 'home' ? homeSplit : awaySplit)
+                    ? (historyVenue === 'home' ? homeSplit : awaySplit)!.average.toFixed(1)
+                    : '—'}
+                </Text>
+                <Text style={styles.splitMeta}>
+                  {(historyVenue === 'home' ? homeSplit : awaySplit)
+                    ? `${(historyVenue === 'home' ? homeSplit : awaySplit)!.count} MATCHES`
+                    : 'NO SAMPLE'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.splitItem}>
+                  <Text style={styles.splitLabel}>HOME SPLIT</Text>
+                  <Text style={[styles.splitValue, { color: Colors.success }]}>
+                    {homeSplit ? homeSplit.average.toFixed(1) : '—'}
+                  </Text>
+                  <Text style={styles.splitMeta}>{homeSplit ? `${homeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
+                </View>
+                <View style={styles.splitDivider} />
+                <View style={styles.splitItem}>
+                  <Text style={styles.splitLabel}>AWAY SPLIT</Text>
+                  <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
+                    {awaySplit ? awaySplit.average.toFixed(1) : '—'}
+                  </Text>
+                  <Text style={styles.splitMeta}>{awaySplit ? `${awaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
+                </View>
+              </>
+            )}
           </View>
           {showPossessionContext && (tpHomeSplit || tpAwaySplit) && (
             <View style={styles.splitRow}>
-              <View style={styles.splitItem}>
-                <Text style={styles.splitLabel}>TP HOME · LAST 10</Text>
-                <Text style={[styles.splitValue, { color: Colors.success }]}>
-                  {tpHomeSplit ? `${tpHomeSplit.average.toFixed(1)}%` : '—'}
-                </Text>
-                <Text style={styles.splitMeta}>{tpHomeSplit ? `${tpHomeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-              </View>
-              <View style={styles.splitDivider} />
-              <View style={styles.splitItem}>
-                <Text style={styles.splitLabel}>TP AWAY · LAST 10</Text>
-                <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
-                  {tpAwaySplit ? `${tpAwaySplit.average.toFixed(1)}%` : '—'}
-                </Text>
-                <Text style={styles.splitMeta}>{tpAwaySplit ? `${tpAwaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-              </View>
+              {showSelectedVenueOnly ? (
+                <View style={styles.splitItem}>
+                  <Text style={styles.splitLabel}>
+                    {historyVenue === 'home' ? 'TP HOME · LAST 10' : 'TP AWAY · LAST 10'}
+                  </Text>
+                  <Text style={[styles.splitValue, { color: historyVenue === 'home' ? Colors.success : '#60A5FA' }]}>
+                    {(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)
+                      ? `${(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)!.average.toFixed(1)}%`
+                      : '—'}
+                  </Text>
+                  <Text style={styles.splitMeta}>
+                    {(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)
+                      ? `${(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)!.count} MATCHES`
+                      : 'NO SAMPLE'}
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.splitItem}>
+                    <Text style={styles.splitLabel}>TP HOME · LAST 10</Text>
+                    <Text style={[styles.splitValue, { color: Colors.success }]}>
+                      {tpHomeSplit ? `${tpHomeSplit.average.toFixed(1)}%` : '—'}
+                    </Text>
+                    <Text style={styles.splitMeta}>{tpHomeSplit ? `${tpHomeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
+                  </View>
+                  <View style={styles.splitDivider} />
+                  <View style={styles.splitItem}>
+                    <Text style={styles.splitLabel}>TP AWAY · LAST 10</Text>
+                    <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
+                      {tpAwaySplit ? `${tpAwaySplit.average.toFixed(1)}%` : '—'}
+                    </Text>
+                    <Text style={styles.splitMeta}>{tpAwaySplit ? `${tpAwaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
+                  </View>
+                </>
+              )}
             </View>
           )}
           {hasMarketEvidence && (

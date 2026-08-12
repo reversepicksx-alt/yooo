@@ -1591,7 +1591,12 @@ async def predict(req: PredictionRequest):
             }
 
         # 2. Player game-by-game box scores from recent fixtures
-        async def fetch_player_game_logs(fixture_list, player_id, limit=35):
+        async def fetch_player_game_logs(
+            fixture_list,
+            player_id,
+            limit=35,
+            extra_fixture_list=None,
+        ):
             """Fetch player's individual stats — always live from API, all competitions."""
 
             def _build_game_log(stats: dict) -> dict:
@@ -2127,6 +2132,7 @@ async def predict(req: PredictionRequest):
                         and _saves_ok
                         and _tp_complete
                         and _competition_meta_complete
+                        and not extra_fixture_list
                     ):
                         _poss_note = (
                             f"; historical possession={_pressure_possession_count}"
@@ -2194,6 +2200,23 @@ async def predict(req: PredictionRequest):
                         )
                     except Exception as _ce:
                         pass  # non-fatal — prediction continues
+
+                # A knockout prediction needs enough equivalent knockout history
+                # to be useful across seasons. The normal "last 40" team feed is
+                # often dominated by one current season, so append the explicitly
+                # selected historical fixtures while keeping the current feed.
+                if extra_fixture_list:
+                    _fixture_by_id = {}
+                    for _fixture in (team_fixtures_raw or []) + list(extra_fixture_list):
+                        _fid = (_fixture.get("fixture") or {}).get("id")
+                        if _fid:
+                            _fixture_by_id[_fid] = _fixture
+                    team_fixtures_raw = list(_fixture_by_id.values())
+                    print(
+                        f"[API-DIRECT] {req.playerName}: expanded player-history pool "
+                        f"to {len(team_fixtures_raw)} fixtures with "
+                        f"{len(extra_fixture_list)} historical knockout candidates"
+                    )
 
                 async def _fetch_one(fix_raw):
                     try:
@@ -3212,6 +3235,94 @@ async def predict(req: PredictionRequest):
             req.opponentId,
             10,
         )
+        async def fetch_historical_knockout_fixtures(team_id: int, venue: str | None) -> list[dict]:
+            """Find verified same-venue elite knockout fixtures across seasons.
+
+            The normal team feed is intentionally shallow (the latest 40
+            fixtures). That is enough for current form, but not for a player
+            such as Vitinha whose comparable Champions League knockout history
+            spans several PSG seasons. Only finished, provider-labelled
+            knockout fixtures are returned; player participation is still
+            verified by fetch_player_game_logs.
+            """
+            if not team_id or req.sport != "soccer" or _is_neutral:
+                return []
+            try:
+                from competition_context import (
+                    ELITE_KNOCKOUT_COMPETITIONS,
+                    KNOCKOUT_STAGES,
+                    normalize_stage,
+                )
+
+                target_stage = normalize_stage((match_odds or {}).get("matchRound"))
+                if target_stage not in KNOCKOUT_STAGES:
+                    return []
+
+                current_year = datetime.now(timezone.utc).year
+                season_start = max(CURRENT_SEASON, current_year)
+                seasons = list(range(season_start, season_start - 5, -1))
+
+                async def _fetch_season(season: int):
+                    try:
+                        return await api_football_request(
+                            "fixtures",
+                            {"team": team_id, "season": season, "status": "FT"},
+                        )
+                    except Exception as _season_err:
+                        print(
+                            f"[HISTORY FIXTURES] {team_id}/{season} unavailable: "
+                            f"{type(_season_err).__name__}"
+                        )
+                        return []
+
+                season_batches = await aio.gather(
+                    *[_fetch_season(season) for season in seasons],
+                    return_exceptions=True,
+                )
+                candidates = []
+                seen_ids = set()
+                for batch in season_batches:
+                    if isinstance(batch, Exception):
+                        continue
+                    for fixture in batch or []:
+                        fixture_meta = fixture.get("fixture") or {}
+                        teams = fixture.get("teams") or {}
+                        league = fixture.get("league") or {}
+                        fixture_id = fixture_meta.get("id")
+                        league_id = league.get("id")
+                        round_value = league.get("round") or ""
+                        if (
+                            not fixture_id
+                            or fixture_id in seen_ids
+                            or league_id not in ELITE_KNOCKOUT_COMPETITIONS
+                            or normalize_stage(round_value) not in KNOCKOUT_STAGES
+                        ):
+                            continue
+                        home_id = (teams.get("home") or {}).get("id")
+                        fixture_venue = "home" if home_id == team_id else "away"
+                        if venue and fixture_venue != venue:
+                            continue
+                        seen_ids.add(fixture_id)
+                        candidates.append(fixture)
+
+                candidates.sort(
+                    key=lambda fixture: (fixture.get("fixture") or {}).get("date", ""),
+                    reverse=True,
+                )
+                # Keep the request bounded while leaving enough room to
+                # produce a 15+ player-appearance sample after DNPs.
+                return candidates[:28]
+            except Exception as _history_fixture_err:
+                print(
+                    f"[HISTORY FIXTURES] {team_id} lookup failed: "
+                    f"{type(_history_fixture_err).__name__}: {_history_fixture_err}"
+                )
+                return []
+
+        historical_knockout_fixtures_task = fetch_historical_knockout_fixtures(
+            actual_team_id,
+            None,
+        )
         # Player game logs: VENUE-PRIORITIZED ordering
         # For neutral: use all fixtures equally (no venue priority — WC/tournament game)
         # For home/away: search venue-matching fixtures first (target: 15-20 venue-matched games)
@@ -3219,7 +3330,16 @@ async def predict(req: PredictionRequest):
             all_team_fixtures if _is_neutral
             else venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
         )
-        player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 35)
+        async def _fetch_player_logs_with_history():
+            historical_knockout_fixtures = await historical_knockout_fixtures_task
+            return await fetch_player_game_logs(
+                venue_first_fixtures,
+                req.playerId,
+                35,
+                extra_fixture_list=historical_knockout_fixtures,
+            )
+
+        player_game_logs_task = _fetch_player_logs_with_history()
 
         # Position comparison task — same-position players vs this opponent
         # (started later after player_position is resolved)
@@ -4914,6 +5034,7 @@ async def predict(req: PredictionRequest):
                     competition_name=(match_odds or {}).get("matchLeague") or "",
                     round_value=(match_odds or {}).get("matchRound") or "",
                     venue=player_venue,
+                    include_all_venues=True,
                 )
                 if not _history_view_logs:
                     print(

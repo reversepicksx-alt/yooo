@@ -213,12 +213,15 @@ def select_contextual_history(
     competition_name: Any = None,
     round_value: Any = None,
     venue: Any = None,
+    include_all_venues: bool = False,
 ) -> tuple[list[dict], dict]:
     """Select customer-visible history for the exact match context.
 
-    Venue is always required.  Knockout targets additionally require the same
-    comparable knockout stage class; rows with missing competition metadata are
-    excluded rather than guessed into the display sample.
+    Venue is required for normal recent history. Knockout archive views may
+    explicitly include both venues while retaining each row's venue label;
+    they still require the same comparable knockout stage class. Rows with
+    missing competition metadata are excluded rather than guessed into the
+    display sample.
     """
     target = _target_context(
         competition_id,
@@ -238,9 +241,10 @@ def select_contextual_history(
     candidates = [log for log in (logs or []) if isinstance(log, dict)]
     for log in candidates:
         row = _row_context(log)
-        if target_venue and row.get("venue") != target_venue:
+        if target_venue and not (is_knockout_target and include_all_venues) and row.get("venue") != target_venue:
             continue
-        venue_matches += 1
+        if target_venue and row.get("venue") == target_venue:
+            venue_matches += 1
         if is_knockout_target and row.get("stageClass") != target_stage_class:
             continue
         stage_matches += 1
@@ -252,9 +256,17 @@ def select_contextual_history(
             "stageLabel": _stage_display_label(row.get("stage"), row.get("stageClass")),
         })
 
+    selected.sort(key=lambda log: str(log.get("date") or ""), reverse=True)
     return selected, {
-        "mode": "venue_and_knockout_stage" if is_knockout_target else "venue",
+        "mode": (
+            "knockout_stage_all_venues"
+            if is_knockout_target and include_all_venues
+            else "venue_and_knockout_stage"
+            if is_knockout_target
+            else "venue"
+        ),
         "venue": target_venue,
+        "scope": "all_venues" if is_knockout_target and include_all_venues else "selected_venue",
         "stage": target.get("stage"),
         "stageClass": target_stage_class,
         "stageLabel": stage_label,
@@ -266,7 +278,8 @@ def select_contextual_history(
         "metadataRequired": is_knockout_target,
         "label": (
             f"{str(target.get('competitionName') or 'COMPETITION').upper()} · "
-            f"{stage_label} · {target_venue.upper()}"
+            f"{stage_label} · "
+            f"{'ALL VENUES' if is_knockout_target and include_all_venues else target_venue.upper()}"
             if target_venue
             else f"{str(target.get('competitionName') or 'COMPETITION').upper()} · {stage_label}"
         ),
