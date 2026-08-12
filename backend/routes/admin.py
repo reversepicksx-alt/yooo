@@ -1434,6 +1434,8 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "projectedValue": 1,
         "confidenceScore": 1,
         "tacticalContext": 1,
+        # Required for top-league enrichment skew detection.
+        "leagueId": 1,
         # Required so the validator can identify voided picks for nVoidedCovered.
         "voidReason": 1,
     }
@@ -1485,10 +1487,15 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     n_valid = validation.get("bzzoiroValidN", 0)
     n_absent = validation.get("bzzoiroAbsentN", 0)
     n_voided = validation.get("nVoidedCovered", 0)
+    n_live_refined = validation.get("liveRefinedN", 0)
+    live_refined_hr = validation.get("liveRefinedHitRate")
     hr_a = (validation.get("bzzoiroValid") or {}).get("hitRate")
     hr_b = (validation.get("bzzoiroAbsent") or {}).get("hitRate")
     mae_a = (validation.get("bzzoiroValid") or {}).get("projection", {}).get("mae")
     mae_b = (validation.get("bzzoiroAbsent") or {}).get("projection", {}).get("mae")
+    skew_info = validation.get("topLeagueSkew") or {}
+    skew_detected = skew_info.get("detected", False)
+    hr_threshold = (validation.get("promotionDecision") or {}).get("hitRateThreshold", -2.0)
     total = n_valid + n_absent
 
     # Persist audit record.
@@ -1500,11 +1507,17 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "bzzoiroAbsentN": n_absent,
         # Voided picks with a valid Bzzoiro snapshot — coverage corpus only.
         "nVoidedCovered": n_voided,
+        # Live-mode refined: picks where BZZOIRO_POSITION_LIVE=live actively
+        # overrode a generic API-Football label.
+        "liveRefinedN": n_live_refined,
+        "liveRefinedHitRate": live_refined_hr,
         "promotionVerdict": verdict,
         "bzzoiroHitRate": hr_a,
         "baselineHitRate": hr_b,
         "bzzoiroMAE": mae_a,
         "baselineMAE": mae_b,
+        "topLeagueSkewDetected": skew_detected,
+        "hitRateThreshold": hr_threshold,
         "result": validation,
     }
     try:
@@ -1524,13 +1537,37 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
             f"carry a valid Bzzoiro snapshot and count toward the coverage corpus "
             f"but are excluded from hit-rate and MAE metrics."
         )
+    if n_live_refined:
+        lr_note = (
+            f" (hit rate: {live_refined_hr}%)" if live_refined_hr is not None else ""
+        )
+        observations.append(
+            f"ℹ️  {n_live_refined} of those picks went through with BZZOIRO_POSITION_LIVE=live "
+            f"and had a generic API-Football label refined to a specific position{lr_note}."
+        )
+    else:
+        observations.append(
+            "ℹ️  No picks have yet accumulated with BZZOIRO_POSITION_LIVE=live active "
+            "(positionSource=bzzoiro_live_confirmed_lineup). These are needed for a "
+            "true before/after comparison — accumulate 30+ settled picks under live mode."
+        )
+
+    # Top-league skew
+    if skew_detected:
+        skew_detail = skew_info.get("detail", "")
+        observations.append(
+            f"⚠️  Top-league enrichment skew confirmed — hit-rate threshold tightened "
+            f"from −2 pp to +{hr_threshold} pp. {skew_detail}"
+        )
+    elif skew_info.get("detail"):
+        observations.append(f"✅  {skew_info['detail']}")
 
     if hr_a is not None and hr_b is not None:
         gap = round(hr_a - hr_b, 1)
-        symbol = "✅" if gap >= 0 else ("⚠️" if gap >= -2 else "❌")
+        symbol = "✅" if gap >= hr_threshold else ("⚠️" if gap >= -2 else "❌")
         observations.append(
             f"{symbol} Hit rate — Bzzoiro-valid: {hr_a}%, absent: {hr_b}% "
-            f"(gap: {gap:+.1f} pp)."
+            f"(gap: {gap:+.1f} pp; threshold: {hr_threshold:+.0f} pp)."
         )
     elif hr_a is not None:
         observations.append(f"ℹ️  Bzzoiro-valid hit rate: {hr_a}% (no baseline to compare).")
@@ -1548,8 +1585,8 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     )
     observations.append(
         "ℹ️  Observational caveat: picks receiving Bzzoiro coverage may differ "
-        "systematically from those that do not (e.g. top-league bias). "
-        "Treat verdict as an indicator, not a causal proof."
+        "systematically from those that do not. Top-league skew is now auto-detected "
+        "and tightens the hit-rate threshold when confirmed."
     )
 
     return {
@@ -1561,10 +1598,14 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
         "bzzoiroValidN": n_valid,
         "bzzoiroAbsentN": n_absent,
         "nVoidedCovered": n_voided,
+        "liveRefinedN": n_live_refined,
+        "liveRefinedHitRate": live_refined_hr,
         "bzzoiroHitRate": hr_a,
         "baselineHitRate": hr_b,
         "bzzoiroMAE": mae_a,
         "baselineMAE": mae_b,
+        "topLeagueSkewDetected": skew_detected,
+        "hitRateThreshold": hr_threshold,
         "promotionVerdict": verdict,
         "promotionSummary": summary,
         "observations": observations,
@@ -1604,6 +1645,10 @@ async def admin_bzzoiro_position_replay_last(email: str, token: str):
     n_valid = doc.get("bzzoiroValidN", 0)
     n_absent = doc.get("bzzoiroAbsentN", 0)
     n_voided = doc.get("nVoidedCovered", 0)
+    n_live_refined = doc.get("liveRefinedN", 0)
+    live_refined_hr = doc.get("liveRefinedHitRate")
+    skew_detected = doc.get("topLeagueSkewDetected", False)
+    hr_threshold = doc.get("hitRateThreshold", -2.0)
     total = n_valid + n_absent
     if total or n_voided:
         observations.append(
@@ -1615,14 +1660,36 @@ async def admin_bzzoiro_position_replay_last(email: str, token: str):
                 f"ℹ️  {n_voided} voided pick(s) carry a Bzzoiro snapshot "
                 f"(excluded from hit-rate metrics)."
             )
+    if n_live_refined:
+        lr_note = (
+            f" (hit rate: {live_refined_hr}%)" if live_refined_hr is not None else ""
+        )
+        observations.append(
+            f"ℹ️  {n_live_refined} picks went through with BZZOIRO_POSITION_LIVE=live "
+            f"and had a generic label refined to a specific position{lr_note}."
+        )
+    else:
+        observations.append(
+            "ℹ️  No live-mode refined picks yet (positionSource=bzzoiro_live_confirmed_lineup). "
+            "Accumulate 30+ settled picks under BZZOIRO_POSITION_LIVE=live for a true comparison."
+        )
+    # Top-league skew
+    skew_info = (validation.get("topLeagueSkew") or {})
+    if skew_detected:
+        observations.append(
+            f"⚠️  Top-league skew confirmed — hit-rate threshold tightened to +{hr_threshold} pp."
+        )
+    elif skew_info.get("detail"):
+        observations.append(f"✅  {skew_info['detail']}")
+
     hr_a = doc.get("bzzoiroHitRate")
     hr_b = doc.get("baselineHitRate")
     if hr_a is not None and hr_b is not None:
         gap = round(hr_a - hr_b, 1)
-        symbol = "✅" if gap >= 0 else ("⚠️" if gap >= -2 else "❌")
+        symbol = "✅" if gap >= hr_threshold else ("⚠️" if gap >= -2 else "❌")
         observations.append(
             f"{symbol} Hit rate — Bzzoiro-valid: {hr_a}%, absent: {hr_b}% "
-            f"(gap: {gap:+.1f} pp)."
+            f"(gap: {gap:+.1f} pp; threshold: {hr_threshold:+.0f} pp)."
         )
     mae_a = doc.get("bzzoiroMAE")
     mae_b = doc.get("baselineMAE")
@@ -1642,10 +1709,14 @@ async def admin_bzzoiro_position_replay_last(email: str, token: str):
         "bzzoiroValidN": n_valid,
         "bzzoiroAbsentN": n_absent,
         "nVoidedCovered": n_voided,
+        "liveRefinedN": n_live_refined,
+        "liveRefinedHitRate": live_refined_hr,
         "bzzoiroHitRate": hr_a,
         "baselineHitRate": hr_b,
         "bzzoiroMAE": mae_a,
         "baselineMAE": mae_b,
+        "topLeagueSkewDetected": skew_detected,
+        "hitRateThreshold": hr_threshold,
         "promotionVerdict": verdict,
         "promotionSummary": summary,
         "observations": observations,

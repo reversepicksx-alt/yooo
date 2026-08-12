@@ -1309,13 +1309,18 @@ def validate_weighted_opponent_evidence(rows: list[dict]) -> dict:
 
 
 def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
-    """Compare settled soccer picks where Bzzoiro position data was valid vs unavailable.
+    """Compare settled soccer picks by Bzzoiro position-refinement source.
 
     This is a group-comparison replay, not a walk-forward simulation:
 
     - Group A (bzzoiro_valid): settled picks where
       ``tacticalContext.bzzoiroEnrichment.positionValidation.valid == True``
-      and the fix-date match was "exact".
+      and the fixture-date match was "exact".  Kept for context only.
+    - Group A-live (bzzoiro_live_refined): subset of group A where
+      ``tacticalContext.player.positionSource == "bzzoiro_live_confirmed_lineup"``.
+      These are picks generated while BZZOIRO_POSITION_LIVE=live was active and
+      a generic API-Football label was overridden with a Bzzoiro-confirmed position.
+      THIS IS THE PROMOTION COHORT — all scoring gates use this sub-group.
     - Group B (bzzoiro_absent): all other settled soccer picks in the corpus
       (bzzoiro unavailable, failed validation, or non-exact fixture match).
 
@@ -1324,19 +1329,27 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
       - Directional accuracy (implied projection direction vs actual outcome)
       - Projection MAE vs actualValue when projectedValue is present
 
-    The comparison answers: "do picks where Bzzoiro confirmed the player's
-    position hit more often than picks where we relied on API-Football alone?"
+    Top-league enrichment skew detection
+    -------------------------------------
+    Bzzoiro lineup data is disproportionately available for top domestic leagues
+    (EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, UEL).  Skew is measured
+    against the live-refined cohort (not the broader bzzoiro-valid cohort) so
+    that shadow-mode picks cannot dilute or inflate the signal.  When the
+    live-refined top-league fraction exceeds the absent fraction by ≥ 20 pp AND
+    the live-refined fraction is ≥ 60%, the hit-rate threshold tightens from
+    −2 pp (not harmful) to +2 pp (demonstrably beneficial).
 
     Promotion criteria (all must pass for a GO verdict):
-      1. Bzzoiro group hit rate ≥ baseline group hit rate − 2 pp  (not harmful)
-      2. ≥ _MIN_ELIGIBLE_FOR_PROMOTION scored bzzoiro-valid picks
-      3. Bzzoiro projection MAE ≤ baseline MAE + 0.1  (within tolerance)
+      1. Live-refined sample size ≥ 30  (mandatory blocker — GO impossible without it)
+      2. Live-refined hit rate ≥ absent hit rate + threshold  (−2 pp standard,
+         +2 pp when top-league skew is confirmed)
+      3. Live-refined projection MAE ≤ absent MAE + 0.1  (within tolerance)
 
-    Note: because we cannot control which picks received bzzoiro enrichment,
+    Note: because we cannot control which picks received live Bzzoiro enrichment,
     this is an observational comparison, not a controlled experiment. Confounders
-    (e.g. richer data available for top-league matches) may inflate group A's
-    apparent accuracy. The verdict is therefore an indicator, not a definitive
-    causal proof.
+    (e.g. richer data available for top-league matches) may inflate apparent accuracy.
+    Skew detection mitigates this automatically. The verdict is still an indicator,
+    not a definitive causal proof.
 
     Leakage policy: all metrics read the fields stored at prediction time
     (projectedValue, confidenceScore, recommendation, result). No post-hoc
@@ -1432,125 +1445,247 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
     stats_a = _group_stats(group_a, "bzzoiro_valid")
     stats_b = _group_stats(group_b, "bzzoiro_absent")
 
-    _MIN_ELIGIBLE_FOR_PROMOTION = 20
+    # ── Live-mode refined sub-group ───────────────────────────────────────────
+    # Picks in the bzzoiro-valid group where BZZOIRO_POSITION_LIVE=live was
+    # active and the position source shows a generic API-Football label was
+    # actually refined (i.e. positionSource == "bzzoiro_live_confirmed_lineup").
+    # These are the "true" live-mode picks that exercised the new code path.
+    group_a_live: list[dict] = []
+    for row in group_a:
+        tc = row.get("tacticalContext") or {}
+        player_info = tc.get("player") or {}
+        pos_source = str(player_info.get("positionSource") or "").lower()
+        if pos_source == "bzzoiro_live_confirmed_lineup":
+            group_a_live.append(row)
+    stats_a_live = _group_stats(group_a_live, "bzzoiro_live_refined")
+
+    # ── Top-league enrichment skew detection ─────────────────────────────────
+    # Skew is computed against the live-refined promotion cohort (group_a_live),
+    # NOT the broader bzzoiro-valid cohort.  Using the broader cohort would allow
+    # shadow-mode picks (which pre-date BZZOIRO_POSITION_LIVE=live) to dilute a
+    # true top-league concentration in the live cohort, or to inject shadow-only
+    # top-league picks that falsely trigger the tighter threshold when the actual
+    # live picks are balanced across leagues.
+    _TOP_LEAGUE_IDS: frozenset[int] = frozenset({
+        39,   # English Premier League
+        140,  # Spanish La Liga
+        78,   # German Bundesliga
+        135,  # Italian Serie A
+        61,   # French Ligue 1
+        2,    # UEFA Champions League
+        3,    # UEFA Europa League
+    })
+
+    def _top_league_fraction(group: list[dict]) -> float | None:
+        if not group:
+            return None
+        top = sum(
+            1 for r in group
+            if int(r.get("leagueId") or 0) in _TOP_LEAGUE_IDS
+        )
+        return round(top / len(group) * 100, 1)
+
+    # Fractions are from the live-refined cohort vs the absent baseline.
+    top_frac_live = _top_league_fraction(group_a_live)
+    top_frac_b = _top_league_fraction(group_b)
+    top_league_skew_detected: bool = False
+    top_league_skew_detail: str | None = None
+
+    if top_frac_live is not None and top_frac_b is not None:
+        skew_gap = round(top_frac_live - top_frac_b, 1)
+        if top_frac_live >= 60.0 and skew_gap >= 20.0:
+            top_league_skew_detected = True
+            top_league_skew_detail = (
+                f"Top-league concentration — live-refined: {top_frac_live}%, "
+                f"absent: {top_frac_b}% (gap: +{skew_gap} pp). "
+                "Live-mode picks are disproportionately skewed toward top domestic "
+                "leagues where match data is richer. The apparent hit-rate advantage "
+                "may reflect data quality, not position refinement. Stricter threshold applied."
+            )
+        else:
+            top_league_skew_detail = (
+                f"Top-league concentration — live-refined: {top_frac_live}%, "
+                f"absent: {top_frac_b}% (gap: {skew_gap:+.1f} pp) — no material skew detected."
+            )
+
+    # When top-league skew is confirmed, the hit-rate threshold tightens from
+    # "not harmful (≥ −2 pp)" to "demonstrably beneficial (≥ +2 pp)" so that
+    # a GO verdict requires real evidence of improvement, not just absence of harm.
+    _HIT_RATE_THRESHOLD = 2.0 if top_league_skew_detected else -2.0
+    _HIT_RATE_THRESHOLD_LABEL = (
+        f"+{_HIT_RATE_THRESHOLD} pp (tightened due to confirmed top-league skew)"
+        if top_league_skew_detected
+        else f"{_HIT_RATE_THRESHOLD} pp (standard)"
+    )
+
+    _MIN_ELIGIBLE_FOR_PROMOTION = 30
+    _MIN_HIT_N = 10
 
     # ── Promotion criteria ────────────────────────────────────────────────────
+    # Criteria are evaluated against the live-refined sub-group, not the broader
+    # bzzoiro-valid cohort.  The broader group may include shadow-mode picks that
+    # pre-date BZZOIRO_POSITION_LIVE=live, so it cannot substitute for live evidence.
     criteria: list[dict] = []
     issues: list[str] = []
     passed: list[str] = []
 
-    # 1. Sample size gate
-    n_a = stats_a["n"]
-    if n_a >= _MIN_ELIGIBLE_FOR_PROMOTION:
+    n_a = stats_a["n"]           # broader bzzoiro_valid — context only
+    n_live = stats_a_live["n"]   # live-mode refined — the promotion cohort
+
+    # 1. Live-mode sample size gate (mandatory blocker — GO is impossible without it)
+    if n_live >= _MIN_ELIGIBLE_FOR_PROMOTION:
         passed.append(
-            f"Bzzoiro-valid group has {n_a} scored picks "
+            f"Live-mode refined group has {n_live} scored picks "
             f"(≥ {_MIN_ELIGIBLE_FOR_PROMOTION} required)"
         )
-        criteria.append({"check": "sample_size", "result": "pass",
-                          "bzzoiroValidN": n_a, "minimum": _MIN_ELIGIBLE_FOR_PROMOTION})
+        criteria.append({"check": "live_sample_size", "result": "pass",
+                          "liveRefinedN": n_live, "minimum": _MIN_ELIGIBLE_FOR_PROMOTION})
     else:
         issues.append(
-            f"Only {n_a} bzzoiro-valid scored picks "
-            f"(need ≥ {_MIN_ELIGIBLE_FOR_PROMOTION})"
+            f"Only {n_live} live-mode refined scored picks "
+            f"(need ≥ {_MIN_ELIGIBLE_FOR_PROMOTION}). Accumulate more settled soccer "
+            "picks with BZZOIRO_POSITION_LIVE=live active for a true before/after comparison."
         )
-        criteria.append({"check": "sample_size", "result": "insufficient_data",
-                          "bzzoiroValidN": n_a, "minimum": _MIN_ELIGIBLE_FOR_PROMOTION})
+        criteria.append({"check": "live_sample_size", "result": "insufficient_data",
+                          "liveRefinedN": n_live, "minimum": _MIN_ELIGIBLE_FOR_PROMOTION})
 
-    # 2. Hit rate not materially worse than baseline
-    hr_a = stats_a["hitRate"]
+    # 1b. Top-league skew check (informational — does not block GO but tightens hit-rate)
+    if top_league_skew_detected and top_league_skew_detail:
+        issues.append(top_league_skew_detail)
+        criteria.append({
+            "check": "top_league_skew",
+            "result": "skew_confirmed",
+            "liveRefinedTopLeaguePct": top_frac_live,
+            "baselineTopLeaguePct": top_frac_b,
+            "hitRateThresholdAdjusted": True,
+            "note": top_league_skew_detail,
+        })
+    elif top_league_skew_detail:
+        passed.append(top_league_skew_detail)
+        criteria.append({
+            "check": "top_league_skew",
+            "result": "pass",
+            "liveRefinedTopLeaguePct": top_frac_live,
+            "baselineTopLeaguePct": top_frac_b,
+            "hitRateThresholdAdjusted": False,
+            "note": top_league_skew_detail,
+        })
+
+    # 2. Live-refined hit rate vs absent baseline
+    # Threshold is tightened to +2 pp when top-league skew is confirmed.
+    hr_live = stats_a_live["hitRate"]
     hr_b = stats_b["hitRate"]
-    _MIN_HIT_N = 10
-    if hr_a is not None and hr_b is not None and n_a >= _MIN_HIT_N:
-        gap = round(hr_a - hr_b, 1)
-        if gap >= -2.0:
+    if hr_live is not None and hr_b is not None and n_live >= _MIN_HIT_N:
+        gap = round(hr_live - hr_b, 1)
+        if gap >= _HIT_RATE_THRESHOLD:
             passed.append(
-                f"Bzzoiro-valid hit rate ({hr_a}%) within 2 pp of "
-                f"absent group ({hr_b}%) — not harmful"
+                f"Live-refined hit rate ({hr_live}%) vs absent group ({hr_b}%) — "
+                f"gap {gap:+.1f} pp passes threshold ({_HIT_RATE_THRESHOLD_LABEL})"
             )
-            criteria.append({"check": "hit_rate", "result": "pass",
-                              "bzzoiroHitRate": hr_a, "baselineHitRate": hr_b,
-                              "gapPp": gap})
+            criteria.append({"check": "live_hit_rate", "result": "pass",
+                              "liveRefinedHitRate": hr_live, "baselineHitRate": hr_b,
+                              "gapPp": gap,
+                              "threshold": _HIT_RATE_THRESHOLD,
+                              "thresholdLabel": _HIT_RATE_THRESHOLD_LABEL})
         else:
             issues.append(
-                f"Bzzoiro-valid hit rate ({hr_a}%) is {abs(gap):.1f} pp below "
-                f"absent group ({hr_b}%) — position enrichment may degrade calibration"
+                f"Live-refined hit rate ({hr_live}%) vs absent group ({hr_b}%) — "
+                f"gap {gap:+.1f} pp does not meet threshold ({_HIT_RATE_THRESHOLD_LABEL})"
             )
-            criteria.append({"check": "hit_rate", "result": "fail",
-                              "bzzoiroHitRate": hr_a, "baselineHitRate": hr_b,
-                              "gapPp": gap})
+            criteria.append({"check": "live_hit_rate", "result": "fail",
+                              "liveRefinedHitRate": hr_live, "baselineHitRate": hr_b,
+                              "gapPp": gap,
+                              "threshold": _HIT_RATE_THRESHOLD,
+                              "thresholdLabel": _HIT_RATE_THRESHOLD_LABEL})
     else:
-        note = f"Need ≥{_MIN_HIT_N} picks in bzzoiro-valid group; have {n_a}"
-        criteria.append({"check": "hit_rate", "result": "insufficient_data",
-                          "bzzoiroHitRate": hr_a, "baselineHitRate": hr_b,
+        note = f"Need ≥{_MIN_HIT_N} picks in live-refined group; have {n_live}"
+        criteria.append({"check": "live_hit_rate", "result": "insufficient_data",
+                          "liveRefinedHitRate": hr_live, "baselineHitRate": hr_b,
+                          "threshold": _HIT_RATE_THRESHOLD,
                           "note": note})
 
-    # 3. Projection MAE not materially worse than baseline (within 0.1 tolerance)
-    mae_a = (stats_a["projection"] or {}).get("mae")
+    # 3. Live-refined projection MAE vs absent baseline (within 0.1 tolerance)
+    mae_live = (stats_a_live["projection"] or {}).get("mae")
     mae_b = (stats_b["projection"] or {}).get("mae")
     _MAE_TOLERANCE = 0.1
-    if mae_a is not None and mae_b is not None:
-        if mae_a <= mae_b + _MAE_TOLERANCE:
+    if mae_live is not None and mae_b is not None:
+        if mae_live <= mae_b + _MAE_TOLERANCE:
             passed.append(
-                f"Bzzoiro-valid MAE ({mae_a}) ≤ absent-group MAE ({mae_b}) + {_MAE_TOLERANCE} tolerance"
+                f"Live-refined MAE ({mae_live}) ≤ absent-group MAE ({mae_b}) + {_MAE_TOLERANCE} tolerance"
             )
-            criteria.append({"check": "projection_mae", "result": "pass",
-                              "bzzoiroMAE": mae_a, "baselineMAE": mae_b,
+            criteria.append({"check": "live_projection_mae", "result": "pass",
+                              "liveRefinedMAE": mae_live, "baselineMAE": mae_b,
                               "tolerance": _MAE_TOLERANCE})
         else:
             issues.append(
-                f"Bzzoiro-valid MAE ({mae_a}) exceeds absent-group MAE ({mae_b}) "
-                f"by more than {_MAE_TOLERANCE} — projection accuracy degraded"
+                f"Live-refined MAE ({mae_live}) exceeds absent-group MAE ({mae_b}) "
+                f"by more than {_MAE_TOLERANCE} — projection accuracy degraded in live mode"
             )
-            criteria.append({"check": "projection_mae", "result": "fail",
-                              "bzzoiroMAE": mae_a, "baselineMAE": mae_b,
+            criteria.append({"check": "live_projection_mae", "result": "fail",
+                              "liveRefinedMAE": mae_live, "baselineMAE": mae_b,
                               "tolerance": _MAE_TOLERANCE})
     else:
-        criteria.append({"check": "projection_mae", "result": "insufficient_data",
-                          "bzzoiroMAE": mae_a, "baselineMAE": mae_b,
+        criteria.append({"check": "live_projection_mae", "result": "insufficient_data",
+                          "liveRefinedMAE": mae_live, "baselineMAE": mae_b,
                           "tolerance": _MAE_TOLERANCE})
 
     # ── Verdict ───────────────────────────────────────────────────────────────
-    has_insufficient = any(c["result"] == "insufficient_data" for c in criteria)
-    has_failures = any(c["result"] == "fail" for c in criteria)
+    # skew_confirmed criteria never block a GO on their own — they only tighten
+    # the hit-rate threshold (already applied above).  Exclude them from the
+    # all_pass / has_failures gate so they don't introduce a third outcome class.
+    _scoreable_criteria = [
+        c for c in criteria if c.get("check") != "top_league_skew"
+    ]
+    has_insufficient = any(c["result"] == "insufficient_data" for c in _scoreable_criteria)
+    has_failures = any(c["result"] == "fail" for c in _scoreable_criteria)
     all_pass = (
         not has_failures
         and not has_insufficient
-        and all(c["result"] == "pass" for c in criteria)
-        and bool(criteria)
+        and all(c["result"] == "pass" for c in _scoreable_criteria)
+        and bool(_scoreable_criteria)
     )
 
-    if n_a < _MIN_ELIGIBLE_FOR_PROMOTION:
+    skew_suffix = (
+        " Top-league enrichment skew was detected; the hit-rate threshold was "
+        "tightened to require a demonstrable improvement (≥ +2 pp) over baseline."
+        if top_league_skew_detected else ""
+    )
+
+    if n_live < _MIN_ELIGIBLE_FOR_PROMOTION:
         verdict = "CAUTION"
         summary = (
-            f"Insufficient data — only {n_a} bzzoiro-valid scored pick(s) "
+            f"Insufficient live-mode data — only {n_live} live-refined scored pick(s) "
             f"(minimum {_MIN_ELIGIBLE_FOR_PROMOTION} required for a GO verdict). "
-            "Accumulate more settled soccer picks with exact Bzzoiro fixture coverage "
-            "before promoting."
+            "Ensure BZZOIRO_POSITION_LIVE=live is set in the backend environment and "
+            "accumulate more settled soccer picks before re-running this replay."
         )
     elif has_failures:
         verdict = "NO_GO"
         summary = (
             "Bzzoiro position enrichment fails key promotion criteria. "
             "Keep shadow-only and investigate the flagged issues before promoting."
+            + skew_suffix
         )
     elif has_insufficient:
         verdict = "CAUTION"
         summary = (
             "One or more promotion criteria could not be evaluated (insufficient data). "
             "All criteria must fully pass before promoting."
+            + skew_suffix
         )
     elif all_pass:
         verdict = "GO"
         summary = (
             "Bzzoiro position enrichment passes all out-of-sample promotion criteria. "
-            "Safe to promote from shadow-only to live mode by setting "
-            "BZZOIRO_POSITION_LIVE=live in the backend environment."
+            "Safe to promote by keeping BZZOIRO_POSITION_LIVE=live in the backend environment."
+            + skew_suffix
         )
     else:
         verdict = "CAUTION"
         summary = (
             "Mixed results — some criteria pass, others do not. "
             "Keep shadow-only; investigate flagged issues before promoting."
+            + skew_suffix
         )
 
     dates = _date_range(ordered)
@@ -1558,10 +1693,24 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
         "totalRows": len(ordered),
         "bzzoiroValidN": n_a,
         "bzzoiroAbsentN": stats_b["n"],
+        # Live-mode refined picks: subset of bzzoiro_valid where BZZOIRO_POSITION_LIVE=live
+        # was active and the positionSource is "bzzoiro_live_confirmed_lineup".
+        "liveRefinedN": stats_a_live["n"],
+        "liveRefinedHitRate": stats_a_live["hitRate"],
         # Voided picks (DNP, etc.) with a valid Bzzoiro snapshot: counted for
         # corpus-size purposes only.  Not included in hit-rate/MAE groups.
         "nVoidedCovered": n_voided_covered,
         "dateRange": dates,
+        "topLeagueSkew": {
+            "detected": top_league_skew_detected,
+            # Fractions are from the live-refined cohort vs absent — consistent
+            # with the promotion cohort.  Shadow picks do not dilute this signal.
+            "liveRefinedTopLeaguePct": top_frac_live,
+            "baselineTopLeaguePct": top_frac_b,
+            "hitRateThresholdAdjusted": top_league_skew_detected,
+            "hitRateThreshold": _HIT_RATE_THRESHOLD,
+            "detail": top_league_skew_detail,
+        },
         "leakagePolicy": (
             "Metrics read fields stored at prediction time "
             "(result, projectedValue, line, actualValue). "
@@ -1570,9 +1719,11 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
         "observationalCaveat": (
             "This is an observational group comparison, not a controlled experiment. "
             "Picks receiving Bzzoiro enrichment may systematically differ from those "
-            "that do not (e.g. top-league coverage bias). Treat verdict as an indicator."
+            "that do not (e.g. top-league coverage bias). Top-league skew is now "
+            "detected automatically and tightens the hit-rate threshold when confirmed."
         ),
         "bzzoiroValid": stats_a,
+        "bzzoiroLiveRefined": stats_a_live,
         "bzzoiroAbsent": stats_b,
         "criteria": criteria,
         "promotionDecision": {
@@ -1581,19 +1732,25 @@ def validate_bzzoiro_position_replay(rows: list[dict]) -> dict:
             "issues": issues,
             "passed": passed,
             "criteria": criteria,
+            "topLeagueSkewDetected": top_league_skew_detected,
+            "hitRateThreshold": _HIT_RATE_THRESHOLD,
+            "hitRateThresholdLabel": _HIT_RATE_THRESHOLD_LABEL,
             "promotionEnvVar": "BZZOIRO_POSITION_LIVE",
             "promotionValues": {
                 "shadow": "position_supplement_explanation_only",
                 "live": "position_supplement_also_overrides_generic_api_football_labels",
             },
             "promotionCommand": (
-                "Set BZZOIRO_POSITION_LIVE=live in the backend environment, "
-                "then redeploy."
+                "Set BZZOIRO_POSITION_LIVE=live in the backend environment and redeploy "
+                "to activate live-mode position refinement for generic API-Football labels. "
+                "Re-run this replay after 30+ settled picks have accumulated under live mode."
             ),
             "note": (
                 "GO = all criteria pass with sufficient data; "
                 "CAUTION = mixed or insufficient evidence; "
-                "NO_GO = one or more criteria fail"
+                "NO_GO = one or more criteria fail. "
+                "Top-league skew detection tightens the hit-rate threshold from "
+                "−2 pp (not harmful) to +2 pp (demonstrably beneficial) when confirmed."
             ),
         },
     }
