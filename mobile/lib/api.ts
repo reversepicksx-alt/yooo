@@ -2408,6 +2408,47 @@ export async function getBzzoiroStatus(
   );
 }
 
+export interface BzzoiroPositionReplayResult {
+  found: boolean;
+  generatedAt?: string;
+  bzzoiroValidN?: number;
+  bzzoiroAbsentN?: number;
+  nVoidedCovered?: number;
+  bzzoiroHitRate?: number | null;
+  baselineHitRate?: number | null;
+  bzzoiroMAE?: number | null;
+  baselineMAE?: number | null;
+  promotionVerdict?: string;
+  promotionSummary?: string;
+  observations?: string[];
+  liveFlagState: string;
+  // When returned from a fresh run (POST), validation is the full payload
+  success?: boolean;
+  n?: number;
+  sport?: string;
+  validation?: any;
+}
+
+export async function getLastBzzoiroPositionReplay(
+  email: string,
+  token: string,
+): Promise<BzzoiroPositionReplayResult> {
+  return apiCall(
+    `/api/admin/bzzoiro-position-replay/last?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`,
+    { method: 'GET' },
+  );
+}
+
+export async function runBzzoiroPositionReplay(
+  email: string,
+  token: string,
+): Promise<BzzoiroPositionReplayResult> {
+  return apiCall('/api/admin/bzzoiro-position-replay', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+}
+
 export async function resetQuotaBreaker(
   email: string,
   token: string,

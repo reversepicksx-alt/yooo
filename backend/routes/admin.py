@@ -1441,18 +1441,11 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     cursor = db.picks.find(query, projection).sort("settledAt", 1).limit(req.limit)
     rows = await cursor.to_list(length=req.limit)
 
+    import os as _os
+    _pos_live = _os.environ.get("BZZOIRO_POSITION_LIVE", "shadow").strip().lower()
+    _live_flag_state = "live" if _pos_live == "live" else "shadow"
+
     if not rows:
-        result_payload = {
-            "success": True,
-            "n": 0,
-            "sport": "soccer",
-            "generatedAt": generated_at,
-            "message": (
-                "No eligible settled soccer picks found. "
-                "Picks must have status='settled' and result in ['hit', 'miss']."
-            ),
-            "validation": None,
-        }
         await db.model_audit.insert_one({
             "auditType": "bzzoiro_position_replay",
             "sport": "soccer",
@@ -1462,46 +1455,62 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
             "promotionVerdict": "CAUTION",
             "result": None,
         })
-        return result_payload
+        return {
+            "found": False,
+            "success": True,
+            "n": 0,
+            "sport": "soccer",
+            "generatedAt": generated_at,
+            "bzzoiroValidN": 0,
+            "bzzoiroAbsentN": 0,
+            "nVoidedCovered": 0,
+            "bzzoiroHitRate": None,
+            "baselineHitRate": None,
+            "bzzoiroMAE": None,
+            "baselineMAE": None,
+            "promotionVerdict": "CAUTION",
+            "promotionSummary": "",
+            "observations": [
+                "No eligible settled soccer picks found. "
+                "Picks must have status='settled' and result in ['hit', 'miss']."
+            ],
+            "liveFlagState": _live_flag_state,
+            "validation": None,
+        }
 
     validation = validate_bzzoiro_position_replay(rows)
+
+    verdict = (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
+    summary = (validation.get("promotionDecision") or {}).get("summary", "")
+    n_valid = validation.get("bzzoiroValidN", 0)
+    n_absent = validation.get("bzzoiroAbsentN", 0)
+    n_voided = validation.get("nVoidedCovered", 0)
+    hr_a = (validation.get("bzzoiroValid") or {}).get("hitRate")
+    hr_b = (validation.get("bzzoiroAbsent") or {}).get("hitRate")
+    mae_a = (validation.get("bzzoiroValid") or {}).get("projection", {}).get("mae")
+    mae_b = (validation.get("bzzoiroAbsent") or {}).get("projection", {}).get("mae")
+    total = n_valid + n_absent
 
     # Persist audit record.
     audit_doc = {
         "auditType": "bzzoiro_position_replay",
         "sport": "soccer",
         "generatedAt": generated_at,
-        "bzzoiroValidN": validation.get("bzzoiroValidN", 0),
-        "bzzoiroAbsentN": validation.get("bzzoiroAbsentN", 0),
+        "bzzoiroValidN": n_valid,
+        "bzzoiroAbsentN": n_absent,
         # Voided picks with a valid Bzzoiro snapshot — coverage corpus only.
-        "nVoidedCovered": validation.get("nVoidedCovered", 0),
-        "promotionVerdict": (
-            (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
-        ),
-        "bzzoiroHitRate": (
-            (validation.get("bzzoiroValid") or {}).get("hitRate")
-        ),
-        "baselineHitRate": (
-            (validation.get("bzzoiroAbsent") or {}).get("hitRate")
-        ),
-        "bzzoiroMAE": (
-            (validation.get("bzzoiroValid") or {}).get("projection", {}).get("mae")
-        ),
-        "baselineMAE": (
-            (validation.get("bzzoiroAbsent") or {}).get("projection", {}).get("mae")
-        ),
+        "nVoidedCovered": n_voided,
+        "promotionVerdict": verdict,
+        "bzzoiroHitRate": hr_a,
+        "baselineHitRate": hr_b,
+        "bzzoiroMAE": mae_a,
+        "baselineMAE": mae_b,
         "result": validation,
     }
     try:
         await db.model_audit.insert_one(audit_doc)
     except Exception as _audit_err:
         print(f"[BZZOIRO POSITION REPLAY] audit write failed: {_audit_err}")
-
-    verdict = (validation.get("promotionDecision") or {}).get("verdict", "CAUTION")
-    n_valid = validation.get("bzzoiroValidN", 0)
-    n_absent = validation.get("bzzoiroAbsentN", 0)
-    n_voided = validation.get("nVoidedCovered", 0)
-    total = n_valid + n_absent
 
     observations = []
     observations.append(
@@ -1516,8 +1525,6 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
             f"but are excluded from hit-rate and MAE metrics."
         )
 
-    hr_a = (validation.get("bzzoiroValid") or {}).get("hitRate")
-    hr_b = (validation.get("bzzoiroAbsent") or {}).get("hitRate")
     if hr_a is not None and hr_b is not None:
         gap = round(hr_a - hr_b, 1)
         symbol = "✅" if gap >= 0 else ("⚠️" if gap >= -2 else "❌")
@@ -1528,8 +1535,6 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     elif hr_a is not None:
         observations.append(f"ℹ️  Bzzoiro-valid hit rate: {hr_a}% (no baseline to compare).")
 
-    mae_a = (validation.get("bzzoiroValid") or {}).get("projection", {}).get("mae")
-    mae_b = (validation.get("bzzoiroAbsent") or {}).get("projection", {}).get("mae")
     if mae_a is not None and mae_b is not None:
         symbol = "✅" if mae_a <= mae_b else "⚠️"
         observations.append(
@@ -1538,8 +1543,8 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
 
     verdict_emoji = {"GO": "✅", "CAUTION": "⚠️", "NO_GO": "❌"}.get(verdict, "ℹ️")
     observations.append(
-        f"{verdict_emoji} Promotion verdict: {verdict} — "
-        + (validation.get("promotionDecision") or {}).get("summary", "")
+        f"{verdict_emoji} Promotion verdict: {verdict}"
+        + (f" — {summary}" if summary else ".")
     )
     observations.append(
         "ℹ️  Observational caveat: picks receiving Bzzoiro coverage may differ "
@@ -1548,12 +1553,103 @@ async def admin_bzzoiro_position_replay(req: BzzoiroPositionReplayRequest):
     )
 
     return {
+        "found": True,
         "success": True,
         "n": n_valid,
         "sport": "soccer",
         "generatedAt": generated_at,
+        "bzzoiroValidN": n_valid,
+        "bzzoiroAbsentN": n_absent,
+        "nVoidedCovered": n_voided,
+        "bzzoiroHitRate": hr_a,
+        "baselineHitRate": hr_b,
+        "bzzoiroMAE": mae_a,
+        "baselineMAE": mae_b,
+        "promotionVerdict": verdict,
+        "promotionSummary": summary,
         "observations": observations,
+        "liveFlagState": _live_flag_state,
         "validation": validation,
+    }
+
+
+@router.get("/bzzoiro-position-replay/last")
+async def admin_bzzoiro_position_replay_last(email: str, token: str):
+    """Owner-only: fetch the most recent bzzoiro_position_replay audit record.
+
+    Returns the persisted result from the last run of
+    POST /api/admin/bzzoiro-position-replay, plus the current
+    BZZOIRO_POSITION_LIVE environment variable state so the owner can
+    see whether the feature has been promoted without re-running the replay.
+    Returns ``{"found": false}`` when no record has been stored yet.
+    """
+    await verify_owner(email, token)
+
+    doc = await db.model_audit.find_one(
+        {"auditType": "bzzoiro_position_replay"},
+        {"_id": 0},
+        sort=[("generatedAt", -1)],
+    )
+
+    position_live = os.environ.get("BZZOIRO_POSITION_LIVE", "shadow").strip().lower()
+    live_flag_state = "live" if position_live == "live" else "shadow"
+
+    if not doc:
+        return {"found": False, "liveFlagState": live_flag_state}
+
+    # Rebuild observations from the persisted result so the card can display
+    # human-readable lines without storing them in the audit document.
+    validation = doc.get("result") or {}
+    observations: list[str] = []
+    n_valid = doc.get("bzzoiroValidN", 0)
+    n_absent = doc.get("bzzoiroAbsentN", 0)
+    n_voided = doc.get("nVoidedCovered", 0)
+    total = n_valid + n_absent
+    if total or n_voided:
+        observations.append(
+            f"ℹ️  {total} settled soccer picks — "
+            f"{n_valid} with valid Bzzoiro coverage, {n_absent} without."
+        )
+        if n_voided:
+            observations.append(
+                f"ℹ️  {n_voided} voided pick(s) carry a Bzzoiro snapshot "
+                f"(excluded from hit-rate metrics)."
+            )
+    hr_a = doc.get("bzzoiroHitRate")
+    hr_b = doc.get("baselineHitRate")
+    if hr_a is not None and hr_b is not None:
+        gap = round(hr_a - hr_b, 1)
+        symbol = "✅" if gap >= 0 else ("⚠️" if gap >= -2 else "❌")
+        observations.append(
+            f"{symbol} Hit rate — Bzzoiro-valid: {hr_a}%, absent: {hr_b}% "
+            f"(gap: {gap:+.1f} pp)."
+        )
+    mae_a = doc.get("bzzoiroMAE")
+    mae_b = doc.get("baselineMAE")
+    if mae_a is not None and mae_b is not None:
+        symbol = "✅" if mae_a <= mae_b else "⚠️"
+        observations.append(
+            f"{symbol} MAE — Bzzoiro-valid: {mae_a}, absent: {mae_b}."
+        )
+    verdict = doc.get("promotionVerdict", "CAUTION")
+    verdict_emoji = {"GO": "✅", "CAUTION": "⚠️", "NO_GO": "❌"}.get(verdict, "ℹ️")
+    summary = (validation.get("promotionDecision") or {}).get("summary", "")
+    observations.append(f"{verdict_emoji} Promotion verdict: {verdict}" + (f" — {summary}" if summary else "."))
+
+    return {
+        "found": True,
+        "generatedAt": doc.get("generatedAt"),
+        "bzzoiroValidN": n_valid,
+        "bzzoiroAbsentN": n_absent,
+        "nVoidedCovered": n_voided,
+        "bzzoiroHitRate": hr_a,
+        "baselineHitRate": hr_b,
+        "bzzoiroMAE": mae_a,
+        "baselineMAE": mae_b,
+        "promotionVerdict": verdict,
+        "promotionSummary": summary,
+        "observations": observations,
+        "liveFlagState": live_flag_state,
     }
 
 

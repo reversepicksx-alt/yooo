@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, getBzzoiroStatus, resetQuotaBreaker, triggerStorageCleanup, runModelReplay, Pick, AnalyticsData, BzzoiroStatus, ModelReplayResult } from '@/lib/api';
+import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, getBzzoiroStatus, getLastBzzoiroPositionReplay, runBzzoiroPositionReplay, resetQuotaBreaker, triggerStorageCleanup, runModelReplay, Pick, AnalyticsData, BzzoiroStatus, ModelReplayResult, BzzoiroPositionReplayResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -248,6 +248,15 @@ export default function AnalyticsDashboard({
   const [replayRunning, setReplayRunning] = React.useState(false);
   const [replayResult, setReplayResult] = React.useState<ModelReplayResult | null>(null);
   const [replayError, setReplayError] = React.useState<string | null>(null);
+  const [bzzoiroReplayRunning, setBzzoiroReplayRunning] = React.useState(false);
+  const [bzzoiroReplayResult, setBzzoiroReplayResult] = React.useState<BzzoiroPositionReplayResult | null>(null);
+  const [bzzoiroReplayError, setBzzoiroReplayError] = React.useState<string | null>(null);
+  const { data: lastBzzoiroReplay } = useQuery<BzzoiroPositionReplayResult>({
+    queryKey: ['lastBzzoiroReplay', session?.email],
+    queryFn: () => getLastBzzoiroPositionReplay(session!.email, session!.token),
+    enabled: visible && !!session,
+    staleTime: 5 * 60_000,
+  });
 
   const handleQuotaReset = async () => {
     if (!session || quotaResetting) return;
@@ -275,6 +284,22 @@ export default function AnalyticsDashboard({
       setReplayError(err?.message ?? 'Replay failed');
     } finally {
       setReplayRunning(false);
+    }
+  };
+
+  const handleRunBzzoiroReplay = async () => {
+    if (!session || bzzoiroReplayRunning) return;
+    setBzzoiroReplayRunning(true);
+    setBzzoiroReplayError(null);
+    setBzzoiroReplayResult(null);
+    try {
+      const result = await runBzzoiroPositionReplay(session.email, session.token);
+      setBzzoiroReplayResult(result);
+      queryClient.invalidateQueries({ queryKey: ['lastBzzoiroReplay'] });
+    } catch (err: any) {
+      setBzzoiroReplayError(err?.message ?? 'Replay failed');
+    } finally {
+      setBzzoiroReplayRunning(false);
     }
   };
 
@@ -421,6 +446,105 @@ export default function AnalyticsDashboard({
           </Text>{' '}
           in the production environment.
         </Text>
+      </View>
+    );
+  };
+
+  const renderBzzoiroPositionReplay = () => {
+    // Show the last persisted audit record (always), with any fresh run result
+    // overlaid when the owner clicks "Run replay" during this session.
+    const display = bzzoiroReplayResult ?? lastBzzoiroReplay;
+    const liveFlagState = bzzoiroReplayResult?.liveFlagState ?? lastBzzoiroReplay?.liveFlagState ?? 'shadow';
+    const verdict = bzzoiroReplayResult?.promotionVerdict ?? (lastBzzoiroReplay?.found ? lastBzzoiroReplay.promotionVerdict : undefined);
+    const verdictColor = verdict === 'GO' ? Colors.success : verdict === 'NO_GO' ? Colors.error : '#f59e0b';
+    const flagColor = liveFlagState === 'live' ? Colors.success : Colors.textTertiary;
+
+    return (
+      <View style={[s.storageCard, { borderColor: 'rgba(99,102,241,0.3)' }]}>
+        <View style={s.storageHeader}>
+          <Text style={s.chartTitle}>BZZOIRO POSITION REPLAY</Text>
+          <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+            {verdict ? (
+              <Text style={[s.storageStatus, { color: verdictColor }]}>
+                {verdict === 'GO' ? '✅' : verdict === 'NO_GO' ? '❌' : '⚠️'} {verdict}
+              </Text>
+            ) : null}
+            <Text style={[s.storageStatus, { color: flagColor }]}>
+              {liveFlagState.toUpperCase()}
+            </Text>
+          </View>
+        </View>
+
+        {display && display.found ? (
+          <>
+            {/* Key metrics row */}
+            <View style={[s.dedupRow, { marginTop: 6 }]}>
+              <View style={s.dedupCell}>
+                <Text style={s.dedupNum}>{display.bzzoiroValidN ?? 0}</Text>
+                <Text style={s.dedupLabel}>BZZOIRO-VALID</Text>
+              </View>
+              <Text style={s.dedupArrow}>·</Text>
+              <View style={s.dedupCell}>
+                <Text style={s.dedupNum}>{display.bzzoiroAbsentN ?? 0}</Text>
+                <Text style={s.dedupLabel}>ABSENT</Text>
+              </View>
+              <Text style={s.dedupArrow}>·</Text>
+              <View style={s.dedupCell}>
+                <Text style={[s.dedupNum, { fontSize: 14 }]}>
+                  {display.bzzoiroHitRate != null ? `${display.bzzoiroHitRate}%` : '—'}
+                </Text>
+                <Text style={s.dedupLabel}>VALID HIT%</Text>
+              </View>
+              <Text style={s.dedupArrow}>·</Text>
+              <View style={s.dedupCell}>
+                <Text style={[s.dedupNum, { fontSize: 14 }]}>
+                  {display.baselineHitRate != null ? `${display.baselineHitRate}%` : '—'}
+                </Text>
+                <Text style={s.dedupLabel}>BASELINE HIT%</Text>
+              </View>
+            </View>
+            {(display.bzzoiroMAE != null || display.baselineMAE != null) && (
+              <Text style={s.storageBarMeta}>
+                MAE — Bzzoiro-valid: {display.bzzoiroMAE ?? '—'} · absent: {display.baselineMAE ?? '—'}
+              </Text>
+            )}
+            {display.observations && display.observations.length > 0 && (
+              <View style={{ marginTop: 6, gap: 3 }}>
+                {display.observations.map((obs, i) => (
+                  <Text key={i} style={s.ownerHealthMeta}>{obs}</Text>
+                ))}
+              </View>
+            )}
+            {display.generatedAt ? (
+              <Text style={[s.storageBarMeta, { marginTop: 4 }]}>
+                Last run: {new Date(display.generatedAt).toLocaleString()}
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          !display || !display.found ? (
+            <Text style={s.storageBarMeta}>
+              No replay has been run yet. Tap below to run the first comparison.
+            </Text>
+          ) : null
+        )}
+
+        {bzzoiroReplayError ? (
+          <Text style={[s.ownerHealthMeta, { color: Colors.error, marginTop: 4 }]}>
+            Replay error: {bzzoiroReplayError}
+          </Text>
+        ) : null}
+
+        <TouchableOpacity
+          style={[s.replayBtn, bzzoiroReplayRunning && s.cleanupBtnDisabled]}
+          onPress={handleRunBzzoiroReplay}
+          disabled={bzzoiroReplayRunning}
+        >
+          <Ionicons name="refresh-circle-outline" size={13} color={bzzoiroReplayRunning ? Colors.textTertiary : Colors.primary} />
+          <Text style={[s.cleanupBtnText, { color: bzzoiroReplayRunning ? Colors.textTertiary : Colors.primary }]}>
+            {bzzoiroReplayRunning ? 'Running replay…' : 'Run Bzzoiro position replay'}
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -685,6 +809,7 @@ export default function AnalyticsDashboard({
             {renderQuotaUsage()}
             {renderStorageHealth()}
             {renderBzzoiroWarning()}
+            {renderBzzoiroPositionReplay()}
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>
                 <View style={s.chartHeader}>
