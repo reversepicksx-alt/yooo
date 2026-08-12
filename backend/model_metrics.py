@@ -646,6 +646,8 @@ def walk_forward_replay(rows: list[dict]) -> dict:
 
     leakage_violations = 0
     missing_prior_data_events = 0
+    # Running maximum of prior sort keys — used by the O(n) leakage check.
+    _max_prior_dt: str = ""
 
     # Per-sport accumulators: sport → {log_loss, brier, prob_n, abs, sq, signed, reg_n}
     sport_acc: dict[str, dict] = defaultdict(lambda: {
@@ -678,11 +680,12 @@ def walk_forward_replay(rows: list[dict]) -> dict:
         prop_type = str(row.get("propType") or "unknown")
 
         # ── Leakage check ──────────────────────────────────────────────────
-        # Any prior row whose settledAt is >= the current row's is a violation.
-        if index > 0:
-            prior_dts = [_as_sortable_dt(ordered[j]) for j in range(index)]
-            if any(pdt >= row_dt for pdt in prior_dts if pdt):
-                leakage_violations += 1
+        # O(n): track the running maximum of prior sort keys.  Since rows are
+        # already sorted ascending by _as_sortable_dt, max_prior_dt equals the
+        # largest key seen before the current row.  A violation occurs when any
+        # prior key is >= the current key (same-timestamp ties count too).
+        if index > 0 and _max_prior_dt and row_dt and _max_prior_dt >= row_dt:
+            leakage_violations += 1
 
         if index == 0:
             missing_prior_data_events += 1
@@ -749,6 +752,10 @@ def walk_forward_replay(rows: list[dict]) -> dict:
             if label:
                 running_bins[label]["n"] += 1
                 running_bins[label]["hits"] += outcome
+
+        # ── Advance leakage-check running max ──────────────────────────────
+        if row_dt > _max_prior_dt:
+            _max_prior_dt = row_dt
 
     # ── Assemble prospective calibration output ────────────────────────────
     def _prosp_bin_summary(pb: dict) -> dict | None:
@@ -900,6 +907,98 @@ def walk_forward_replay(rows: list[dict]) -> dict:
             eligible_samples=len(ordered),
         ),
     }
+
+def walk_forward_trends(rows: list[dict]) -> dict:
+    """Return per-period walk-forward bySport metrics for trend comparison.
+
+    Runs walk_forward_replay independently on three date-filtered slices of the
+    deduped corpus — all-time, last 30 days, and last 7 days — so the dashboard
+    can show whether accuracy is improving or degrading after calibration changes.
+
+    Each period returns a list of per-sport records with:
+      sport, n, logLoss, brierScore, mae
+
+    The date filter uses the same sort key as _as_sortable_dt (settledAt preferred,
+    falling back to timestamp).  Rows without either field fall into the "all" slice
+    only.
+
+    Note: each slice is an independent walk-forward replay, meaning the 30d window
+    does NOT have access to prior-window training context.  This is intentional —
+    the goal is to see how the model performs *in* that window, not to measure
+    calibration state.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    deduped = dedupe_prediction_rows(rows)
+    now = datetime.now(timezone.utc)
+
+    def _parse_row_dt(row: dict) -> "datetime | None":
+        """Return a timezone-aware datetime for a row, or None."""
+        raw = row.get("settledAt") or row.get("timestamp") or ""
+        if not raw:
+            return None
+        if isinstance(raw, datetime):
+            return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except (TypeError, ValueError):
+            return None
+
+    def _filter(rows_in: list[dict], days: int) -> list[dict]:
+        """Filter to rows settled within the last `days` days using timezone-aware comparison."""
+        cutoff_dt = now - timedelta(days=days)
+        result = []
+        for r in rows_in:
+            dt = _parse_row_dt(r)
+            if dt is not None and dt >= cutoff_dt:
+                result.append(r)
+        return result
+
+    def _sport_summary(wf: dict) -> list[dict]:
+        out = []
+        for entry in wf.get("bySport", []):
+            cls = entry.get("classification", {})
+            prj = entry.get("projection", {})
+            n = cls.get("n") or prj.get("n") or 0
+            if not n:
+                continue
+            out.append({
+                "sport": entry.get("sport", "unknown"),
+                "n": n,
+                "logLoss": cls.get("logLoss"),
+                "brierScore": cls.get("brierScore"),
+                "mae": prj.get("mae"),
+            })
+        return out
+
+    rows_30d = _filter(deduped, 30)
+    rows_7d = _filter(deduped, 7)
+
+    wf_all = walk_forward_replay(deduped)
+    wf_30d = walk_forward_replay(rows_30d) if rows_30d else {}
+    wf_7d = walk_forward_replay(rows_7d) if rows_7d else {}
+
+    return {
+        "periods": {
+            "all": _sport_summary(wf_all),
+            "30d": _sport_summary(wf_30d),
+            "7d": _sport_summary(wf_7d),
+        },
+        "dateRange": {
+            "all": wf_all.get("dateRange"),
+            "30d": wf_30d.get("dateRange") if wf_30d else None,
+            "7d": wf_7d.get("dateRange") if wf_7d else None,
+        },
+        "n": {
+            "all": len(deduped),
+            "30d": len(rows_30d),
+            "7d": len(rows_7d),
+        },
+    }
+
 
 def validate_weighted_opponent_evidence(rows: list[dict]) -> dict:
     """Leakage-safe replay comparing weighted vs unweighted opponent cohort evidence.

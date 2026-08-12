@@ -837,6 +837,84 @@ export default function AnalyticsDashboard({
                     ))}
                   </View>
                 )}
+                {(() => {
+                  const trends = ownerData.walkForwardReplay?.trends;
+                  if (!trends) return null;
+                  // Build a unified sport list across all periods
+                  const sportSet = new Set<string>();
+                  (['all', '30d', '7d'] as const).forEach(p =>
+                    (trends.periods[p] ?? []).forEach(r => sportSet.add(r.sport))
+                  );
+                  const sports = Array.from(sportSet).sort();
+                  if (!sports.length) return null;
+                  const byPeriod = (period: 'all' | '30d' | '7d') => {
+                    const map: Record<string, typeof trends.periods.all[0]> = {};
+                    (trends.periods[period] ?? []).forEach(r => { map[r.sport] = r; });
+                    return map;
+                  };
+                  const allMap = byPeriod('all');
+                  const map30 = byPeriod('30d');
+                  const map7 = byPeriod('7d');
+                  const brierColor = (v: number | null | undefined, ref: number | null | undefined) => {
+                    if (v == null) return Colors.textTertiary;
+                    if (ref == null) return Colors.textSecondary;
+                    const delta = v - ref;
+                    // Lower Brier is better; improving = green, degrading = red
+                    if (delta < -0.01) return Colors.success;
+                    if (delta > 0.01) return Colors.error;
+                    return Colors.textSecondary;
+                  };
+                  return (
+                    <View style={s.ownerPropList}>
+                      <Text style={s.ownerHealthLabel}>ACCURACY TREND · BRIER SCORE (lower = better)</Text>
+                      <Text style={[s.ownerHealthMeta, { marginBottom: 5 }]}>
+                        All-time ({trends.n.all}) · 30d ({trends.n['30d']}) · 7d ({trends.n['7d']})
+                      </Text>
+                      {/* Table header */}
+                      <View style={s.trendTableHeader}>
+                        <Text style={[s.trendTableCell, s.trendTableCellSport]}>SPORT</Text>
+                        <Text style={[s.trendTableCell, s.trendTableCellNum]}>ALL</Text>
+                        <Text style={[s.trendTableCell, s.trendTableCellNum]}>30D</Text>
+                        <Text style={[s.trendTableCell, s.trendTableCellNum]}>7D</Text>
+                        <Text style={[s.trendTableCell, s.trendTableCellNum]}>ΔALL→7D</Text>
+                      </View>
+                      {sports.map(sport => {
+                        const allRow = allMap[sport];
+                        const row30 = map30[sport];
+                        const row7 = map7[sport];
+                        const allBrier = allRow?.brierScore ?? null;
+                        const brier30 = row30?.brierScore ?? null;
+                        const brier7 = row7?.brierScore ?? null;
+                        const delta = (brier7 != null && allBrier != null) ? brier7 - allBrier : null;
+                        return (
+                          <View key={sport} style={s.trendTableRow}>
+                            <Text style={[s.trendTableCell, s.trendTableCellSport, { color: Colors.text }]}>
+                              {sport.toUpperCase()}
+                            </Text>
+                            <Text style={[s.trendTableCell, s.trendTableCellNum, { color: Colors.textSecondary }]}>
+                              {allBrier != null ? allBrier.toFixed(3) : '—'}
+                            </Text>
+                            <Text style={[s.trendTableCell, s.trendTableCellNum, { color: brierColor(brier30, allBrier) }]}>
+                              {brier30 != null ? brier30.toFixed(3) : '—'}
+                            </Text>
+                            <Text style={[s.trendTableCell, s.trendTableCellNum, { color: brierColor(brier7, allBrier) }]}>
+                              {brier7 != null ? brier7.toFixed(3) : '—'}
+                            </Text>
+                            <Text style={[s.trendTableCell, s.trendTableCellNum, {
+                              color: delta == null ? Colors.textTertiary : delta < -0.01 ? Colors.success : delta > 0.01 ? Colors.error : Colors.textSecondary,
+                              fontWeight: '800',
+                            }]}>
+                              {delta != null ? (delta > 0 ? '+' : '') + delta.toFixed(3) : '—'}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                      <Text style={[s.ownerHealthMeta, { marginTop: 4 }]}>
+                        Green = improving vs all-time · Red = degrading · Always uses full all-sports corpus, independent of the display-period filter above
+                      </Text>
+                    </View>
+                  );
+                })()}
                 {ownerData.overall.outcomeCounts?.unknown ? (
                   <Text style={s.ownerHealthMeta}>
                     Unclassified settled rows: {ownerData.overall.outcomeCounts.unknown} · excluded from win rate and probability metrics
@@ -1053,6 +1131,12 @@ const s = StyleSheet.create({
   wfTableCellSport: { flex: 2 },
   wfTableCellN: { flex: 1, textAlign: 'right' },
   wfTableCellNum: { flex: 2, textAlign: 'right' },
+  // Walk-forward trend comparison table
+  trendTableHeader: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle, paddingBottom: 3, marginBottom: 3 },
+  trendTableRow: { flexDirection: 'row', paddingVertical: 3 },
+  trendTableCell: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
+  trendTableCellSport: { flex: 2 },
+  trendTableCellNum: { flex: 2, textAlign: 'right' as const },
   chartCard: {
     backgroundColor: Colors.card,
     borderRadius: 14,

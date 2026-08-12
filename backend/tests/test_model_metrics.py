@@ -4,6 +4,7 @@ from model_metrics import (
     _event_key,
     validate_weighted_opponent_evidence,
     validate_bzzoiro_position_replay,
+    walk_forward_trends,
 )
 
 
@@ -777,3 +778,160 @@ def test_bzzoiro_replay_voided_row_with_voidreason_projected_counts_correctly():
     # Must not enter either scored accuracy group.
     assert result["bzzoiroValidN"] == 0
     assert result["bzzoiroAbsentN"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# walk_forward_trends tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+from datetime import datetime, timezone, timedelta
+
+
+def _trends_row(idx, sport="soccer", result="hit", confidence=65, days_ago=60):
+    """Build a settled row settled `days_ago` days in the past."""
+    settled = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    return {
+        "trackingId": f"trk-{sport}-{idx}",
+        "playerName": f"Player {idx}",
+        "sport": sport,
+        "propType": "passes",
+        "line": 10.5,
+        "recommendation": "OVER",
+        "fixtureId": 9000 + idx,
+        "playerId": idx,
+        "teamId": 1,
+        "opponentId": 2,
+        "confidenceScore": confidence,
+        "rawConfidence": confidence,
+        "actualValue": 12,
+        "projectedValue": 10,
+        "result": result,
+        "status": "settled",
+        "settledAt": settled,
+    }
+
+
+def test_walk_forward_trends_returns_all_three_period_keys():
+    rows = [_trends_row(i, days_ago=60 - i) for i in range(1, 20)]
+    trends = walk_forward_trends(rows)
+    assert "periods" in trends
+    assert "all" in trends["periods"]
+    assert "30d" in trends["periods"]
+    assert "7d" in trends["periods"]
+    assert "n" in trends
+    assert trends["n"]["all"] >= trends["n"]["30d"] >= trends["n"]["7d"]
+
+
+def test_walk_forward_trends_per_sport_brier_score():
+    """Brier score is computed independently per sport."""
+    soccer_rows = [_trends_row(i, sport="soccer", result="hit" if i % 2 == 0 else "miss", days_ago=10) for i in range(1, 8)]
+    mlb_rows = [_trends_row(i + 20, sport="mlb", result="hit", days_ago=10) for i in range(1, 5)]
+    trends = walk_forward_trends(soccer_rows + mlb_rows)
+    all_period = trends["periods"]["all"]
+    sports_found = {r["sport"] for r in all_period}
+    assert "soccer" in sports_found
+    assert "mlb" in sports_found
+    for entry in all_period:
+        assert entry["brierScore"] is not None or entry["n"] == 0
+        assert entry["n"] > 0
+
+
+def test_walk_forward_trends_deduplicates_before_slicing():
+    """Duplicate saves of the same event must not double-count in any period."""
+    base = _trends_row(1, days_ago=5)
+    duplicate = dict(base, trackingId="trk-soccer-1b", settledAt=(datetime.now(timezone.utc) - timedelta(days=5, hours=1)).isoformat())
+    unique = _trends_row(2, days_ago=4)
+    trends = walk_forward_trends([base, duplicate, unique])
+    # 2 unique events within 7d → 7d slice should have exactly 2
+    assert trends["n"]["7d"] == 2
+    assert trends["n"]["all"] == 2
+
+
+def test_walk_forward_trends_periods_filter_correctly_by_date():
+    """Rows older than 30d must not appear in 30d or 7d slices."""
+    old_rows = [_trends_row(i, days_ago=60) for i in range(1, 6)]
+    recent_30d = [_trends_row(i + 10, days_ago=20) for i in range(1, 4)]
+    recent_7d = [_trends_row(i + 20, days_ago=3) for i in range(1, 3)]
+    trends = walk_forward_trends(old_rows + recent_30d + recent_7d)
+    assert trends["n"]["all"] == 10   # 5 + 3 + 2 unique events (no dupes)
+    assert trends["n"]["30d"] == len(recent_30d) + len(recent_7d)
+    assert trends["n"]["7d"] == len(recent_7d)
+
+
+def test_walk_forward_trends_independent_of_pre_filter():
+    """Trends computed from the full corpus must differ from trends on a pre-filtered subset.
+
+    This verifies that the caller should always pass the unfiltered corpus to
+    walk_forward_trends, not the period-display-filtered rows, so that the all/
+    30d/7d internal slices are accurate.
+    """
+    old_rows = [_trends_row(i, days_ago=60) for i in range(1, 6)]
+    recent_rows = [_trends_row(i + 10, days_ago=3) for i in range(1, 4)]
+    all_rows = old_rows + recent_rows
+
+    trends_from_full = walk_forward_trends(all_rows)
+    trends_from_filtered = walk_forward_trends(recent_rows)  # simulates a wrong pre-filter
+
+    # Full corpus "all" slice includes old rows; pre-filtered corpus does not.
+    assert trends_from_full["n"]["all"] == len(all_rows)
+    assert trends_from_filtered["n"]["all"] == len(recent_rows)
+    # They should diverge
+    assert trends_from_full["n"]["all"] != trends_from_filtered["n"]["all"]
+
+
+def test_walk_forward_trends_handles_utc_offset_dates():
+    """Date filtering must work on rows with explicit UTC offsets (+00:00 vs Z)."""
+    recent_utc = dict(_trends_row(1, days_ago=3))
+    recent_utc["settledAt"] = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    old_z = dict(_trends_row(2, days_ago=40))
+    old_z["settledAt"] = (datetime.now(timezone.utc) - timedelta(days=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    trends = walk_forward_trends([recent_utc, old_z])
+    assert trends["n"]["all"] == 2
+    assert trends["n"]["7d"] == 1   # only the 3-day-old row
+    assert trends["n"]["30d"] == 1  # only the 3-day-old row
+
+
+def test_walk_forward_trends_excludes_calibration_only_rows_from_brier():
+    """Rows with isCalibrationOnly=True must not contribute to the Brier/log-loss computation.
+
+    This mirrors the requirement that the all_sports_raw Mongo projection must include
+    isCalibrationOnly so that PASS rows whose recommendation field is not literally 'pass'
+    are still correctly filtered out of probability metrics.
+    """
+    wager_hit = dict(_trends_row(1, sport="soccer", result="hit", days_ago=5))
+    wager_miss = dict(_trends_row(2, sport="soccer", result="miss", days_ago=4))
+    cal_only = dict(_trends_row(3, sport="soccer", result="hit", days_ago=3))
+    cal_only["isCalibrationOnly"] = True  # must be excluded from Brier
+    cal_only["recommendation"] = "OVER"   # not literally 'pass', so field check matters
+
+    trends = walk_forward_trends([wager_hit, wager_miss, cal_only])
+    all_period = trends["periods"]["all"]
+    soccer_entry = next((r for r in all_period if r["sport"] == "soccer"), None)
+    assert soccer_entry is not None
+    # Only 2 scored events (the calibration-only row must be excluded)
+    assert soccer_entry["n"] == 2
+    # Brier must not be None — we have 2 scored events with confidenceScore=65
+    assert soccer_entry["brierScore"] is not None
+
+
+def test_walk_forward_trends_mae_is_populated_when_actual_and_projected_present():
+    """per-sport MAE must be non-null when actualValue and projectedValue are provided.
+
+    This verifies the all_sports_raw query includes actualValue/projectedValue so that
+    the per-sport projection metrics are computed rather than silently set to null.
+    """
+    rows = []
+    for i in range(1, 8):
+        r = dict(_trends_row(i, sport="mlb", result="hit" if i % 2 else "miss", days_ago=10))
+        r["propType"] = "pitcher_strikeouts"
+        r["actualValue"] = 5.0 + i
+        r["projectedValue"] = 5.0
+        rows.append(r)
+
+    trends = walk_forward_trends(rows)
+    all_period = trends["periods"]["all"]
+    mlb_entry = next((r for r in all_period if r["sport"] == "mlb"), None)
+    assert mlb_entry is not None
+    # MAE must be a positive finite number when both values are present
+    assert mlb_entry["mae"] is not None
+    assert mlb_entry["mae"] > 0

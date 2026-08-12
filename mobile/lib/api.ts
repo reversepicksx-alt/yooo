@@ -2260,6 +2260,14 @@ export interface AnalyticsData {
       rmse: number | null;
       meanError: number | null;
     }>;
+    trends?: {
+      periods: {
+        all: Array<{ sport: string; n: number; logLoss: number | null; brierScore: number | null; mae: number | null }>;
+        '30d': Array<{ sport: string; n: number; logLoss: number | null; brierScore: number | null; mae: number | null }>;
+        '7d': Array<{ sport: string; n: number; logLoss: number | null; brierScore: number | null; mae: number | null }>;
+      };
+      n: { all: number; '30d': number; '7d': number };
+    };
   };
   insights?: SystemInsights;
   scope?: {

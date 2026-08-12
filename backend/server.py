@@ -63,6 +63,7 @@ from model_metrics import (
     build_scorecard,
     dedupe_prediction_rows,
     walk_forward_replay,
+    walk_forward_trends,
     _is_scored_directional_row,
 )
 
@@ -1051,8 +1052,16 @@ async def owner_analytics(payload: dict = Body(...)):
             "fixtureId": 1, "fixtureDate": 1, "matchDate": 1,
             "timestamp": 1, "createdAt": 1, "settledAt": 1,
             "result": 1, "confidenceScore": 1, "rawConfidence": 1,
+            # Required by walk_forward_trends:
+            #   isCalibrationOnly — filters PASS/calibration-only rows from Brier
+            #   actualValue / projectedValue — needed for per-sport MAE computation
+            "isCalibrationOnly": 1, "actualValue": 1, "projectedValue": 1,
         },
     ).to_list(200000)
+    # Trends must use the FULL unfiltered all-sports corpus so that the all/30d/7d
+    # slices inside walk_forward_trends are always accurate regardless of which
+    # display-period filter the owner has selected.  Compute before period filter.
+    wf_trends = walk_forward_trends(dedupe_prediction_rows(all_sports_raw))
     if period != "all":
         all_sports_raw = [row for row in all_sports_raw if in_period(row)]
     all_sports_deduped = dedupe_prediction_rows(all_sports_raw)
@@ -1106,6 +1115,7 @@ async def owner_analytics(payload: dict = Body(...)):
             "byDirection": walk_forward.get("byDirection", {}),
             "bySport": walk_forward.get("bySport", []),
             "byProp": walk_forward.get("byProp", []),
+            "trends": wf_trends,
         },
         "insights": dashboard_insights,
         "scope": {
