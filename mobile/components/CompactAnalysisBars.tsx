@@ -136,6 +136,15 @@ function displayH2HDate(value: unknown) {
   return raw.slice(0, 10);
 }
 
+function newestFirst(a: Record<string, any>, b: Record<string, any>) {
+  const aTime = Date.parse(String(a.date || ''));
+  const bTime = Date.parse(String(b.date || ''));
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return bTime - aTime;
+  }
+  return String(b.date || '').localeCompare(String(a.date || ''));
+}
+
 const H2H_COLUMN_WIDTH = 68;
 
 function stageLabelForRow(row: Record<string, any>) {
@@ -227,7 +236,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const logs = normalizedLogs
     .filter((game) => !game.synthetic && game.value != null)
     .filter((game) => !historyVenue || rowVenue(game) === historyVenue)
-    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+    .sort(newestFirst)
     .slice(0, 20);
   const h2h = prediction.h2hPlayerStats ?? {};
   const showSelectedVenueOnly = historyVenue === 'home' || historyVenue === 'away';
@@ -243,7 +252,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
   const selectedOpponentFixtureSplit = matchupVolume?.fixtureSplits?.[opponentEvidenceVenue] ?? {};
   const selectedPlayerSaveRate = matchupVolume?.goalkeeperSaveRate?.selectedVenue;
   const selectedPlayerPassShare = matchupVolume?.playerPassInvolvement?.selectedVenue;
-  const hasMarketEvidence = Boolean(matchupVolume?.available && (isSotProp || isGkProp || isPassProp));
+  // Pass props do not show the aggregate pass-volume context card. The
+  // player history and deterministic projection are the relevant evidence
+  // here; the team/opponent volume estimates were confusing and redundant.
+  const hasMarketEvidence = Boolean(matchupVolume?.available && (isSotProp || isGkProp));
   const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
   const meetingsByVenue = h2h.teamMeetingsByVenue ?? {};
   const teamMeetings = [
@@ -263,13 +275,13 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       : []),
   ];
   const h2hRows = playerMatches.length
-    ? playerMatches.slice(0, 20).map((match: any) => ({
+    ? playerMatches.slice().sort(newestFirst).slice(0, 20).map((match: any) => ({
         ...match,
         possession: match.teamPossession,
         displayValue: match.targetStat,
         teamOnly: false,
       }))
-    : teamMeetings.slice(0, 20).map((meeting: any) => ({
+    : teamMeetings.slice().sort(newestFirst).slice(0, 20).map((meeting: any) => ({
         ...meeting,
         displayValue: meeting.possession,
         teamOnly: true,
@@ -393,9 +405,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               <Ionicons name="pulse" size={11} color={Colors.primary} />
               <View style={styles.headerStack}>
                 <Text style={styles.title}>RECENT MATCHES · {logs.length}</Text>
-                {historyContext?.label && (
+                {historyVenue && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                    {historyContext.label}
+                    {historyVenue.toUpperCase()} VENUE MATCHES
                   </Text>
                 )}
               </View>

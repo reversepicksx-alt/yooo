@@ -33,6 +33,20 @@ It SKIPS the export when `dist/index.html` already exists, so the published app 
 **Why:** Keeps deploys fast (no rebuild when dist is committed) but means a stale committed
 dist silently ships old code.
 
+## Live prediction history contract
+
+The mobile live-history adapter must accept the non-empty history array from any of
+`playerGameLogs.games`, `gameLogs`, or `recentSamples`, and derive the displayed value
+from the mapped stat field before generic `value`/`targetStat` aliases. Empty arrays must
+not block fallback sources.
+
+**Why:** The backend has returned these compatible shapes across live and saved-analysis
+paths; treating an empty primary array as authoritative makes valid recent history vanish
+without an API error.
+
+**How to apply:** When changing prediction response fields, preserve this tolerant
+normalization before the UI filters rows.
+
 ## Metro export can hang at 0% — do NOT force always-export on deploy
 
 Observed: `npx expo export -p web` reproducibly **hangs at `0.0% (0/1)`** (Metro stuck

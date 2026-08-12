@@ -383,6 +383,8 @@ export interface PredictionResult {
   playerName?: string;
   teamName?: string;
   propType?: string;
+  venue?: string;
+  playerIsHome?: boolean;
   line?: number;
   projection?: number;
   confidence?: number;
@@ -1268,13 +1270,32 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
 
   const propTypeStr = (raw.propType || request.propType as string || '');
   const statField = GAME_LOG_FIELD_MAP[propTypeStr];
-  const rawGames = (raw.playerGameLogs?.games || []) as Record<string, unknown>[];
+  // Soccer predictions have existed in a few response shapes across app
+  // versions. Keep the live UI tolerant at this boundary instead of making
+  // the chart depend on one backend field name.
+  const rawGameSources = [
+    raw.playerGameLogs?.games,
+    (raw as any).gameLogs,
+    (raw as any).recentSamples,
+  ];
+  const rawGames = (
+    rawGameSources.find((source) => Array.isArray(source) && source.length > 0)
+      || []
+  ) as Record<string, unknown>[];
   const gameLogs: GameLog[] = rawGames.length > 0
     ? rawGames
         .map(g => {
           // Prefer the mapped field, fall back to backend-computed targetStat
           const mappedVal = statField ? (g[statField] as number | null | undefined) : undefined;
-          const value = mappedVal != null ? mappedVal : (g.targetStat as number | null | undefined) ?? null;
+          const value = mappedVal != null
+            ? mappedVal
+            : (g.value as number | null | undefined)
+              ?? (g.targetStat as number | null | undefined)
+              ?? (g.statValue as number | null | undefined)
+              ?? (g.stat as number | null | undefined)
+              ?? (g.pass_attempts as number | null | undefined)
+              ?? (g.passes_total as number | null | undefined)
+              ?? null;
           return {
             date: (g.date as string) || '',
             opponent: (g.opponent as string) || '',
@@ -1318,6 +1339,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     fixtureDate: raw.fixtureDate,
     fixtureOpponentId: raw.fixtureOpponentId,
     fixtureTeamId: raw.fixtureTeamId,
+    venue: (raw as any).venue || (raw as any).playerVenue || undefined,
+    playerIsHome: (raw as any).playerIsHome ?? (raw as any).matchupOverview?.playerIsHome,
     projection: raw.projectedValue,
     confidence: raw.confidenceScore,
     rawConfidence: raw.rawConfidence ?? raw.confidenceScore,
