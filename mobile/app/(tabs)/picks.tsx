@@ -429,6 +429,81 @@ function renderModelFactors(factors: AnalysisFactor[]) {
   );
 }
 
+function renderRoleEvidence(data: unknown) {
+  const packet = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, any>
+    : null;
+  if (!packet) return null;
+
+  const opportunity = packet.opportunity && typeof packet.opportunity === 'object'
+    ? packet.opportunity
+    : {};
+  const counts = packet.evidenceCounts && typeof packet.evidenceCounts === 'object'
+    ? packet.evidenceCounts
+    : {};
+  const questions = Array.isArray(packet.questions) ? packet.questions.filter(Boolean) : [];
+  const status = String(packet.status || 'unavailable');
+  const statusColor = status === 'verified'
+    ? Colors.success
+    : status === 'partial' ? '#F59E0B' : Colors.textTertiary;
+  const role = packet.role || packet.position || 'Role not verified';
+  const fixture = packet.fixtureId != null ? `Fixture ${packet.fixtureId}` : 'Fixture unavailable';
+  const sample = opportunity.playerLogCount != null
+    ? `${opportunity.playerLogCount} player logs`
+    : null;
+  const expectedMinutes = opportunity.expectedMinutes != null
+    ? `${Number(opportunity.expectedMinutes).toFixed(0)} min expected`
+    : null;
+  const sameRole = counts.sameRoleComparables != null
+    ? `${counts.sameRoleComparables} same-role comparables`
+    : null;
+  const sameVenue = counts.sameVenueComparables != null
+    ? `${counts.sameVenueComparables} same-venue comparables`
+    : null;
+  const context = [fixture, packet.venue ? String(packet.venue).toUpperCase() : null]
+    .filter(Boolean).join(' · ');
+  const prop = opportunity.propType ? String(opportunity.propType).replace(/_/g, ' ') : null;
+
+  return (
+    <View style={mStyles.roleSection}>
+      <View style={mStyles.factorSectionHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={mStyles.factorSectionTitle}>ROLE-FIRST EVIDENCE</Text>
+          <Text style={mStyles.factorSectionSubtitle}>What was observed for this player and fixture</Text>
+        </View>
+        <Ionicons name="shield-checkmark-outline" size={16} color={statusColor} />
+      </View>
+      <View style={mStyles.roleCard}>
+        <View style={mStyles.roleCardTop}>
+          <Text style={mStyles.roleTitle}>{role}</Text>
+          <Text style={[mStyles.factorStatus, { color: statusColor }]}>{status.toUpperCase()}</Text>
+        </View>
+        <Text style={mStyles.roleMeta}>{[packet.position, packet.source, context].filter(Boolean).join(' · ')}</Text>
+        <View style={mStyles.roleStats}>
+          {[sample, expectedMinutes, sameRole, sameVenue, prop ? `Prop: ${prop}` : null]
+            .filter(Boolean)
+            .map((value) => (
+              <View key={value} style={mStyles.roleStatPill}>
+                <Text style={mStyles.roleStatText}>{value}</Text>
+              </View>
+            ))}
+        </View>
+        {questions.length > 0 && (
+          <View style={mStyles.roleQuestions}>
+            <Text style={mStyles.roleQuestionLabel}>QUESTIONS THE MODEL CHECKED</Text>
+            {questions.slice(0, 3).map((question: string) => (
+              <View key={question} style={mStyles.roleQuestionRow}>
+                <Ionicons name="ellipse" size={5} color={statusColor} />
+                <Text style={mStyles.roleQuestion}>{question}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
 function renderEvidenceSummary(data: Record<string, unknown> | null) {
   if (!data) return null;
   const snapshot = (data as any)?.modelInputSnapshot?.sampleCounts ?? {};
@@ -1108,10 +1183,17 @@ export default function PicksScreen() {
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
-  const modalText = getTacticalRead({
-    ...(analysisModal?.pick as any),
-    ...(analysisModal?.data as any),
-  });
+  const modalText = (
+    String(
+      (analysisModal?.data as any)?.tacticalBreakdown
+        ?? (analysisModal?.pick as any)?.tacticalBreakdown
+        ?? '',
+    ).trim()
+    || getTacticalRead({
+      ...(analysisModal?.pick as any),
+      ...(analysisModal?.data as any),
+    })
+  );
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
   const capturedModalFactors = (
     (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]
@@ -1630,6 +1712,32 @@ export default function PicksScreen() {
               return null;
             })()}
 
+            {/* ── TACTICAL READ — primary explanation destination ── */}
+            {!analysisModal?.loading && modalText && (
+              <View style={mStyles.tacticalSection}>
+                <View style={mStyles.factorSectionHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={mStyles.factorSectionTitle}>TACTICAL READ</Text>
+                    <Text style={mStyles.factorSectionSubtitle}>Why the fixture context supports or limits this prop</Text>
+                  </View>
+                  <Ionicons name="compass-outline" size={17} color={modalRecColor} />
+                </View>
+                <View style={mStyles.tacticalCard}>
+                  {renderAnalysisBlocks(modalText, modalRec)}
+                </View>
+              </View>
+            )}
+            {!analysisModal?.loading && renderRoleEvidence((() => {
+              const data = analysisModal?.data as any;
+              const pick = analysisModal?.pick as any;
+              const candidate = data?.roleEvidence ?? pick?.roleEvidence;
+              // Older saved picks used roleEvidence for a string-list; prefer
+              // the packet when both shapes are present.
+              if (candidate && !Array.isArray(candidate) && typeof candidate === 'object') return candidate;
+              return data?.roleEvidencePacket ?? pick?.roleEvidencePacket;
+            })())}
+            {!analysisModal?.loading && modalFactors.length > 0 && renderModelFactors(modalFactors)}
+
             {/* ── RECENT + H2H BAR HISTORY ── */}
             {!analysisModal?.loading && analysisModal?.data && (
               <CompactAnalysisBars
@@ -1828,6 +1936,51 @@ const mStyles = StyleSheet.create({
   modalLoading: { alignItems: 'center', paddingVertical: 40, gap: 14 },
   modalLoadingText: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
   aiBlocks: { gap: 16 },
+  tacticalSection: { marginBottom: 18, gap: 10 },
+  tacticalCard: {
+    backgroundColor: 'rgba(57,255,20,0.045)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.20)',
+    padding: 12,
+    gap: 12,
+  },
+  roleSection: { marginBottom: 18, gap: 10 },
+  roleCard: {
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 12,
+    gap: 8,
+  },
+  roleCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  roleTitle: { flex: 1, fontSize: 13, fontWeight: '800', color: Colors.text },
+  roleMeta: { fontSize: 10, color: Colors.textTertiary, lineHeight: 15 },
+  roleStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  roleStatPill: {
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  roleStatText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '700' },
+  roleQuestions: { gap: 5, marginTop: 2 },
+  roleQuestionLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+  },
+  roleQuestionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
+  roleQuestion: { flex: 1, fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   oddsRow: { marginHorizontal: 16, marginBottom: 10, gap: 5 },
   oddsHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   oddsLabel: { fontSize: 9, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 1.2 },
