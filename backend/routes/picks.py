@@ -1109,6 +1109,12 @@ async def list_picks(req: GetPicksRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
+    # ── Settlement write-fail counter (owner-only, reset per request) ────
+    # Tracks how many DB correction writes were swallowed during this request.
+    # A non-zero count means the subscriber sees a corrected result in-memory
+    # but the DB was not updated — the pick will revert on the next request.
+    _settlement_write_fails: int = 0
+
     # ── Short-circuit: serve from cache if fresh enough ───────────────────
     _now_mono = _time_mod.monotonic()
     _cached = _picks_list_cache.get(requester_email)
@@ -1212,6 +1218,7 @@ async def list_picks(req: GetPicksRequest):
                     {"$set": updates}
                 )
             except Exception as _e:
+                _settlement_write_fails += 1
                 print(f"[PICKS-LIST WRITE FAIL] repair {p.get('playerName','')}: {_e}")
 
     for p in picks:
@@ -1259,6 +1266,7 @@ async def list_picks(req: GetPicksRequest):
                                   "voidReason": p.get("voidReason") or void_label}}
                     )
                 except Exception as _e:
+                    _settlement_write_fails += 1
                     print(f"[PICKS-LIST WRITE FAIL] DNP {p.get('playerName','')}: {_e}")
             continue
 
@@ -1295,6 +1303,7 @@ async def list_picks(req: GetPicksRequest):
                     {"$set": repair_set, "$unset": {"voidReason": ""}},
                 )
             except Exception as _e:
+                _settlement_write_fails += 1
                 print(f"[PICKS-LIST WRITE FAIL] DNP repair {p.get('playerName','')}: {_e}")
             print(
                 f"[CONSISTENCY] Repaired false DNP {p.get('playerName','')} "
@@ -1351,6 +1360,7 @@ async def list_picks(req: GetPicksRequest):
                         }},
                     )
                 except Exception as _e:
+                    _settlement_write_fails += 1
                     print(f"[PICKS-LIST WRITE FAIL] legacy-source {p.get('playerName','')}: {_e}")
                 continue
             # A verified final can never remain a user-facing PASS. Older
@@ -1404,6 +1414,7 @@ async def list_picks(req: GetPicksRequest):
                         {"$set": updates, "$unset": unset} if unset else {"$set": updates}
                     )
                 except Exception as _e:
+                    _settlement_write_fails += 1
                     print(f"[PICKS-LIST WRITE FAIL] consistency {p.get('playerName','')}: {_e}")
 
     # ── CS2 settled-pick data repair ─────────────────────────────────────────
@@ -1860,6 +1871,7 @@ async def list_picks(req: GetPicksRequest):
                                     update_doc
                                 )
                             except Exception as _we:
+                                _settlement_write_fails += 1
                                 print(f"[PICKS-LIST WRITE FAIL] final-refresh {p.get('playerName','')}: {_we}")
                 except Exception as _re:
                     _re_is_quota = _is_storage_quota_error(_re)
@@ -1888,7 +1900,18 @@ async def list_picks(req: GetPicksRequest):
         "ts": _time_mod.monotonic(),
         "picks": visible_picks,
     }
-    return {"picks": visible_picks}
+    _is_owner = requester_email in OWNER_EMAILS or requester_email == OWNER_EMAIL
+    response: dict = {"picks": visible_picks}
+    if _settlement_write_fails > 0 and _is_owner:
+        # Owner-only visibility: these picks show corrected results in-memory
+        # but the Atlas write was blocked.  They will revert to their previous
+        # state on the next request until the DB write succeeds.
+        response["unsavedSettlementCount"] = _settlement_write_fails
+        print(
+            f"[PICKS-LIST WRITE FAIL] {_settlement_write_fails} settlement write(s) were "
+            f"blocked this request — picks appear corrected in-memory but DB not updated."
+        )
+    return response
 
 
 # In-memory cache for /picks/matchups: email -> {ts, result}. TTL 60s.
