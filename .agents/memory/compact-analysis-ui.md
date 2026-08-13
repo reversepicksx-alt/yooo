@@ -21,6 +21,12 @@ H2H evidence should remain a compact comparison strip rather than a second full-
 
 **How to apply:** Keep H2H height close to the bar content itself and use tap selection only where it adds information without restoring a large detail panel.
 
+Recent Matches, player-history/model-source numbers, and H2H should share one bordered history card. When a fixture venue is known, the Recent Matches chart must show only that venue’s verified player matches, while the compact header may summarize both archive counts.
+
+**Why:** The user wants the selected home/away sample immediately visible without stacking separate history and H2H cards that push the useful bars below the fold.
+
+**How to apply:** Render the venue-filtered chart first, add the small history-rate row and one-line calibration note beneath it, then place H2H as a subsection in the same card. Keep venue labels explicit when the selected sample is home or away.
+
 Analytics hit rates must display their scored numerator/denominator and excluded outcome counts; never let a small daily rate read like it applies to every headline pick.
 
 **Why:** A Today screenshot showed 90.9% beside 15 picks, but the rate was 10/11 HIT/MISS rows while four non-directional outcomes were excluded, and one scored row had no recognized OVER/UNDER direction.

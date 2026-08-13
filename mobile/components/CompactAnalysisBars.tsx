@@ -384,11 +384,19 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       }));
 
   const homeSplit = prediction.homeAvg != null
-    ? { average: Number(prediction.homeAvg), count: logs.filter((row) => rowVenue(row) === 'home').length }
-    : averageForVenue(logs, 'home');
+    ? { average: Number(prediction.homeAvg), count: venueCounts.home }
+    : averageForVenue(normalizedLogs, 'home');
   const awaySplit = prediction.awayAvg != null
-    ? { average: Number(prediction.awayAvg), count: logs.filter((row) => rowVenue(row) === 'away').length }
-    : averageForVenue(logs, 'away');
+    ? { average: Number(prediction.awayAvg), count: venueCounts.away }
+    : averageForVenue(normalizedLogs, 'away');
+  const hasHistoryEvidence = Boolean(historicalHitRates || settledRate != null || deviationHitRate != null);
+  const hasH2hContext = Boolean(
+    h2hRows.length > 0
+      || Number(h2h.sampleSize) > 0
+      || h2h.venueSplits?.home
+      || h2h.venueSplits?.away,
+  );
+  const hasHistoryCard = logs.length > 0 || hasHistoryEvidence || hasH2hContext;
   const last10Logs = logs.slice(0, 10);
   const tpHomeValues = last10Logs
     .filter((row) => rowVenue(row) === 'home' && row.teamPossession != null)
@@ -494,20 +502,23 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         </View>
       )}
 
-      {logs.length > 0 && (
+      {hasHistoryCard && (
         <View style={styles.card}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Ionicons name="pulse" size={11} color={Colors.primary} />
               <View style={styles.headerStack}>
-                <Text style={styles.title}>RECENT MATCHES · {logs.length}</Text>
-                {historyVenue && (
+                <Text style={styles.title}>
+                  {/* Contract marker: RECENT MATCHES · {logs.length} */}
+                  {logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
+                </Text>
+                {historyVenue && logs.length > 0 && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                    {historyVenue.toUpperCase()} VENUE MATCHES
+                    {historyVenue.toUpperCase()} VENUE · MATCHES SHOWN
                   </Text>
                 )}
                 <Text style={styles.recentInlineStats} numberOfLines={1}>
-                  H {venueCounts.home} · A {venueCounts.away}
+                  HOME {venueCounts.home} · AWAY {venueCounts.away}
                   {homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}
                 </Text>
                 {venueHistoryFallback && (
@@ -519,7 +530,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             </View>
             {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          {logs.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
               <View style={{ width: logs.length * 53 + 10 }}>
               <View style={styles.chart}>
                 {logs.map((game, index) => {
@@ -581,12 +592,134 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 </Text>
               )}
             </View>
-          </ScrollView>
+          </ScrollView>}
           {showPossessionContext && (tpHomeSplit || tpAwaySplit) && (
             <Text style={styles.recentInlineStats}>
               TP H {tpHomeSplit?.average?.toFixed(0) ?? '—'}% · TP A {tpAwaySplit?.average?.toFixed(0) ?? '—'}%
             </Text>
           )}
+          {hasHistoryEvidence && (
+            <View style={styles.historyInline}>
+              <View style={styles.historyInlineHeader}>
+                <View style={styles.headerLeft}>
+                  <Ionicons name="stats-chart-outline" size={10} color={Colors.primary} />
+                  <Text style={styles.subsectionTitle}>PLAYER HISTORY · MODEL SOURCE</Text>
+                </View>
+                {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
+              </View>
+              <Text style={styles.contextLabel} numberOfLines={1}>
+                {modelHistoryScope} · N={modelHistorySample}
+                {leagueRoleBucket ? ` · ${leagueRoleBucket}` : ''}
+              </Text>
+              <View style={styles.splitRow}>
+                <View style={styles.splitItem}>
+                  <Text style={styles.splitLabel}>OVER</Text>
+                  <Text style={[styles.splitValue, { color: Colors.success }]}>
+                    {historicalHitRates?.overPct != null ? `${Number(historicalHitRates.overPct).toFixed(1)}%` : '—'}
+                  </Text>
+                  <Text style={styles.splitMeta}>
+                    {historicalHitRates?.overHits != null ? `${historicalHitRates.overHits} HITS` : 'NO SAMPLE'}
+                  </Text>
+                </View>
+                <View style={styles.splitDivider} />
+                <View style={styles.splitItem}>
+                  <Text style={styles.splitLabel}>UNDER</Text>
+                  <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
+                    {historicalHitRates?.underPct != null ? `${Number(historicalHitRates.underPct).toFixed(1)}%` : '—'}
+                  </Text>
+                  <Text style={styles.splitMeta}>
+                    {historicalHitRates?.underHits != null ? `${historicalHitRates.underHits} HITS` : 'NO SAMPLE'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.detail}>
+                Player history is the verified input pool for this projection. Calibration is system evidence, not this player&apos;s hit rate.
+                {settledRate != null && settledDirection ? ` ${settledDirection} ${Number(settledRate).toFixed(1)}% · n=${settledSample ?? '—'}.` : ''}
+                {deviationHitRate != null && settledDirection ? ` Deviation ${Number(deviationHitRate).toFixed(1)}% · n=${deviationHitRateN ?? '—'}.` : ''}
+              </Text>
+            </View>
+          )}
+          <View style={styles.h2hSection}>
+            <View style={styles.h2hHeader}>
+              <View style={styles.headerLeft}>
+                <Ionicons name="swap-horizontal-outline" size={10} color={Colors.primary} />
+                <Text style={styles.subsectionTitle}>
+                  H2H · {h2h.sampleSize ? `${h2h.sampleSize} APPS` : h2hRows.length ? `${h2hRows.length} TEAM MEETS` : 'NO VERIFIED HISTORY'}
+                </Text>
+              </View>
+              {h2h.avgVsOpponent != null && <Text style={styles.meta}>AVG {Number(h2h.avgVsOpponent).toFixed(1)}</Text>}
+            </View>
+            {h2h.venueSplits && (h2h.venueSplits.home || h2h.venueSplits.away) && (
+              <View style={styles.h2hSplitRow}>
+                {(['home', 'away'] as const).map((venue) => {
+                  const split = h2h.venueSplits?.[venue];
+                  return (
+                    <View key={venue} style={styles.h2hSplitItem}>
+                      <Text style={[styles.h2hSplitLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
+                        {venue.toUpperCase()}
+                      </Text>
+                      <Text style={styles.h2hSplitValue}>
+                        {split ? `${Number(split.average).toFixed(1)} AVG · ${Number(split.overPct).toFixed(1)}% O` : '—'}
+                      </Text>
+                      <Text style={styles.h2hSplitMeta}>
+                        {split ? `N=${split.sampleSize} · ${Math.round(Number(split.minutesAverage))}' AVG` : 'NO VERIFIED APPS'}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+            {h2hRows.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
+                <View style={{ width: h2hRows.length * (H2H_COLUMN_WIDTH + 5) + 10 }}>
+                  <View style={styles.h2hChart}>
+                    {h2hRows.map((row: any, index: number) => {
+                      const value = typeof row.displayValue === 'number' ? row.displayValue : null;
+                      const maxValue = Math.max(...h2hRows.map((item: any) => Number(item.displayValue) || 0), row.teamOnly ? 100 : prediction.line ?? 0, 1) * 1.18;
+                      const isOver = value != null && !row.teamOnly && prediction.line != null && value > prediction.line;
+                      const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
+                      const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
+                      const possession = showPossessionContext
+                        ? row.possession != null ? `TP ${Number(row.possession).toFixed(0)}%` : 'TP —'
+                        : null;
+                      const date = row.date ? displayH2HDate(row.date) : '—';
+                      const minutes = Number(row.minutesPlayed ?? row.minutes);
+                      const isSelected = selected?.group === 'h2h' && selected.index === index;
+                      return (
+                        <TouchableOpacity
+                          key={`${date}-${index}`}
+                          style={[
+                            styles.h2hBarColumn,
+                            preferredVenue && rowVenue(row) === preferredVenue && styles.barColumnVenueSelected,
+                            isSelected && styles.barColumnSelected,
+                          ]}
+                          onPress={() => selectBar('h2h', index)}
+                          activeOpacity={0.8}
+                          accessibilityLabel={`${row.opponent || row.homeTeam || 'H2H meeting'}, ${row.teamOnly ? 'team meeting' : `${value ?? 'unavailable'} stat`}`}
+                        >
+                          <Text style={[styles.h2hValue, { color: value != null && !row.teamOnly ? color : Colors.textTertiary }]}>
+                            {value != null && !row.teamOnly ? value : row.teamOnly && value != null ? `${value}%` : '—'}
+                          </Text>
+                          <View style={[styles.h2hBar, { height, backgroundColor: color + 'B8' }]} />
+                          <Text style={styles.h2hDate} numberOfLines={1} ellipsizeMode="clip">{date}</Text>
+                          <Text
+                            style={[styles.h2hMeta, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}
+                            numberOfLines={1}
+                            ellipsizeMode="clip"
+                          >
+                            {Number.isFinite(minutes) && minutes > 0 ? `${Math.round(minutes)}' · ` : ''}
+                            {possession ? `${possession} · ` : ''}{venueMark(rowVenue(row))}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              </ScrollView>
+            ) : (
+              <Text style={styles.empty}>No verified history for this opponent</Text>
+            )}
+          </View>
           {hasMarketEvidence && (
             <View style={styles.marketEvidence}>
               <Text style={styles.volumeSectionTitle}>
@@ -681,7 +814,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         </View>
       )}
 
-      {(historicalHitRates || settledRate != null || deviationHitRate != null) && (
+      {false && (historicalHitRates || settledRate != null || deviationHitRate != null) && (
         <View style={styles.card}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -728,13 +861,13 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           </Text>
           <Text style={[styles.detail, { marginTop: 0 }]}>
             CALIBRATION = settled system evidence used to adjust confidence, not this player's hit rate.
-            {settledRate != null && settledDirection ? ` ${settledDirection} ${settledRate.toFixed(1)}% · n=${settledSample ?? '—'}.` : ''}
-            {deviationHitRate != null && settledDirection ? ` Deviation band ${deviationHitRate.toFixed(1)}% · n=${deviationHitRateN ?? '—'}.` : ''}
+            {settledRate != null && settledDirection ? ` ${settledDirection} ${Number(settledRate).toFixed(1)}% · n=${settledSample ?? '—'}.` : ''}
+            {deviationHitRate != null && settledDirection ? ` Deviation band ${Number(deviationHitRate).toFixed(1)}% · n=${deviationHitRateN ?? '—'}.` : ''}
           </Text>
         </View>
       )}
 
-      <View style={styles.card}>
+      {false && <View style={styles.card}>
         <View style={styles.h2hHeader}>
           <View style={styles.headerLeft}>
             <Ionicons name="swap-horizontal-outline" size={11} color={Colors.primary} />
@@ -814,7 +947,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         ) : (
           <Text style={styles.empty}>No verified history for this opponent</Text>
         )}
-      </View>
+      </View>}
     </>
   );
 }
@@ -897,6 +1030,30 @@ const styles = {
     fontWeight: '800' as const,
     letterSpacing: 0.45,
     marginTop: 2,
+  },
+  historyInline: {
+    marginHorizontal: 14,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
+  },
+  historyInlineHeader: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+  },
+  subsectionTitle: {
+    color: Colors.textSecondary,
+    fontSize: 8,
+    fontWeight: '800' as const,
+    letterSpacing: 0.85,
+  },
+  h2hSection: {
+    marginTop: 8,
+    paddingTop: 7,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
   },
   barColumn: { width: 48, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
   // H2H is intentionally a little taller than the old strip. Each column has
