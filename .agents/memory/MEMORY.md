@@ -153,3 +153,4 @@
 - [API-Football player fixture fallback](api-football-player-fixture-fallback.md) — `/fixtures` rejects `player`; query the verified club team, then match exact player ID within fixture payloads.
 - [Saved analysis log normalization](saved-analysis-log-normalization.md) — saved analysis uses `playerGameLogs.games`; shared history UI must normalize it alongside live `gameLogs`.
 - [Verified venue-history threshold](venue-history-threshold.md) — venue priors require 30 verified player appearances; search older competitions/seasons, then use full history with an explicit fallback.
+- [Passing correlation diagnostics](passing-correlation-diagnostics.md) — same-fixture picks are correlated evidence; exact-time settlement ties need deterministic ordering, not false leakage violations.

@@ -2421,6 +2421,75 @@ export interface AnalyticsData {
     duplicateRowsRemoved: number;
     sports: string[];
   };
+  passingDiagnostics?: PassingDiagnostics;
+}
+
+export interface PassingMetricSummary {
+  n: number;
+  hits: number;
+  misses: number;
+  hitRate: number | null;
+  under: { n: number; hits: number; misses: number; hitRate: number | null };
+  over: { n: number; hits: number; misses: number; hitRate: number | null };
+  meanProjectionError: number | null;
+  projectionN: number;
+}
+
+export interface PassingDiagnosticBucket extends PassingMetricSummary {
+  label: string;
+}
+
+export interface PassingReplayBucket {
+  label: string;
+  n: number;
+  evaluatedN: number;
+  leakageViolations: number;
+  missingPriorDataEvents: number;
+  classification: { n: number; logLoss: number | null; brierScore: number | null };
+  projection: { n: number; mae: number | null; rmse: number | null; meanError: number | null };
+  byDirection: Record<string, { n: number; hits: number; misses: number; hitRate: number | null }>;
+}
+
+export interface PassingDiagnostics {
+  scope: {
+    propTypes: string[];
+    rawRows: number;
+    uniqueEvents: number;
+    fixtures: number;
+    scoredEvents: number;
+  };
+  correlationSummary: {
+    correlatedEvents: number;
+    independentEvents: number;
+    fixtureIdentityUnavailableEvents: number;
+    correlatedFixtures: number;
+    independentFixtures: number;
+    correlated: PassingMetricSummary;
+    independent: PassingMetricSummary;
+  };
+  sourceAudit: {
+    verifiedSourceEvents: number;
+    exactFixtureSourceEvents: number;
+    missingFixtureEvents: number;
+    statPaths: Array<{ path: string; n: number }>;
+  };
+  dimensions: {
+    league: PassingDiagnosticBucket[];
+    competition: PassingDiagnosticBucket[];
+    position: PassingDiagnosticBucket[];
+    possessionBand: PassingDiagnosticBucket[];
+    correlation: PassingDiagnosticBucket[];
+  };
+  walkForward: {
+    overall: PassingReplayBucket;
+    byLeague: PassingReplayBucket[];
+    byCompetition: PassingReplayBucket[];
+    byPosition: PassingReplayBucket[];
+    byPossessionBand: PassingReplayBucket[];
+    byCorrelation: PassingReplayBucket[];
+    method: string;
+  };
+  note: string;
 }
 
 export interface SystemInsightDimension {

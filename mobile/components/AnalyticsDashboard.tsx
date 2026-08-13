@@ -6,7 +6,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, getStorageHealth, triggerStorageCleanup, runModelReplay, Pick, AnalyticsData, ModelReplayResult } from '@/lib/api';
+import {
+  getOwnerAnalytics,
+  getStorageHealth,
+  triggerStorageCleanup,
+  runModelReplay,
+  Pick,
+  AnalyticsData,
+  ModelReplayResult,
+  PassingDiagnosticBucket,
+  PassingReplayBucket,
+} from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -487,6 +497,92 @@ export default function AnalyticsDashboard({
     );
   };
 
+  const renderPassingDiagnostics = () => {
+    const diagnostics = ownerData?.passingDiagnostics;
+    if (!diagnostics || diagnostics.scope.scoredEvents === 0) return null;
+
+    const { correlationSummary: correlation, sourceAudit, dimensions, walkForward } = diagnostics;
+    const rateColor = (rate: number | null | undefined) =>
+      rate == null ? Colors.textTertiary : rate >= 60 ? Colors.success : rate >= 50 ? Colors.primary : Colors.error;
+    const metricText = (metric: PassingDiagnosticBucket) =>
+      `${metric.hitRate != null ? `${metric.hitRate}%` : '—'} · n=${metric.n}`;
+    const replayMetricText = (metric: PassingReplayBucket) => {
+      const projection = metric.projection.meanError;
+      const direction = metric.byDirection?.under ?? metric.byDirection?.over;
+      return `n=${metric.n} · hit ${direction?.hitRate ?? '—'}% · bias ${projection != null ? `${projection > 0 ? '+' : ''}${projection.toFixed(1)}` : '—'}`;
+    };
+    const renderBucketLines = (title: string, rows: PassingDiagnosticBucket[], limit = 5) => (
+      <View style={s.passingDiagSection}>
+        <Text style={s.ownerHealthLabel}>{title}</Text>
+        {rows.slice(0, limit).map((row) => (
+          <View key={`${title}-${row.label}`} style={s.passingDiagRow}>
+            <Text style={s.passingDiagLabel} numberOfLines={1}>{row.label}</Text>
+            <Text style={[s.passingDiagRate, { color: rateColor(row.hitRate) }]}>{metricText(row)}</Text>
+            <Text style={s.passingDiagMeta}>
+              U {row.under.hitRate ?? '—'} · O {row.over.hitRate ?? '—'}
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+    const renderReplayLines = (title: string, rows: PassingReplayBucket[], limit = 5) => (
+      <View style={s.passingDiagSection}>
+        <Text style={s.ownerHealthLabel}>{title}</Text>
+        {rows.slice(0, limit).map((row) => (
+          <View key={`${title}-${row.label}`} style={s.passingDiagRow}>
+            <Text style={s.passingDiagLabel} numberOfLines={1}>{row.label}</Text>
+            <Text style={s.passingDiagRate}>{replayMetricText(row)}</Text>
+            <Text style={s.passingDiagMeta}>leak {row.leakageViolations}</Text>
+          </View>
+        ))}
+      </View>
+    );
+
+    return (
+      <View style={s.passingDiagCard}>
+        <View style={s.chartHeader}>
+          <Text style={s.chartTitle}>PASSING PROP DIAGNOSTIC</Text>
+          <Text style={s.chartSubtitle}>LEAKAGE-SAFE</Text>
+        </View>
+        <Text style={s.ownerHealthMeta}>
+          Passing props only · {diagnostics.scope.uniqueEvents} unique events across {diagnostics.scope.fixtures} fixtures.
+          Correlated means 2+ picks share one exact fixture; it is not independent evidence.
+        </Text>
+        <View style={s.passingDiagCompare}>
+          <View style={s.passingDiagCompareCell}>
+            <Text style={s.passingDiagCompareValue}>{correlation.correlatedEvents}</Text>
+            <Text style={s.passingDiagCompareLabel}>CORRELATED PICKS</Text>
+            <Text style={[s.passingDiagCompareMeta, { color: rateColor(correlation.correlated.hitRate) }]}>
+              {correlation.correlated.hitRate ?? '—'}% hit · {correlation.correlatedFixtures} fixtures
+            </Text>
+          </View>
+          <View style={s.passingDiagCompareCell}>
+            <Text style={s.passingDiagCompareValue}>{correlation.independentEvents}</Text>
+            <Text style={s.passingDiagCompareLabel}>INDEPENDENT PICKS</Text>
+            <Text style={[s.passingDiagCompareMeta, { color: rateColor(correlation.independent.hitRate) }]}>
+              {correlation.independent.hitRate ?? '—'}% hit · {correlation.independentFixtures} fixtures
+            </Text>
+          </View>
+        </View>
+        <Text style={s.ownerHealthMeta}>
+          UNDER: correlated {correlation.correlated.under.hitRate ?? '—'}% ({correlation.correlated.under.n}) · independent {correlation.independent.under.hitRate ?? '—'}% ({correlation.independent.under.n})
+        </Text>
+        <Text style={s.ownerHealthMeta}>
+          Source audit: {sourceAudit.verifiedSourceEvents}/{diagnostics.scope.uniqueEvents} verified · {sourceAudit.exactFixtureSourceEvents} exact fixture joins · {sourceAudit.missingFixtureEvents} missing fixture IDs
+        </Text>
+        {renderBucketLines('BY LEAGUE · DESCRIPTIVE', dimensions.league)}
+        {renderBucketLines('BY POSSESSION BAND', dimensions.possessionBand)}
+        {renderBucketLines('BY POSITION', dimensions.position)}
+        {renderBucketLines('BY COMPETITION', dimensions.competition)}
+        {renderReplayLines('WALK-FORWARD · BY LEAGUE', walkForward.byLeague)}
+        {renderReplayLines('WALK-FORWARD · BY CORRELATION', walkForward.byCorrelation)}
+        <Text style={s.ownerHealthMeta}>
+          Replay uses only earlier settled rows inside each bucket; leakage violations should remain 0. It is evaluation only and does not alter calibration.
+        </Text>
+      </View>
+    );
+  };
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={[s.backdrop, { paddingTop: insets.top + 30 }]}>
@@ -880,6 +976,7 @@ export default function AnalyticsDashboard({
                     ) : null}
                   </View>
                 ) : null}
+                {renderPassingDiagnostics()}
               </View>
             )}
             {renderTrendChart()}
@@ -983,6 +1080,41 @@ const s = StyleSheet.create({
   ownerPropList: { marginTop: 9, gap: 3 },
   ownerPropRow: { fontSize: 10, color: Colors.textSecondary, lineHeight: 14, textTransform: 'capitalize' },
   ownerHealthReplay: { fontSize: 10, color: Colors.primary, marginTop: 6, fontWeight: '700' },
+  passingDiagCard: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.18)',
+  },
+  passingDiagCompare: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 5,
+  },
+  passingDiagCompareCell: {
+    flex: 1,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+  },
+  passingDiagCompareValue: { fontSize: 20, fontWeight: '800', color: Colors.text },
+  passingDiagCompareLabel: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5, color: Colors.textTertiary, marginTop: 2 },
+  passingDiagCompareMeta: { fontSize: 10, fontWeight: '700', marginTop: 4 },
+  passingDiagSection: { marginTop: 10 },
+  passingDiagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  passingDiagLabel: { flex: 1.25, fontSize: 10, color: Colors.textSecondary },
+  passingDiagRate: { minWidth: 78, textAlign: 'right', fontSize: 10, fontWeight: '700', color: Colors.text },
+  passingDiagMeta: { minWidth: 76, textAlign: 'right', fontSize: 9, color: Colors.textTertiary },
   replayBtn: {
     flexDirection: 'row',
     alignItems: 'center',

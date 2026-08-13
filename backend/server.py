@@ -798,6 +798,11 @@ async def owner_analytics(payload: dict = Body(...)):
             "result": 1, "confidenceScore": 1, "rawConfidence": 1,
             "confidenceLevel": 1, "projectedValue": 1, "projection": 1,
             "actualValue": 1, "passOutcome": 1, "isCalibrationOnly": 1,
+            "settlementSource": 1,
+            "homePoss": 1, "awayPoss": 1, "teamPossession": 1,
+            "playerPossession": 1,
+            "competitionType": 1, "competition": 1, "stageType": 1,
+            "matchRound": 1, "round": 1, "leagueRound": 1,
         },
     ).to_list(100000)
     _period_cutoff = None
@@ -1093,6 +1098,8 @@ async def owner_analytics(payload: dict = Body(...)):
             key=lambda row: row["rate"],
         )[:3],
     }
+    from passing_diagnostics import build_passing_diagnostics
+    passing_diagnostics = build_passing_diagnostics(raw_rows)
 
     # ROI assumes -110 standard American odds: win=+$100, loss=-$110 per $110 wagered
     confidence_tiers = []
@@ -1201,6 +1208,7 @@ async def owner_analytics(payload: dict = Body(...)):
             "trends": wf_trends,
         },
         "insights": dashboard_insights,
+        "passingDiagnostics": passing_diagnostics,
         "scope": {
             "access": "owner",
             "dataset": "all_users",
