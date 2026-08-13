@@ -527,13 +527,13 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
           </View>
           {logs.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-              <View style={{ width: logs.length * 53 + 10 }}>
+              <View style={{ width: logs.length * 45 + 10 }}>
               <View style={styles.chart}>
                 {logs.map((game, index) => {
                   const value = Number(game.value);
                   const maxValue = Math.max(...logs.map((item) => Number(item.value) || 0), prediction.line ?? 0, 1) * 1.18;
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
-                  const height = Math.max(10, (value / maxValue) * 112);
+                   const height = Math.max(7, (value / maxValue) * 78);
                   const date = game.date ? displayH2HDate(game.date) : '—';
                    const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
                   const minutes = game.minutesPlayed ?? game.minutes;
@@ -1019,7 +1019,7 @@ const styles = {
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
-  chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
+  chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
   recentInlineStats: {
     color: '#697586',
     fontSize: 7,
@@ -1051,7 +1051,7 @@ const styles = {
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.07)',
   },
-  barColumn: { width: 48, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
+  barColumn: { width: 42, height: 118, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 4, paddingTop: 1 },
   // H2H is intentionally a little taller than the old strip. Each column has
   // reserved rows for value → bar → date → possession/venue, so the bar can
   // never cover the customer-facing numbers.
@@ -1079,13 +1079,13 @@ const styles = {
   h2hMeta: { fontSize: 8, lineHeight: 11, height: 11, fontWeight: '900' as const, marginTop: 1, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
-  value: { fontSize: 8, fontWeight: '800' as const, marginBottom: 2 },
-  bar: { width: 28, minHeight: 10, borderRadius: 3, justifyContent: 'flex-end' as const, alignItems: 'center' as const, position: 'relative' as const },
+  value: { fontSize: 7, lineHeight: 8, fontWeight: '800' as const, marginBottom: 1 },
+  bar: { width: 22, minHeight: 7, borderRadius: 3, justifyContent: 'flex-end' as const, alignItems: 'center' as const, position: 'relative' as const },
   possession: { position: 'absolute' as const, bottom: 4, color: '#FFF', fontSize: 6.5, fontWeight: '900' as const },
-  possessionLabel: { fontSize: 6.5, color: '#7D8796', lineHeight: 9, fontWeight: '800' as const },
-  venueLabel: { fontSize: 7, lineHeight: 9, fontWeight: '900' as const, letterSpacing: 0.5 },
-  date: { fontSize: 6.5, color: '#777', lineHeight: 10, marginTop: 4 },
-  opponent: { fontSize: 7, fontWeight: '700' as const, lineHeight: 10 },
+  possessionLabel: { fontSize: 5.5, color: '#7D8796', lineHeight: 7, fontWeight: '800' as const },
+  venueLabel: { fontSize: 6, lineHeight: 7, fontWeight: '900' as const, letterSpacing: 0.4 },
+  date: { fontSize: 5.5, color: '#777', lineHeight: 7, marginTop: 1 },
+  opponent: { fontSize: 6, fontWeight: '700' as const, lineHeight: 8 },
   detail: { paddingHorizontal: 2, paddingTop: 4, paddingBottom: 2, color: '#9CA3AF', fontSize: 8, lineHeight: 12 },
   splitRow: {
     marginHorizontal: 14,
