@@ -266,8 +266,8 @@ export default function OwnerPickCard({
     setTeamLogoFailed(false);
   }, [playerPhotoUri, teamLogoUri]);
 
-  const tweetText = `${APP_STORE_URL}\nvia @Reversepickss\nImages © API-Football · images shown for informational purposes only.`;
-  const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss\nImages © API-Football · images shown for informational purposes only.`;
+  const tweetText = `${APP_STORE_URL}\nvia @Reversepickss`;
+  const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss`;
 
   const handleShare = async () => {
     setSharing(true);
@@ -576,11 +576,6 @@ export default function OwnerPickCard({
                 )}
               </View>
             </View>
-            {captureMode && (
-              <Text style={styles.captureDisclaimer}>
-                Images © API-Football · images shown for informational purposes only.
-              </Text>
-            )}
           </View>
         </View>
         {shareSheet}
@@ -731,12 +726,6 @@ export default function OwnerPickCard({
             </Text>
           )}
         </View>
-        {captureMode && (
-          <Text style={styles.captureDisclaimer}>
-            Images © API-Football · images shown for informational purposes only.
-          </Text>
-        )}
-
         {/* ── Track live btn ─────────────────────────────── */}
         {live && !won && !lost && pick.sport === 'soccer' && onTrack && (
           <TouchableOpacity onPress={onTrack} style={styles.liveBtn} activeOpacity={0.7}>
@@ -862,10 +851,6 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
       <span style="font-size:10px;color:rgba(255,255,255,0.3);font-weight:600">${timeStr}</span>
     </div>
     ${ctxHTML}
-    <!-- Attribution -->
-    <div style="margin-top:8px">
-      <span style="font-size:9px;color:rgba(255,255,255,0.25);font-weight:500">Images © API-Football · images shown for informational purposes only</span>
-    </div>
   </div>
 </div>`;
 }
@@ -1000,10 +985,6 @@ const styles = StyleSheet.create({
   footTime: { color: 'rgba(255,255,255,0.3)', fontSize: 9, fontWeight: '600' },
   matchId: { color: Colors.primary, fontSize: 9, fontWeight: '800', letterSpacing: 0.25, marginLeft: 8 },
   footScore: { color: 'rgba(255,255,255,0.25)', fontSize: 8.5, fontWeight: '500' },
-  captureDisclaimer: {
-    color: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: '500',
-    marginTop: 6, lineHeight: 11,
-  },
   liveBtn: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
     marginTop: 5, paddingHorizontal: 8, paddingVertical: 3,

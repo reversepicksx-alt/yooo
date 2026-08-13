@@ -59,6 +59,9 @@ export default function TermsScreen() {
         <Text style={styles.body}>
           All content, algorithms, models, and software within Reverse Picks are the proprietary property of Reverse Picks and are protected by applicable intellectual property laws. These Terms do not grant you any rights to our trademarks or intellectual property.
         </Text>
+        <Text style={styles.body}>
+          Player photos, team crests, league marks, and other third-party visual assets may appear alongside predictions for identification and informational purposes only. These assets are not sold separately by Reverse Picks, and ownership remains with the applicable rights holders. Their use remains subject to any applicable provider, league, club, player, photographer, or other rights-holder terms.
+        </Text>
 
         <Text style={styles.section}>7. Disclaimer of Warranties</Text>
         <Text style={styles.body}>
