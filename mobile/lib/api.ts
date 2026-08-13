@@ -2503,36 +2503,6 @@ export async function triggerStorageCleanup(
   });
 }
 
-export interface QuotaStatus {
-  active: boolean;
-  trippedDate: string | null;
-  dailyCallCount: number;
-  softLimit: number;
-  hardLimit: number;
-  date: string;
-  lastResetAt: string | null;
-}
-
-export async function getQuotaStatus(
-  email: string,
-  token: string,
-): Promise<QuotaStatus> {
-  return apiCall(
-    `/api/admin/quota-status?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`,
-    { method: 'GET' },
-  );
-}
-
-export async function resetQuotaBreaker(
-  email: string,
-  token: string,
-): Promise<{ cleared: boolean; message: string }> {
-  return apiCall('/api/admin/quota-reset', {
-    method: 'POST',
-    body: JSON.stringify({ email, token }),
-  });
-}
-
 export interface PlayerPickRow {
   playerName: string;
   position: string;

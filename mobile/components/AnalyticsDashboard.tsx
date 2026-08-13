@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, getStorageHealth, getQuotaStatus, resetQuotaBreaker, triggerStorageCleanup, runModelReplay, Pick, AnalyticsData, ModelReplayResult } from '@/lib/api';
+import { getOwnerAnalytics, getStorageHealth, triggerStorageCleanup, runModelReplay, Pick, AnalyticsData, ModelReplayResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -232,30 +232,9 @@ export default function AnalyticsDashboard({
     enabled: visible && !!session,
     staleTime: 5 * 60_000,   // 5 minutes — lightweight call, no need to hammer
   });
-  const { data: quotaStatus, refetch: refetchQuota } = useQuery({
-    queryKey: ['quotaStatus', session?.email],
-    queryFn: () => getQuotaStatus(session!.email, session!.token),
-    enabled: visible && !!session,
-    staleTime: 2 * 60_000,   // 2 minutes — show fresh counts
-  });
-  const [quotaResetting, setQuotaResetting] = React.useState(false);
   const [replayRunning, setReplayRunning] = React.useState(false);
   const [replayResult, setReplayResult] = React.useState<ModelReplayResult | null>(null);
   const [replayError, setReplayError] = React.useState<string | null>(null);
-
-  const handleQuotaReset = async () => {
-    if (!session || quotaResetting) return;
-    setQuotaResetting(true);
-    try {
-      const result = await resetQuotaBreaker(session.email, session.token);
-      await refetchQuota();
-      Alert.alert('Quota Reset', result.message);
-    } catch (err: any) {
-      Alert.alert('Reset Failed', err?.message ?? 'Unknown error');
-    } finally {
-      setQuotaResetting(false);
-    }
-  };
 
   const handleRunReplay = async () => {
     if (!session || replayRunning) return;
@@ -297,86 +276,6 @@ export default function AnalyticsDashboard({
   // source for Live/Settled Picks and are never used for this report when the
   // owner dataset is available.
   const stats = (ownerData?.insights ?? localStats) as ReturnType<typeof computeAnalytics>;
-
-  const renderQuotaUsage = () => {
-    if (!quotaStatus) return null;
-    const { active, trippedDate, dailyCallCount, softLimit, hardLimit, date, lastResetAt } = quotaStatus;
-
-    // The soft limit is the operative enforcement threshold — background API
-    // calls are suspended once it is reached, long before the provider's
-    // hard plan limit. Warnings and the progress bar reflect soft-limit
-    // headroom so the owner sees actionable usage, not a misleadingly small
-    // fraction of the 450 k provider ceiling.
-    const softUsedPct  = softLimit > 0 ? Math.min(100, (dailyCallCount / softLimit) * 100) : 0;
-    const hardUsedPct  = hardLimit > 0 ? Math.min(100, (dailyCallCount / hardLimit) * 100) : 0;
-    const barColor     = active ? Colors.error : softUsedPct >= 80 ? '#f59e0b' : Colors.success;
-    const statusLabel  = active ? '⚠ BREAKER TRIPPED' : softUsedPct >= 80 ? '⚠ BUDGET HIGH' : softUsedPct >= 50 ? '↑ MID USAGE' : '✓ OK';
-    const statusColor  = active ? Colors.error : softUsedPct >= 80 ? '#f59e0b' : Colors.primary;
-
-    return (
-      <View style={[s.storageCard, active && s.storageCardDegraded]}>
-        <View style={s.storageHeader}>
-          <Text style={s.chartTitle}>API-FOOTBALL QUOTA</Text>
-          <Text style={[s.storageStatus, { color: statusColor }]}>{statusLabel}</Text>
-        </View>
-
-        {/* Soft-budget bar — this is the operative enforcement limit */}
-        <View style={s.storageBarRow}>
-          <View style={s.storageBarTrack}>
-            <View style={[s.storageBarFill, { width: `${softUsedPct}%`, backgroundColor: barColor }]} />
-          </View>
-          <Text style={[s.storageBarLabel, { color: barColor }]}>{softUsedPct.toFixed(0)}%</Text>
-        </View>
-        <Text style={s.storageBarMeta}>
-          {dailyCallCount.toLocaleString()} / {softLimit.toLocaleString()} background budget today ({date})
-        </Text>
-
-        {/* Secondary: provider plan headroom */}
-        <Text style={[s.storageBarMeta, { marginTop: 3 }]}>
-          Provider plan: {dailyCallCount.toLocaleString()} / {hardLimit.toLocaleString()} ({hardUsedPct.toFixed(2)}% of {(hardLimit / 1000).toFixed(0)}k limit)
-        </Text>
-
-        {trippedDate ? (
-          <Text style={[s.storageBarMeta, { color: Colors.error, marginTop: 4 }]}>
-            Breaker tripped: {trippedDate} — all API calls suspended until midnight UTC
-          </Text>
-        ) : null}
-
-        {lastResetAt ? (
-          <Text style={[s.storageBarMeta, { color: Colors.textTertiary, marginTop: 3 }]}>
-            Last reset: {(() => {
-              try {
-                const d = new Date(lastResetAt);
-                const now = new Date();
-                const diffMs = now.getTime() - d.getTime();
-                const diffMins = Math.floor(diffMs / 60000);
-                if (diffMins < 1) return 'just now';
-                if (diffMins < 60) return `${diffMins}m ago`;
-                const diffHrs = Math.floor(diffMins / 60);
-                if (diffHrs < 24) return `${diffHrs}h ago`;
-                return d.toLocaleString();
-              } catch {
-                return lastResetAt;
-              }
-            })()}
-          </Text>
-        ) : null}
-
-        {active && (
-          <TouchableOpacity
-            style={[s.cleanupBtn, quotaResetting && s.cleanupBtnDisabled, { marginTop: 8 }]}
-            onPress={handleQuotaReset}
-            disabled={quotaResetting}
-          >
-            <Ionicons name="refresh-outline" size={13} color={quotaResetting ? Colors.textTertiary : Colors.error} />
-            <Text style={[s.cleanupBtnText, { color: quotaResetting ? Colors.textTertiary : Colors.error }]}>
-              {quotaResetting ? 'Resetting…' : 'Reset breaker now'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
 
   const renderStorageHealth = () => {
     if (!storageHealth) return null;
@@ -635,7 +534,6 @@ export default function AnalyticsDashboard({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
-            {renderQuotaUsage()}
             {renderStorageHealth()}
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>

@@ -141,6 +141,7 @@
 - [Owner-only player media](owner-only-media-gating.md) — photos and team crests require server-side owner authorization and stay out of persisted prediction records.
 - [Player identity and context](player-identity-context.md) — verified player IDs are authoritative; fixture team context disambiguates cache media and prevents same-name history merges.
 - [Owner API status indicator](owner-api-status-indicator.md) — quota health is a compact owner-only header dot; regular users see no provider details.
+- [Provider branding removal](provider-branding-removal.md) — external sports-provider quota and dashboard details stay out of user-facing app surfaces; internal safeguards may remain.
 - [MLB next-game date boundary](mlb-next-game-date-boundary.md) — reject cached or provider-returned games before today at both API and mobile boundaries.
 - [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.
 - [Trust-oriented evidence display](trust-oriented-evidence-display.md) — users trust predictions more when provenance, sample context, and unavailable data are visible instead of hidden or estimated.

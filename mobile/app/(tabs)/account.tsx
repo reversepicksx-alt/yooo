@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, setUsername, setProfileImage, getDmInbox, getQuotaStatus, type QuotaStatus } from '@/lib/api';
+import { getUserProfile, setUsername, setProfileImage, getDmInbox } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
@@ -467,9 +467,6 @@ export default function AccountScreen() {
   const [usernameError, setUsernameError] = useState('');
   const [instructionsOpen, setInstructionsOpen] = useState(false);
 
-  // Owner-only provider status indicator
-  const [quotaStatus, setQuotaStatus] = useState<QuotaStatus | null>(null);
-
   // RevenueCat state (iOS native only)
   const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
 
@@ -503,21 +500,6 @@ export default function AccountScreen() {
   useEffect(() => {
     fetchSubStatus();
   }, [fetchSubStatus]);
-
-  // Owner: fetch quota breaker status on mount
-  const fetchQuotaStatus = useCallback(async () => {
-    if (!isOwner || !session?.email || !session?.token) return;
-    try {
-      const s = await getQuotaStatus(session.email, session.token);
-      setQuotaStatus(s);
-    } catch {
-      // non-critical — leave state null
-    }
-  }, [isOwner, session?.email, session?.token]);
-
-  useEffect(() => {
-    fetchQuotaStatus();
-  }, [fetchQuotaStatus]);
 
   // Poll DM inbox for unread count
   useEffect(() => {
@@ -794,26 +776,6 @@ export default function AccountScreen() {
               </View>
             )}
           </TouchableOpacity>
-          {isOwner && (
-            <View
-              accessibilityLabel={`API quota ${quotaStatus === null ? 'status checking' : quotaStatus.active ? 'exhausted' : 'available'}`}
-              style={styles.apiStatus}
-            >
-              <Text style={styles.apiStatusLabel}>API</Text>
-              <View
-                style={[
-                  styles.apiStatusDot,
-                  {
-                    backgroundColor: quotaStatus === null
-                      ? Colors.textTertiary
-                      : quotaStatus.active
-                        ? '#ef4444'
-                        : '#22c55e',
-                  },
-                ]}
-              />
-            </View>
-          )}
           <NotificationBell />
         </View>
       </View>

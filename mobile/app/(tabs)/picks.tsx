@@ -1363,10 +1363,10 @@ export default function PicksScreen() {
             </View>
             <Text style={disclaimerStyles.title}>Image Use Notice</Text>
             <Text style={disclaimerStyles.body}>
-              Player photos and team crests displayed on your account are sourced from API-Football and are the property of their respective rights holders.{'\n\n'}
+              Player photos and team crests displayed on your account are provided under the app's data licenses and are the property of their respective rights holders.{'\n\n'}
               These images are shown <Text style={disclaimerStyles.bold}>exclusively on your owner account</Text> for personal, non-commercial, informational purposes — they are never displayed to subscribers or third parties.{'\n\n'}
               This use is consistent with fair use under 17 U.S.C. § 107 (informational, non-commercial, personal). By continuing, you acknowledge that you will not use these images in any commercial context.{'\n\n'}
-              <Text style={disclaimerStyles.small}>API-Football · api-football.com · Data licensed per your API subscription agreement.</Text>
+              <Text style={disclaimerStyles.small}>Data providers and rights holders · Used under applicable licensing agreements.</Text>
             </Text>
             <TouchableOpacity style={disclaimerStyles.btn} onPress={dismissImageDisclaimer} activeOpacity={0.85}>
               <Text style={disclaimerStyles.btnText}>I UNDERSTAND — CONTINUE</Text>
