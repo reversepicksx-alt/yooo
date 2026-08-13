@@ -3,6 +3,7 @@ import uuid
 import unicodedata
 import asyncio as aio
 import traceback
+from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
@@ -951,6 +952,11 @@ async def save_pick(req: SavePickRequest):
 # entire pipeline on every poll cycle.
 _picks_list_cache: dict[str, dict] = {}   # email → {ts, picks}
 PICKS_LIST_CACHE_TTL = 20                 # seconds
+# Settlement/live refresh is deliberately decoupled from the first list
+# response.  These sets prevent the 15-second client poll from starting
+# duplicate full refresh pipelines for the same subscriber.
+_picks_refresh_inflight: set[str] = set()
+_picks_list_background = ContextVar("picks_list_background", default=False)
 
 
 # ── Owner-only media enrichment (player photos + team crests) ───────────
@@ -1129,7 +1135,12 @@ async def list_picks(req: GetPicksRequest):
     # Active picks must always pass through the live resolver. Returning a
     # 20-second cached snapshot while the client polls every 15 seconds made
     # the Live tab show stale PENDING cards and hide minute-by-minute values.
-    if _cached and not _cached_has_active and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL:
+    if (
+        _cached
+        and not _picks_list_background.get()
+        and not _cached_has_active
+        and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL
+    ):
         return {"picks": _cached["picks"]}
 
     # Always fetch only the requester's own picks for the My Picks / Live / History UI.
@@ -1162,6 +1173,40 @@ async def list_picks(req: GetPicksRequest):
             ]
             return {"picks": stale_picks, "settlementDelayed": True}
         return {"picks": [], "settlementDelayed": True}
+
+    # The history screen should never wait for provider settlement work.  A
+    # first request can otherwise block on several sequential fixture/player
+    # calls before it reaches the response at the bottom of this function.
+    # Return the durable Mongo snapshot now and let one background invocation
+    # run the existing repair/live/final-refresh pipeline.  The client's
+    # existing poll then receives the updated result.
+    if requester_email in _picks_refresh_inflight and not _picks_list_background.get():
+        return {
+            "picks": [p for p in picks if p.get("hiddenFromUser") is not True],
+            "settlementRefreshing": True,
+        }
+    if requester_email not in _picks_refresh_inflight:
+        _picks_refresh_inflight.add(requester_email)
+
+        async def _run_pick_refresh() -> None:
+            background_token = _picks_list_background.set(True)
+            try:
+                await list_picks(req)
+            except Exception as _refresh_exc:
+                print(
+                    f"[PICKS-LIST BACKGROUND] refresh failed for "
+                    f"{requester_email}: {_refresh_exc}"
+                )
+                traceback.print_exc()
+            finally:
+                _picks_list_background.reset(background_token)
+                _picks_refresh_inflight.discard(requester_email)
+
+        aio.create_task(_run_pick_refresh())
+        return {
+            "picks": [p for p in picks if p.get("hiddenFromUser") is not True],
+            "settlementRefreshing": True,
+        }
 
     def _pick_email(p: dict) -> str:
         return requester_email

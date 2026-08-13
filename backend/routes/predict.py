@@ -40,7 +40,6 @@ from tactical_evidence import (
 )
 from role_evidence import build_role_evidence_packet
 from matchup_volume import build_matchup_volume_packet
-from bzzoiro_client import fetch_fixture_enrichment as _fetch_bzzoiro_enrichment
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
 # game script intelligence removed — it distorted confidence scores for GK pass picks
@@ -3808,32 +3807,6 @@ async def predict(req: PredictionRequest):
             player_team_id=_canonical_team_id or req.teamId,
             opponent_id=_canonical_opponent_id,
         )
-        # Optional secondary provider.  It is deliberately fetched in the
-        # evidence wave and never passed into the Bayesian projection.
-        bzzoiro_task = (
-            _fetch_bzzoiro_enrichment(
-                db,
-                fixture_id=_sit_fixture_id,
-                team_id=_canonical_team_id,
-                team_name=_canonical_team_name or "",
-                opponent_id=_canonical_opponent_id,
-                opponent_name=_canonical_opponent_name or "",
-                match_date=_sit_match_date,
-                player_id=req.playerId,
-                player_name=req.playerName,
-            )
-            if req.sport == "soccer"
-            else aio.sleep(
-                0,
-                result={
-                    "available": False,
-                    "status": "not_applicable",
-                    "provider": "bzzoiro",
-                    "shadowOnly": True,
-                    "reason": "Bzzoiro enrichment is football-only.",
-                },
-            )
-        )
         statsbomb_task = (
             _fetch_statsbomb_enrichment(
                 db,
@@ -3861,9 +3834,8 @@ async def predict(req: PredictionRequest):
         # Required projection inputs and optional shadow providers have
         # different latency contracts. Keep API-Football player logs, team
         # stats, and the situation engine together so the deterministic
-        # projection sees the same evidence as before. Bzzoiro and StatsBomb
-        # are explanation-only and must not be allowed to hold that result
-        # hostage when their external services are slow.
+        # projection sees the same evidence as before. StatsBomb is optional
+        # explanation-only enrichment and must not hold the result hostage.
         async def _bounded_required(coro, label: str, timeout: float):
             try:
                 return await aio.wait_for(coro, timeout=timeout)
@@ -3900,10 +3872,7 @@ async def predict(req: PredictionRequest):
             _bounded_required(opponent_away_volume_task, "opponent away volume", 18),
             return_exceptions=True,
         )
-        optional_wave2 = aio.gather(
-            bzzoiro_task, statsbomb_task,
-            return_exceptions=True,
-        )
+        optional_wave2 = aio.gather(statsbomb_task, return_exceptions=True)
         try:
             required_results = await aio.wait_for(required_wave2, timeout=27)
         except aio.TimeoutError:
@@ -3919,7 +3888,7 @@ async def predict(req: PredictionRequest):
         try:
             optional_results = await aio.wait_for(optional_wave2, timeout=3)
         except aio.TimeoutError:
-            optional_results = [None, None]
+            optional_results = [None]
             print(f"[WAVE2 OPTIONAL TIMEOUT] shadow enrichment exceeded 3s for {req.playerName}")
 
         required_results = required_results + matchup_volume_results
@@ -4027,20 +3996,9 @@ async def predict(req: PredictionRequest):
                     _gl["opponentShotsOnTarget"] = _volume_row["opponentShotsOnTarget"]
                 if _volume_row.get("opponentPasses") is not None:
                     _gl["opponentPassAttempts"] = _volume_row["opponentPasses"]
-        bzzoiro_enrichment = (
+        statsbomb_enrichment = (
             optional_results[0]
             if len(optional_results) > 0 and not isinstance(optional_results[0], (Exception, type(None)))
-            else {
-                "available": False,
-                "status": "unavailable",
-                "provider": "bzzoiro",
-                "shadowOnly": True,
-                "reason": "Bzzoiro enrichment did not complete.",
-            }
-        )
-        statsbomb_enrichment = (
-            optional_results[1]
-            if len(optional_results) > 1 and not isinstance(optional_results[1], (Exception, type(None)))
             else {
                 "available": False,
                 "status": "unavailable",
@@ -4049,12 +4007,6 @@ async def predict(req: PredictionRequest):
                 "reason": "StatsBomb enrichment did not complete.",
             }
         )
-        if bzzoiro_enrichment.get("available"):
-            print(
-                f"[BZZOIRO] covered event="
-                f"{(bzzoiro_enrichment.get('fixture') or {}).get('bzzoiroEventId')} "
-                f"press={(bzzoiro_enrichment.get('pressIntensity') or {}).get('label')}"
-            )
         if statsbomb_enrichment.get("available"):
             _sb_metrics = statsbomb_enrichment.get("eventMetrics") or {}
             print(
@@ -7005,19 +6957,6 @@ Possession Pressure Index: {_pi_label} | Opponent avg {_pi_poss}% ball possessio
 High opponent possession = the subject player's team has less time on the ball → subject player makes fewer pass attempts.
 Mathematical possession penalty already applied: ×{_pi_mult} reduction to pass projection.
 CRITICAL: This opponent dominates ball possession. Do NOT project pass totals near season average — the subject player's team will have significantly reduced time with the ball."""
-                _bz_press = (bzzoiro_enrichment or {}).get("pressIntensity") or {}
-                if (
-                    (bzzoiro_enrichment or {}).get("available")
-                    and _bz_press
-                    and req.propType in {"pass_attempts", "passes"}
-                ):
-                    bayesian_prompt_anchor += f"""
-[BZZOIRO OBSERVED MATCH PRESSURE — SHADOW EVIDENCE ONLY]
-Bzzoiro covered this exact fixture and observed the opponent at {_bz_press.get('label', 'unknown')} proxy intensity:
-{_bz_press.get('defensiveActions', '?')} defensive actions ({_bz_press.get('tackles', '?')} tackles + {_bz_press.get('interceptions', '?')} interceptions),
-{_bz_press.get('possession', '?')}% possession, {_bz_press.get('passesPerDefensiveAction', '?')} passes per defensive action.
-This is a one-match Bzzoiro defensive-actions proxy, not true PPDA or direct pressure-event tracking.
-Use it to explain the matchup only. Do not change the mathematical projection or treat one match as a stable team baseline."""
                 if (
                     req.propType in {"pass_attempts", "passes"}
                     and _pressure_response.get("status") == "classified"
@@ -8157,8 +8096,6 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             wave2_supplement["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
-        if bzzoiro_enrichment:
-            wave2_supplement["bzzoiroEnrichment"] = bzzoiro_enrichment
         if statsbomb_enrichment:
             wave2_supplement["statsbombEnrichment"] = statsbomb_enrichment
 
@@ -9105,7 +9042,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "line": req.line,
             },
             "pressureResponse": _pressure_response,
-            "bzzoiroEnrichment": bzzoiro_enrichment,
             "statsbombEnrichment": statsbomb_enrichment,
             "positionPassesReceived": (
                 (statsbomb_enrichment.get("eventMetrics") or {})
@@ -11734,7 +11670,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "targetLineupPosition": (_tc_target_lineup[0] or {}).get("pos") if _tc_target_lineup else None,
             "playerOpponentHistory": (historical_data.get("h2hPlayerStats") or {}).get("opponentHitRate"),
             "positionCohort": position_comp_data,
-            "bzzoiroEnrichment": bzzoiro_enrichment,
             "statsbombEnrichment": statsbomb_enrichment,
         }
 
@@ -11781,7 +11716,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
-                bzzoiro_enrichment=bzzoiro_enrichment,
             )
         except Exception as _tactical_intel_err:
             print(f"[TACTICAL INTELLIGENCE] failed: {_tactical_intel_err}")
@@ -12061,7 +11995,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
-                bzzoiro_enrichment=bzzoiro_enrichment,
             )
             prediction["matchScript"] = prediction["tacticalIntelligence"].get("matchScript")
             prediction["positionalReality"] = prediction["tacticalIntelligence"].get("positionalReality")
@@ -12088,12 +12021,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
             })
             # Position and its provenance are only overwritten when the
-            # API-Football observation actually supplied a value.  When the
-            # tactical builder resolved position from a validated Bzzoiro
-            # supplement (positionSource == "bzzoiro_shadow_confirmed_lineup"),
-            # the builder's values are preserved here so the final packet
-            # remains consistent with the role-group and positional-reality
-            # calculations that were already performed with that position.
+            # API-Football observation actually supplied a value.
             if display_position:
                 _ti_player["position"] = display_position
                 _ti_player["positionSource"] = (
@@ -12840,7 +12768,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "teamPassObservations": len(_af_team_passes), "shareJoins": len(_af_shares),
                     "goalkeeperPoolRows": int((_gk_pool_prior or {}).get("poolRows") or 0),
                     "goalkeeperPoolPlayers": int((_gk_pool_prior or {}).get("poolPlayers") or 0),
-                    "bzzoiroFixtureCovered": bool((bzzoiro_enrichment or {}).get("available")),
                     "statsbombFixtureCovered": bool((statsbomb_enrichment or {}).get("available")),
                 },
                 "final": {
@@ -12855,7 +12782,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     "teamQualityGap": (real_bayes or {}).get("teamQualityGap"),
                     "pressureResponse": prediction.get("pressureResponse"),
                     "goalkeeperPoolPrior": (real_bayes or {}).get("goalkeeperPoolPrior"),
-                    "bzzoiroEnrichment": prediction.get("tacticalContext", {}).get("bzzoiroEnrichment"),
                     "statsbombEnrichment": prediction.get("tacticalContext", {}).get("statsbombEnrichment"),
                     "tacticalIntelligence": prediction.get("tacticalIntelligence"),
                 },

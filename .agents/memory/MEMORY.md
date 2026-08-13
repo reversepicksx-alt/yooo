@@ -1,5 +1,8 @@
 - [Evidence-quality gate](evidence-quality-gate.md) — post-projection layer caps confidence and converts thin edges to PASS; missing optional feeds are neutral; real log count may undercount in quota-exhausted mode (logs need targetStat or prop-specific field).
 - [Prediction failure contract](prediction-failure-contract.md) — unexpected provider/enrichment failures return a structured retryable result instead of an opaque 5xx to users.
+- [Bzzoiro retirement](bzzoiro-retirement.md) — retired from active prediction enrichment and user-facing analysis; remaining compatibility code must stay dormant.
+- [Picks list latency](picks-list-latency.md) — My Picks returns the durable snapshot before settlement/provider refresh work; background refresh is deduplicated per subscriber.
+- [Picks tab terminal status](picks-tab-terminal-status.md) — classify Live/History from normalized persisted status first; legacy settled rows must not disappear when result metadata is incomplete.
 - [MongoDB cache quota recovery](mongodb-cache-quota-recovery.md) — drop only regenerable cache collections; durable saved identities can restore search after cache cleanup.
 - [Squad sync name clobber](squad-sync-name-clobber.md) — squad re-sync delete+reinsert overwrites enriched full names with abbreviated API names, silently breaking multi-word search; all name writers must keep the longer existing name.
 - [Projection line-anchor bug](projection-line-anchor.md) — projectedValue showed line±0.5 (not real Bayesian) whenever CONSISTENCY GUARD or BAYESIAN TRUTH flipped direction. Fix: use real_bayes["posteriorMean"] in both overrides.
@@ -33,7 +36,6 @@
 - [BDL sports client fixes](bdl-sports-client-fixes.md) — MMA→/fight_stats; PGA→/player_season_stats+synthetic rounds; LoL→/matches; F1/Dota2 data gaps; Bayesian _baye_mc arg pattern; non-soccer blank-screen mode fix.
 - [Calibration accuracy improvements](calibration-accuracy.md) — Direction-aware calibration (propType|DIRECTION buckets), AVOID suppression, conviction filter (<60% Bayesian → cap 54%), market correction 1.5% in _monte_carlo_probability default.
 - [Calibration hard-override danger](calibration-blend-v4.md) — Hard override (return empirical rate wholesale at n>=20) caused 36pp haircut from thin buckets. Fixed with James-Stein blend + _MIN_BUCKET_N raised 20→50. Odds-tier priors _MIN_SAMPLE raised 8→30 (= shrinkage constant k).
-- [Minor sport engine bugs](minor-sport-engine-bugs.md) — PGA/F1/MMA/LoL/Dota2/NCAAF had p_over/p_under as 0-1 fractions (no ×100). cbase_engine had wrong _baye_mc arg order. Both fixed.
 - [BDL soccer data tiers and ID quirks](bdl-soccer-data-tiers.md) — Tier-1 stats always present; Tier-2 (passes, tackles, minutes) often None; match_id is round ID not match ID; use player.team_ids[0] + sequential schedule matching for enrichment.
 - [WC live tracking — BDL routing removed](wc-bdl-routing.md) — World Cup (leagueId=1) must NOT be in LEAGUE_TO_BDL; BDL /fifa/worldcup/v1 returns Tier-2 stats as None→0, causing wrong MISS settlements. Use API-Football path instead. Zero-value guard added at all 3 settlement points (BDL live, API-Football live, background settle).
 - [BDL soccer spatial shot data](bdl-soccer-shots-spatial.md) — /epl/v2/match_shots works (per_page max=100); average_positions/heatmaps are 404; player_id=shooter; xgot>0=on-target; covariate 3f uses xg_shot series.
@@ -60,7 +62,6 @@
 - [Live pace-divergence warning](live-pace-divergence.md) — pre-match expectedPoss covariate can't see in-game shifts (parked bus after early goal); mitigated via live pace/hit_pct divergence alert, not a "smarter" pre-match model.
 - [Bayesian possession double-counting bug](bayesian-possession-double-count.md) — pass_attempts/passes/key_passes/crosses/dribbles were squeezed by BOTH the 3b covariate cap AND the direct squeeze multiplier for the same signal; now derived from one shared prop set.
 - [Paywall purchase/restore signup parity](paywall-restore-signup-parity.md) — any "no session yet" guest-signup branch added to one IAP entry point (buy/restore) must be mirrored on all sibling entry points, or restoring on reinstall silently drops the entitlement.
-- [EAS submit ASC key setup](eas-asc-key-setup.md) — ASC_PRIVATE_KEY env var stores key with spaces instead of newlines; must reconstruct PEM via Python regex + 64-char chunk reformatter into /home/runner/.eas/asc_key_fixed.p8 before each submit. EAS temp files in /tmp/runner/eas-cli-nodejs accumulate (4GB) and cause error -122 (EDQUOT); clear before each build attempt.
 - [Fullback possession-squeeze floor bug](fullback-squeeze-floor.md) — LB/RB/WB were bucketed as generic DEF (30% max cut) instead of CB-tier (20% max cut) in bayesian_engine.py; cross-check `_is_*` position sets across the file before adding new position logic.
 - [Odds-tier self-learning priors](odds-tier-priors-system.md) — "Alive" empirical layer auto-learns (oddsTier x position x prop x rec) buckets from settled picks. Mirrors scenario_priors architecture. Default mode=shadow; controlled by `ODDS_TIER_PRIORS_MODE` env var.
 - [Dev workspace mongod is NOT production](dev-mongod-not-prod.md) — local mongod at /home/runner/.reversepicks_db is empty/ephemeral in this workspace; real user/subscriber/pick data lives in the deployed production environment, inaccessible from here. Use RevenueCat/Stripe APIs (via listConnections) for real payment data instead.
@@ -111,10 +112,8 @@
 - [Deterministic provider removal](deterministic-provider-removal.md) — when retiring generation providers, preserve compatibility-shaped response fields and rebuild their values from deterministic ledger data.
 - [TheStatsAPI evidence contract](thestatsapi-evidence-contract.md) — optional soccer enrichment requires identity joins and explicit coverage states; empty data is unavailable, never a measured zero.
 - [API-Football response shape](api-football-response-shape.md) — api_football_request returns the provider response list directly; normalize legacy envelope-shaped test doubles before parsing lineups or fixtures.
-- [Apple introductory-offer lifecycle](apple-intro-offer-lifecycle.md) — deleting an App Store introductory offer blocks new trials but does not cancel trials already granted to existing Apple customers.
 - [Fixture odds and tactical contract](fixture-odds-tactical-contract.md) — moneyline home/away labels follow verified fixture teams; tactical prose is role/prop-specific and omits unsupported claims.
 - [Tactical shadow model](tactical-shadow-model.md) — lineup, role, opponent-shape, odds, and possession signals explain picks first; projection changes require settled-pick validation.
-- [RevenueCat managed credential access](revenuecat-managed-credential.md) — attached RevenueCat may still withhold catalog-management credentials; verify production project access before mutating offerings.
 - [Positional reality shadow packet](positional-reality-shadow.md) — match script, attacking-direction zones, prop signals, and robust outlier weighting are visible but remain non-live until replay validation.
 - [Sport re-enable audit](sport-reenable-audit.md) — restoring a sport requires auditing picker, saved-history, response-contract, live-tracking, and settlement gates together; config alone is insufficient.
 - [MLB/NFL identity and history](mlb-nfl-confirmation-and-history.md) — invalidate stale search responses; default multi-context soccer players to club fixtures and keep MLB/NFL evidence history visible.
@@ -128,9 +127,7 @@
 - [Live projection display](live-projection-display.md) — keep saved PROJ visible; NOW and PACE are separate live context, never a replacement.
 - [Tactical evidence provenance](tactical-evidence-provenance.md) — provider-observed roles and exact sample-labeled opponent/cohort evidence prevent generic or overstated tactical explanations.
 - [Prediction synthesis scope](prediction-synthesis-scope.md) — evidence assembly precedes prediction creation; final-direction metadata must wait until deterministic synthesis completes.
-- [Free event position metrics](free-event-position-metrics.md) — StatsBomb Open Data supports exact-match position-aware pass evidence; restricted coverage must remain unavailable, not fabricated.
 - [Bzzoiro enrichment boundary](bzzoiro-enrichment-boundary.md) — optional lineup/position/stat enrichment uses name-bridged exact fixtures; its defensive-actions proxy is not true PPDA and stays shadow-only.
-- [StatsBomb Open Data evidence](statsbomb-open-data.md) — exact public event coverage supports PPDA/pressure explanations only; restricted or missing coverage stays unavailable and projection-neutral.
 - [Historical evidence replay limits](historical-evidence-replay.md) — separate prediction reruns from evidence coverage; preserve provider date-coverage and rate-limit reasons.
 - [Prediction response identity](prediction-response-identity.md) — normalize explicit null identity fields at the final response boundary, not only missing keys.
 - [Tactical explanation assembly](tactical-explanation-assembly.md) — generate one final role-specific narrative after the ledger; never append early and late explanations together.
@@ -148,12 +145,10 @@
 - [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.
 - [Trust-oriented evidence display](trust-oriented-evidence-display.md) — users trust predictions more when provenance, sample context, and unavailable data are visible instead of hidden or estimated.
 - [Season-boundary evidence handling](season-boundary-evidence.md) — new fixtures can belong to the next competition season while valid history remains in the completed prior season; filter incomplete rows, do not weaken provenance.
-- [API-Football attacking grid columns](api-football-attacking-grid.md) — 4-2-3-1 row-four columns are LW/CAM/RW left-to-right; never collapse all three into CAM.
 - [Team-schedule possession context](team-schedule-possession.md) — possession context must average independent club schedules; player minutes and exact-position cohort rows must not determine the sample.
 - [Fixture and role evidence contract](fixture-role-contract.md) — canonical team IDs control fixture orientation; generic positions stay incomplete and role evidence remains separate from deterministic projection math.
 - [Matchup-volume transport](matchup-volume-transport.md) — new venue evidence must survive backend response normalization and use a versioned cache identity when its coverage contract changes.
 - [Competition-aware evidence](competition-aware-evidence.md) — competition/stage/venue history backoffs stay auditable and shadow-only until leakage-safe replay validates live influence.
-- [Deployment VM readiness](deployment-vm-readiness.md) — a publish that builds and scans successfully but stalls at VM readiness is usually promote/provisioning; compare with the last successful build before changing code.
 - [API-Football player fixture fallback](api-football-player-fixture-fallback.md) — `/fixtures` rejects `player`; query the verified club team, then match exact player ID within fixture payloads.
 - [Saved analysis log normalization](saved-analysis-log-normalization.md) — saved analysis uses `playerGameLogs.games`; shared history UI must normalize it alongside live `gameLogs`.
 - [Verified venue-history threshold](venue-history-threshold.md) — venue priors require 30 verified player appearances; search older competitions/seasons, then use full history with an explicit fallback.

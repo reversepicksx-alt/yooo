@@ -6,39 +6,11 @@ tactical packet. The packet is currently shadow-only for projection changes:
 the existing Bayesian engine remains the numeric source of truth until these
 signals have enough settled-pick history to calibrate safely.
 
-Feature flag — BZZOIRO_POSITION_LIVE
--------------------------------------
-Controls how validated Bzzoiro lineup position data supplements role resolution:
-
-  shadow (default)
-    Bzzoiro position is used ONLY when API-Football returned no position at all.
-    The supplement is label-only; it affects the tactical narrative but does not
-    change the player_position that feeds calibration or Bayesian math.
-
-  live
-    In addition to the shadow behaviour, Bzzoiro may also override a generic
-    API-Football category label (Defender / Midfielder / Attacker / DEF / MID /
-    FWD) with a more specific Bzzoiro position (e.g. CB, LB, CAM).  This widens
-    the supplement to cases where API-Football confirmed the player was in the
-    lineup but only returned a broad group name.
-
-Set BZZOIRO_POSITION_LIVE=live in the backend environment and redeploy to
-activate.  Revert to BZZOIRO_POSITION_LIVE=shadow (or unset it) to roll back
-without a code change.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any
-
-# Generic position labels from API-Football that Bzzoiro may refine in live mode.
-_GENERIC_API_FOOTBALL_POSITIONS: frozenset[str] = frozenset({
-    "DEFENDER", "DEF", "D",
-    "MIDFIELDER", "MID", "M",
-    "ATTACKER", "FORWARD", "FWD", "FW", "F",
-    "GOALKEEPER",  # extremely rare — API-Football normally returns GK
-})
 
 from positional_reality import build_positional_reality
 from tactical_evidence import build_position_cohort_statement
@@ -294,15 +266,10 @@ def build_tactical_intelligence(
     game_script: dict[str, Any] | None = None,
     lineup: dict[str, Any] | None = None,
     history_values: list[Any] | None = None,
-    bzzoiro_enrichment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a complete, provenance-tagged tactical evidence packet.
 
-    ``bzzoiro_enrichment`` is optional shadow context.  It is consumed only
-    when its ``positionValidation`` gate passes (exact fixture date match and
-    confirmed lineup presence) so raw Bzzoiro data can never reach the packet
-    without explicit quality gating.  API-Football remains authoritative for
-    all projection inputs.
+    API-Football remains authoritative for lineup and position evidence.
     """
     lineup = lineup if isinstance(lineup, dict) else {}
     home = lineup.get("home") if isinstance(lineup.get("home"), dict) else {}
@@ -321,84 +288,8 @@ def build_tactical_intelligence(
     target_pos = _clean(player_position) or _player_position(target or {})
     target_role = _clean(player_role) or _clean((prediction.get("player") or {}).get("role"))
 
-    # ── Bzzoiro shadow supplement ─────────────────────────────────────────
-    # Use Bzzoiro's confirmed lineup position only when:
-    #   1. The positionValidation gate has explicitly passed, AND
-    #   2. API-Football did not supply a usable position for this player.
-    # This keeps API-Football authoritative and prevents unvalidated coordinates
-    # from entering the packet.
-    _bzz: dict[str, Any] = bzzoiro_enrichment if isinstance(bzzoiro_enrichment, dict) else {}
-    _bzz_validation: dict[str, Any] = _bzz.get("positionValidation") or {}
-    _bzz_lineup_target: dict[str, Any] = (_bzz.get("lineup") or {}).get("target") or {}
-    _bzz_avg_pos: dict[str, Any] = (_bzz.get("target") or {}).get("averagePosition") or {}
-
-    _bzz_position_raw = (
-        _bzz_lineup_target.get("position") or _bzz_lineup_target.get("pos")
-        if isinstance(_bzz_lineup_target, dict)
-        else None
-    )
-    _bzz_gate_passed = (
-        _bzz_validation.get("lineupValid")
-        and _bzz_validation.get("fixtureDateMatch") == "exact"
-    )
-    _bzz_position: str | None = None
-    _bzz_position_source = "unavailable"
-
-    # Feature flag: controls how Bzzoiro position supplements role resolution.
-    #   shadow (default) — supplement only when API-Football has no position.
-    #   live             — also refine generic API-Football category labels
-    #                      (e.g. "Defender" → "CB", "Midfielder" → "CAM").
-    _bzz_live_mode = os.environ.get("BZZOIRO_POSITION_LIVE", "shadow").lower().strip()
-    if _bzz_live_mode not in {"shadow", "live"}:
-        _bzz_live_mode = "shadow"
-
-    _target_pos_is_generic = (
-        target_pos.upper() in _GENERIC_API_FOOTBALL_POSITIONS
-        if target_pos else False
-    )
-    # In shadow mode: supplement only when there is no API-Football position.
-    # In live mode:   supplement also when API-Football returned a generic label.
-    _bzz_should_supplement = _bzz_gate_passed and _bzz_position_raw and (
-        not target_pos
-        or (_bzz_live_mode == "live" and _target_pos_is_generic)
-    )
-    if _bzz_should_supplement:
-        # Normalize through the same alias table as API-Football positions.
-        from tactical_evidence import normalize_observed_position
-        _bzz_position = normalize_observed_position(_bzz_position_raw) or None
-        if _bzz_position:
-            _bzz_position_source = (
-                "bzzoiro_live_confirmed_lineup"
-                if (_bzz_live_mode == "live" and target_pos)
-                else "bzzoiro_shadow_confirmed_lineup"
-            )
-
-    # Effective position: prefer API-Football specific position; fall back to
-    # validated Bzzoiro when shadow logic or live refinement applies.
-    effective_pos = (
-        target_pos if (target_pos and not _target_pos_is_generic)
-        or (target_pos and _bzz_live_mode != "live")
-        else _bzz_position or target_pos or ""
-    )
-    effective_pos_source = (
-        "lineup-provider" if (target_pos and not (
-            _bzz_live_mode == "live" and _target_pos_is_generic and _bzz_position
-        ))
-        else _bzz_position_source if _bzz_position
-        else "lineup-provider" if target_pos
-        else "unavailable"
-    )
-
-    # Average-position grid coordinates from Bzzoiro (shadow only).
-    # Only forwarded when the coordinates passed the 0–100 range check.
-    _bzz_grid_x: float | None = None
-    _bzz_grid_y: float | None = None
-    if _bzz_gate_passed and _bzz_validation.get("coordinatesValid") and isinstance(_bzz_avg_pos, dict):
-        try:
-            _bzz_grid_x = float(_bzz_avg_pos["x"]) if _bzz_avg_pos.get("x") is not None else None
-            _bzz_grid_y = float(_bzz_avg_pos["y"]) if _bzz_avg_pos.get("y") is not None else None
-        except (TypeError, ValueError):
-            _bzz_grid_x = _bzz_grid_y = None
+    effective_pos = target_pos or ""
+    effective_pos_source = "lineup-provider" if target_pos else "unavailable"
     target_group = _role_group(effective_pos, target_role)
     opponent_matchup = _opponent_role_matchup(target, opponent_players, prop_type)
 
@@ -495,16 +386,6 @@ def build_tactical_intelligence(
     limitations = []
     if not effective_pos and not target_role:
         limitations.append("player role and position unavailable")
-    if _bzz_position and not target_pos:
-        limitations.append(
-            "player position sourced from Bzzoiro lineup (shadow); "
-            "API-Football lineup position unavailable for this fixture."
-        )
-    elif _bzz_position and _target_pos_is_generic and _bzz_live_mode == "live":
-        limitations.append(
-            "player position refined from generic API-Football label to "
-            "Bzzoiro-confirmed position (BZZOIRO_POSITION_LIVE=live)."
-        )
     if not opponent_players:
         limitations.append("opponent lineup unavailable")
     if not formation or not opponent_formation:
@@ -523,24 +404,18 @@ def build_tactical_intelligence(
         and (market_status == "verified_fixture_moneyline" or possession_is_real)
     ) else "limited"
 
-    # Bzzoiro average-position coordinates: use provider grid position from the
-    # API-Football lineup when available; supplement with validated Bzzoiro
-    # coordinates (shadow-only) when the API-Football lineup has no x/y data.
     _api_grid_x = target.get("x") if target else None
     _api_grid_y = target.get("y") if target else None
-    _grid_x = _api_grid_x if _api_grid_x is not None else _bzz_grid_x
-    _grid_y = _api_grid_y if _api_grid_y is not None else _bzz_grid_y
+    _grid_x = _api_grid_x
+    _grid_y = _api_grid_y
     _grid_source = (
         "api_football" if _api_grid_x is not None
-        else ("bzzoiro_live" if _bzz_live_mode == "live" else "bzzoiro_shadow")
-        if _bzz_grid_x is not None
         else "unavailable"
     )
 
     return {
         "version": "tactical-shadow-v2",
-        "mode": "shadow" if _bzz_live_mode != "live" else "shadow_with_bzzoiro_position_live",
-        "bzzoiroPositionMode": _bzz_live_mode,
+        "mode": "shadow",
         "status": tactical_status,
         "sourcePolicy": "verified inputs only; inferred mechanisms are labeled",
         "player": {

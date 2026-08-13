@@ -63,10 +63,18 @@ function getLeagueLabel(id?: number | null) {
 function normalizedResult(p: Pick) {
   return String(p.result || '').toLowerCase();
 }
+function normalizedStatus(p: Pick) {
+  return String(p.status || '').toLowerCase();
+}
+function normalizedMatchStatus(p: Pick) {
+  return String(p.matchStatus || '').toLowerCase();
+}
 function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const result = normalizedResult(p);
+  const status = normalizedStatus(p);
   const hasVerifiedSource = p.settlementSource?.verified === true;
-  const isExplicitFinal = p.status === 'settled' || p.matchStatus === 'final';
+  const isExplicitFinal = ['settled', 'final', 'won', 'lost'].includes(status)
+    || normalizedMatchStatus(p) === 'final';
   const lineNumber = Number(p.line);
   const legacyVoid = result === 'push' && (
     Boolean(p.voidReason)
@@ -97,11 +105,24 @@ function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   return null;
 }
 function isLive(p: Pick) {
-  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending'
-    || (!p.status && derivedOutcome(p) == null);
+  // A final/settled record must never remain in Live just because a provider
+  // left an old live marker behind.
+  if (isHistoryVisible(p)) return false;
+  const status = normalizedStatus(p);
+  const matchStatus = normalizedMatchStatus(p);
+  return ['live', 'pending', 'scheduled', 'upcoming', 'active', 'open'].includes(status)
+    || ['live', '1h', '2h', 'ht', 'et', 'bt', 'p'].includes(matchStatus)
+    || (!status && derivedOutcome(p) == null);
 }
 function isSettled(p: Pick) {
-  return derivedOutcome(p) != null;
+  // Trust the persisted terminal state even when an older row has no result
+  // or uses a legacy result value. Hiding that row makes the History tab claim
+  // there are no settled picks when the database clearly has one.
+  const status = normalizedStatus(p);
+  const result = normalizedResult(p);
+  return ['settled', 'final', 'won', 'lost'].includes(status)
+    || ['hit', 'miss', 'push', 'dnp', 'won', 'lost'].includes(result)
+    || derivedOutcome(p) != null;
 }
 function isPendingReview(p: Pick) {
   const result = normalizedResult(p);
