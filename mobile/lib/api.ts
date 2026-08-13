@@ -502,6 +502,12 @@ export interface PredictionResult {
     mostLikelyValue?: number;
     range60?: [number, number];
     range80?: [number, number];
+    landingBands?: Array<{
+      label: string;
+      lower?: number | null;
+      upper?: number | null;
+      probability: number;
+    }>;
     distributionType?: string;
   };
   mostLikelyValue?: number;

@@ -3219,6 +3219,27 @@ export default function ScanScreen() {
                   CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.
                 </Text>
               )}
+              {prediction.distribution?.landingBands && prediction.distribution.landingBands.length > 0 && (
+                <View style={styles.landingBandsWrap}>
+                  <View style={styles.landingBandsHeader}>
+                    <Text style={styles.ciLabel}>LANDING PROBABILITY</Text>
+                    <Text style={styles.landingBandsMeta}>SAME FINAL DISTRIBUTION · 100%</Text>
+                  </View>
+                  <View style={styles.landingBandsGrid}>
+                    {prediction.distribution.landingBands.map((band) => (
+                      <View key={`${band.label}-${band.probability}`} style={styles.landingBand}>
+                        <Text style={styles.landingBandLabel} numberOfLines={1}>{band.label}</Text>
+                        <Text style={styles.landingBandProbability}>
+                          {Number.isFinite(Number(band.probability)) ? `${Number(band.probability).toFixed(1)}%` : '—'}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={styles.landingBandsNote}>
+                    Bands split the simulated outcomes into non-overlapping ranges. OVER/UNDER still uses the posted line.
+                  </Text>
+                </View>
+              )}
 
               {/* Confidence Gauge — visual meter 50%→100% */}
               {confPct != null && (
@@ -6406,6 +6427,57 @@ const styles = StyleSheet.create({
   },
   ciLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
   ciVal: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+  landingBandsWrap: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingTop: 7,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  landingBandsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  landingBandsMeta: {
+    color: Colors.textTertiary,
+    fontSize: 7,
+    fontWeight: '800',
+    letterSpacing: 0.55,
+  },
+  landingBandsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  landingBand: {
+    flexGrow: 1,
+    flexBasis: '22%',
+    minWidth: 66,
+    paddingHorizontal: 7,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+  },
+  landingBandLabel: {
+    color: Colors.textTertiary,
+    fontSize: 7,
+    fontWeight: '800',
+    letterSpacing: 0.35,
+  },
+  landingBandProbability: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  landingBandsNote: {
+    color: Colors.textTertiary,
+    fontSize: 7,
+    lineHeight: 10,
+    marginTop: 5,
+  },
 
   /* Model Factors card */
   /* ─── ANALYSIS CARD ACCENT STRIPE ─── */

@@ -113,6 +113,7 @@ def _monte_carlo_probability(
     variance: float = None,
     market_correction: float = 0.015,
     covariate_sigma_frac: float = 0.0,
+    display_as_integer: bool = False,
 ) -> tuple:
     """
     Monte Carlo simulation for P(over) / P(under) and 80% CI.
@@ -136,12 +137,13 @@ def _monte_carlo_probability(
       eff_std = sqrt(std² + (mean × frac)²)   [Gaussian]
       eff_var = var × (1 + frac)²              [NegBin]
 
-    Returns: (p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80, mode)
+    Returns: (p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80,
+              mode, landing_bands)
     """
     if std <= 0 or mean <= 0:
         p = 1.0 if mean > line else 0.0
         value = round(mean, 1)
-        return p, 1.0 - p, value, value, value, value, value
+        return p, 1.0 - p, value, value, value, value, value, []
 
     if is_count_stat:
         var = variance if variance and variance > 0 else std ** 2
@@ -168,6 +170,61 @@ def _monte_carlo_probability(
     ci_low_80  = round(sorted_s[int(0.10 * n_sims)], 1)  # 10th percentile
     ci_high_80 = round(sorted_s[int(0.90 * n_sims)], 1)  # 90th percentile
 
+    # Preserve the simulated probability mass in readable landing bands.
+    # The lower boundaries are the 80% and 60% distribution cut points; the
+    # final boundary is the effective line used by P(OVER)/P(UNDER).  This
+    # gives the UI useful bands such as "<14", "14–24", "25–32", "33+"
+    # without inventing a second probability model.
+    q80_low = sorted_s[int(0.10 * n_sims)]
+    q60_low = sorted_s[int(0.20 * n_sims)]
+    effective_break = effective_line
+    breaks = sorted({
+        round(boundary, 8)
+        for boundary in (q80_low, q60_low)
+        if boundary < effective_break
+    })
+
+    def band_probability(lower: float | None, upper: float | None) -> float:
+        if lower is None:
+            count = sum(1 for sample in samples if sample < upper)
+        elif upper is None:
+            count = sum(1 for sample in samples if sample >= lower)
+        else:
+            count = sum(1 for sample in samples if lower <= sample < upper)
+        return round((count / n_sims) * 100.0, 1)
+
+    def band_label(lower: float | None, upper: float | None) -> str:
+        if display_as_integer:
+            if lower is None:
+                return f"≤{math.ceil(upper) - 1}"
+            if upper is None:
+                return f"{math.ceil(lower)}+"
+            return f"{math.ceil(lower)}–{math.ceil(upper) - 1}"
+        if lower is None:
+            return f"<{upper:.1f}"
+        if upper is None:
+            return f"≥{lower:.1f}"
+        return f"{lower:.1f}–{upper:.1f}"
+
+    landing_bands = []
+    previous = None
+    for boundary in breaks + [effective_break]:
+        if previous is not None and boundary <= previous:
+            continue
+        landing_bands.append({
+            "label": band_label(previous, boundary),
+            "lower": round(previous, 1) if previous is not None else None,
+            "upper": round(boundary, 1),
+            "probability": band_probability(previous, boundary),
+        })
+        previous = boundary
+    landing_bands.append({
+        "label": band_label(previous, None),
+        "lower": round(previous, 1) if previous is not None else None,
+        "upper": None,
+        "probability": band_probability(previous, None),
+    })
+
     # For continuous stats the mean is also the mode.  For discrete props,
     # return the most frequently sampled integer so the UI can distinguish
     # "expected value" from "most likely landing value".
@@ -179,7 +236,10 @@ def _monte_carlo_probability(
     else:
         mode = round(mean, 1)
 
-    return p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80, mode
+    return (
+        p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80,
+        mode, landing_bands,
+    )
 
 
 def compute_live_gaussian_update(
@@ -2239,6 +2299,7 @@ def compute_bayesian_projection(
         ci_low_60, ci_high_60,
         ci_low_80, ci_high_80,
         most_likely_value,
+        landing_bands,
     ) = _monte_carlo_probability(
         mean=_posterior_mean_raw,
         std=_effective_std_raw,
@@ -2247,6 +2308,10 @@ def compute_bayesian_projection(
         is_count_stat=is_count_stat,
         variance=_prior_variance_raw,
         covariate_sigma_frac=min(0.20, _cov_sigma),
+        display_as_integer=(
+            is_count_stat
+            or prop_type in {"pass_attempts", "passes", "crosses", "key_passes"}
+        ),
     )
     print(f"[COV SIGMA] {prop_type}: _cov_sigma={_cov_sigma:.3f} "
           f"(capped={min(0.20, _cov_sigma):.3f}) → p_over={p_over*100:.1f}% p_under={p_under*100:.1f}%")
@@ -2307,11 +2372,13 @@ def compute_bayesian_projection(
             "mostLikelyValue": most_likely_value,
             "range60": [ci_low_60, ci_high_60],
             "range80": [ci_low_80, ci_high_80],
+            "landingBands": landing_bands,
             "distributionType": "negative_binomial" if is_count_stat else "gaussian",
         },
         "mostLikelyValue": most_likely_value,
         "range60": [ci_low_60, ci_high_60],
         "range80": [ci_low_80, ci_high_80],
+        "landingBands": landing_bands,
         "edgeZ": edge_z,
 
         # 3 Layers (for transparency) — also in raw units
