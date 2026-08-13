@@ -3202,7 +3202,7 @@ export default function ScanScreen() {
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
                   <Text style={styles.analysisStatLabel}>
-                    {modelProbPct != null ? 'Model probability' : 'Evidence confidence'}
+                    {modelProbPct != null ? 'Calibrated probability' : 'Evidence confidence'}
                   </Text>
                   <Text style={[styles.analysisStatVal, { color: recColor }]}>
                     {modelProbPct != null
@@ -3210,10 +3210,15 @@ export default function ScanScreen() {
                       : confPct != null ? `${confPct}%` : '—'}
                   </Text>
                   <Text style={styles.analysisStatSub}>
-                    {modelProbPct != null ? 'CALIBRATED MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
+                    {modelProbPct != null ? 'FINAL MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
                   </Text>
                 </View>
               </View>
+              {modelProbPct != null && (
+                <Text style={styles.probabilityExplainer}>
+                  CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.
+                </Text>
+              )}
 
               {/* Confidence Gauge — visual meter 50%→100% */}
               {confPct != null && (
@@ -6386,6 +6391,13 @@ const styles = StyleSheet.create({
   analysisStatVal: { fontSize: 22, fontWeight: '800', color: Colors.text },
   analysisStatSub: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.8 },
   analysisStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 14 },
+  probabilityExplainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 7,
+    color: Colors.textTertiary,
+    fontSize: 8,
+    lineHeight: 12,
+  },
 
   /* Confidence interval */
   ciRow: {

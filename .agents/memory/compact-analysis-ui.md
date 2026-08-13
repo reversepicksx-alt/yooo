@@ -9,6 +9,12 @@ Analysis should feel like a dense stats interface, not a stack of dashboard card
 
 **How to apply:** Keep the shared compact bar renderer consistent across scan and saved-pick history. Preserve verified data meaning; never fabricate possession, keep older verbose renderers out of the active presentation, reuse exact fixture IDs when enriching H2H possession, mark every bar H/A, venue-highlight the prediction side in Recent and H2H, and reject partial tactical placeholders in favor of a complete deterministic read.
 
+Recent Match venue summaries should stay inline and numeric (`H n · A n`, with optional compact averages) rather than rendering separate HOME/AWAY metric blocks. Model Source should explain its relationship to calibrated probability in short text lines, not another large card.
+
+**Why:** The mobile analysis screenshot became visually block-heavy and made the player-history source, calibrated probability, and evidence confidence look interchangeable.
+
+**How to apply:** Keep Recent Matches focused on bars; reserve full cards for the actual history/probability evidence. Define calibrated probability as the final line-clearing probability after projection context and settled calibration; define evidence confidence separately as data-quality strength.
+
 H2H evidence should remain a compact comparison strip rather than a second full-height chart: retain the stat, date, possession, and H/A marker, but omit repeated opponent labels and expanded explanatory legends when the opponent is already the card context.
 
 **Why:** The previous H2H block consumed most of the analysis viewport while repeating context already present in the card header; the useful evidence is the meeting value and its provenance markers.

@@ -290,6 +290,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         ?? game.stat
         ?? null,
     })) as Array<Record<string, any>>;
+  const venueCounts = {
+    home: normalizedLogs.filter((game) => !game.synthetic && game.value != null && rowVenue(game) === 'home').length,
+    away: normalizedLogs.filter((game) => !game.synthetic && game.value != null && rowVenue(game) === 'away').length,
+  };
   const logs = normalizedLogs
     .filter((game) => (
       !game.synthetic
@@ -502,6 +506,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                     {historyVenue.toUpperCase()} VENUE MATCHES
                   </Text>
                 )}
+                <Text style={styles.recentInlineStats} numberOfLines={1}>
+                  H {venueCounts.home} · A {venueCounts.away}
+                  {homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}
+                </Text>
                 {venueHistoryFallback && (
                   <Text style={styles.contextWarning} numberOfLines={1}>
                     {Number.isFinite(venueHistorySample) ? venueHistorySample : 0}/{venueHistoryTarget} VERIFIED · FULL HISTORY PRIOR
@@ -574,79 +582,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               )}
             </View>
           </ScrollView>
-          <View style={styles.splitRow}>
-            {showSelectedVenueOnly ? (
-              <View style={styles.splitItem}>
-                <Text style={styles.splitLabel}>{historyVenue === 'home' ? 'HOME SPLIT' : 'AWAY SPLIT'}</Text>
-                <Text style={[styles.splitValue, { color: historyVenue === 'home' ? Colors.success : '#60A5FA' }]}>
-                  {(historyVenue === 'home' ? homeSplit : awaySplit)
-                    ? (historyVenue === 'home' ? homeSplit : awaySplit)!.average.toFixed(1)
-                    : '—'}
-                </Text>
-                <Text style={styles.splitMeta}>
-                  {(historyVenue === 'home' ? homeSplit : awaySplit)
-                    ? `${(historyVenue === 'home' ? homeSplit : awaySplit)!.count} MATCHES`
-                    : 'NO SAMPLE'}
-                </Text>
-              </View>
-            ) : (
-              <>
-                <View style={styles.splitItem}>
-                  <Text style={styles.splitLabel}>HOME SPLIT</Text>
-                  <Text style={[styles.splitValue, { color: Colors.success }]}>
-                    {homeSplit ? homeSplit.average.toFixed(1) : '—'}
-                  </Text>
-                  <Text style={styles.splitMeta}>{homeSplit ? `${homeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-                </View>
-                <View style={styles.splitDivider} />
-                <View style={styles.splitItem}>
-                  <Text style={styles.splitLabel}>AWAY SPLIT</Text>
-                  <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
-                    {awaySplit ? awaySplit.average.toFixed(1) : '—'}
-                  </Text>
-                  <Text style={styles.splitMeta}>{awaySplit ? `${awaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-                </View>
-              </>
-            )}
-          </View>
           {showPossessionContext && (tpHomeSplit || tpAwaySplit) && (
-            <View style={styles.splitRow}>
-              {showSelectedVenueOnly ? (
-                <View style={styles.splitItem}>
-                  <Text style={styles.splitLabel}>
-                    {historyVenue === 'home' ? 'TP HOME · LAST 10' : 'TP AWAY · LAST 10'}
-                  </Text>
-                  <Text style={[styles.splitValue, { color: historyVenue === 'home' ? Colors.success : '#60A5FA' }]}>
-                    {(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)
-                      ? `${(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)!.average.toFixed(1)}%`
-                      : '—'}
-                  </Text>
-                  <Text style={styles.splitMeta}>
-                    {(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)
-                      ? `${(historyVenue === 'home' ? tpHomeSplit : tpAwaySplit)!.count} MATCHES`
-                      : 'NO SAMPLE'}
-                  </Text>
-                </View>
-              ) : (
-                <>
-                  <View style={styles.splitItem}>
-                    <Text style={styles.splitLabel}>TP HOME · LAST 10</Text>
-                    <Text style={[styles.splitValue, { color: Colors.success }]}>
-                      {tpHomeSplit ? `${tpHomeSplit.average.toFixed(1)}%` : '—'}
-                    </Text>
-                    <Text style={styles.splitMeta}>{tpHomeSplit ? `${tpHomeSplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-                  </View>
-                  <View style={styles.splitDivider} />
-                  <View style={styles.splitItem}>
-                    <Text style={styles.splitLabel}>TP AWAY · LAST 10</Text>
-                    <Text style={[styles.splitValue, { color: '#60A5FA' }]}>
-                      {tpAwaySplit ? `${tpAwaySplit.average.toFixed(1)}%` : '—'}
-                    </Text>
-                    <Text style={styles.splitMeta}>{tpAwaySplit ? `${tpAwaySplit.count} MATCHES` : 'NO SAMPLE'}</Text>
-                  </View>
-                </>
-              )}
-            </View>
+            <Text style={styles.recentInlineStats}>
+              TP H {tpHomeSplit?.average?.toFixed(0) ?? '—'}% · TP A {tpAwaySplit?.average?.toFixed(0) ?? '—'}%
+            </Text>
           )}
           {hasMarketEvidence && (
             <View style={styles.marketEvidence}>
@@ -785,20 +724,13 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             </View>
           </View>
           <Text style={styles.detail}>
-            This is the history pool used by the model, not a system-wide win rate.
+            MODEL SOURCE = this player's verified history for the selected venue/prop.
           </Text>
-          {settledRate != null && settledDirection && (
-            <Text style={[styles.detail, { marginTop: 0 }]}>
-              SYSTEM SETTLED BASELINE · {settledDirection} {settledRate.toFixed(1)}%
-              {settledSample ? ` · n=${settledSample}` : ''}
-            </Text>
-          )}
-          {deviationHitRate != null && settledDirection && (
-            <Text style={[styles.detail, { marginTop: 0 }]}>
-              DEVIATION-BAND BASELINE · {settledDirection} {deviationHitRate.toFixed(1)}%
-              {deviationHitRateN ? ` · n=${deviationHitRateN}` : ''}
-            </Text>
-          )}
+          <Text style={[styles.detail, { marginTop: 0 }]}>
+            CALIBRATION = settled system evidence used to adjust confidence, not this player's hit rate.
+            {settledRate != null && settledDirection ? ` ${settledDirection} ${settledRate.toFixed(1)}% · n=${settledSample ?? '—'}.` : ''}
+            {deviationHitRate != null && settledDirection ? ` Deviation band ${deviationHitRate.toFixed(1)}% · n=${deviationHitRateN ?? '—'}.` : ''}
+          </Text>
         </View>
       )}
 
@@ -959,6 +891,13 @@ const styles = {
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
   chart: { height: 151, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 5 },
+  recentInlineStats: {
+    color: '#697586',
+    fontSize: 7,
+    fontWeight: '800' as const,
+    letterSpacing: 0.45,
+    marginTop: 2,
+  },
   barColumn: { width: 48, height: 151, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 5, paddingTop: 2 },
   // H2H is intentionally a little taller than the old strip. Each column has
   // reserved rows for value → bar → date → possession/venue, so the bar can
