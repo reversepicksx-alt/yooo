@@ -2524,41 +2524,53 @@ async def refresh_pick_analysis(pick_id: str, payload: dict):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    # ── Rate limit: 1 refresh per pick per hour (atomic) ─────────────────
-    # We stamp the timestamp BEFORE AI generation using a conditional
-    # findOneAndUpdate.  The filter only matches when the stored timestamp is
-    # absent, null, or older than the cooldown window, so concurrent requests
-    # cannot each see an unset timestamp and both proceed to generate.
+    # ── Rate limit: 1 refresh per user+player+prop+fixture per hour ──────
+    # The cooldown is stored in the separate `refresh_cooldowns` collection,
+    # NOT on the pick document.  This means deleting and re-saving a pick
+    # cannot bypass the limit — the cooldown key is independent of pickId.
+    #
+    # Key: SHA-1 hash of (email, playerName, propType, fixtureId).
+    # The TTL index on `refresh_cooldowns._ts` auto-expires entries after 1h.
+    # We use find_one_and_update with upsert=True + $setOnInsert so the
+    # insert only fires when no live cooldown document exists.  Concurrent
+    # requests for the same key are serialised by the unique index on `_key`.
     from fastapi.responses import JSONResponse
     from pymongo import ReturnDocument
+    import hashlib as _hashlib
 
     _REFRESH_COOLDOWN_SECONDS = 3600
     _now_dt = datetime.now(timezone.utc)
     _now_iso = _now_dt.isoformat()
-    _cooldown_cutoff_iso = (_now_dt - timedelta(seconds=_REFRESH_COOLDOWN_SECONDS)).isoformat()
 
-    pick = await db.picks.find_one_and_update(
-        {
-            "pickId": pick_id,
-            "email": email,
-            # Matches when refreshedAt is missing, null, or old enough
-            "tacticalBreakdownRefreshedAt": {"$not": {"$gt": _cooldown_cutoff_iso}},
-        },
-        {"$set": {"tacticalBreakdownRefreshedAt": _now_iso}},
-        projection={"_id": 0},
-        return_document=ReturnDocument.BEFORE,
+    # Fetch the pick first so we can derive the cooldown key and also so we
+    # can return 404 before touching the cooldown collection.
+    pick = await db.picks.find_one(
+        {"pickId": pick_id, "email": email},
+        {"_id": 0},
     )
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
 
-    if pick is None:
-        # Either the pick doesn't exist or the cooldown is active — distinguish.
-        _existing = await db.picks.find_one(
-            {"pickId": pick_id, "email": email},
-            {"_id": 0, "tacticalBreakdownRefreshedAt": 1},
-        )
-        if not _existing:
-            raise HTTPException(status_code=404, detail="Pick not found")
-        # On cooldown — compute the remaining wait from the stored timestamp.
-        _last_refreshed = _existing.get("tacticalBreakdownRefreshedAt") or _now_iso
+    _player_name = (pick.get("playerName") or "").strip().lower()
+    _prop_type   = (pick.get("propType") or "").strip().lower()
+    _fixture_id  = str(pick.get("fixtureId") or "")
+    _key_raw     = f"{email}|{_player_name}|{_prop_type}|{_fixture_id}"
+    _cooldown_key = _hashlib.sha1(_key_raw.encode()).hexdigest()
+
+    # Atomically insert a cooldown document if none exists (upsert).
+    # $setOnInsert fires ONLY on insert, so an existing document is untouched.
+    # return_document=BEFORE → None means this was a fresh insert (allowed).
+    # A returned document means a live cooldown entry already existed (blocked).
+    #
+    # Concurrency note: two simultaneous requests for the same _cooldown_key
+    # can both observe no document, then race to upsert.  The unique index on
+    # `_key` ensures only one insert succeeds; the loser gets a DuplicateKeyError
+    # from Motor.  We catch that and treat it identically to "document already
+    # existed" — both paths return a 429 cooldown response.
+
+    async def _cooldown_429(existing_doc: dict | None) -> JSONResponse:
+        """Build the standard 429 rate-limit response from an existing cooldown doc."""
+        _last_refreshed = (existing_doc or {}).get("createdAt") or _now_iso
         try:
             _last_dt = datetime.fromisoformat(_last_refreshed.replace("Z", "+00:00"))
             _elapsed = (_now_dt - _last_dt).total_seconds()
@@ -2576,8 +2588,53 @@ async def refresh_pick_analysis(pick_id: str, payload: dict):
                 "refreshedAt": _last_refreshed,
             },
         )
-    # `pick` is the document as it was BEFORE the timestamp was stamped.
-    # The cooldown slot is now reserved for this request.
+
+    try:
+        _cooldown_result = await db.refresh_cooldowns.find_one_and_update(
+            {"_key": _cooldown_key},
+            {"$setOnInsert": {
+                "_key":       _cooldown_key,
+                "_ts":        _now_dt,          # TTL field — expires after 1 hour
+                "email":      email,
+                "playerName": pick.get("playerName", ""),
+                "propType":   pick.get("propType", ""),
+                "fixtureId":  _fixture_id,
+                "createdAt":  _now_iso,
+            }},
+            upsert=True,
+            projection={"_id": 0, "_ts": 1, "createdAt": 1},
+            return_document=ReturnDocument.BEFORE,
+        )
+    except Exception as _dup_exc:
+        # DuplicateKeyError from a concurrent upsert race — the other request
+        # won the insert; this one is rate-limited.  Any other unexpected error
+        # is also treated conservatively as a cooldown hit so we never open two
+        # concurrent AI generations for the same player+prop.
+        from pymongo.errors import DuplicateKeyError as _DKE
+        if not isinstance(_dup_exc, _DKE):
+            print(f"[REFRESH ANALYSIS] unexpected cooldown upsert error: {_dup_exc}")
+        _existing_doc = None
+        try:
+            _existing_doc = await db.refresh_cooldowns.find_one(
+                {"_key": _cooldown_key}, {"_id": 0, "createdAt": 1}
+            )
+        except Exception:
+            pass
+        return await _cooldown_429(_existing_doc)
+
+    if _cooldown_result is not None:
+        # A live cooldown document was already present — rate-limited.
+        return await _cooldown_429(_cooldown_result)
+
+    # Fresh insert — cooldown slot is now reserved for this request.
+    # Stamp the pick document for display purposes (shows when it was last refreshed).
+    try:
+        await db.picks.update_one(
+            {"pickId": pick_id, "email": email},
+            {"$set": {"tacticalBreakdownRefreshedAt": _now_iso}},
+        )
+    except Exception as _stamp_exc:
+        print(f"[REFRESH ANALYSIS] could not stamp tacticalBreakdownRefreshedAt: {_stamp_exc}")
 
     # Build the evidence packet from the stored pick.  Try to enrich it with
     # the latest cached prediction data (which carries more complete evidence
@@ -2641,14 +2698,23 @@ async def refresh_pick_analysis(pick_id: str, payload: dict):
     ledger_fingerprint = prediction_data.get("factorLedgerFingerprint") or ""
 
     async def _release_slot() -> None:
-        """Clear the reserved timestamp so the user can retry after a failure."""
+        """Remove the cooldown entry so the user can retry after a generation failure.
+
+        The cooldown lives in refresh_cooldowns (not on the pick document), so
+        we delete by _cooldown_key.  We also clear the display timestamp on the
+        pick so the UI doesn't show a stale 'refreshed X minutes ago' label.
+        """
+        try:
+            await db.refresh_cooldowns.delete_one({"_key": _cooldown_key})
+        except Exception as _rel_exc:
+            print(f"[REFRESH ANALYSIS] could not release cooldown slot: {_rel_exc}")
         try:
             await db.picks.update_one(
                 {"pickId": pick_id, "email": email},
                 {"$unset": {"tacticalBreakdownRefreshedAt": ""}},
             )
-        except Exception as _rel_exc:
-            print(f"[REFRESH ANALYSIS] could not release cooldown slot: {_rel_exc}")
+        except Exception:
+            pass
 
     try:
         from compact_explanation import build_compact_explanation

@@ -12,6 +12,7 @@ Storage budget targets (Atlas M0 free tier = 512 MB):
   team_fixture_history  → 45 days  (_dt  datetime)
   cache_players         → 45 days  (_dt  datetime)
   team_stats            → 45 days  (_dt  datetime)
+  refresh_cooldowns     →  1 hour  (_ts  datetime)
 """
 
 DAY = 86400  # seconds
@@ -27,6 +28,10 @@ TTL_SPECS = [
     ("team_fixture_history", "_dt",  45 * DAY),
     ("cache_players",        "_dt",  45 * DAY),
     ("team_stats",           "_dt",  45 * DAY),
+    # Per-user analysis refresh cooldown — auto-expires after 1 hour.
+    # Keyed by _key (hash of email+player+prop+fixture) so the limit
+    # survives pick deletion and re-save.
+    ("refresh_cooldowns",    "_ts",  3600),
 ]
 
 
@@ -41,4 +46,9 @@ async def setup_ttl_indexes(db) -> None:
             )
         except Exception as e:
             print(f"[TTL] Index {coll_name}.{field}: {e}")
+    # Unique index on the cooldown key so concurrent upserts are safe.
+    try:
+        await db["refresh_cooldowns"].create_index("_key", unique=True, background=True)
+    except Exception as e:
+        print(f"[TTL] Index refresh_cooldowns._key: {e}")
     print(f"[TTL] {len(TTL_SPECS)} TTL indexes verified across cache collections")
