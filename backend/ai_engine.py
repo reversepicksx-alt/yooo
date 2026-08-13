@@ -725,6 +725,219 @@ async def _repair_pending_review_soccer_batch(
     return summary
 
 
+async def _refresh_recent_soccer_settlements(
+    *,
+    limit: int = 24,
+    hours: int = 48,
+    pick_ids: list[str] | None = None,
+    audit_overrides: dict | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Recheck recent settled soccer picks against the exact final player row.
+
+    API-Football can revise fixture player totals after the first FT response.
+    A settled record is therefore not immutable until it has been rechecked
+    against the exact fixture/player endpoint.  This refresh deliberately
+    bypasses the normal "already settled" guard, but never writes unless the
+    provider returns a verified exact-fixture result.
+    """
+    from routes.picks import _settle_soccer_pick
+
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=max(1, min(hours, 168)))).isoformat()
+    retry_before = (now - timedelta(minutes=12)).isoformat()
+    query: dict = {
+        "sport": "soccer",
+        "status": "settled",
+        "fixtureId": {"$exists": True, "$ne": None},
+        "correctedManually": {"$ne": True},
+    }
+    if pick_ids:
+        query["pickId"] = {"$in": [str(value) for value in pick_ids if value]}
+    else:
+        query["$and"] = [
+            {
+                "$or": [
+                    {"settledAt": {"$gte": cutoff}},
+                    {"settledAt": {"$exists": False}},
+                    {"settledAt": None},
+                ]
+            },
+            {
+                "$or": [
+                    {"settlementFinalCheckedAt": {"$exists": False}},
+                    {"settlementFinalCheckedAt": {"$lt": retry_before}},
+                ]
+            },
+        ]
+
+    candidates = await db.picks.find(query, {"_id": 0}).sort("settledAt", 1).to_list(
+        max(1, min(limit, 80))
+    )
+    entries = []
+    checked = repaired = deferred = errors = 0
+
+    for pick_doc in candidates:
+        pick_id = str(pick_doc.get("pickId") or "")
+        entry = {
+            "pickId": pick_id,
+            "playerName": pick_doc.get("playerName"),
+            "propType": pick_doc.get("propType"),
+            "fixtureId": pick_doc.get("fixtureId"),
+            "previousResult": pick_doc.get("result"),
+            "previousActualValue": pick_doc.get("actualValue"),
+        }
+        if not pick_id:
+            entry["action"] = "skipped: missing pickId"
+            entries.append(entry)
+            deferred += 1
+            continue
+
+        try:
+            result = await _settle_soccer_pick(
+                {
+                    **pick_doc,
+                    "id": pick_id,
+                    "status": "live",
+                    "_settlement_repair": True,
+                },
+                pick_doc.get("teamId") or 0,
+                pick_doc.get("playerId") or 0,
+                pick_doc.get("opponentName", ""),
+                pick_doc.get("propType", ""),
+                pick_doc.get("leagueId") or 0,
+            )
+            source = dict((result or {}).get("settlementSource") or {})
+            if not result or source.get("verified") is not True:
+                entry["action"] = "deferred: exact final stat unavailable"
+                entries.append(entry)
+                deferred += 1
+                continue
+
+            checked += 1
+            source["verificationMethod"] = "final_stat_refresh"
+            source["checkedAt"] = now.isoformat()
+            new_result = result.get("result")
+            new_actual = result.get("actualValue")
+            previous_result = pick_doc.get("result")
+            previous_actual = pick_doc.get("actualValue")
+            audit_override = (audit_overrides or {}).get(pick_id) or {}
+            audit_backfill = bool(
+                audit_override and not pick_doc.get("settlementCorrection")
+            )
+            changed = (
+                previous_result != new_result
+                or previous_actual != new_actual
+                or pick_doc.get("minutesPlayed") != result.get("minutesPlayed")
+            )
+            entry.update({
+                "verifiedResult": new_result,
+                "verifiedActualValue": new_actual,
+                "verifiedMinutesPlayed": result.get("minutesPlayed"),
+                "changed": changed,
+            })
+
+            if dry_run:
+                entry["action"] = (
+                    "would-repair" if changed
+                    else "would-backfill-audit" if audit_backfill
+                    else "verified-no-change"
+                )
+                entries.append(entry)
+                continue
+
+            update_fields = {
+                "status": "settled",
+                "result": new_result,
+                "actualValue": new_actual,
+                "hitPct": (
+                    100 if new_result == "hit"
+                    else 0 if new_result in {"miss", "dnp"}
+                    else 50
+                ),
+                "minutesPlayed": result.get("minutesPlayed"),
+                "settlementSource": source,
+                "settlementFinalCheckedAt": now.isoformat(),
+                "settlementFinalVerifiedAt": source.get("recordedAt") or now.isoformat(),
+                "resettledAt": now.isoformat(),
+                "settledBy": "api_football_final_refresh",
+            }
+            for field in (
+                "fixtureId", "fixtureDate", "matchScore", "homeTeam",
+                "awayTeam", "finalHomeGoals", "finalAwayGoals",
+                "homePoss", "awayPoss", "oppAvgPoss",
+            ):
+                if result.get(field) is not None:
+                    update_fields[field] = result[field]
+
+            update_doc: dict = {"$set": update_fields}
+            if new_result == "dnp":
+                if result.get("voidReason"):
+                    update_fields["voidReason"] = result["voidReason"]
+            else:
+                update_doc["$unset"] = {"voidReason": ""}
+
+            if changed or audit_backfill:
+                update_fields["settlementCorrection"] = {
+                    "previousResult": audit_override.get(
+                        "previousResult", previous_result
+                    ),
+                    "previousActualValue": audit_override.get(
+                        "previousActualValue", previous_actual
+                    ),
+                    "previousMinutesPlayed": audit_override.get(
+                        "previousMinutesPlayed", pick_doc.get("minutesPlayed")
+                    ),
+                    "previousSettlementSource": audit_override.get(
+                        "previousSettlementSource", pick_doc.get("settlementSource")
+                    ),
+                    "replacementResult": new_result,
+                    "replacementActualValue": new_actual,
+                    "replacementMinutesPlayed": result.get("minutesPlayed"),
+                    "correctedBy": (
+                        "api_football_final_refresh"
+                        if changed
+                        else "api_football_final_refresh_audit_backfill"
+                    ),
+                    "correctedAt": now.isoformat(),
+                }
+
+            updated = await db.picks.update_one(
+                {"pickId": pick_id, "status": "settled"},
+                update_doc,
+            )
+            if updated.modified_count:
+                repaired += 1
+                entry["action"] = (
+                    "repaired" if changed
+                    else "audit-backfilled" if audit_backfill
+                    else "verified-no-change"
+                )
+                print(
+                    f"[FINAL REFRESH] {pick_doc.get('playerName', '?')} "
+                    f"{pick_doc.get('propType', '?')} "
+                    f"{previous_actual} → {new_actual} ({new_result})"
+                )
+            else:
+                entry["action"] = "deferred: record changed before write"
+                deferred += 1
+            entries.append(entry)
+        except Exception as exc:
+            errors += 1
+            entry["action"] = f"error: {str(exc)[:180]}"
+            entries.append(entry)
+
+    return {
+        "found": len(candidates),
+        "checked": checked,
+        "repaired": repaired,
+        "deferred": deferred,
+        "errors": errors,
+        "dryRun": dry_run,
+        "results": entries,
+    }
+
+
 async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
     from utils import api_football_request, is_quota_exhausted
@@ -733,6 +946,11 @@ async def _run_auto_settlement():
 
     if is_quota_exhausted():
         return  # Don't burn quota on settlement checks when there's nothing left
+
+    # A provider's first FT player snapshot can be revised later. Recheck
+    # recently settled rows before processing new live picks so stale values
+    # never remain in calibration.
+    await _refresh_recent_soccer_settlements(limit=24, hours=48)
 
     # pending_review records were previously invisible to this bot, leaving
     # large legacy backlogs dependent on the owner's six-item UI refresh.

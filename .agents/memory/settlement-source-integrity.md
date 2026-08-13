@@ -16,3 +16,15 @@ Active picks that remain `live` after a fixture finishes need the same exact-fix
 **Why:** A finished API-Football fixture can be available and fully verifiable even when the initial live lookup missed the UTC-boundary transition.
 
 **How to apply:** Include own active soccer picks in the bounded final-refresh queue, route them through the API-Football-only repair path, and persist the verified fixture ID with the settlement.
+
+Final API-Football player totals can be revised after the first FT response; a
+`verified=true` marker proves exact fixture/player provenance, not that the
+provider snapshot is permanently final.
+
+**Why:** Post-match passes for two exact-fixture picks increased after their
+initial settlements, changing both results from HIT to MISS.
+
+**How to apply:** Recheck recent settled soccer rows for a bounded window,
+preserve the prior value/result/source in a correction audit, and keep
+unverified or quota-deferred rows out of calibration until the replacement is
+verified.

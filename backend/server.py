@@ -1524,6 +1524,44 @@ async def pending_review_status(payload: dict = Body(...)):
     }
 
 
+@app.post("/api/admin/refresh-final-soccer")
+async def refresh_final_soccer(payload: dict = Body(...)):
+    """Owner-triggered exact final-stat refresh for recent soccer picks.
+
+    The normal settlement bot performs this same refresh every cycle. This
+    endpoint exists so an owner can immediately reconcile a known bad day
+    without manually entering any stat or result.
+    """
+    from routes.admin import verify_owner
+    from ai_engine import _refresh_recent_soccer_settlements
+
+    await verify_owner(
+        str(payload.get("email") or ""),
+        str(payload.get("token") or ""),
+    )
+    pick_ids = payload.get("pickIds")
+    if payload.get("pickId"):
+        pick_ids = [payload["pickId"]]
+    if pick_ids is not None:
+        pick_ids = [str(value) for value in pick_ids if value]
+    audit_overrides = payload.get("auditOverrides")
+    if not isinstance(audit_overrides, dict):
+        audit_overrides = None
+    try:
+        return {
+            "ok": True,
+            "refresh": await _refresh_recent_soccer_settlements(
+                limit=max(1, min(int(payload.get("limit") or 80), 80)),
+                hours=max(1, min(int(payload.get("hours") or 48), 168)),
+                pick_ids=pick_ids,
+                audit_overrides=audit_overrides,
+                dry_run=bool(payload.get("dryRun", False)),
+            ),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.post("/api/admin/bulk-resettle-zero-picks")
 async def bulk_resettle_zero_picks(payload: dict):
     """

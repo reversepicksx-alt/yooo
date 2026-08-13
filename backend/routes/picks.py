@@ -5093,7 +5093,12 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
             "duels_won",
         }
-        if actual_value == 0 and prop_type in _COUNT_PROPS_SETTLE and minutes_played >= 30:
+        if (
+            actual_value == 0
+            and prop_type in _COUNT_PROPS_SETTLE
+            and minutes_played >= 30
+            and not pick.get("_settlement_repair")
+        ):
             print(f"[SETTLE-DEFER] {pick.get('playerName','')} {prop_type} — stat=0 with {minutes_played} min; likely unpopulated, deferring")
             return None
 
