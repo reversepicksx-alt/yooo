@@ -245,7 +245,11 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         ?? null,
     })) as Array<Record<string, any>>;
   const logs = normalizedLogs
-    .filter((game) => !game.synthetic && game.value != null)
+    .filter((game) => (
+      !game.synthetic
+      && game.value != null
+      && (!historyVenue || rowVenue(game) === historyVenue)
+    ))
     .sort(newestFirst)
     .slice(0, 100);
   const historicalHitRates = (prediction as any).hitRates
@@ -262,10 +266,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     ? recommendation
     : null;
   const h2h = prediction.h2hPlayerStats ?? {};
-  // Recent history intentionally shows both venue pools. The selected venue
-  // remains highlighted on each row, but the archive must not hide the
-  // opposite venue when the customer is checking sample depth.
-  const showSelectedVenueOnly = false;
+  // Recent Matches is the prediction-context view. Do not show the opposite
+  // venue here; it is not part of the selected matchup sample.
+  const showSelectedVenueOnly = true;
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
   const isGkProp = prediction.propType === 'saves' || prediction.propType === 'goalie_saves';
@@ -433,7 +436,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 <Text style={styles.title}>RECENT MATCHES · {logs.length}</Text>
                 {historyVenue && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                    HOME + AWAY VENUE MATCHES
+                    {historyVenue.toUpperCase()} VENUE MATCHES
                   </Text>
                 )}
               </View>

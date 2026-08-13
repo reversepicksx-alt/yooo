@@ -5175,6 +5175,11 @@ async def predict(req: PredictionRequest):
                 for g in player_game_logs
                 if g.get("venue") == "away" and g.get(target_field) is not None
             ]
+            _all_history_values = [
+                g.get(target_field)
+                for g in player_game_logs
+                if g.get(target_field) is not None
+            ]
             if _all_home_values:
                 game_log_summary["homeAvg"] = round(
                     sum(_all_home_values) / len(_all_home_values), 2
