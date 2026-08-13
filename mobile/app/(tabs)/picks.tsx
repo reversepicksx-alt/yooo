@@ -1487,6 +1487,7 @@ export default function PicksScreen() {
             const card = (
               <OwnerPickCard
                 pick={item}
+                ownerMediaEnabled={isOwner}
                 compact
                 onTrack={() => setLiveTrackerPick(item)}
                 onDelete={onDeleteForItem}
@@ -1516,6 +1517,7 @@ export default function PicksScreen() {
               <SwipeablePickRow onDelete={onDeleteForItem}>
                 <OwnerPickCard
                   pick={item}
+                  ownerMediaEnabled={isOwner}
                   compact
                   onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}

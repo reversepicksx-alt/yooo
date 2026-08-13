@@ -161,13 +161,15 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress, compact = false,
+  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress,
+  ownerMediaEnabled = false, compact = false,
 }: {
   pick: Pick; onTrack?: () => void;
   onDelete?: () => void;
   onShareCommunity?: (imageData: string) => void | Promise<void>;
   onAutoPostImage?: (imageData: string) => void | Promise<void>;
   onManagerBadgePress?: () => void;
+  ownerMediaEnabled?: boolean;
   compact?: boolean;
 }) {
   const won = pickWon(pick);
@@ -237,11 +239,32 @@ export default function OwnerPickCard({
 
   const [sharing, setSharing] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
+  const [teamLogoFailed, setTeamLogoFailed] = useState(false);
   const [shareSheetVisible, setShareSheetVisible] = useState(false);
   const [captureMode, setCaptureMode] = useState(false);
   const pendingBlobRef = useRef<Blob | null>(null);
   const cardRef = useRef<View>(null);
   const autoCapturePickRef = useRef<string>('');
+
+  // The owner-only response fields are preferred, but older/mobile cached
+  // responses may not contain them. Reconstruct the same verified
+  // API-Football media URLs from the persisted IDs only for the owner card.
+  // Never enable this fallback for subscriber cards.
+  const canUseOwnerMedia = ownerMediaEnabled
+    && (!pick.sport || pick.sport.toLowerCase() === 'soccer');
+  const playerPhotoUri = pick.ownerPlayerPhoto
+    || (canUseOwnerMedia && pick.playerId
+      ? `https://media.api-sports.io/football/players/${pick.playerId}.png`
+      : '');
+  const teamLogoUri = pick.ownerTeamLogo
+    || (canUseOwnerMedia && pick.teamId
+      ? `https://media.api-sports.io/football/teams/${pick.teamId}.png`
+      : '');
+
+  useEffect(() => {
+    setPhotoFailed(false);
+    setTeamLogoFailed(false);
+  }, [playerPhotoUri, teamLogoUri]);
 
   const tweetText = `${APP_STORE_URL}\nvia @Reversepickss\nImages © API-Football · images shown for informational purposes only.`;
   const nativeShareText = `${APP_STORE_URL}\nvia @Reversepickss\nImages © API-Football · images shown for informational purposes only.`;
@@ -357,8 +380,8 @@ export default function OwnerPickCard({
     const logoUrl = typeof logoSrc === 'string' ? logoSrc : logoSrc?.uri ?? '';
     const [logoDataUri, photoDataUri, teamLogoDataUri] = await Promise.all([
       logoUrl ? fetchAsDataUri(logoUrl) : Promise.resolve(''),
-      pick.ownerPlayerPhoto ? fetchAsDataUri(pick.ownerPlayerPhoto) : Promise.resolve(''),
-      pick.ownerTeamLogo ? fetchAsDataUri(pick.ownerTeamLogo) : Promise.resolve(''),
+      playerPhotoUri ? fetchAsDataUri(playerPhotoUri) : Promise.resolve(''),
+      teamLogoUri ? fetchAsDataUri(teamLogoUri) : Promise.resolve(''),
     ]);
 
     const container = document.createElement('div');
@@ -442,8 +465,8 @@ export default function OwnerPickCard({
           <View style={styles.compactInner}>
             <View style={styles.compactTopRow}>
               <View style={styles.identity}>
-                {pick.ownerPlayerPhoto && !photoFailed ? (
-                  <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.compactAvatar}
+                {playerPhotoUri && !photoFailed ? (
+                  <Image source={{ uri: playerPhotoUri }} style={styles.compactAvatar}
                     onError={() => setPhotoFailed(true)} />
                 ) : (
                   <View style={[styles.compactAvatar, styles.avatarFallback]}>
@@ -452,10 +475,19 @@ export default function OwnerPickCard({
                 )}
                 <View style={styles.nameBlock}>
                   <Text style={styles.compactPlayerName} numberOfLines={1}>{pick.playerName}</Text>
-                  <Text style={styles.compactSubText} numberOfLines={1}>
-                    {pick.teamName || 'Team'}
-                    <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
-                  </Text>
+                  <View style={styles.compactTeamRow}>
+                    {teamLogoUri && !teamLogoFailed ? (
+                      <Image
+                        source={{ uri: teamLogoUri }}
+                        style={styles.compactTeamLogo}
+                        onError={() => setTeamLogoFailed(true)}
+                      />
+                    ) : null}
+                    <Text style={styles.compactSubText} numberOfLines={1}>
+                      {pick.teamName || 'Team'}
+                      <Text style={{ color: accentColor === 'rgba(255,255,255,0.18)' ? 'rgba(255,255,255,0.35)' : accentColor }}> · {venueTag}</Text>
+                    </Text>
+                  </View>
                   {live && pick.fixtureId != null && (
                     <Text style={styles.compactMatchId}>MATCH ID {pick.fixtureId}</Text>
                   )}
@@ -569,8 +601,8 @@ export default function OwnerPickCard({
         {/* ── Top row: identity + badge ─────────────────────── */}
         <View style={styles.topRow}>
           <View style={styles.identity}>
-            {pick.ownerPlayerPhoto && !photoFailed ? (
-              <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.avatar}
+            {playerPhotoUri && !photoFailed ? (
+              <Image source={{ uri: playerPhotoUri }} style={styles.avatar}
                 onError={() => setPhotoFailed(true)} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback]}>
@@ -580,8 +612,9 @@ export default function OwnerPickCard({
             <View style={styles.nameBlock}>
               <Text style={styles.playerName} numberOfLines={1}>{pick.playerName}</Text>
               <View style={styles.subRow}>
-                {pick.ownerTeamLogo ? (
-                  <Image source={{ uri: pick.ownerTeamLogo }} style={styles.teamCrest} />
+                {teamLogoUri && !teamLogoFailed ? (
+                  <Image source={{ uri: teamLogoUri }} style={styles.teamCrest}
+                    onError={() => setTeamLogoFailed(true)} />
                 ) : null}
                 <Text style={styles.subText} numberOfLines={1}>
                   {pick.teamName || 'Team'}
@@ -883,6 +916,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(57,255,20,0.08)', alignItems: 'center', justifyContent: 'center',
   },
   compactManagerDot: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
+  compactTeamRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1, minWidth: 0 },
+  compactTeamLogo: { width: 11, height: 11, marginRight: 4 },
   compactBottomRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginTop: 2, minHeight: 23,

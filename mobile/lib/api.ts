@@ -1786,7 +1786,17 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
       return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
     })(),
     teamName: p.teamName as string,
+     teamId: (() => {
+       const value = p.teamId;
+       const numeric = typeof value === 'number' ? value : Number(value);
+       return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+     })(),
     opponentName: p.opponentName as string,
+     opponentId: (() => {
+       const value = p.opponentId;
+       const numeric = typeof value === 'number' ? value : Number(value);
+       return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+     })(),
     propType: (p.propType as string) || '',
     line: (p.line as number) || 0,
     // normalize projectedValue → projection
