@@ -130,7 +130,18 @@ def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> 
             if isinstance(prediction.get("playerIsHome"), bool)
             else is_home
         )
-        prediction["venue"] = prediction.get("venue") or ("home" if is_home else "away")
+        _canonical_venue = "home" if is_home else "away"
+        _existing_venue = prediction.get("venue")
+        if _existing_venue and _existing_venue != _canonical_venue:
+            # venue field disagrees with playerIsHome — fixture team IDs are the
+            # single source of truth for which side the player occupies.  Record
+            # the contradiction so the saved snapshot is auditable; then override.
+            if not prediction.get("venueWasRepaired"):
+                prediction["venueWasRepaired"] = True
+                prediction["originalRequestVenue"] = _existing_venue
+            prediction["venue"] = _canonical_venue
+        else:
+            prediction["venue"] = _existing_venue or _canonical_venue
     else:
         prediction["venue"] = prediction.get("venue") or req.venue or "home"
 
@@ -1049,6 +1060,12 @@ async def predict(req: PredictionRequest):
         # next fixture while leaving the stale requested opponent in req. That
         # produced contradictory cards such as Corinthians vs Bahia when the
         # actual fixture was Corinthians vs Athletico.
+        # Capture the user-supplied venue BEFORE any fixture alignment rewrites req.venue.
+        # This is the sole way to detect a home/away contradiction after model_copy
+        # silently corrects req.venue at the prefetch boundary.
+        _raw_request_venue = req.venue  # user-supplied value; never mutated after this line
+        _venue_contradiction_detected = False  # set to True if fixture disagrees with user input
+
         match_odds_prefetched = None
         sgo_market_task = None
         if not ai_only_mode and actual_team_id and not _is_bdl_league:
@@ -1074,11 +1091,24 @@ async def predict(req: PredictionRequest):
                         f"→ actual={_fixture_opp_name}({_fixture_opp_id}) "
                         f"fixture={(match_odds_prefetched or {}).get('fixtureId')}"
                     )
+                _fixture_pih = (match_odds_prefetched or {}).get("playerIsHome")
+                _fixture_venue_str = "home" if _fixture_pih else "away"
+                if (
+                    _fixture_pih is not None
+                    and _raw_request_venue.lower() not in ("neutral",)
+                    and _raw_request_venue.lower() != _fixture_venue_str
+                ):
+                    _venue_contradiction_detected = True
+                    print(
+                        f"[VENUE CONTRADICTION] user='{_raw_request_venue}' "
+                        f"fixture='{_fixture_venue_str}' player={req.playerName} "
+                        f"— repairing from verified fixture data"
+                    )
                 req = req.model_copy(update={
                     "opponentId": _fixture_opp_id,
                     "opponentName": _fixture_opp_name,
                     "teamName": _fixture_team_name or req.teamName,
-                    "venue": "home" if (match_odds_prefetched or {}).get("playerIsHome") else "away",
+                    "venue": _fixture_venue_str,
                 })
                 actual_team_id = (match_odds_prefetched or {}).get("fixtureTeamId") or actual_team_id
             _fixture_ok, _fixture_reason = _validate_fixture_identity(
@@ -3102,13 +3132,29 @@ async def predict(req: PredictionRequest):
         # pipeline — game log filtering, possession calculation, and structured evidence — must
         # use a SINGLE consistent venue. We trust the fixture data because it determines
         # the actual match context (home/away possession, opponent venue, etc.).
+        #
+        # Track provenance so the final snapshot records whether a repair happened:
+        #   _venue_source = "fixture"  → playerIsHome from verified fixture data
+        #   _venue_source = "request"  → no fixture confirmation; user input used as-is
+        #
+        # _venue_contradiction_detected was set at the prefetch boundary (before model_copy
+        # silently corrected req.venue).  _raw_request_venue is the user-supplied value.
+        # Both are captured earlier in the function — we read them here so the alignment
+        # block has the original intent available regardless of what req.venue is now.
+        _venue_was_repaired = locals().get("_venue_contradiction_detected", False)
+        _original_request_venue = locals().get("_raw_request_venue", player_venue)
+        _venue_source = "request"  # upgraded to "fixture" when odds/fixture confirms
         _pih_after_odds = match_odds.get("playerIsHome") if match_odds else None
         if _pih_after_odds is not None:
             _fixture_venue = "home" if _pih_after_odds else "away"
+            _venue_source = "fixture"
             if player_venue != _fixture_venue:
+                # Defensive double-check: model_copy should have aligned player_venue
+                # already, but log and correct here for any path that bypassed prefetch.
                 print(f"[VENUE ALIGN] user={player_venue} → fixture={_fixture_venue} "
                       f"player={req.playerName} team={corrected_team_name}")
                 player_venue = _fixture_venue
+                _venue_was_repaired = True
         opponent_venue = "away" if player_venue == "home" else "home"
         is_womens = req.leagueId in WOMENS_LEAGUE_IDS
         pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
@@ -9825,6 +9871,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     f"({_pre_conflict} → {prediction['confidenceScore']})"
                 )
 
+        # Guard 4b: Unverified venue — no fixture data was available to confirm the
+        # user-supplied home/away assignment.  The pipeline may have processed game
+        # logs, possession, and conditional-possession under an incorrect venue.
+        # Very high confidence would be misleading; cap at 65 so the pick can still
+        # be surfaced but is not presented as a strong recommendation.
+        if locals().get("_venue_source") == "request":
+            _vu_conf = prediction.get("confidenceScore", 50)
+            if _vu_conf > 65:
+                prediction["confidenceScore"] = 65
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    "UNVERIFIED VENUE: Fixture data unavailable to confirm home/away assignment — confidence capped"
+                ]
+                print(f"[VENUE GUARD] No fixture data; confidence {_vu_conf}→65 (unverified venue)")
+
         # Guard 5: Line-Deviation Intelligence — data-driven market asymmetry guard.
         # Uses the deviation band system (calibration.py) to adjust confidence
         # based on how far the book's line is from our model's projection.
@@ -12800,6 +12860,24 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             print(f"[FINAL LEDGER] failed: {_ledger_err}")
             prediction["aiSource"] = "model"
             prediction["aiPending"] = False
+
+        # Venue provenance — write to the prediction dict before normalization so
+        # the saved snapshot carries a complete audit trail regardless of whether
+        # the caller consumes the top-level field or the matchupOverview sub-doc.
+        #   resolvedVenue:        final venue used by the entire pipeline ("home"/"away")
+        #   venueSource:          "fixture" if playerIsHome was confirmed by API-Football;
+        #                         "request" if no fixture was available (unverified)
+        #   venueWasRepaired:     True only when user input contradicted the fixture
+        #   originalRequestVenue: the user-supplied value that was overridden
+        _pv_resolved = locals().get("player_venue") or prediction.get("venue") or req.venue
+        if _pv_resolved:
+            prediction["resolvedVenue"] = _pv_resolved
+        prediction["venueSource"] = locals().get("_venue_source", "request")
+        if locals().get("_venue_was_repaired"):
+            prediction["venueWasRepaired"] = True
+            prediction["originalRequestVenue"] = (
+                locals().get("_original_request_venue") or req.venue
+            )
 
         prediction = _normalize_prediction_identity(prediction, req)
         # Reconcile the evidence verdict with the final displayed direction.
