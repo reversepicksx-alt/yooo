@@ -3219,14 +3219,17 @@ export default function ScanScreen() {
                   CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.
                 </Text>
               )}
-              {prediction.distribution?.landingBands && prediction.distribution.landingBands.length > 0 && (
+              {(() => {
+                const landingBands = prediction.distribution?.landingBands
+                  ?? (prediction as any).bayesianMetrics?.distribution?.landingBands;
+                return landingBands && landingBands.length > 0 ? (
                 <View style={styles.landingBandsWrap}>
                   <View style={styles.landingBandsHeader}>
                     <Text style={styles.ciLabel}>LANDING PROBABILITY</Text>
                     <Text style={styles.landingBandsMeta}>SAME FINAL DISTRIBUTION · 100%</Text>
                   </View>
                   <View style={styles.landingBandsGrid}>
-                    {prediction.distribution.landingBands.map((band) => (
+                    {landingBands.map((band: { label: string; probability: number }) => (
                       <View key={`${band.label}-${band.probability}`} style={styles.landingBand}>
                         <Text style={styles.landingBandLabel} numberOfLines={1}>{band.label}</Text>
                         <Text style={styles.landingBandProbability}>
@@ -3239,7 +3242,8 @@ export default function ScanScreen() {
                     Bands split the simulated outcomes into non-overlapping ranges. OVER/UNDER still uses the posted line.
                   </Text>
                 </View>
-              )}
+                ) : null;
+              })()}
 
               {/* Confidence Gauge — visual meter 50%→100% */}
               {confPct != null && (

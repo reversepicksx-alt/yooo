@@ -298,10 +298,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     .filter((game) => (
       !game.synthetic
       && game.value != null
-      && (!historyVenue || rowVenue(game) === historyVenue)
     ))
     .sort(newestFirst)
-    .slice(0, 100);
+    .slice(0, 40);
   const historicalHitRates = prediction.modelHitRates
     ?? prediction.playerGameLogs?.modelHitRates
     ?? (prediction as any).hitRates
@@ -333,9 +332,6 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     ? recommendation
     : null;
   const h2h = prediction.h2hPlayerStats ?? {};
-  // Recent Matches is the prediction-context view. Do not show the opposite
-  // venue here; it is not part of the selected matchup sample.
-  const showSelectedVenueOnly = true;
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
   const isGkProp = prediction.propType === 'saves' || prediction.propType === 'goalie_saves';
@@ -512,9 +508,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   {/* Contract marker: RECENT MATCHES · {logs.length} */}
                   {logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
                 </Text>
-                {historyVenue && logs.length > 0 && (
+                {logs.length > 0 && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                    {historyVenue.toUpperCase()} VENUE · MATCHES SHOWN
+                    ALL VENUES · MATCHES SHOWN
                   </Text>
                 )}
                 <Text style={styles.recentInlineStats} numberOfLines={1}>

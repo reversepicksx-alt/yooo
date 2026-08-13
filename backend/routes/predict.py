@@ -50,6 +50,12 @@ router = APIRouter(prefix="/api", tags=["predict"])
 # A venue-specific player prior is only activated after this many verified
 # appearances. The history loader may search older seasons to reach it.
 _VENUE_HISTORY_TARGET = 30
+# Customer-facing Recent Matches is a complete archive, not the model's
+# venue-scoped prior. Keep enough rows to make the archive useful on mobile;
+# provider gaps may make 35 the honest floor, but never intentionally stop at
+# the old 10/15/25-row samples.
+_RECENT_ARCHIVE_TARGET = 40
+_RECENT_ARCHIVE_MIN = 35
 
 
 def _json_safe_prediction(value, *, _active=None, _depth=0):
@@ -2187,7 +2193,7 @@ async def predict(req: PredictionRequest):
                         or _selected_venue_count >= _VENUE_HISTORY_TARGET
                     )
                     if (
-                        len(collected) >= 15
+                        len(collected) >= _RECENT_ARCHIVE_MIN
                         and len(good) >= len(collected) // 2
                         and _saves_ok
                         and _tp_complete
@@ -2561,7 +2567,10 @@ async def predict(req: PredictionRequest):
                 if (
                     req.sport == "soccer"
                     and player_venue
-                    and _venue_history_count(collected) < _VENUE_HISTORY_TARGET
+                    and (
+                        _venue_history_count(collected) < _VENUE_HISTORY_TARGET
+                        or len(collected) < _RECENT_ARCHIVE_TARGET
+                    )
                 ):
                     _known_fixture_ids = {
                         str((fixture or {}).get("fixture", {}).get("id"))
@@ -2638,11 +2647,20 @@ async def predict(req: PredictionRequest):
                             ),
                             reverse=True,
                         )
-                        _selected_logs = await _fetch_fixture_batch(_selected_rows)
+                        # Fill the venue-prior target first, then continue
+                        # across both venues until the customer archive reaches
+                        # its independent target.
+                        _priority_rows = (
+                            _selected_rows
+                            if _venue_history_count(collected) < _VENUE_HISTORY_TARGET
+                            else []
+                        )
+                        _priority_logs = await _fetch_fixture_batch(_priority_rows)
+                        _selected_logs = _priority_logs
                         collected.extend(_selected_logs)
                         _older_fetched_ids.update(
                             str((fixture.get("fixture") or {}).get("id"))
-                            for fixture in _selected_rows
+                            for fixture in _priority_rows
                             if (fixture.get("fixture") or {}).get("id")
                         )
                         print(
@@ -2652,18 +2670,32 @@ async def predict(req: PredictionRequest):
                             f"venue={_venue_history_count(collected)}/"
                             f"{_VENUE_HISTORY_TARGET}"
                         )
-                        if _venue_history_count(collected) >= _VENUE_HISTORY_TARGET:
+                        if (
+                            _venue_history_count(collected) >= _VENUE_HISTORY_TARGET
+                            and len(collected) >= _RECENT_ARCHIVE_TARGET
+                        ):
                             break
 
-                    # If 30 venue appearances still do not exist, complete the
-                    # scanned historical seasons for an honest full-history
-                    # fallback rather than silently weighting only one venue.
-                    if _venue_history_count(collected) < _VENUE_HISTORY_TARGET:
+                    # If either the venue prior or the customer archive is
+                    # still short, complete the scanned historical seasons.
+                    # Rows remain exact-fixture, positive-minute, provider-
+                    # verified data; this is not a synthetic filler path.
+                    if (
+                        _venue_history_count(collected) < _VENUE_HISTORY_TARGET
+                        or len(collected) < _RECENT_ARCHIVE_MIN
+                    ):
                         _remaining_rows = [
                             fixture for fixture in _older_fixture_pool
                             if str((fixture.get("fixture") or {}).get("id"))
                             not in _older_fetched_ids
                         ]
+                        _remaining_rows = sorted(
+                            _remaining_rows,
+                            key=lambda fixture: str(
+                                (fixture.get("fixture") or {}).get("date") or ""
+                            ),
+                            reverse=True,
+                        )[:max(_RECENT_ARCHIVE_TARGET - len(collected), 0)]
                         if _remaining_rows:
                             _remaining_logs = await _fetch_fixture_batch(
                                 _remaining_rows
@@ -4095,7 +4127,7 @@ async def predict(req: PredictionRequest):
             _bdl_gl_key = _bdl_stat_field_map.get(req.propType, "passes_total")
             try:
                 _bdl_logs, _bdl_pid = await _bdl_soc.get_game_logs(
-                    league_id, req.playerName, last_n=25
+                    league_id, req.playerName, last_n=_RECENT_ARCHIVE_TARGET
                 )
                 if _bdl_logs:
                     # Quality gate: only adopt BDL logs when the target stat
@@ -5435,16 +5467,16 @@ async def predict(req: PredictionRequest):
                 }
 
             game_log_summary = {
-                "games": _history_view_logs,
+                    "games": _history_view_logs,
                 # Keep the venue-scoped view for model/context calculations,
                 # but expose the complete verified archive for the customer
                 # Recent Matches card. The UI can then show both venues
                 # without relabeling mixed rows as the selected venue.
-                "allGames": sorted(
+                    "allGames": sorted(
                     player_game_logs,
                     key=lambda g: str(g.get("date") or ""),
                     reverse=True,
-                ),
+                    )[:_RECENT_ARCHIVE_TARGET],
                 "targetProp": req.propType,
                 "sampleSize": len(values),
                 "last10Count": len(_last10_logs),
