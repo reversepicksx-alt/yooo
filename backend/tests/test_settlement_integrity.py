@@ -9,16 +9,19 @@ Covers:
  - Repair-audit trail shape: verified source excludes pick from legacy count
 """
 
+import asyncio
 import pytest
 from routes.picks import (
     SOCCER_STAT_MAP,
     SOCCER_STAT_PATHS,
     _has_soccer_stat_evidence,
+    _discard_dnp_pick,
     _soccer_dnp_guard_fires,
     _settle_pick_result,
     _soccer_settlement_provenance,
     _pass_lean,
 )
+import routes.picks as picks_routes
 
 
 # ── SOCCER_STAT_MAP correctness ───────────────────────────────────────────────
@@ -101,6 +104,57 @@ def test_zero_stat_does_not_prove_soccer_participation():
         "minutesPlayed": 19,
     }
     assert _has_soccer_stat_evidence(pick) is False
+
+
+def test_dnp_discard_deletes_pick_and_invalidates_list_cache(monkeypatch):
+    class DeleteResult:
+        deleted_count = 1
+
+    class FakePicks:
+        def __init__(self):
+            self.queries = []
+
+        async def delete_many(self, query):
+            self.queries.append(query)
+            return DeleteResult()
+
+    class FakeDB:
+        def __init__(self):
+            self.picks = FakePicks()
+
+    fake_db = FakeDB()
+    monkeypatch.setattr(picks_routes, "db", fake_db)
+    monkeypatch.setattr(
+        picks_routes,
+        "_picks_list_cache",
+        {"subscriber@example.com": {"ts": 1, "picks": []}},
+    )
+
+    deleted = asyncio.run(
+        _discard_dnp_pick(
+            {"pickId": "pick-dnp-1", "email": "Subscriber@Example.com"},
+            reason="player not in finished squad",
+        )
+    )
+
+    assert deleted == 1
+    assert fake_db.picks.queries == [{
+        "pickId": "pick-dnp-1",
+        "email": "subscriber@example.com",
+    }]
+    assert "subscriber@example.com" not in picks_routes._picks_list_cache
+
+
+def test_dnp_discard_without_identity_is_a_noop(monkeypatch):
+    class FakePicks:
+        async def delete_many(self, query):
+            raise AssertionError("a pick without an id must not be deleted")
+
+    class FakeDB:
+        picks = FakePicks()
+
+    monkeypatch.setattr(picks_routes, "db", FakeDB())
+    assert asyncio.run(_discard_dnp_pick({"playerName": "No ID"})) == 0
 
 
 def test_stat_evidence_is_not_applied_to_non_soccer_picks():

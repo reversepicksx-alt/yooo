@@ -215,25 +215,13 @@ async def _try_settle_mlb(pick: dict) -> bool:
                 ip_float = int(ip_parts[0]) + (int(ip_parts[1]) / 3.0 if len(ip_parts) > 1 else 0)
                 if ip_float == 0.0:
                     print(f"[MLB SETTLE] DNP detected for {pick.get('playerName')} {prop_type} "
-                          f"(IP=0, stat=0) — voiding as DNP")
-                    await db.picks.update_one(
-                        {"pickId": pick["pickId"]},
-                        {"$set": {
-                            "actualValue":  0.0,
-                            "result":       "dnp",
-                            "hitPct":       0,
-                            "status":       "settled",
-                            "matchStatus":  "final",
-                            "settledAt":    datetime.now(timezone.utc).isoformat(),
-                            "settledBy":    "mlb_auto_dnp",
-                            "voidReason":   "Player did not pitch (IP=0, stat=0)",
-                        }},
+                          f"(IP=0, stat=0) — discarding")
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(
+                        pick,
+                        pick.get("email"),
+                        "Player did not pitch (IP=0, stat=0)",
                     )
-                    try:
-                        from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "dnp")
-                    except Exception as _pe:
-                        print(f"[MLB SETTLE] push error: {_pe}")
                     return True
             except Exception:
                 pass
@@ -846,6 +834,19 @@ async def _refresh_recent_soccer_settlements(
                 entries.append(entry)
                 continue
 
+            if new_result == "dnp":
+                from routes.picks import _discard_dnp_pick
+                deleted = await _discard_dnp_pick(
+                    pick_doc,
+                    pick_doc.get("email"),
+                    result.get("voidReason") or "final settlement refresh",
+                )
+                entry["action"] = "discarded-dnp" if deleted else "dnp-not-found"
+                if deleted:
+                    repaired += 1
+                entries.append(entry)
+                continue
+
             update_fields = {
                 "status": "settled",
                 "result": new_result,
@@ -1288,19 +1289,13 @@ async def _run_auto_settlement():
                             _pick_age_h = 0
                         _has_opp = bool(pick.get("opponentId") or pick.get("opponentName"))
                         if _pick_age_h >= 48 and not _has_opp:
-                            _now_iso_sv = datetime.now(timezone.utc).isoformat()
-                            await db.picks.update_one(
-                                {"pickId": pick["pickId"]},
-                                {"$set": {"status":"settled","result":"dnp","hitPct":0,
-                                          "settledAt":_now_iso_sv,"settledBy":"stale_void_orphan",
-                                          "voidReason":"No opponent info on pick — cannot match fixture, voided as DNP"}},
+                            from routes.picks import _discard_dnp_pick
+                            await _discard_dnp_pick(
+                                pick,
+                                pick.get("email"),
+                                "No opponent info on pick — cannot match fixture",
                             )
                             settled_count += 1
-                            try:
-                                from routes.push import _notify_pick_settled
-                                await _notify_pick_settled(pick, "dnp")
-                            except Exception as _pe:
-                                print(f"[ORPHAN-VOID] push error: {_pe}")
                             print(f"[ORPHAN-VOID] soccer {pick.get('playerName','?')} {pick.get('propType','?')} (no opponent)")
                             continue
             except Exception:
@@ -1443,56 +1438,31 @@ async def _run_auto_settlement():
                 # Player DNP — finished match but player not in any map stats
                 if result and result.get("playerDNP"):
                     void_reason = "Player did not appear in match stats (DNP)"
-                    await db.picks.update_one(
-                        {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
-                                  "settledAt": now_iso, "sport": "cs2",
-                                  "matchScore": result.get("matchScore"),
-                                  "voidReason": void_reason}},
-                    )
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(pick, email, void_reason)
                     settled_count += 1
-                    try:
-                        from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "dnp")
-                    except Exception as _pe:
-                        print(f"[CS2 AUTO-SETTLE] push error: {_pe}")
-                    print(f"[CS2 AUTO-SETTLE] DNP push: {pname} — {void_reason}")
+                    print(f"[CS2 AUTO-SETTLE] DNP discarded: {pname} — {void_reason}")
                     continue
 
                 # Map 3 wasn't played (match went 2-0 or 0-2)
                 if result and result.get("noMap3"):
                     void_reason = f"Map 3 not played ({result.get('mapsPlayed', '?')} maps total) — voided as DNP"
-                    await db.picks.update_one(
-                        {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
-                                  "settledAt": now_iso, "sport": "cs2",
-                                  "matchScore": result.get("matchScore"),
-                                  "voidReason": void_reason}},
-                    )
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(pick, email, void_reason)
                     settled_count += 1
-                    try:
-                        from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "dnp")
-                    except Exception as _pe:
-                        print(f"[CS2 AUTO-SETTLE] push error: {_pe}")
-                    print(f"[CS2 AUTO-SETTLE] No-map3 push: {pname} — {void_reason}")
+                    print(f"[CS2 AUTO-SETTLE] No-map3 DNP discarded: {pname} — {void_reason}")
                     continue
 
                 # Stale-void: if pick is > 7 days old with no data, DNP it so it never hangs forever
                 if pick_ts and (datetime.now(timezone.utc) - pick_ts).days >= 7:
-                    await db.picks.update_one(
-                        {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
-                                  "settledAt": now_iso, "sport": "cs2",
-                                  "voidReason": "No match data found after 7 days — voided as DNP"}},
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(
+                        pick,
+                        email,
+                        "No match data found after 7 days",
                     )
                     settled_count += 1
-                    try:
-                        from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "dnp")
-                    except Exception as _pe:
-                        print(f"[CS2 AUTO-SETTLE] push error: {_pe}")
-                    print(f"[CS2 AUTO-SETTLE] Stale-void push: {pname} (7d+ no data)")
+                    print(f"[CS2 AUTO-SETTLE] Stale-void DNP discarded: {pname} (7d+ no data)")
                 continue
 
             actual_value = result["actualValue"]
@@ -1590,19 +1560,13 @@ async def _run_auto_settlement():
                     except Exception:
                         pass
                 if _orphan_ts and (datetime.now(timezone.utc) - _orphan_ts).total_seconds() >= 172800:
-                    _now_iso_wta_sv = datetime.now(timezone.utc).isoformat()
-                    await db.picks.update_one(
-                        {"pickId": pick_id, "email": email},
-                        {"$set": {"status":"settled","result":"dnp","hitPct":0,
-                                  "settledAt":_now_iso_wta_sv,"settledBy":"stale_void_orphan",
-                                  "voidReason":"No opponent info stored — WTA pick cannot be settled, voided as DNP"}},
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(
+                        pick,
+                        email,
+                        "No opponent info stored — WTA pick cannot be settled",
                     )
                     settled_count += 1
-                    try:
-                        from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "dnp")
-                    except Exception as _pe:
-                        print(f"[WTA ORPHAN-VOID] push error: {_pe}")
                     print(f"[WTA ORPHAN-VOID] {pick.get('playerName','?')} — no opponent info")
                 continue
 
@@ -1645,20 +1609,14 @@ async def _run_auto_settlement():
             if not result or result.get("actualValue") is None:
                 # Stale-void: WTA matches are weekly so allow 14 days
                 if pick_ts and (datetime.now(timezone.utc) - pick_ts).days >= 14:
-                    now_iso = datetime.now(timezone.utc).isoformat()
-                    await db.picks.update_one(
-                        {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
-                                  "settledAt": now_iso, "sport": "wta",
-                                  "voidReason": "No match data found after 14 days — voided as DNP"}},
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(
+                        pick,
+                        email,
+                        "No match data found after 14 days",
                     )
                     settled_count += 1
-                    try:
-                        from routes.push import _notify_pick_settled
-                        await _notify_pick_settled(pick, "dnp")
-                    except Exception as _pe:
-                        print(f"[WTA AUTO-SETTLE] push error: {_pe}")
-                    print(f"[WTA AUTO-SETTLE] Stale-void push: {pick.get('playerName','?')} (14d+ no data)")
+                    print(f"[WTA AUTO-SETTLE] Stale-void DNP discarded: {pick.get('playerName','?')} (14d+ no data)")
                 continue
 
             actual_value = result["actualValue"]
@@ -1754,24 +1712,14 @@ async def _run_auto_settlement():
         for _sp in _stale_candidates:
             try:
                 _sport = _sp.get("sport") or "soccer"
-                await db.picks.update_one(
-                    {"pickId": _sp["pickId"]},
-                    {"$set": {
-                        "result":      "dnp",
-                        "status":      "settled",
-                        "matchStatus": "final",
-                        "settledAt":   _now_sv.isoformat(),
-                        "settledBy":   "stale_void",
-                        "voidReason":  f"No data found after 7+ days ({_sport}) — voided as DNP",
-                    }},
+                from routes.picks import _discard_dnp_pick
+                await _discard_dnp_pick(
+                    _sp,
+                    _sp.get("email"),
+                    f"No data found after 7+ days ({_sport})",
                 )
                 _sv_count += 1
-                try:
-                    from routes.push import _notify_pick_settled
-                    await _notify_pick_settled(_sp, "dnp")
-                except Exception as _pe:
-                    print(f"[STALE-VOID] push error: {_pe}")
-                print(f"[STALE-VOID] {_sp.get('playerName','?')} {_sp.get('propType','?')} ({_sport}) → push")
+                print(f"[STALE-VOID] {_sp.get('playerName','?')} {_sp.get('propType','?')} ({_sport}) → discarded")
             except Exception:
                 pass
         if _sv_count:
@@ -1925,15 +1873,13 @@ async def _try_settle_wc_api_only(pick: dict) -> bool:
                     and minutes_played < 30
                     and not (actual_value is not None and actual_value > 0)
                 ):
-                    void_set = {
-                        "status": "settled", "result": "dnp",
-                        "actualValue": actual_value, "minutesPlayed": minutes_played,
-                        "settledAt": datetime.now(timezone.utc).isoformat(),
-                        "settledBy": "wc_api", "wcSettled": True,
-                        "voidReason": f"Player only played {minutes_played} min (min 30 required)",
-                    }
-                    await db.picks.update_one({"pickId": pick_id}, {"$set": void_set})
-                    print(f"[WC SETTLE] {player_name}/{prop_type} → DNP/VOID ({minutes_played} min)")
+                    from routes.picks import _discard_dnp_pick
+                    await _discard_dnp_pick(
+                        pick,
+                        pick.get("email"),
+                        f"Player only played {minutes_played} min (min 30 required)",
+                    )
+                    print(f"[WC SETTLE] {player_name}/{prop_type} → DNP discarded ({minutes_played} min)")
                     return True
                 result = "win" if (
                     (rec == "over" and actual_value > line) or
@@ -2254,49 +2200,13 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 _scen_bucket = bucket_from_final_score(home_goals, away_goals)
             except Exception:
                 _scen_bucket = None
-            _push_set = {
-                "status": "settled",
-                "result": "dnp",
-                "actualValue": actual_value,
-                "minutesPlayed": minutes_played,
-                "matchScore": f"{_player_goals}-{_opp_goals}",
-                "finalHomeGoals": home_goals,
-                "finalAwayGoals": away_goals,
-                "homeTeam": home_team_name,
-                "awayTeam": away_team_name,
-                "scenarioBucket": _scen_bucket,
-                "settledAt": datetime.now(timezone.utc).isoformat(),
-                "settledBy": "auto_soccer",
-                "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
-                "settlementSource": {
-                    "provider": "api-football",
-                    "fixtureId": fid,
-                    "playerId": player_id,
-                    "propType": prop_type,
-                    "statPath": "fixtures/players.player_missing_or_unpopulated",
-                    "fixtureStatus": _match_status,
-                    "verified": bool(_stored_fid),
-                    "verificationMethod": "fixture_id" if _stored_fid else "team_opponent_date_fallback",
-                    "recordedAt": datetime.now(timezone.utc).isoformat(),
-                },
-            }
-            if home_poss is not None:
-                _push_set["homePoss"] = home_poss
-            if away_poss is not None:
-                _push_set["awayPoss"] = away_poss
-            _upd = await db.picks.update_one(
-                {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
-                {"$set": _push_set}
+            from routes.picks import _discard_dnp_pick
+            await _discard_dnp_pick(
+                pick,
+                pick.get("email"),
+                f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
             )
-            if _upd.modified_count == 0:
-                print(f"[AUTO-SETTLE] {pick.get('playerName','')} already settled by another process — skipping duplicate void/push write")
-                return True
-            try:
-                from routes.push import _notify_pick_settled
-                await _notify_pick_settled(pick, "dnp")
-            except Exception as _pe:
-                print(f"[AUTO-SETTLE] push error: {_pe}")
-            print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → DNP/VOID (only {minutes_played} min played)")
+            print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → DNP discarded (only {minutes_played} min played)")
             return True
 
         # Determine result
@@ -2373,66 +2283,15 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 
 
 async def _settle_dnp_push(pick: dict, matched: dict, void_reason: str) -> bool:
-    """Settle a pick as push/DNP when the player did not participate.
+    """Discard a pick when the player did not participate.
 
     Used when a finished fixture's player-stats response does not include the
     player (not in matchday squad), or when minutes < 30 and no stat evidence.
     """
     try:
-        home_goals = matched.get("goals", {}).get("home", 0) or 0
-        away_goals = matched.get("goals", {}).get("away", 0) or 0
-        _venue = (pick.get("venue") or "home").lower()
-        _player_goals = home_goals if _venue == "home" else away_goals
-        _opp_goals    = away_goals if _venue == "home" else home_goals
-        home_team_name = matched.get("teams", {}).get("home", {}).get("name", "") or ""
-        away_team_name = matched.get("teams", {}).get("away", {}).get("name", "") or ""
-        home_team_id   = matched.get("teams", {}).get("home", {}).get("id")
-        away_team_id   = matched.get("teams", {}).get("away", {}).get("id")
-        fid = matched.get("fixture", {}).get("id")
-        home_poss, away_poss = None, None
-        if fid:
-            try:
-                from routes.picks import _fetch_fixture_possession
-                home_poss, away_poss = await _fetch_fixture_possession(fid, home_team_id, away_team_id)
-            except Exception:
-                pass
-        try:
-            from game_script_engine import bucket_from_final_score
-            _scen_bucket = bucket_from_final_score(home_goals, away_goals)
-        except Exception:
-            _scen_bucket = None
-        _push_set = {
-            "status": "settled",
-            "result": "dnp",
-            "actualValue": None,
-            "minutesPlayed": 0,
-            "matchScore": f"{_player_goals}-{_opp_goals}",
-            "finalHomeGoals": home_goals,
-            "finalAwayGoals": away_goals,
-            "homeTeam": home_team_name,
-            "awayTeam": away_team_name,
-            "scenarioBucket": _scen_bucket,
-            "settledAt": datetime.now(timezone.utc).isoformat(),
-            "settledBy": "auto_soccer_dnp",
-            "voidReason": void_reason,
-        }
-        if home_poss is not None:
-            _push_set["homePoss"] = home_poss
-        if away_poss is not None:
-            _push_set["awayPoss"] = away_poss
-        _upd = await db.picks.update_one(
-            {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
-            {"$set": _push_set}
-        )
-        if _upd.modified_count == 0:
-            print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','')} already settled — skipping duplicate")
-            return True
-        try:
-            from routes.push import _notify_pick_settled
-            await _notify_pick_settled(pick, "dnp")
-        except Exception as _pe:
-            print(f"[AUTO-SETTLE-DNP] push error: {_pe}")
-        print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','')} → push ({void_reason})")
+        from routes.picks import _discard_dnp_pick
+        await _discard_dnp_pick(pick, pick.get("email"), void_reason)
+        print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','')} discarded ({void_reason})")
         return True
     except Exception as e:
         print(f"[AUTO-SETTLE-DNP] Error settling {pick.get('playerName','')}: {e}")
@@ -2668,6 +2527,15 @@ async def _update_mlb_live_picks():
                             result_str = _settle_numeric_result(current_value, line_f, rec)
                     else:
                         result_str = _settle_numeric_result(current_value, line_f, rec)
+                    if result_str == "dnp":
+                        from routes.picks import _discard_dnp_pick
+                        await _discard_dnp_pick(
+                            pick,
+                            pick.get("email"),
+                            f"MLB pitcher DNP: IP=0 for {prop_type}",
+                        )
+                        print(f"[MLB LIVE] DNP discarded {pick.get('playerName')} {prop_type}")
+                        continue
                     set_fields.update({
                         "actualValue": round(current_value, 1),
                         "result":      result_str,

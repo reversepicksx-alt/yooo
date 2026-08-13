@@ -1033,6 +1033,40 @@ _picks_refresh_inflight: set[str] = set()
 _picks_list_background = ContextVar("picks_list_background", default=False)
 
 
+async def _discard_dnp_pick(
+    pick: dict,
+    email: str | None = None,
+    reason: str = "",
+) -> int:
+    """Delete a pick once a verified settlement says the player did not play.
+
+    DNP is a discard state, not a user-facing result.  Keep the identity
+    scoped when an email is known; settlement helpers sometimes receive an
+    in-memory request-shaped pick without the persisted email field.
+    """
+    pick_id = pick.get("pickId") or pick.get("id")
+    if not pick_id:
+        return 0
+    owner_email = (email or pick.get("email") or "").lower().strip()
+    query: dict = {"pickId": pick_id}
+    if owner_email:
+        query["email"] = owner_email
+    try:
+        deleted = await db.picks.delete_many(query)
+        count = int(deleted.deleted_count or 0)
+        if owner_email:
+            _picks_list_cache.pop(owner_email, None)
+        print(
+            f"[DNP-DISCARD] {pick.get('playerName', '?')} "
+            f"{pick.get('propType', '?')} pick={pick_id} deleted={count}"
+            + (f" reason={reason}" if reason else "")
+        )
+        return count
+    except Exception as exc:
+        print(f"[DNP-DISCARD] delete failed for {pick_id}: {exc}")
+        return 0
+
+
 # ── Owner-only media enrichment (player photos + team crests) ───────────
 async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
     """Attach player photo and team crest URLs for the owner account only."""
@@ -1215,7 +1249,12 @@ async def list_picks(req: GetPicksRequest):
         and not _cached_has_active
         and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL
     ):
-        return {"picks": _cached["picks"]}
+        return {
+            "picks": [
+                p for p in _cached["picks"]
+                if str(p.get("result") or "").lower() != "dnp"
+            ]
+        }
 
     # Always fetch only the requester's own picks for the My Picks / Live / History UI.
     # The owner's "see all users" calibration view is available in /picks/matchups.
@@ -1227,6 +1266,12 @@ async def list_picks(req: GetPicksRequest):
     # Calibration and analytics independently read the full collection.
     _atlas_read_blocked = False
     try:
+        # Existing DNP rows are legacy clutter. Remove them before returning
+        # the first durable snapshot so they cannot reappear from history.
+        await db.picks.delete_many({
+            "email": requester_email,
+            "result": {"$regex": r"^dnp$", "$options": "i"},
+        })
         picks = await db.picks.find(
             {"email": requester_email},
             _PICKS_LIST_PROJECTION,
@@ -1244,6 +1289,7 @@ async def list_picks(req: GetPicksRequest):
             stale_picks = [
                 {**p, "settlementDelayed": True}
                 for p in _cached["picks"]
+                if str(p.get("result") or "").lower() != "dnp"
             ]
             return {"picks": stale_picks, "settlementDelayed": True}
         return {"picks": [], "settlementDelayed": True}
@@ -1354,6 +1400,14 @@ async def list_picks(req: GetPicksRequest):
             continue
         pick_email = _pick_email(p)
 
+        # DNP is intentionally not retained as a settled card. This catches
+        # legacy rows and any provider-specific worker that handed us a DNP
+        # before the new discard policy was deployed.
+        if str(p.get("result") or "").lower() == "dnp":
+            await _discard_dnp_pick(p, pick_email, "existing DNP row")
+            p["_discardedDnp"] = True
+            continue
+
         # ── DNP / early-sub guard ────────────────────────────────────────────
         # Voided picks (voidReason set OR <30 min played) must always be DNP,
         # except when the final provider stat proves the player participated.
@@ -1371,22 +1425,12 @@ async def list_picks(req: GetPicksRequest):
             _sport == "soccer" and _min_played is not None and _min_played < 30
         ))
         if is_dnp:
-            if p.get("result") != "dnp":
-                p["result"] = "dnp"
-                void_label = p.get("voidReason") or (
-                    f"<30 min ({p.get('minutesPlayed',0)} min played)"
-                    if _sport == "soccer" else f"DNP ({_sport})"
-                )
-                print(f"[CONSISTENCY] DNP→dnp {p.get('playerName','')} {p.get('propType','')} ({void_label})")
-                try:
-                    await db.picks.update_one(
-                        {"pickId": p["pickId"], "email": pick_email},
-                        {"$set": {"result": "dnp", "hitPct": 0,
-                                  "voidReason": p.get("voidReason") or void_label}}
-                    )
-                except Exception as _e:
-                    _settlement_write_fails += 1
-                    print(f"[PICKS-LIST WRITE FAIL] DNP {p.get('playerName','')}: {_e}")
+            void_label = p.get("voidReason") or (
+                f"<30 min ({p.get('minutesPlayed',0)} min played)"
+                if _sport == "soccer" else f"DNP ({_sport})"
+            )
+            await _discard_dnp_pick(p, pick_email, void_label)
+            p["_discardedDnp"] = True
             continue
 
         # Repair an already-settled false DNP in-place the next time the
@@ -1666,6 +1710,10 @@ async def list_picks(req: GetPicksRequest):
             for p, settled in zip(cs2_live_picks, cs2_results):
                 if isinstance(settled, Exception) or not settled:
                     continue
+                if str(settled.get("result") or "").lower() == "dnp":
+                    await _discard_dnp_pick(p, req.email, "CS2 settlement")
+                    p["_discardedDnp"] = True
+                    continue
                 p["status"]      = "settled"
                 p["result"]      = settled.get("result", "pending")
                 p["actualValue"] = settled.get("actualValue")
@@ -1701,6 +1749,10 @@ async def list_picks(req: GetPicksRequest):
             for p, settled in zip(wta_live_picks, wta_results):
                 if isinstance(settled, Exception) or not settled:
                     continue
+                if str(settled.get("result") or "").lower() == "dnp":
+                    await _discard_dnp_pick(p, req.email, "WTA settlement")
+                    p["_discardedDnp"] = True
+                    continue
                 p["status"]      = "settled"
                 p["result"]      = settled.get("result", "pending")
                 p["actualValue"] = settled.get("actualValue")
@@ -1719,6 +1771,10 @@ async def list_picks(req: GetPicksRequest):
             for p in picks:
                 upd = bdl_update_map.get(p.get("pickId"))
                 if upd:
+                    if str(upd.get("result") or "").lower() == "dnp":
+                        await _discard_dnp_pick(p, req.email, "BDL settlement")
+                        p["_discardedDnp"] = True
+                        continue
                     p["currentValue"] = upd.get("currentValue")
                     p["pace"]         = upd.get("pace")
                     p["hitPct"]       = upd.get("hitPct")
@@ -1753,6 +1809,10 @@ async def list_picks(req: GetPicksRequest):
             for p in picks:
                 upd = update_map.get(p.get("pickId"))
                 if upd:
+                    if str(upd.get("result") or "").lower() == "dnp":
+                        await _discard_dnp_pick(p, req.email, "soccer settlement")
+                        p["_discardedDnp"] = True
+                        continue
                     p["currentValue"] = upd.get("currentValue")
                     p["pace"] = upd.get("pace")
                     p["hitPct"] = upd.get("hitPct")
@@ -1919,29 +1979,14 @@ async def list_picks(req: GetPicksRequest):
                         meta_set = {}
 
                         if refreshed.get("voidReason"):
-                            new_res = "dnp"
-                            p["result"] = new_res
-                            p["actualValue"] = new_val
-                            p["voidReason"] = refreshed["voidReason"]
-                            meta_set = {
-                                "status": "settled",
-                                "result": new_res,
-                                "actualValue": new_val,
-                                "hitPct": 50,
-                                "voidReason": refreshed["voidReason"],
-                                "settlementSource": refreshed.get("settlementSource"),
-                            }
-                            if refreshed.get("fixtureId") is not None:
-                                meta_set["fixtureId"] = refreshed["fixtureId"]
-                                p["fixtureId"] = refreshed["fixtureId"]
-                            meta_set["settlementReview"] = None
-                            for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
-                                         "homePoss", "awayPoss", "minutesPlayed"):
-                                v = refreshed.get(fld)
-                                if v is not None and v != "":
-                                    meta_set[fld] = v
-                                    p[fld] = v
+                            await _discard_dnp_pick(
+                                p,
+                                pick_email,
+                                refreshed["voidReason"],
+                            )
+                            p["_discardedDnp"] = True
                             print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: DNP/VOID ({refreshed['voidReason']})")
+                            continue
                         else:
                             for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
                                          "homePoss", "awayPoss"):
@@ -2010,7 +2055,12 @@ async def list_picks(req: GetPicksRequest):
 
     # Owner-only: attach player photos and team crests from API-Football cache.
     # Do not spend enrichment work on records hidden from the user's History.
-    visible_picks = [p for p in picks if p.get("hiddenFromUser") is not True]
+    visible_picks = [
+        p for p in picks
+        if p.get("hiddenFromUser") is not True
+        and p.get("_discardedDnp") is not True
+        and str(p.get("result") or "").lower() != "dnp"
+    ]
     await _enrich_owner_media(visible_picks, requester_email)
 
     # Cache only the user-visible result. Hidden records remain persisted and
@@ -4234,7 +4284,9 @@ async def _build_bdl_soccer_update(
 
     settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
     if result_str == "dnp":
-        settled_hit_pct = 0
+        await _discard_dnp_pick(pick, email, update.get("voidReason") or "BDL soccer settlement")
+        update["_discardedDnp"] = True
+        return update
 
     update["result"]      = result_str
     update["actualValue"] = current_value_safe
@@ -4668,46 +4720,12 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             update["minutesPlayed"] = 0
             update["hitPct"] = 0
             update["voidReason"] = "Player not in matchday squad"
-            # Persist the settlement so the card moves out of the Live tab
-            _persist_settlement = {
-                "status": "settled",
-                "result": "dnp",
-                "actualValue": None,
-                "hitPct": 0,
-                "matchScore": match_score,
-                "minutesPlayed": 0,
-                "finalHomeGoals": home_goals,
-                "finalAwayGoals": away_goals,
-                "homeTeam": home_team_name,
-                "awayTeam": away_team_name,
-                "fixtureId": fixture_id,
-                "settledAt": datetime.now(timezone.utc).isoformat(),
-                "settledBy": "live_dnp",
-                "voidReason": "Player not in matchday squad",
-                "settlementSource": _soccer_settlement_provenance(
-                    provider="api-football",
-                    fixture_id=fixture_id,
-                    player_id=pick.get("playerId"),
-                    prop_type=pick.get("propType", ""),
-                    stat_path="fixtures/players.player_missing",
-                    fixture_status=status_short,
-                ),
-            }
-            if home_poss is not None:
-                _persist_settlement["homePoss"] = home_poss
-            if away_poss is not None:
-                _persist_settlement["awayPoss"] = away_poss
-            if opp_avg_poss is not None:
-                _persist_settlement["oppAvgPoss"] = opp_avg_poss
-            await db.picks.update_one(
-                {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
-                {"$set": _persist_settlement}
+            await _discard_dnp_pick(
+                pick,
+                email,
+                "Player not in finished matchday squad",
             )
-            try:
-                from routes.push import _notify_pick_settled
-                await _notify_pick_settled(pick, "dnp")
-            except Exception as _pe:
-                print(f"[SETTLE-DNP] push error: {_pe}")
+            update["_discardedDnp"] = True
             return update
 
         # If stat came back as None (API didn't return the field), defer to background loop
@@ -4760,6 +4778,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         if result_str == "dnp":
             settled_hit_pct = 0
         update["hitPct"] = settled_hit_pct
+        if result_str == "dnp":
+            await _discard_dnp_pick(
+                pick,
+                email,
+                update.get("voidReason") or "API-Football soccer settlement",
+            )
+            update["_discardedDnp"] = True
+            return update
         # Capture final score + scenario bucket for scenario_priors mining
         try:
             from game_script_engine import bucket_from_final_score
@@ -5020,25 +5046,12 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         if minutes_confirmed and minutes_played < _DNP_THRESHOLD and not (
             actual_value is not None and actual_value > 0
         ):
-            return {
-                "pickId": pick.get("id"), "fixtureId": match.get("match_id") or match.get("id"),
-                "status": "settled", "result": "dnp",
-                "actualValue": actual_value, "minutesPlayed": minutes_played,
-                "voidReason": f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
-                "matchScore": f"{p_goals}-{o_goals}",
-                "homeTeam": match.get("home_team_name", ""),
-                "awayTeam": match.get("away_team_name", ""),
-                "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
-                "settlementSource": _soccer_settlement_provenance(
-                    provider="bdl-soccer",
-                    fixture_id=match.get("match_id") or match.get("id"),
-                    player_id=pick.get("playerId"),
-                    prop_type=prop_type,
-                    stat_path=f"bdl.{stat_field}",
-                    fixture_status="FT",
-                    verification_method="finished_match_player_stat",
-                ),
-            }
+            await _discard_dnp_pick(
+                pick,
+                pick.get("email"),
+                f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
+            )
+            return None
         result_str, pass_outcome = _settle_pick_result(actual_value, pick.get("line", 0), pick)
         return {
             "pickId": pick.get("id"), "fixtureId": match.get("match_id") or match.get("id"),
@@ -5248,25 +5261,12 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     if _soccer_dnp_guard_fires(actual_value, minutes_played, _DNP_THRESHOLD) and (
         minutes_played > 0 or actual_value is not None
     ):
-        return {
-            "pickId": pick.get("id"),
-                "fixtureId": fixture_id,
-            "status": "settled",
-            "result": "dnp",
-            "actualValue": actual_value,
-            "minutesPlayed": minutes_played,
-            "voidReason": f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
-            "fixtureDate": fixture_date,
-            "matchScore": f"{home_goals}-{away_goals}",
-            "homeTeam": home_team_name,
-            "awayTeam": away_team_name,
-            "finalHomeGoals": home_goals,
-            "finalAwayGoals": away_goals,
-            "homePoss": home_poss,
-            "awayPoss": away_poss,
-            "oppAvgPoss": settle_opp_avg_poss,
-            "settlementSource": settlement_source,
-        }
+        await _discard_dnp_pick(
+            pick,
+            pick.get("email"),
+            f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
+        )
+        return None
 
     if actual_value is not None:
         # Zero-value guard: count stats should never be 0 for a player who
