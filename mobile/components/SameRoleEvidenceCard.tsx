@@ -208,6 +208,7 @@ export default function SameRoleEvidenceCard({
     || scopeIncludesPosition(data.sourceScope);
   const exactPositionUnavailable = data.positionEvidenceType === 'unavailable'
     || data.comparisonMode === 'unavailable';
+  const broadPositionOnly = data.positionEvidenceType === 'broad_category';
   const role = isSamePosition ? '' : (data.targetRole || 'same role');
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
@@ -247,7 +248,7 @@ export default function SameRoleEvidenceCard({
   // not consume the same visual weight as a verified comparison cohort. Keep
   // the disclosure visible without presenting broad-category rows as a
   // failed or misleading full analysis.
-  if (exactPositionUnavailable && !hasSourcePlayers) {
+  if (exactPositionUnavailable && !hasSourcePlayers && !broadPositionOnly) {
     const targetLabel = positionLabel(data.targetPosition || data.positionShort);
     return (
       <View style={{
@@ -291,6 +292,8 @@ export default function SameRoleEvidenceCard({
         <Text style={{ fontSize: 9, color: verdictColor, fontWeight: '900', letterSpacing: 1 }}>
            {exactPositionUnavailable
              ? 'EXACT-POSITION EVIDENCE UNAVAILABLE'
+             : broadPositionOnly
+             ? `POSITION EVIDENCE · ${position.toUpperCase()}`
              : isSamePosition
              ? `EXACT ${positionLabel(data.targetPosition || data.positionShort || 'POSITION').toUpperCase()} EVIDENCE`
              : 'SAME-ROLE OPPONENT EVIDENCE'}

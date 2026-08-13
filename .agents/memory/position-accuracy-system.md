@@ -110,5 +110,13 @@ player into generic `MID` and removes all similar-player rows.
 trusted player-ID profile is the fallback; generic API-Sports categories remain
 broad and cannot authorize exact-position cohorts.
 
+## Identity-keyed exact fallback
+
+When a provider exposes only a broad category and grounded lookup times out, an authoritative exact profile may be used only when keyed to the verified provider player ID and labeled `manual_override`. It must include visible provenance; it is not a lineup observation.
+
+**Why:** Facundo Torres' current fixture responses had no usable lineup grid, but authoritative club/profile sources identify him as a right winger. Treating him as generic Attacker left the position evidence empty and removed valid exact-position context.
+
+**How to apply:** Keep fixture/history observations and trusted cached profiles higher priority. Use an identity-keyed manual profile only for an explicitly verified player, and never let calibration or tactical inference relabel the identity.
+
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.

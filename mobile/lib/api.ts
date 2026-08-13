@@ -372,7 +372,8 @@ export interface H2HMatch {
   date: string;
   score: string;
   venue: string;
-  minutes: number;
+  minutes?: number | null;
+  minutesPlayed?: number | null;
   targetStat: number | null;
   opponent: string;
   teamPossession?: number | null;
@@ -637,6 +638,28 @@ export interface PredictionResult {
         possessionAvailable?: boolean;
       }>;
     };
+    venueSplits?: {
+      home?: {
+        sampleSize?: number;
+        average?: number;
+        overHits?: number;
+        underHits?: number;
+        pushHits?: number;
+        overPct?: number;
+        underPct?: number;
+        minutesAverage?: number;
+      };
+      away?: {
+        sampleSize?: number;
+        average?: number;
+        overHits?: number;
+        underHits?: number;
+        pushHits?: number;
+        overPct?: number;
+        underPct?: number;
+        minutesAverage?: number;
+      };
+    };
     seasonsCovered?: { min: number; max: number; range: string } | null;
     trendDirection?: 'improving' | 'declining' | 'stable';
     trendDelta?: number;
@@ -753,6 +776,18 @@ export interface PredictionResult {
   playerRoleSource?: string;
   playerRoleConfidence?: string;
   playerRoleIsInferred?: boolean;
+  positionEvidence?: {
+    genericPosition?: string | null;
+    specificPosition?: string | null;
+    displayPosition?: string | null;
+    role?: string | null;
+    source?: string | null;
+    status?: string | null;
+    confidence?: string | null;
+    evidence?: string[];
+    decisionRule?: string;
+  };
+  leagueRoleBucket?: string;
   sharpSummary?: string;
   keyEvidence?: string;
   gameFlowDynamics?: string;
@@ -1030,6 +1065,28 @@ interface RawPrediction {
         awayPossession?: number | null;
         possessionAvailable?: boolean;
       }>;
+    };
+    venueSplits?: {
+      home?: {
+        sampleSize?: number;
+        average?: number;
+        overHits?: number;
+        underHits?: number;
+        pushHits?: number;
+        overPct?: number;
+        underPct?: number;
+        minutesAverage?: number;
+      };
+      away?: {
+        sampleSize?: number;
+        average?: number;
+        overHits?: number;
+        underHits?: number;
+        pushHits?: number;
+        overPct?: number;
+        underPct?: number;
+        minutesAverage?: number;
+      };
     };
   };
   matchDominance?: {
@@ -1439,7 +1496,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
              venue: ['home', 'away'].includes(String(m.venue || '').toLowerCase())
                ? String(m.venue).toLowerCase()
                : '',
-            minutes: m.minutesPlayed || m.minutes || 0,
+            minutes: m.minutesPlayed ?? m.minutes ?? null,
+            minutesPlayed: m.minutesPlayed ?? m.minutes ?? null,
             targetStat: m.targetStat ?? null,
             opponent: m.opponent || '',
             teamPossession: (m.teamPossession as number | null) ?? null,
@@ -1450,6 +1508,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
           targetProp: raw.h2hPlayerStats.targetProp,
           teamMeetings: raw.h2hPlayerStats.teamMeetings,
           teamMeetingsByVenue: raw.h2hPlayerStats.teamMeetingsByVenue,
+          venueSplits: raw.h2hPlayerStats.venueSplits,
         }
       : undefined,
     expectedPossession: raw.matchupOverview?.expectedPossession
@@ -1491,6 +1550,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     playerRoleSource: raw.player?.roleSource || undefined,
     playerRoleConfidence: raw.player?.roleConfidence || undefined,
     playerRoleIsInferred: raw.player?.roleIsInferred || undefined,
+    positionEvidence: (raw as any).positionEvidence ?? undefined,
+    leagueRoleBucket: (raw as any).leagueRoleBucket ?? undefined,
     sport: raw.sport || (request.sport as string) || undefined,
     tacticalAlerts: raw.tacticalAlerts || undefined,
     isWorldCup: (raw as any).isWorldCup || undefined,

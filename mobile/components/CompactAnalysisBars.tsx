@@ -36,6 +36,7 @@ type CompactPrediction = {
       underHits?: number | null;
       total?: number | null;
     } | null;
+    leagueRoleBucket?: string | null;
   } | null;
   venueHistory?: {
     selectedVenue?: 'home' | 'away' | null;
@@ -60,6 +61,8 @@ type CompactPrediction = {
     underHits?: number | null;
     total?: number | null;
   } | null;
+  leagueRoleBucket?: string | null;
+  positionEvidence?: Record<string, any> | null;
   h2hPlayerStats?: Record<string, any> | null;
   matchupVolume?: Record<string, any> | null;
   [key: string]: any;
@@ -310,6 +313,11 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     ? `${String(venueHistory.selectedVenue || historyVenue || 'selected').toUpperCase()} VENUE`
     : 'MIXED VERIFIED HISTORY';
   const modelHistorySample = Number(venueHistory?.modelSampleSize || historicalHitRates?.total || 0);
+  const leagueRoleBucket = String(
+    prediction.leagueRoleBucket
+      ?? prediction.playerGameLogs?.leagueRoleBucket
+      ?? '',
+  ).trim();
   const settledRate = Number.isFinite(Number((prediction as any).propHistoricalRate))
     ? Number((prediction as any).propHistoricalRate)
     : null;
@@ -743,6 +751,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 <Text style={styles.title}>PLAYER HISTORY · MODEL SOURCE</Text>
                 <Text style={styles.contextLabel} numberOfLines={1}>
                   {modelHistoryScope} · N={modelHistorySample}
+                  {leagueRoleBucket ? ` · ${leagueRoleBucket}` : ''}
                 </Text>
               </View>
             </View>
@@ -803,6 +812,26 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           </View>
           {h2h.avgVsOpponent != null && <Text style={styles.meta}>AVG {Number(h2h.avgVsOpponent).toFixed(1)}</Text>}
         </View>
+        {h2h.venueSplits && (h2h.venueSplits.home || h2h.venueSplits.away) && (
+          <View style={styles.h2hSplitRow}>
+            {(['home', 'away'] as const).map((venue) => {
+              const split = h2h.venueSplits?.[venue];
+              return (
+                <View key={venue} style={styles.h2hSplitItem}>
+                  <Text style={[styles.h2hSplitLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
+                    {venue.toUpperCase()}
+                  </Text>
+                  <Text style={styles.h2hSplitValue}>
+                    {split ? `${Number(split.average).toFixed(1)} AVG · ${Number(split.overPct).toFixed(1)}% O` : '—'}
+                  </Text>
+                  <Text style={styles.h2hSplitMeta}>
+                    {split ? `N=${split.sampleSize} · ${Math.round(Number(split.minutesAverage))}' AVG` : 'NO VERIFIED APPS'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
         {h2hRows.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
             <View style={{ width: h2hRows.length * (H2H_COLUMN_WIDTH + 5) + 10 }}>
@@ -817,6 +846,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                      ? row.possession != null ? `TP ${Number(row.possession).toFixed(0)}%` : 'TP —'
                      : null;
                   const date = row.date ? displayH2HDate(row.date) : '—';
+                  const minutes = Number(row.minutesPlayed ?? row.minutes);
                   const isSelected = selected?.group === 'h2h' && selected.index === index;
                   return (
                     <TouchableOpacity
@@ -840,6 +870,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                         numberOfLines={1}
                         ellipsizeMode="clip"
                       >
+                        {Number.isFinite(minutes) && minutes > 0 ? `${Math.round(minutes)}' · ` : ''}
                         {possession ? `${possession} · ` : ''}{venueMark(rowVenue(row))}
                       </Text>
                     </TouchableOpacity>
@@ -936,6 +967,22 @@ const styles = {
   h2hBarColumn: { width: H2H_COLUMN_WIDTH, height: 74, alignItems: 'center' as const, justifyContent: 'flex-start' as const, borderRadius: 5, paddingTop: 1 },
   h2hValue: { fontSize: 11, fontWeight: '900' as const, lineHeight: 14, height: 14, marginBottom: 2 },
   h2hBar: { width: 26, minHeight: 4, borderRadius: 2 },
+  h2hSplitRow: {
+    flexDirection: 'row' as const,
+    gap: 7,
+    marginHorizontal: 14,
+    marginBottom: 7,
+  },
+  h2hSplitItem: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  h2hSplitLabel: { fontSize: 7, fontWeight: '900' as const, letterSpacing: 0.8 },
+  h2hSplitValue: { color: '#D8DEE9', fontSize: 8, fontWeight: '800' as const, marginTop: 1 },
+  h2hSplitMeta: { color: '#687386', fontSize: 7, fontWeight: '700' as const, marginTop: 1 },
   h2hDate: { fontSize: 8, color: '#888', lineHeight: 11, height: 11, marginTop: 3, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
   h2hMeta: { fontSize: 8, lineHeight: 11, height: 11, fontWeight: '900' as const, marginTop: 1, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },

@@ -5455,23 +5455,9 @@ export default function ScanScreen() {
 
             </View>{/* end captureContainer */}
 
-            {prediction.recommendation === 'PASS' && (
-              <View style={{
-                marginTop: 10, padding: 14, borderRadius: 14,
-                backgroundColor: 'rgba(255,165,0,0.08)',
-                borderWidth: 1, borderColor: 'rgba(255,165,0,0.35)',
-              }}>
-                <Text style={{ color: '#FFA500', fontSize: 13, fontWeight: '800', letterSpacing: 0.3 }}>PASS — SKIP THIS PROP</Text>
-                <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 5 }}>
-                  {prediction.passReason || 'The recent data does not support an actionable OVER or UNDER.'}
-                </Text>
-              </View>
-            )}
             <TouchableOpacity
                 style={[{
-                  backgroundColor: prediction.recommendation === 'PASS'
-                    ? '#FFA500'
-                    : prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
+                  backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
                   borderRadius: 18, paddingVertical: 16, paddingHorizontal: 24,
                   alignItems: 'center', justifyContent: 'center', marginTop: 10, gap: 1,
                   shadowColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
@@ -5495,7 +5481,7 @@ export default function ScanScreen() {
                       Save Pick
                     </Text>
                     <Text style={{ color: '#000', fontWeight: '900', fontSize: 26, letterSpacing: 0.5, lineHeight: 30 }}>
-                      {prediction.recommendation === 'PASS' ? 'PASS · CALIBRATE' : `${prediction.recommendation}  ${prediction.line}`}
+                      {`${prediction.recommendation}  ${prediction.line}`}
                     </Text>
                     {(prediction.pOver != null || prediction.pUnder != null) && (
                       <Text style={{ color: 'rgba(0,0,0,0.42)', fontWeight: '600', fontSize: 11, marginTop: 1 }}>

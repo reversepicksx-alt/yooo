@@ -7239,6 +7239,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                     ),
                                     "opponent": opponent_name,
                                     "venue": venue_in_match,
+                                    # Keep minutes beside every player-vs-opponent
+                                    # row. A target-stat value without minutes is
+                                    # not a verified appearance.
+                                    "minutes": minutes_played,
                                     "minutesPlayed": minutes_played,
                                     "observedPosition": observed_h2h_position,
                                     "positionSource": (
@@ -7448,6 +7452,39 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     "evidenceStatus": _h2h_evidence["evidenceStatus"],
                     "opponent": req.opponentName,
                 }
+
+            # Keep the direct-player H2H evidence split by the player's actual
+            # venue in each historical fixture. The overall H2H average is
+            # useful context, but it must not hide a home/away disagreement.
+            _h2h_venue_splits = {}
+            for _venue in ("home", "away"):
+                _venue_rows = [
+                    row for row in h2h_player_stats
+                    if row.get("venue") == _venue
+                    and row.get("targetStat") is not None
+                    and (row.get("minutesPlayed") or row.get("minutes") or 0) > 0
+                ]
+                _venue_values = [row["targetStat"] for row in _venue_rows]
+                if not _venue_values:
+                    continue
+                _venue_over = sum(1 for value in _venue_values if value > req.line)
+                _venue_under = sum(1 for value in _venue_values if value < req.line)
+                _venue_push = len(_venue_values) - _venue_over - _venue_under
+                _h2h_venue_splits[_venue] = {
+                    "sampleSize": len(_venue_values),
+                    "average": round(sum(_venue_values) / len(_venue_values), 2),
+                    "overHits": _venue_over,
+                    "underHits": _venue_under,
+                    "pushHits": _venue_push,
+                    "overPct": round(_venue_over / len(_venue_values) * 100, 1),
+                    "underPct": round(_venue_under / len(_venue_values) * 100, 1),
+                    "minutesAverage": round(
+                        sum((row.get("minutesPlayed") or row.get("minutes") or 0) for row in _venue_rows)
+                        / len(_venue_rows),
+                        1,
+                    ),
+                }
+            h2h_summary["venueSplits"] = _h2h_venue_splits
 
             # ── Enriched H2H metadata for the pro analysis display ──────────
             # Total team meetings found (not just ones the player appeared in)
@@ -8689,13 +8726,29 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     else "unavailable"
                 ),
                 "positionEvidenceType": (
-                    "exact_position" if position_comparison else "unavailable"
+                    "exact_position"
+                    if specific_position in {
+                        "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
+                        "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+                    }
+                    else "broad_category" if player_position else "unavailable"
                 ),
                 "positionEvidenceNote": (
-                    "Rows require exact observed lineup/provider position or "
-                    "trusted grounded/manual position; tactical role is context only."
-                    if position_comparison
-                    else "Exact-position comparison evidence unavailable; no broad-category substitutes shown."
+                    (
+                        f"Exact {specific_position} identity is verified from "
+                        f"{str(_position_resolution_source or 'verified evidence').replace('_', ' ')}; "
+                        "comparison rows are separate opponent-context evidence."
+                    )
+                    if specific_position in {
+                        "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
+                        "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+                    }
+                    else (
+                        f"Provider verifies the broad {player_position} category; "
+                        "no exact flank/central position was available, so it is not relabeled."
+                        if player_position
+                        else "No provider or lineup position evidence was available."
+                    )
                 ),
                 "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
@@ -10349,11 +10402,72 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 
         # Use the single corrected team name resolved early (trusts req.teamName from scan)
         player_team_display = corrected_team_name
+        _exact_position_values = {
+            "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+            "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+        }
+        _position_display_value = display_position or player_position or ""
+        _position_is_exact = _position_display_value.upper() in _exact_position_values
+        _observed_source = str((_observed_role or {}).get("source") or "").strip()
+        _position_evidence_source = (
+            _position_resolution_source
+            if _position_resolution_source in {
+                "manual_override",
+                "gemini_web_grounded",
+                "api_sports_lineup_history",
+                "cache",
+            }
+            else _observed_source or _position_resolution_source
+        )
+        _position_evidence_rows = (
+            [
+                "Transfermarkt lists Right Winger as the main position",
+                "Austin FC describes Facundo Torres as a winger",
+            ]
+            if _position_evidence_source == "manual_override"
+            else (
+                _observed_role.get("evidence", [])
+                if _observed_role
+                else ["provider category only; exact lineup/profile position was not available"]
+            )
+        )
+        _position_evidence = {
+            "genericPosition": player_position or None,
+            "specificPosition": _position_display_value if _position_is_exact else None,
+            "displayPosition": _position_display_value or None,
+            "role": display_role or player_role or None,
+            "source": _position_evidence_source or "unavailable",
+            "status": (
+                "verified_exact"
+                if _position_is_exact
+                else "verified_broad"
+                if player_position
+                else "unavailable"
+            ),
+            "confidence": (
+                _observed_role.get("confidence")
+                if _observed_role and _observed_role.get("confidence")
+                else "medium" if _position_is_exact else "low"
+            ),
+            "evidence": _position_evidence_rows,
+            "decisionRule": "exact fixture/history/profile position outranks broad provider category; calibration cannot relabel identity",
+        }
+        _league_label = str(
+            (prediction.get("matchContext") or {}).get("league")
+            or prediction.get("leagueName")
+            or f"League {req.leagueId}"
+        ).strip()
+        _role_bucket_label = (
+            _position_display_value
+            if _position_is_exact
+            else player_position or "UNSPECIFIED"
+        )
+        _league_role_bucket = f"{_league_label} · {_role_bucket_label}"
         prediction["player"] = {
             "id": req.playerId,
             "name": req.playerName,
             "team": player_team_display,
-            "position": display_position or "Unknown",
+            "position": _position_display_value or "Unknown",
             "role": display_role or "",
             "positionSource": _position_resolution_source,
             "roleSource": _observed_role.get("source") if _observed_role else None,
@@ -10366,6 +10480,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 and str(_observed_role.get("source", "")).endswith("_inferred")
             ),
         }
+        prediction["positionEvidence"] = _position_evidence
+        prediction["leagueRoleBucket"] = _league_role_bucket
         prediction["opponent"] = req.opponentName
         prediction["propType"] = req.propType
         prediction["line"] = req.line
@@ -10794,13 +10910,13 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 prediction["projectedValue"] = round((req.line - 0.5) * 2) / 2
             print(f"[HARD BLOCK] clearances OVER → forced UNDER 60% for {req.playerName}")
 
-        # ── RECENT PASS-PROP SUPPRESSION ─────────────────────────────────────
+        # ── RECENT PASS-PROP CALIBRATION CONTEXT ─────────────────────────────
         # All-time safety is useful for context, but it can hide a short-lived
         # league/role regime change.  For soccer passing props only, suppress
         # a direction when the most-specific rolling bucket has at least ten
         # deduplicated settled events and is at or below a 50% hit rate.
-        # Do not reverse the recommendation: PASS means the model has no
-        # actionable side and protects both the UI and direct save callers.
+        # This can cap confidence, but never creates a third customer-facing
+        # direction. The final projection ledger owns OVER/UNDER.
         if (
             str(req.sport or "").lower() == "soccer"
             and req.propType in {"pass_attempts", "passes"}
@@ -10826,33 +10942,32 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             ):
                 _pass_rate = _recent_pass["hitRate"]
                 _pass_n = _recent_pass["n"]
-                prediction["recommendation"] = "PASS"
-                # Keep the side being suppressed. PASS remains non-actionable
-                # for the user, but calibration must score the avoided
-                # OVER/UNDER direction after the fixture settles.
-                prediction["passLeaning"] = _pass_dir
-                prediction["passReason"] = (
-                    f"PASS — recent {_pass_dir} pass-prop results in this "
-                    f"league/role bucket are {_pass_rate:.0f}% "
-                    f"({_pass_n} settled events)."
-                )
-                prediction["skipReason"] = "RECENT_PASS_PROP_BUCKET"
-                prediction["skipDetails"] = {
+                prediction["recentPropSafety"] = {
                     "direction": _pass_dir,
                     "hitRate": _pass_rate,
                     "sampleSize": _pass_n,
                     "windowDays": 45,
                     "minSampleSize": 10,
+                    "action": "confidence_cap",
                 }
-                prediction["confidenceScore"] = 50
-                prediction["rawConfidence"] = 50
-                prediction["confidenceLevel"] = "Low"
-                prediction["coinFlip"] = False
+                prediction["confidenceScore"] = min(
+                    float(prediction.get("confidenceScore") or 50),
+                    60,
+                )
+                prediction["rawConfidence"] = min(
+                    float(prediction.get("rawConfidence") or prediction["confidenceScore"]),
+                    60,
+                )
+                prediction["confidenceLevel"] = (
+                    "Medium" if prediction["confidenceScore"] >= 55 else "Low"
+                )
                 prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
-                    prediction["passReason"] + " No opposite-side recommendation is implied."
+                    f"LOW {_pass_dir} CALIBRATION: league/role bucket is "
+                    f"{_pass_rate:.0f}% across {_pass_n} settled events; "
+                    "direction remains ledger-based."
                 ]
                 print(
-                    f"[PASS PROP SUPPRESSION] {req.playerName}/{req.propType}: "
+                    f"[PASS PROP CALIBRATION] {req.playerName}/{req.propType}: "
                     f"{_pass_dir} {_pass_rate:.1f}% ({_pass_n}n, rolling 45d)"
                 )
 

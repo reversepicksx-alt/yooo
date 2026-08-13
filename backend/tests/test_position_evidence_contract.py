@@ -115,6 +115,14 @@ def test_prediction_does_not_erase_grounded_profile_on_category_fallback():
     ]
 
 
+def test_identity_keyed_manual_profile_can_resolve_facundo_exact_position():
+    positions_source = (ROOT / "ai_positions.py").read_text()
+    assert "_MANUAL_EXACT_PROFILES" in positions_source
+    assert "51620" in positions_source
+    assert '"specificPosition": "RW"' in positions_source
+    assert '"source": "manual_override"' in positions_source
+
+
 def test_comparison_profiles_accept_string_or_integer_provider_ids():
     comparison_start = PREDICT_SOURCE.index("cached_pr = await db.player_positions.find_one(")
     comparison_block = PREDICT_SOURCE[comparison_start:comparison_start + 900]

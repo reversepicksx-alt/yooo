@@ -420,6 +420,7 @@ export function renderH2HIntelligence(
   ];
   const prop =
     PROP_LABELS[h2h.targetProp ?? ''] ?? (h2h.targetProp ?? '').replace(/_/g, ' ');
+  const venueSplits = h2h.venueSplits ?? {};
   return (
     <View style={aStyles.proCard}>
       <View style={aStyles.proCardHeader}>
@@ -433,6 +434,40 @@ export function renderH2HIntelligence(
           {h2h.seasonsCovered ? ` · ${h2h.seasonsCovered.range}` : ''}
         </Text>
       </View>
+      {(venueSplits.home || venueSplits.away) && (
+        <View style={{ flexDirection: 'row', gap: 7, marginBottom: 9 }}>
+          {(['home', 'away'] as const).map((venue) => {
+            const split = venueSplits[venue];
+            return (
+              <View
+                key={venue}
+                style={{
+                  flex: 1,
+                  backgroundColor: Colors.cardSecondary,
+                  borderRadius: 6,
+                  paddingHorizontal: 7,
+                  paddingVertical: 5,
+                }}
+              >
+                <Text
+                  style={[
+                    aStyles.proCardMetricLabel,
+                    { color: venue === 'home' ? Colors.success : '#60A5FA' },
+                  ]}
+                >
+                  {venue.toUpperCase()}
+                </Text>
+                <Text style={{ color: Colors.text, fontSize: 10, fontWeight: '800', marginTop: 2 }}>
+                  {split ? `${Number(split.average).toFixed(1)} AVG · ${Number(split.overPct).toFixed(1)}% O` : '—'}
+                </Text>
+                <Text style={{ color: Colors.textTertiary, fontSize: 8, marginTop: 1 }}>
+                  {split ? `N=${split.sampleSize} · ${Math.round(Number(split.minutesAverage))}' avg` : 'No verified apps'}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
       <View style={aStyles.proCardMetrics}>
         {avg != null && (
           <View style={aStyles.proCardMetric}>
@@ -499,6 +534,11 @@ export function renderH2HIntelligence(
                 <Text style={aStyles.h2hVenue}>{(m.venue ?? '?').slice(0, 1).toUpperCase()}</Text>
                 <Text style={aStyles.h2hOpp} numberOfLines={1}>
                   {m.opponent ?? '?'}
+                </Text>
+                <Text style={aStyles.h2hPoss}>
+                  {m.minutesPlayed != null || m.minutes != null
+                    ? `${m.minutesPlayed ?? m.minutes}'`
+                    : '—'}
                 </Text>
                 {m.teamPossession != null && (
                   <Text style={aStyles.h2hPoss}>{m.teamPossession}%</Text>

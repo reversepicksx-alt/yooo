@@ -21,6 +21,21 @@ _position_usage_date = ""
 _position_usage_attempts = 0
 _position_usage_lock = aio.Lock()
 
+# Identity-keyed authoritative profile used only when provider lineups expose
+# a broad category and grounded lookup is unavailable. A trusted cached
+# lineup/profile record still takes precedence above this table.
+_MANUAL_EXACT_PROFILES = {
+    51620: {
+        "specificPosition": "RW",
+        "role": "Traditional Winger",
+        "source": "manual_override",
+        "evidence": [
+            "Transfermarkt lists Right Winger as the main position",
+            "Austin FC describes Facundo Torres as a winger",
+        ],
+    },
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Canonical vocabularies (kept in sync with predict.py POSITION_ROLE_MAP)
@@ -414,6 +429,18 @@ async def resolve_player_role(
     if cached_profile:
         cached_pos, cached_role = cached_profile
         return cached_pos, cached_role, "cache"
+
+    manual_profile = _MANUAL_EXACT_PROFILES.get(int(player_id or 0))
+    if manual_profile and manual_profile["specificPosition"] in allowed_positions:
+        print(
+            f"[POSITION MANUAL] {player_name} → "
+            f"{manual_profile['specificPosition']}/{manual_profile['role']}"
+        )
+        return (
+            manual_profile["specificPosition"],
+            manual_profile["role"],
+            manual_profile["source"],
+        )
 
     verified = await _verify_with_grounded_gemini(player_name, team_name, category)
     if verified:

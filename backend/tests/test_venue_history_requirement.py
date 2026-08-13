@@ -30,6 +30,19 @@ def test_current_fixture_loader_uses_supported_date_window():
     assert "current fixture " in PREDICT_SOURCE
 
 
+def test_h2h_rows_keep_minutes_and_home_away_split():
+    assert '"minutes": minutes_played' in PREDICT_SOURCE
+    assert '"minutesPlayed": minutes_played' in PREDICT_SOURCE
+    assert '"venueSplits"' in PREDICT_SOURCE
+    assert '"minutesAverage"' in PREDICT_SOURCE
+
+
+def test_position_evidence_has_one_resolution_contract():
+    assert '"positionEvidence"' in PREDICT_SOURCE
+    assert '"decisionRule": "exact fixture/history/profile position outranks broad provider category; calibration cannot relabel identity"' in PREDICT_SOURCE
+    assert '"leagueRoleBucket"' in PREDICT_SOURCE
+
+
 def test_history_loader_uses_full_verified_fallback_below_target():
     assert "full-history fallback" in PREDICT_SOURCE
     assert '"full_history_fallback"' in PREDICT_SOURCE

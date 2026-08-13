@@ -19,6 +19,9 @@ def test_compact_analysis_accepts_saved_player_game_log_shape():
     assert "normalized === 'home' || normalized === 'h'" in source
     assert "normalized === 'away' || normalized === 'a'" in source
     assert "RECENT MATCHES · {logs.length}" in source
+    assert "venueSplits" in source
+    assert "minutesPlayed ?? row.minutes" in source
+    assert "leagueRoleBucket" in source
 
 
 def test_analysis_endpoint_projects_and_repairs_recent_log_shapes():
