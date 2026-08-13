@@ -155,3 +155,4 @@
 - [Deployment VM readiness](deployment-vm-readiness.md) — a publish that builds and scans successfully but stalls at VM readiness is usually promote/provisioning; compare with the last successful build before changing code.
 - [API-Football player fixture fallback](api-football-player-fixture-fallback.md) — `/fixtures` rejects `player`; query the verified club team, then match exact player ID within fixture payloads.
 - [Saved analysis log normalization](saved-analysis-log-normalization.md) — saved analysis uses `playerGameLogs.games`; shared history UI must normalize it alongside live `gameLogs`.
+- [Verified venue-history threshold](venue-history-threshold.md) — venue priors require 30 verified player appearances; search older competitions/seasons, then use full history with an explicit fallback.

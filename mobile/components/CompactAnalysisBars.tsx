@@ -20,6 +20,20 @@ type CompactPrediction = {
       pushHits?: number | null;
       total?: number | null;
     } | null;
+    venueHistory?: {
+      selectedVenue?: 'home' | 'away' | null;
+      target?: number | null;
+      verifiedSampleSize?: number | null;
+      status?: string | null;
+      fallback?: string | null;
+    } | null;
+  } | null;
+  venueHistory?: {
+    selectedVenue?: 'home' | 'away' | null;
+    target?: number | null;
+    verifiedSampleSize?: number | null;
+    status?: string | null;
+    fallback?: string | null;
   } | null;
   h2hPlayerStats?: Record<string, any> | null;
   matchupVolume?: Record<string, any> | null;
@@ -217,6 +231,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       ?? (typeof prediction.playerIsHome === 'boolean' ? prediction.playerIsHome : null),
   );
   const historyVenue = preferredVenue ?? normalizeVenue(historyContext?.venue);
+  const venueHistory = prediction.venueHistory ?? prediction.playerGameLogs?.venueHistory ?? null;
+  const venueHistoryFallback = venueHistory?.status === 'full_history_fallback';
+  const venueHistorySample = Number(venueHistory?.verifiedSampleSize);
+  const venueHistoryTarget = Number(venueHistory?.target || 30);
   // The backend supplies a complete, newest-first archive for both venues.
   // Keep the boundary defensive because saved/older responses can still
   // contain only the venue-scoped `games` payload.
@@ -437,6 +455,11 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 {historyVenue && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
                     {historyVenue.toUpperCase()} VENUE MATCHES
+                  </Text>
+                )}
+                {venueHistoryFallback && (
+                  <Text style={styles.contextWarning} numberOfLines={1}>
+                    {Number.isFinite(venueHistorySample) ? venueHistorySample : 0}/{venueHistoryTarget} VERIFIED · FULL HISTORY PRIOR
                   </Text>
                 )}
               </View>
@@ -818,6 +841,7 @@ const styles = {
   headerStack: { flex: 1, minWidth: 0 },
   title: { fontSize: 9, color: Colors.textSecondary, fontWeight: '800' as const, letterSpacing: 1 },
   contextLabel: { marginTop: 3, fontSize: 7, color: Colors.primary, fontWeight: '900' as const, letterSpacing: 0.45 },
+  contextWarning: { marginTop: 3, fontSize: 7, color: '#F59E0B', fontWeight: '900' as const, letterSpacing: 0.35 },
   meta: { marginLeft: 'auto' as const, fontSize: 9, color: Colors.textTertiary, fontFamily: 'JetBrainsMono_700Bold' },
   expectedPossessionBar: {
     height: 7,

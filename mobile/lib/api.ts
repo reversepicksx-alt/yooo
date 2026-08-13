@@ -423,7 +423,21 @@ export interface PredictionResult {
     tpHomeCount?: number;
     tpAwayCount?: number;
     last10Count?: number;
+    venueHistory?: {
+      selectedVenue?: 'home' | 'away' | null;
+      target?: number | null;
+      verifiedSampleSize?: number | null;
+      status?: string | null;
+      fallback?: string | null;
+    };
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  };
+  venueHistory?: {
+    selectedVenue?: 'home' | 'away' | null;
+    target?: number | null;
+    verifiedSampleSize?: number | null;
+    status?: string | null;
+    fallback?: string | null;
   };
   historyContext?: {
     mode?: string;
@@ -959,6 +973,13 @@ interface RawPrediction {
     tpHomeCount?: number;
     tpAwayCount?: number;
     last10Count?: number;
+    venueHistory?: {
+      selectedVenue?: 'home' | 'away' | null;
+      target?: number | null;
+      verifiedSampleSize?: number | null;
+      status?: string | null;
+      fallback?: string | null;
+    };
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number; summary?: string };
   };
   matchupVolume?: PredictionResult['matchupVolume'];
@@ -1384,6 +1405,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     tpAwayCount: raw.playerGameLogs?.tpAwayCount,
     last10Count: raw.playerGameLogs?.last10Count,
     historyContext: raw.playerGameLogs?.historyContext,
+    venueHistory: raw.playerGameLogs?.venueHistory,
     sampleSize: rawGames.length || undefined,
     hitRates: raw.playerGameLogs?.hitRates
       ? {

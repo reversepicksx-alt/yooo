@@ -47,6 +47,10 @@ from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichme
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
+# A venue-specific player prior is only activated after this many verified
+# appearances. The history loader may search older seasons to reach it.
+_VENUE_HISTORY_TARGET = 30
+
 
 def _json_safe_prediction(value, *, _active=None, _depth=0):
     """Detach a prediction graph before MongoDB/HTTP serialization.
@@ -1671,6 +1675,23 @@ async def predict(req: PredictionRequest):
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
                 "duels_won": "duels_won", "yellow_cards": "cards_yellow",
             }
+            # Venue history is only trustworthy as a primary sample when it
+            # has real player appearances, not merely team fixtures. The
+            # provider's recent team feed can contain fewer than 30 selected
+            # venue appearances even when it returns 100 fixtures, so the
+            # loader extends through older seasons before falling back.
+            _VENUE_HISTORY_MAX_OLDER_SEASONS = 7
+
+            def _venue_history_count(logs):
+                if req.sport != "soccer" or not player_venue:
+                    return 0
+                return sum(
+                    1
+                    for log in logs
+                    if log.get("venue") == player_venue
+                    and log.get(stat_field_map.get(req.propType, ""))
+                    is not None
+                )
 
             async def _fetch_fixture_possession(fid, home_id, away_id):
                 """Return both exact fetched fixture possession values.
@@ -2159,9 +2180,11 @@ async def predict(req: PredictionRequest):
                         if _g.get("venue") == "away"
                         and _g.get(target_field) is not None
                     )
+                    _selected_venue_count = _venue_history_count(collected)
                     _venue_history_complete = (
                         req.sport != "soccer"
-                        or (_home_count >= 50 and _away_count >= 50)
+                        or not player_venue
+                        or _selected_venue_count >= _VENUE_HISTORY_TARGET
                     )
                     if (
                         len(collected) >= 15
@@ -2187,7 +2210,8 @@ async def predict(req: PredictionRequest):
                             f"(venue ok: {len(good)}, saves_ok={_saves_ok}, tp_complete={_tp_complete}, "
                             f"competition_meta={_competition_meta_complete}, "
                             f"historical_poss={_pressure_possession_count}, "
-                            f"home={_home_count}, away={_away_count}) — "
+                            f"home={_home_count}, away={_away_count}, "
+                            f"selectedVenue={_selected_venue_count}/{_VENUE_HISTORY_TARGET}) — "
                             "falling through to Stage 1 for more data"
                         )
             except Exception as _ce:
@@ -2490,21 +2514,195 @@ async def predict(req: PredictionRequest):
                     except Exception:
                         return None
 
-                if not team_fixtures_raw:
-                    return collected
+                async def _fetch_fixture_batch(fixture_rows):
+                    if not fixture_rows:
+                        return []
+                    sem = aio.Semaphore(10)
 
-                sem = aio.Semaphore(10)
-                async def _sem_fetch(fix_raw):
-                    async with sem:
-                        return await _fetch_one(fix_raw)
+                    async def _sem_fetch(fix_raw):
+                        async with sem:
+                            return await _fetch_one(fix_raw)
 
-                tasks = [_sem_fetch(fx) for fx in team_fixtures_raw]
-                results = await aio.gather(*tasks, return_exceptions=True)
-                for r in results:
-                    if r and not isinstance(r, Exception):
-                        collected.append(r)
+                    results = await aio.gather(
+                        *[_sem_fetch(fx) for fx in fixture_rows],
+                        return_exceptions=True,
+                    )
+                    return [
+                        result for result in results
+                        if result and not isinstance(result, Exception)
+                    ]
 
-                print(f"[API-DIRECT] {req.playerName}/{req.propType}: {len(collected)} real game logs from {len(team_fixtures_raw)} fixtures")
+                current_fixture_count = len(team_fixtures_raw or [])
+                collected.extend(
+                    await _fetch_fixture_batch(team_fixtures_raw or [])
+                )
+
+                # A 100-fixture feed can still contain only a handful of
+                # selected-venue appearances. Search older seasons, across all
+                # competitions, until 30 verified player appearances exist.
+                # Older rows are fetched venue-first to control API cost. If
+                # the target remains unavailable after the full search, fetch
+                # the remaining scanned rows so the all-history fallback is
+                # still a genuine full-history sample.
+                _older_fixture_pool = []
+                _older_fetched_ids = set()
+                if (
+                    req.sport == "soccer"
+                    and player_venue
+                    and _venue_history_count(collected) < _VENUE_HISTORY_TARGET
+                ):
+                    _known_fixture_ids = {
+                        str((fixture or {}).get("fixture", {}).get("id"))
+                        for fixture in (team_fixtures_raw or [])
+                        if (fixture or {}).get("fixture", {}).get("id")
+                    }
+                    for _older_season in range(
+                        CURRENT_SEASON - 1,
+                        CURRENT_SEASON - 1 - _VENUE_HISTORY_MAX_OLDER_SEASONS,
+                        -1,
+                    ):
+                        try:
+                            _season_rows = await api_football_request(
+                                "fixtures",
+                                {
+                                    "team": actual_team_id,
+                                    "season": _older_season,
+                                    "status": "FT",
+                                },
+                            ) or []
+                        except Exception as _season_err:
+                            print(
+                                f"[PLAYER HISTORY] {req.playerName}: season "
+                                f"{_older_season} lookup failed: "
+                                f"{type(_season_err).__name__}"
+                            )
+                            continue
+
+                        _new_season_rows = []
+                        for _season_fixture in _season_rows:
+                            _season_fid = (
+                                (_season_fixture.get("fixture") or {}).get("id")
+                            )
+                            if not _season_fid:
+                                continue
+                            _season_fid_key = str(_season_fid)
+                            if _season_fid_key in _known_fixture_ids:
+                                continue
+                            _home_id = (
+                                (_season_fixture.get("teams") or {})
+                                .get("home", {})
+                                .get("id")
+                            )
+                            _away_id = (
+                                (_season_fixture.get("teams") or {})
+                                .get("away", {})
+                                .get("id")
+                            )
+                            if actual_team_id not in {_home_id, _away_id}:
+                                continue
+                            _known_fixture_ids.add(_season_fid_key)
+                            _new_season_rows.append(_season_fixture)
+
+                        if not _new_season_rows:
+                            continue
+
+                        _older_fixture_pool.extend(_new_season_rows)
+                        _selected_rows = [
+                            fixture for fixture in _new_season_rows
+                            if (
+                                "home"
+                                if (
+                                    ((fixture.get("teams") or {})
+                                     .get("home", {}).get("id"))
+                                    == actual_team_id
+                                )
+                                else "away"
+                            ) == player_venue
+                        ]
+                        _selected_rows = sorted(
+                            _selected_rows,
+                            key=lambda fixture: str(
+                                (fixture.get("fixture") or {}).get("date") or ""
+                            ),
+                            reverse=True,
+                        )
+                        _selected_logs = await _fetch_fixture_batch(_selected_rows)
+                        collected.extend(_selected_logs)
+                        _older_fetched_ids.update(
+                            str((fixture.get("fixture") or {}).get("id"))
+                            for fixture in _selected_rows
+                            if (fixture.get("fixture") or {}).get("id")
+                        )
+                        print(
+                            f"[PLAYER HISTORY] {req.playerName}: season "
+                            f"{_older_season} added "
+                            f"{len(_selected_logs)} {player_venue} appearances; "
+                            f"venue={_venue_history_count(collected)}/"
+                            f"{_VENUE_HISTORY_TARGET}"
+                        )
+                        if _venue_history_count(collected) >= _VENUE_HISTORY_TARGET:
+                            break
+
+                    # If 30 venue appearances still do not exist, complete the
+                    # scanned historical seasons for an honest full-history
+                    # fallback rather than silently weighting only one venue.
+                    if _venue_history_count(collected) < _VENUE_HISTORY_TARGET:
+                        _remaining_rows = [
+                            fixture for fixture in _older_fixture_pool
+                            if str((fixture.get("fixture") or {}).get("id"))
+                            not in _older_fetched_ids
+                        ]
+                        if _remaining_rows:
+                            _remaining_logs = await _fetch_fixture_batch(
+                                _remaining_rows
+                            )
+                            collected.extend(_remaining_logs)
+                            print(
+                                f"[PLAYER HISTORY] {req.playerName}: venue target "
+                                f"unavailable after older-season search; added "
+                                f"{len(_remaining_logs)} remaining rows for "
+                                "full-history fallback"
+                            )
+
+                    if _older_fixture_pool:
+                        try:
+                            _cache_rows = {}
+                            for _fixture in (
+                                list(team_fixtures_raw or [])
+                                + _older_fixture_pool
+                            ):
+                                _fid = (_fixture.get("fixture") or {}).get("id")
+                                if _fid:
+                                    _cache_rows[str(_fid)] = _fixture
+                            _merged_fixture_history = sorted(
+                                _cache_rows.values(),
+                                key=lambda fixture: str(
+                                    (fixture.get("fixture") or {}).get("date") or ""
+                                ),
+                                reverse=True,
+                            )[:400]
+                            await db.team_fixture_history.update_one(
+                                {"teamId": actual_team_id},
+                                {"$set": {
+                                    "teamId": actual_team_id,
+                                    "fixtures": _merged_fixture_history,
+                                    "historyLookback": "multi-season",
+                                    "_ts": __import__("time").time(),
+                                    "_dt": datetime.now(timezone.utc),
+                                }},
+                                upsert=True,
+                            )
+                        except Exception as _history_cache_err:
+                            print(
+                                f"[PLAYER HISTORY CACHE] skipped: "
+                                f"{type(_history_cache_err).__name__}"
+                            )
+
+                print(
+                    f"[API-DIRECT] {req.playerName}/{req.propType}: "
+                    f"{len(collected)} real game logs from "
+                    f"{current_fixture_count + len(_older_fixture_pool)} fixtures"
+                )
             except Exception as _e:
                 print(f"[API-DIRECT] Error: {_e}")
 
@@ -5176,6 +5374,21 @@ async def predict(req: PredictionRequest):
                 float(g["teamPossession"]) for g in _last10_logs
                 if g.get("venue") == "away" and g.get("teamPossession") is not None
             ]
+            _venue_history_sample = (
+                sum(
+                    1
+                    for _log in player_game_logs
+                    if _log.get("venue") == player_venue
+                    and _log.get(target_field) is not None
+                )
+                if req.sport == "soccer" and player_venue
+                else None
+            )
+            _venue_history_fallback = (
+                req.sport == "soccer"
+                and bool(player_venue)
+                and (_venue_history_sample or 0) < _VENUE_HISTORY_TARGET
+            )
 
             game_log_summary = {
                 "games": _history_view_logs,
@@ -5195,6 +5408,17 @@ async def predict(req: PredictionRequest):
                 "tpAwayAvg": round(sum(_tp_away) / len(_tp_away), 1) if _tp_away else None,
                 "tpHomeCount": len(_tp_home),
                 "tpAwayCount": len(_tp_away),
+                "venueHistory": {
+                    "selectedVenue": player_venue,
+                    "target": _VENUE_HISTORY_TARGET,
+                    "verifiedSampleSize": _venue_history_sample,
+                    "status": (
+                        "sufficient"
+                        if not _venue_history_fallback
+                        else "full_history_fallback"
+                    ),
+                    "fallback": "full_verified_history" if _venue_history_fallback else None,
+                },
             }
             if values:
                 game_log_summary["rawAvg"] = round(sum(values) / len(values), 2)
@@ -5650,18 +5874,23 @@ async def predict(req: PredictionRequest):
                 # the full club log set as the prior instead of splitting by club venue.
                 print(f"[INTL PRIOR] Skipping club venue split — using all {len(player_game_logs)} club logs")
             elif req.propType in _VENUE_SPLIT_PROPS and player_venue:
-                _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
+                _venue_logs = [
+                    g for g in player_game_logs
+                    if g.get("venue") == player_venue
+                    and g.get(target_field) is not None
+                ]
                 # GK saves are HIGHLY venue-dependent (away GKs face far more shots
                 # than home GKs — e.g. Oblak home avg 2.3 vs away avg 5.8). Using
                 # combined logs when away samples exist biases the prior toward home
                 # game values and systematically under-projects away GK saves.
-                # Lower the threshold to 3 for GK saves so 4 away samples activate
-                # the venue split instead of falling back to the combined pool.
+                # Require the same 30-appearance venue target for goalkeeper
+                # saves. A small venue slice can be directionally interesting,
+                # but it must not replace the broad prior.
                 _is_gk_saves = (
                     req.propType in {"saves", "goalie_saves"}
                     and _bayes_position.upper() in {"GK", "GOALKEEPER"}
                 )
-                _venue_min = 3 if _is_gk_saves else 5
+                _venue_min = _VENUE_HISTORY_TARGET
                 if len(_venue_logs) >= _venue_min:
                     _bayes_logs = _venue_logs
                     print(
@@ -11738,6 +11967,35 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 _pgl_summary["homeAvg"] = round(sum(_pgl_home) / len(_pgl_home), 2)
             if _pgl_away:
                 _pgl_summary["awayAvg"] = round(sum(_pgl_away) / len(_pgl_away), 2)
+            _pgl_venue_sample = (
+                sum(
+                    1
+                    for _pgl_log in player_game_logs
+                    if _pgl_log.get("venue") == player_venue
+                    and _pgl_log.get(_pgl_tf) is not None
+                )
+                if req.sport == "soccer" and player_venue
+                else None
+            )
+            _pgl_summary["venueHistory"] = {
+                "selectedVenue": player_venue,
+                "target": _VENUE_HISTORY_TARGET,
+                "verifiedSampleSize": _pgl_venue_sample,
+                "status": (
+                    "sufficient"
+                    if req.sport != "soccer"
+                    or not player_venue
+                    or (_pgl_venue_sample or 0) >= _VENUE_HISTORY_TARGET
+                    else "full_history_fallback"
+                ),
+                "fallback": (
+                    "full_verified_history"
+                    if req.sport == "soccer"
+                    and player_venue
+                    and (_pgl_venue_sample or 0) < _VENUE_HISTORY_TARGET
+                    else None
+                ),
+            }
             if _pgl_vals and req.line:
                 _pgl_over = sum(1 for v in _pgl_vals if v > req.line)
                 _pgl_under = sum(1 for v in _pgl_vals if v < req.line)
