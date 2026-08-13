@@ -1861,6 +1861,10 @@ export default function PicksScreen() {
               if (candidate && !Array.isArray(candidate) && typeof candidate === 'object') return candidate;
               return data?.roleEvidencePacket ?? pick?.roleEvidencePacket;
             })())}
+            {!analysisModal?.loading && capturedModalFactors.length > 0 && renderEvidenceSummary({
+              ...(analysisModal?.pick as any),
+              ...(analysisModal?.data as any),
+            })}
             {!analysisModal?.loading && modalFactors.length > 0 && renderModelFactors(modalFactors)}
             {!analysisModal?.loading && renderProjectionLedger(modalLedger)}
 
