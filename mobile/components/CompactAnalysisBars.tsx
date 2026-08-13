@@ -26,6 +26,15 @@ type CompactPrediction = {
       verifiedSampleSize?: number | null;
       status?: string | null;
       fallback?: string | null;
+      modelScope?: string | null;
+      modelSampleSize?: number | null;
+    } | null;
+    modelHitRates?: {
+      overPct?: number | null;
+      underPct?: number | null;
+      overHits?: number | null;
+      underHits?: number | null;
+      total?: number | null;
     } | null;
   } | null;
   venueHistory?: {
@@ -34,6 +43,22 @@ type CompactPrediction = {
     verifiedSampleSize?: number | null;
     status?: string | null;
     fallback?: string | null;
+    modelScope?: string | null;
+    modelSampleSize?: number | null;
+  } | null;
+  modelHitRates?: {
+    overPct?: number | null;
+    underPct?: number | null;
+    overHits?: number | null;
+    underHits?: number | null;
+    total?: number | null;
+  } | null;
+  archiveHitRates?: {
+    overPct?: number | null;
+    underPct?: number | null;
+    overHits?: number | null;
+    underHits?: number | null;
+    total?: number | null;
   } | null;
   h2hPlayerStats?: Record<string, any> | null;
   matchupVolume?: Record<string, any> | null;
@@ -270,9 +295,21 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
     ))
     .sort(newestFirst)
     .slice(0, 100);
-  const historicalHitRates = (prediction as any).hitRates
+  const historicalHitRates = prediction.modelHitRates
+    ?? prediction.playerGameLogs?.modelHitRates
+    ?? (prediction as any).hitRates
     ?? prediction.playerGameLogs?.hitRates
     ?? null;
+  const deviationHitRate = Number.isFinite(Number((prediction as any).lineDeviationHitRate))
+    ? Number((prediction as any).lineDeviationHitRate)
+    : null;
+  const deviationHitRateN = Number((prediction as any).lineDeviationHitRateN) > 0
+    ? Number((prediction as any).lineDeviationHitRateN)
+    : null;
+  const modelHistoryScope = venueHistory?.modelScope === 'selected_venue'
+    ? `${String(venueHistory.selectedVenue || historyVenue || 'selected').toUpperCase()} VENUE`
+    : 'MIXED VERIFIED HISTORY';
+  const modelHistorySample = Number(venueHistory?.modelSampleSize || historicalHitRates?.total || 0);
   const settledRate = Number.isFinite(Number((prediction as any).propHistoricalRate))
     ? Number((prediction as any).propHistoricalRate)
     : null;
@@ -697,15 +734,20 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         </View>
       )}
 
-      {(historicalHitRates || settledRate != null) && (
+      {(historicalHitRates || settledRate != null || deviationHitRate != null) && (
         <View style={styles.card}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Ionicons name="stats-chart-outline" size={11} color={Colors.primary} />
-              <Text style={styles.title}>HISTORICAL HIT RATE</Text>
+              <View style={styles.headerStack}>
+                <Text style={styles.title}>PLAYER HISTORY · MODEL SOURCE</Text>
+                <Text style={styles.contextLabel} numberOfLines={1}>
+                  {modelHistoryScope} · N={modelHistorySample}
+                </Text>
+              </View>
             </View>
             {historicalHitRates?.total != null && (
-              <Text style={styles.meta}>LINE · n={historicalHitRates.total}</Text>
+              <Text style={styles.meta}>LINE {prediction.line ?? '—'}</Text>
             )}
           </View>
           <View style={styles.splitRow}>
@@ -733,10 +775,19 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               </Text>
             </View>
           </View>
+          <Text style={styles.detail}>
+            This is the history pool used by the model, not a system-wide win rate.
+          </Text>
           {settledRate != null && settledDirection && (
             <Text style={[styles.detail, { marginTop: 0 }]}>
-              SAVED SETTLED PICKS · {settledDirection} {settledRate.toFixed(1)}%
+              SYSTEM SETTLED BASELINE · {settledDirection} {settledRate.toFixed(1)}%
               {settledSample ? ` · n=${settledSample}` : ''}
+            </Text>
+          )}
+          {deviationHitRate != null && settledDirection && (
+            <Text style={[styles.detail, { marginTop: 0 }]}>
+              DEVIATION-BAND BASELINE · {settledDirection} {deviationHitRate.toFixed(1)}%
+              {deviationHitRateN ? ` · n=${deviationHitRateN}` : ''}
             </Text>
           )}
         </View>

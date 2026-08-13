@@ -20,10 +20,22 @@ def test_history_loader_expands_across_older_seasons():
     assert "_older_fixture_pool.extend(_new_season_rows)" in PREDICT_SOURCE
 
 
+def test_current_fixture_loader_uses_supported_date_window():
+    # API-Sports rejects the previous `last` query shape in production. The
+    # current pool must use the bounded date window and leave older-season
+    # expansion available when that call is empty or unavailable.
+    assert '"from": _history_from.isoformat()' in PREDICT_SOURCE
+    assert '"to": _history_to.isoformat()' in PREDICT_SOURCE
+    assert '"last": _player_history_fixture_lookback' not in PREDICT_SOURCE
+    assert "current fixture " in PREDICT_SOURCE
+
+
 def test_history_loader_uses_full_verified_fallback_below_target():
     assert "full-history fallback" in PREDICT_SOURCE
     assert '"full_history_fallback"' in PREDICT_SOURCE
     assert '"fallback": "full_verified_history"' in PREDICT_SOURCE
+    assert '"modelScope"' in PREDICT_SOURCE
+    assert '"modelSampleSize"' in PREDICT_SOURCE
 
 
 def test_venue_count_requires_the_requested_stat_and_exact_venue():

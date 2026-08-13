@@ -1706,6 +1706,14 @@ export default function ScanScreen() {
   const confPct = prediction?.confidence != null
     ? (prediction.confidence > 1 ? Math.round(prediction.confidence) : Math.round(prediction.confidence * 100))
     : null;
+  const recommendationProbability = prediction?.recommendation === 'OVER'
+    ? prediction.pOver
+    : prediction?.recommendation === 'UNDER'
+      ? prediction.pUnder
+      : null;
+  const modelProbPct = recommendationProbability != null
+    ? Number(recommendationProbability)
+    : null;
 
   return (
     <KeyboardAvoidingView
@@ -3193,11 +3201,17 @@ export default function ScanScreen() {
                 </View>
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
-                  <Text style={styles.analysisStatLabel}>Confidence</Text>
-                  <Text style={[styles.analysisStatVal, { color: recColor }]}>
-                    {confPct != null ? `${confPct}%` : '—'}
+                  <Text style={styles.analysisStatLabel}>
+                    {modelProbPct != null ? 'Model probability' : 'Evidence confidence'}
                   </Text>
-                  <Text style={styles.analysisStatSub}>{prediction.confidenceLevel?.toUpperCase() || 'SCORE'}</Text>
+                  <Text style={[styles.analysisStatVal, { color: recColor }]}>
+                    {modelProbPct != null
+                      ? `${modelProbPct.toFixed(1)}%`
+                      : confPct != null ? `${confPct}%` : '—'}
+                  </Text>
+                  <Text style={styles.analysisStatSub}>
+                    {modelProbPct != null ? 'CALIBRATED MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
+                  </Text>
                 </View>
               </View>
 
@@ -3218,7 +3232,7 @@ export default function ScanScreen() {
                   <View style={styles.confGaugeLabels}>
                     <Text style={styles.confGaugeLabelEdge}>50%</Text>
                     <Text style={[styles.confGaugeLabelCenter, { color: recColor }]}>
-                      {confPct}% · {prediction.confidenceLevel?.toUpperCase() || 'CONFIDENCE'}
+                      {confPct}% · EVIDENCE {prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
                     </Text>
                     <Text style={styles.confGaugeLabelEdge}>100%</Text>
                   </View>

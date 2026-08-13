@@ -429,9 +429,15 @@ export interface PredictionResult {
       verifiedSampleSize?: number | null;
       status?: string | null;
       fallback?: string | null;
+      modelScope?: string | null;
+      modelSampleSize?: number | null;
     };
+    modelHitRates?: { overHits: number; underHits: number; pushHits?: number; overPct: number; underPct: number; total: number };
+    archiveHitRates?: { overHits: number; underHits: number; pushHits?: number; overPct: number; underPct: number; total: number };
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   };
+  modelHitRates?: { overHits: number; underHits: number; pushHits?: number; overPct: number; underPct: number; total: number };
+  archiveHitRates?: { overHits: number; underHits: number; pushHits?: number; overPct: number; underPct: number; total: number };
   venueHistory?: {
     selectedVenue?: 'home' | 'away' | null;
     target?: number | null;
@@ -507,6 +513,7 @@ export interface PredictionResult {
   lineDeviationBand?: string;
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
+  lineDeviationHitRateN?: number;
   sport?: string;
   tacticalAlerts?: string[];
   tacticalContext?: {
@@ -979,7 +986,11 @@ interface RawPrediction {
       verifiedSampleSize?: number | null;
       status?: string | null;
       fallback?: string | null;
+      modelScope?: string | null;
+      modelSampleSize?: number | null;
     };
+    modelHitRates?: { overHits: number; underHits: number; pushHits?: number; overPct: number; underPct: number; total: number };
+    archiveHitRates?: { overHits: number; underHits: number; pushHits?: number; overPct: number; underPct: number; total: number };
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number; summary?: string };
   };
   matchupVolume?: PredictionResult['matchupVolume'];
@@ -1077,6 +1088,7 @@ interface RawPrediction {
   lineDeviationBand?: string;
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
+  lineDeviationHitRateN?: number;
   gameScript?: Record<string, unknown>;
   error?: string;
 }
@@ -1406,6 +1418,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     last10Count: raw.playerGameLogs?.last10Count,
     historyContext: raw.playerGameLogs?.historyContext,
     venueHistory: raw.playerGameLogs?.venueHistory,
+    modelHitRates: raw.playerGameLogs?.modelHitRates,
+    archiveHitRates: raw.playerGameLogs?.archiveHitRates,
     sampleSize: rawGames.length || undefined,
     hitRates: raw.playerGameLogs?.hitRates
       ? {
@@ -1498,6 +1512,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     lineDeviationBand: raw.lineDeviationBand ?? undefined,
     lineDeviationPct: raw.lineDeviationPct ?? undefined,
     lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
+    lineDeviationHitRateN: raw.lineDeviationHitRateN ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
     analysisFactors: raw.analysisFactors ?? undefined,

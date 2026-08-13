@@ -7,7 +7,7 @@ import math
 import asyncio as aio
 import statistics as stats_mod
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 from fastapi import APIRouter, HTTPException
 from config import (
@@ -2218,10 +2218,10 @@ async def predict(req: PredictionRequest):
                 print(f"[CACHE-STAGE0] Error: {_ce}")
 
             try:
-                # Fetch a deep finished-fixture pool across ALL competitions. We
-                # target 50 real player appearances at each venue, so a 40-game
-                # team feed is not enough once home/away, DNPs, and missing stats
-                # are removed.
+                # Fetch a deep finished-fixture pool across ALL competitions.
+                # API-Sports rejects the old `last` parameter shape used here
+                # in production, so use a bounded date window and then expand
+                # by season below when the selected venue is still thin.
                 _player_history_fixture_lookback = 100
 
                 # ── On-demand cache: check team_fixture_history before calling API ──
@@ -2244,37 +2244,49 @@ async def predict(req: PredictionRequest):
                     pass
 
                 if team_fixtures_raw is None and not _is_bdl_league:
-                    team_fixtures_raw = await api_football_request(
-                        "fixtures",
-                        {
-                            "team": actual_team_id,
-                            "last": _player_history_fixture_lookback,
-                            "status": "FT",
-                        },
-                    )
+                    _history_to = datetime.now(timezone.utc).date()
+                    _history_from = _history_to - timedelta(days=365 * 3)
+                    try:
+                        team_fixtures_raw = await api_football_request(
+                            "fixtures",
+                            {
+                                "team": actual_team_id,
+                                "from": _history_from.isoformat(),
+                                "to": _history_to.isoformat(),
+                                "status": "FT",
+                            },
+                        )
+                    except Exception as _fixture_pool_err:
+                        print(
+                            f"[API-DIRECT] {req.playerName}: current fixture "
+                            f"pool failed: {type(_fixture_pool_err).__name__}"
+                        )
+                        team_fixtures_raw = []
                     if not team_fixtures_raw:
                         print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
-                        return collected
-                    print(
-                        f"[API-DIRECT] {req.playerName}: "
-                        f"{len(team_fixtures_raw)} team fixtures from API "
-                        f"(target={_player_history_fixture_lookback})"
-                    )
-                    # Write-back: cache for next prediction on same team
-                    import time as _t3
-                    try:
-                        await db.team_fixture_history.update_one(
-                            {"teamId": actual_team_id},
-                            {"$set": {
-                                "teamId": actual_team_id,
-                                "fixtures": team_fixtures_raw,
-                                "_ts": _t3.time(),
-                                "_dt": datetime.now(timezone.utc),
-                            }},
-                            upsert=True
+                    else:
+                        print(
+                            f"[API-DIRECT] {req.playerName}: "
+                            f"{len(team_fixtures_raw)} team fixtures from API "
+                            f"(date window={_history_from.isoformat()}.."
+                            f"{_history_to.isoformat()}, target="
+                            f"{_player_history_fixture_lookback})"
                         )
-                    except Exception as _ce:
-                        pass  # non-fatal — prediction continues
+                        # Write-back: cache for next prediction on same team
+                        import time as _t3
+                        try:
+                            await db.team_fixture_history.update_one(
+                                {"teamId": actual_team_id},
+                                {"$set": {
+                                    "teamId": actual_team_id,
+                                    "fixtures": team_fixtures_raw,
+                                    "_ts": _t3.time(),
+                                    "_dt": datetime.now(timezone.utc),
+                                }},
+                                upsert=True
+                            )
+                        except Exception as _ce:
+                            pass  # non-fatal — prediction continues
 
                 # A knockout prediction needs enough equivalent knockout history
                 # to be useful across seasons. The normal "last 40" team feed is
@@ -5389,6 +5401,38 @@ async def predict(req: PredictionRequest):
                 and bool(player_venue)
                 and (_venue_history_sample or 0) < _VENUE_HISTORY_TARGET
             )
+            _model_history_logs = (
+                [
+                    _log for _log in player_game_logs
+                    if _log.get("venue") == player_venue
+                    and _log.get(target_field) is not None
+                ]
+                if req.sport == "soccer"
+                and player_venue
+                and not _venue_history_fallback
+                else [
+                    _log for _log in player_game_logs
+                    if _log.get(target_field) is not None
+                ]
+            )
+            _model_history_values = [
+                _log.get(target_field) for _log in _model_history_logs
+            ]
+
+            def _hit_rate_packet(_values):
+                if not _values or not req.line:
+                    return None
+                _over_hits = sum(1 for _value in _values if _value > req.line)
+                _under_hits = sum(1 for _value in _values if _value < req.line)
+                _push_hits = len(_values) - _over_hits - _under_hits
+                return {
+                    "overHits": _over_hits,
+                    "underHits": _under_hits,
+                    "pushHits": _push_hits,
+                    "overPct": round(_over_hits / len(_values) * 100, 1),
+                    "underPct": round(_under_hits / len(_values) * 100, 1),
+                    "total": len(_values),
+                }
 
             game_log_summary = {
                 "games": _history_view_logs,
@@ -5418,8 +5462,17 @@ async def predict(req: PredictionRequest):
                         else "full_history_fallback"
                     ),
                     "fallback": "full_verified_history" if _venue_history_fallback else None,
+                    "modelScope": (
+                        "full_verified_history"
+                        if _venue_history_fallback
+                        else "selected_venue"
+                    ),
+                    "modelSampleSize": len(_model_history_values),
                 },
             }
+            _model_hit_rates = _hit_rate_packet(_model_history_values)
+            if _model_hit_rates:
+                game_log_summary["modelHitRates"] = _model_hit_rates
             if values:
                 game_log_summary["rawAvg"] = round(sum(values) / len(values), 2)
                 game_log_summary["rawMin"] = min(values)
@@ -5478,6 +5531,7 @@ async def predict(req: PredictionRequest):
                     "underPct": round(under_hits / len(_all_history_values) * 100, 1),
                     "total": len(_all_history_values),
                 }
+                game_log_summary["archiveHitRates"] = game_log_summary["hitRates"]
 
             # ── Annotate each game log with opponent league rank ────────────────
             # Build a quick lookup: lowercased team name → rank from standings.
@@ -10145,6 +10199,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 prediction["lineDeviationBand"]    = _dev_band
                 prediction["lineDeviationPct"]     = _dev_pct
                 prediction["lineDeviationHitRate"] = _dev_hit_rate
+                prediction["lineDeviationHitRateN"] = _dev_n
 
                 # Apply confidence adjustment for non-aligned, against-book bands
                 if _dev_against and _dev_band not in ("aligned",) and abs(_dev_delta) >= 2:
@@ -10168,6 +10223,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     prediction["lineDeviationBand"] = _dev_band
                     prediction["lineDeviationPct"]  = _dev_pct
                     prediction["lineDeviationHitRate"] = _dev_hit_rate
+                    prediction["lineDeviationHitRateN"] = _dev_n
 
                     if abs(_adj_dev - _pre_dev) >= 1:
                         print(f"[DEV GUARD] {req.playerName} {rec.upper()} {req.propType}: "
