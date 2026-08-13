@@ -1,7 +1,9 @@
 import os
+import logging
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, Query, HTTPException, Body
+from fastapi import FastAPI, Query, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, OWNER_EMAILS, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
 # ── Create App ──
@@ -14,6 +16,68 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Prediction routes depend on provider data and several optional enrichment
+# layers.  An unexpected exception in one of those layers must not become an
+# opaque 500 for a paying user.  The prediction clients already understand a
+# successful response containing an `error` field, so keep that contract at
+# this boundary while preserving the real traceback in backend logs.
+_prediction_guard_log = logging.getLogger("prediction_guard")
+
+
+def _is_prediction_request(request: Request) -> bool:
+    path = request.url.path.rstrip("/")
+    return path == "/api/scan-prop" or (
+        path.startswith("/api/") and path.endswith("/predict")
+    )
+
+
+@app.middleware("http")
+async def prediction_failure_guard(request: Request, call_next):
+    if not _is_prediction_request(request):
+        return await call_next(request)
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        _prediction_guard_log.exception(
+            "[PREDICTION GUARD] %s %s failed before a response: %s",
+            request.method,
+            request.url.path,
+            exc,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "error": (
+                    "Prediction temporarily unavailable while provider data "
+                    "is refreshing. Please try again in a moment."
+                ),
+                "retryable": True,
+            },
+        )
+
+    # Some handlers convert unexpected failures into an HTTP 5xx response
+    # rather than raising. Normalize those too so every prediction client
+    # receives the same structured, retryable contract.
+    if response.status_code >= 500:
+        _prediction_guard_log.error(
+            "[PREDICTION GUARD] %s %s returned HTTP %s",
+            request.method,
+            request.url.path,
+            response.status_code,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "error": (
+                    "Prediction temporarily unavailable while provider data "
+                    "is refreshing. Please try again in a moment."
+                ),
+                "retryable": True,
+            },
+        )
+    return response
 
 # ── Import and include routers ──
 from routes.auth import router as auth_router

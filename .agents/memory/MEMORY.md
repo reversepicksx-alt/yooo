@@ -1,4 +1,5 @@
 - [Evidence-quality gate](evidence-quality-gate.md) — post-projection layer caps confidence and converts thin edges to PASS; missing optional feeds are neutral; real log count may undercount in quota-exhausted mode (logs need targetStat or prop-specific field).
+- [Prediction failure contract](prediction-failure-contract.md) — unexpected provider/enrichment failures return a structured retryable result instead of an opaque 5xx to users.
 - [MongoDB cache quota recovery](mongodb-cache-quota-recovery.md) — drop only regenerable cache collections; durable saved identities can restore search after cache cleanup.
 - [Squad sync name clobber](squad-sync-name-clobber.md) — squad re-sync delete+reinsert overwrites enriched full names with abbreviated API names, silently breaking multi-word search; all name writers must keep the longer existing name.
 - [Projection line-anchor bug](projection-line-anchor.md) — projectedValue showed line±0.5 (not real Bayesian) whenever CONSISTENCY GUARD or BAYESIAN TRUTH flipped direction. Fix: use real_bayes["posteriorMean"] in both overrides.

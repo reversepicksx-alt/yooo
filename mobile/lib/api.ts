@@ -18,6 +18,8 @@ const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/pred
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
+const isPredictionPath = (endpoint: string) =>
+  endpoint === '/api/scan-prop' || (endpoint.startsWith('/api/') && endpoint.endsWith('/predict'));
 // Provider-backed player searches can take several seconds on mobile Safari,
 // especially when the MLB/NFL provider has to warm its cache. Do not turn a
 // slow provider into a false "no results" state in the universal search.
@@ -116,7 +118,9 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
     } else if (resp.status === 403) {
       message = 'Predictions require an active subscription. Tap Account to manage your plan.';
     } else if (resp.status >= 500) {
-      message = `Server error (${resp.status}). Please try again.`;
+      message = isPredictionPath(endpoint)
+        ? 'Prediction temporarily unavailable while provider data is refreshing. Please try again in a moment.'
+        : `Server error (${resp.status}). Please try again.`;
     } else {
       message = `Request failed (${resp.status}).`;
     }
