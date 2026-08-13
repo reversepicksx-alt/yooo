@@ -164,6 +164,80 @@ def _bdl_live_lock(pick_id: str) -> aio.Lock:
 
 router = APIRouter(prefix="/api", tags=["picks"])
 
+# My Picks renders compact cards and fetches full analysis on demand.  Do not
+# send the historical analysis blobs, player logs, or cached provider payloads
+# with every list refresh: one owner account can legitimately have thousands
+# of settled picks, and the full documents make the web response too large for
+# the mobile proxy/browser timeout.
+_PICKS_LIST_PROJECTION = {
+    "_id": 0,
+    "pickId": 1,
+    "trackingId": 1,
+    "email": 1,
+    "sport": 1,
+    "playerId": 1,
+    "playerName": 1,
+    "teamId": 1,
+    "teamName": 1,
+    "opponentId": 1,
+    "opponentName": 1,
+    "leagueId": 1,
+    "leagueName": 1,
+    "fixtureId": 1,
+    "fixtureDate": 1,
+    "matchDate": 1,
+    "timestamp": 1,
+    "createdAt": 1,
+    "settledAt": 1,
+    "propType": 1,
+    "line": 1,
+    "projection": 1,
+    "projectedValue": 1,
+    "preMatchProjection": 1,
+    "recommendation": 1,
+    "passLeaning": 1,
+    "confidence": 1,
+    "confidenceScore": 1,
+    "preMatchConfidenceScore": 1,
+    "confidenceLevel": 1,
+    "liveConfidenceScore": 1,
+    "liveConfidenceLevel": 1,
+    "status": 1,
+    "matchStatus": 1,
+    "result": 1,
+    "actualValue": 1,
+    "minutesPlayed": 1,
+    "voidReason": 1,
+    "correctedManually": 1,
+    "settlementSource": 1,
+    "settlementReview": 1,
+    "hiddenFromUser": 1,
+    "settlementDelayed": 1,
+    "venue": 1,
+    "position": 1,
+    "playerIsHome": 1,
+    "homeTeam": 1,
+    "awayTeam": 1,
+    "finalHomeGoals": 1,
+    "finalAwayGoals": 1,
+    "homePoss": 1,
+    "awayPoss": 1,
+    "oppAvgPoss": 1,
+    "currentValue": 1,
+    "elapsed": 1,
+    "period": 1,
+    "matchScore": 1,
+    "pace": 1,
+    "hitPct": 1,
+    "paceMismatch": 1,
+    "paceWarning": 1,
+    "liveGaussian": 1,
+    "managerContext": 1,
+    "managerChangedAfterPick": 1,
+    "ownerPlayerPhoto": 1,
+    "ownerTeamLogo": 1,
+}
+
 
 def _fixture_contains_teams(fixture: dict, team_id: int, opponent_id: int) -> bool:
     home_id = (fixture.get("teams", {}).get("home", {}) or {}).get("id")
@@ -1155,7 +1229,7 @@ async def list_picks(req: GetPicksRequest):
     try:
         picks = await db.picks.find(
             {"email": requester_email},
-            {"_id": 0},
+            _PICKS_LIST_PROJECTION,
         ).sort("timestamp", -1).to_list(None)
     except Exception as _read_exc:
         _atlas_read_blocked = True

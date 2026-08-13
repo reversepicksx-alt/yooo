@@ -19,6 +19,11 @@ from routes.stripe_pay import checkout_idempotency_key, find_open_stripe_subscri
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+# Atlas free-tier storage limit used by the owner-only health card.  Keep this
+# configurable for deployments on a different plan, but always define a
+# usable default so the health endpoint cannot crash the analytics screen.
+_ATLAS_FREE_TIER_LIMIT_MB = float(os.environ.get("ATLAS_FREE_TIER_LIMIT_MB", "512"))
+
 
 def _mask(val: str) -> str:
     if not val or len(val) < 8:

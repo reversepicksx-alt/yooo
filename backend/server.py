@@ -771,9 +771,19 @@ async def owner_analytics(payload: dict = Body(...)):
     # Authentication identifies who may view this private system report.  It
     # must not scope the data to that person's picks: ReversePicks calibration
     # is learned from the entire settled soccer population.
+    # Older saved soccer picks predate the normalized sport field and have
+    # either no sport key or an empty value.  They are still part of the
+    # soccer scorecard; requiring an exact `sport="soccer"` match makes the
+    # owner dashboard report zero even while the settled-pick ledger contains
+    # thousands of rows.
     settled_filter = {
-        "sport": "soccer",
         "status": "settled",
+        "$or": [
+            {"sport": "soccer"},
+            {"sport": {"$exists": False}},
+            {"sport": None},
+            {"sport": ""},
+        ],
     }
     raw_rows = await db.picks.find(
         settled_filter,
