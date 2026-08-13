@@ -1626,7 +1626,9 @@ export interface Pick {
   playerName: string;
   playerId?: number;
   teamName?: string;
+  teamId?: number;
   opponentName?: string;
+  opponentId?: number;
   propType: string;
   line: number;
   projection?: number;
@@ -1888,8 +1890,15 @@ export async function getMatchups(email: string, token: string): Promise<{
   const picks = (resp.picks || []).map(p => ({
     pickId: (p.pickId as string) || '',
     playerName: (p.playerName as string) || '',
+    playerId: (() => {
+      const value = p.playerId;
+      const numeric = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+    })(),
     teamName: p.teamName as string,
+    teamId: (p.teamId as number) ?? undefined,
     opponentName: p.opponentName as string,
+    opponentId: (p.opponentId as number) ?? undefined,
     propType: (p.propType as string) || '',
     line: (p.line as number) || 0,
     position: (p.position as string) || undefined,
@@ -1911,6 +1920,9 @@ export async function getMatchups(email: string, token: string): Promise<{
     pushes: (p.pushes as number) || 0,
     dnps: (p.dnps as number) || 0,
     winRate: (p.winRate as number) || 0,
+    ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || undefined,
+    ownerTeamLogo: (p.ownerTeamLogo as string) || undefined,
+    ownerOpponentLogo: (p.ownerOpponentLogo as string) || undefined,
   }));
   const options = resp.options || {};
   return {

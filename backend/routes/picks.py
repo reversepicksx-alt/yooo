@@ -1071,6 +1071,7 @@ async def _discard_dnp_pick(
 async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
     """Attach player photo and team crest URLs for the owner account only."""
     from config import OWNER_EMAILS
+    requester_email = str(requester_email or "").lower().strip()
     if requester_email not in OWNER_EMAILS:
         return
     player_ids = {p.get("playerId") for p in picks if p.get("playerId")}
@@ -1249,11 +1250,18 @@ async def list_picks(req: GetPicksRequest):
         and not _cached_has_active
         and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL
     ):
+        cached_visible = [
+            p for p in _cached["picks"]
+            if str(p.get("result") or "").lower() != "dnp"
+        ]
+        # Older in-memory snapshots were created before owner media was
+        # attached. Enrich that snapshot once before returning it; otherwise
+        # the short-circuit permanently hides media until the TTL expires.
+        if requester_email in OWNER_EMAILS and not _cached.get("ownerMediaEnriched"):
+            await _enrich_owner_media(cached_visible, requester_email)
+            _cached["ownerMediaEnriched"] = True
         return {
-            "picks": [
-                p for p in _cached["picks"]
-                if str(p.get("result") or "").lower() != "dnp"
-            ]
+            "picks": cached_visible
         }
 
     # Always fetch only the requester's own picks for the My Picks / Live / History UI.
@@ -1301,8 +1309,17 @@ async def list_picks(req: GetPicksRequest):
     # run the existing repair/live/final-refresh pipeline.  The client's
     # existing poll then receives the updated result.
     if requester_email in _picks_refresh_inflight and not _picks_list_background.get():
+        immediate_picks = [
+            p for p in picks
+            if p.get("hiddenFromUser") is not True
+            and str(p.get("result") or "").lower() != "dnp"
+        ]
+        # The first request intentionally returns before settlement refresh
+        # finishes. Do not let that fast path also bypass owner media.
+        if requester_email in OWNER_EMAILS:
+            await _enrich_owner_media(immediate_picks, requester_email)
         return {
-            "picks": [p for p in picks if p.get("hiddenFromUser") is not True],
+            "picks": immediate_picks,
             "settlementRefreshing": True,
         }
     if requester_email not in _picks_refresh_inflight:
@@ -1323,8 +1340,15 @@ async def list_picks(req: GetPicksRequest):
                 _picks_refresh_inflight.discard(requester_email)
 
         aio.create_task(_run_pick_refresh())
+        immediate_picks = [
+            p for p in picks
+            if p.get("hiddenFromUser") is not True
+            and str(p.get("result") or "").lower() != "dnp"
+        ]
+        if requester_email in OWNER_EMAILS:
+            await _enrich_owner_media(immediate_picks, requester_email)
         return {
-            "picks": [p for p in picks if p.get("hiddenFromUser") is not True],
+            "picks": immediate_picks,
             "settlementRefreshing": True,
         }
 
@@ -2068,6 +2092,7 @@ async def list_picks(req: GetPicksRequest):
     _picks_list_cache[requester_email] = {
         "ts": _time_mod.monotonic(),
         "picks": visible_picks,
+        "ownerMediaEnriched": requester_email in OWNER_EMAILS,
     }
     _is_owner = requester_email in OWNER_EMAILS or requester_email == OWNER_EMAIL
     response: dict = {"picks": visible_picks}
@@ -2109,8 +2134,11 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         "_id": 0,
         "pickId": 1,
         "playerName": 1,
+        "playerId": 1,
         "teamName": 1,
+        "teamId": 1,
         "opponentName": 1,
+        "opponentId": 1,
         "position": 1,
         "role": 1,
         "propType": 1,
@@ -2164,8 +2192,11 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         key = (player, opponent, prop)
         g = groups.setdefault(key, {
             "playerName": player,
+            "playerId": None,
             "opponentName": opponent,
+            "opponentId": None,
             "propType": prop,
+            "teamId": None,
             "position": "",
             "leagueName": "",
             "leagueId": 0,
@@ -2191,6 +2222,12 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
             g["recommendations"].append(rec)
         if p.get("position"):
             g["position"] = p["position"]
+        if p.get("playerId") is not None:
+            g["playerId"] = p["playerId"]
+        if p.get("teamId") is not None:
+            g["teamId"] = p["teamId"]
+        if p.get("opponentId") is not None:
+            g["opponentId"] = p["opponentId"]
         if _league_label(p) != "Unknown":
             g["leagueName"] = _league_label(p)
             g["leagueId"] = p.get("leagueId") or 0
@@ -2225,7 +2262,10 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         matchup = {
             "pickId": f"mu-{'-'.join(str(k).replace(' ', '_') for k in key)}",
             "playerName": g["playerName"],
+            "playerId": g["playerId"],
             "opponentName": g["opponentName"],
+            "opponentId": g["opponentId"],
+            "teamId": g["teamId"],
             "propType": g["propType"],
             "line": round(avg_line, 1),
             "actualValue": round(avg_actual, 1) if avg_actual is not None else None,
