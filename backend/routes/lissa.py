@@ -219,51 +219,34 @@ def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
     if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa")):
         return "I'm Lissa — Reverse Picks' owner-only assistant. You can call me Lissa or Lisa."
 
-    # Capabilities
-    if any(term in lowered for term in ("what can you do", "capabilities", "what do you know", "help me", "how do i use")):
-        return (
-            "When you have a pick analysis open, ask me things like 'why the over,' 'explain this pick,' "
-            "or 'what's the projection.' I can also answer questions about your saved ledger — "
-            "hit rate, specific players, patterns. And I can look up upcoming fixtures if you name a team. "
-            "I'm read-only; I can't change picks or settle results."
-        )
-
-    # App description
-    if any(term in lowered for term in ("what is reverse picks", "what is this app", "what does this app do")):
-        return (
-            "Reverse Picks is a structured player-props analysis app. "
-            "It builds a verified matchup picture — player form, opponent data, odds, tactical role — "
-            "and uses that to project a direction with an explicit evidence trail."
-        )
-
     # Screen / page questions — broad pattern match
     screen_match = (
         _SCREEN_QUESTION_RE.search(lowered)
-        or any(term in lowered for term in ("what page", "what screen", "where am i", "what tab"))
+        or any(term in lowered for term in ("what page", "what screen", "where am i", "what tab",
+                                            "what can you see", "what do you see", "can you see"))
     )
     if screen_match:
         ctx = context if isinstance(context, dict) else {}
         screen = ctx.get("screen") if isinstance(ctx, dict) else {}
         name = str(screen.get("name") or "Reverse Picks") if isinstance(screen, dict) else "Reverse Picks"
 
-        # If a pick card is open in My Picks, mention it briefly — don't launch into analysis
+        # If a pick is open on any screen, lead with the player — don't just name the tab
         pick = ctx.get("pick") if isinstance(ctx, dict) else None
-        if isinstance(pick, dict) and pick.get("playerName") and name == "My Picks":
+        if isinstance(pick, dict) and pick.get("playerName"):
             player = str(pick.get("playerName") or "a player")
             prop = _display_prop(pick.get("propType"))
             rec = str(pick.get("recommendation") or "").upper()
             line = _format_number(pick.get("line"))
+            proj = _format_number(pick.get("projectedValue") or pick.get("projection"))
             line_str = f" {line}" if line else ""
-            rec_str = f", leaning {rec}" if rec else ""
+            proj_str = f", projection {proj}" if proj else ""
+            rec_str = f" — {rec}" if rec else ""
             return (
-                f"You're on My Picks. {player}'s {prop}{line_str} analysis is open{rec_str}. "
-                f"Ask me to explain the pick or walk through the evidence."
+                f"You're on {name}. I can see {player}'s {prop}{line_str} analysis{proj_str}{rec_str}. "
+                f"Ask me anything about it."
             )
 
-        description = str(screen.get("description") or "").strip() if isinstance(screen, dict) else ""
-        if description:
-            return f"You're on {name}. {description}"
-        return f"You're on {name}."
+        return f"You're on {name}. I can see whatever's on your screen — just ask."
 
     return None
 
@@ -842,18 +825,22 @@ async def _build_gemini_prompt(
         convo_block = "\n--- RECENT CONVERSATION ---\n" + "\n".join(lines) + "\n--- END ---"
 
     return (
-        "Your name is Lissa. You're the AI voice inside Reverse Picks, talking directly to the owner.\n"
-        "The owner's name is Reverse. Use it naturally — not at the start of every single sentence, just when it fits.\n\n"
+        "You are Lissa. You're the AI voice inside Reverse Picks — the owner's personal assistant.\n"
+        "The owner's name is Reverse.\n\n"
+        "YOU HAVE FULL VISIBILITY of whatever is on Reverse's screen right now — "
+        "the prediction analysis, the player data, the model factors, the pick ledger, everything below.\n"
+        "Never tell him your access is limited. Never say you can't see something that's in the data below. "
+        "If the data is there, use it. If it genuinely isn't, say what's missing in one short sentence.\n\n"
         "HOW YOU TALK:\n"
-        "- Sound like a smart friend who actually knows the numbers, not a customer support bot.\n"
-        "- Short sentences. Contractions. Real words. Never say 'Certainly', 'Of course', 'I understand that', or 'Great question'.\n"
-        "- Don't acknowledge the question — just answer it. Lead with the actual answer in the first sentence.\n"
-        "- Use the player's real name. Use the actual numbers. Be specific.\n"
-        "- Two or three short paragraphs max. Never use bullet points or headings.\n"
-        "- If evidence is thin or missing, say that plainly in one sentence and move on.\n"
-        "- Never promise a result. Never give financial advice. You can't change picks or run new predictions.\n\n"
-        f"Reverse is currently on: {screen_name}\n"
-        f"His ledger: {ledger_line}\n"
+        "- Talk like a sharp friend who knows the numbers inside out. Direct. Confident. Real.\n"
+        "- Short sentences. Contractions. No filler words.\n"
+        "- Never open with 'Certainly', 'Of course', 'Great question', 'I understand', or any acknowledgement.\n"
+        "- First sentence = the actual answer. Everything else is supporting detail.\n"
+        "- Use the player's real name. Quote the actual numbers from the data.\n"
+        "- Two or three short paragraphs max. No bullet points. No headings. No markdown.\n"
+        "- If asked what you can see: describe what's actually in the data below, specifically.\n\n"
+        f"SCREEN: {screen_name}\n"
+        f"LEDGER: {ledger_line}\n"
         f"{pick_block}"
         f"{settled_block}"
         f"{convo_block}\n\n"
