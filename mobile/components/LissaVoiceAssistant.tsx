@@ -37,18 +37,15 @@ function stripWakeWord(text: string): string {
 function immediateResponse(question: string): string | null {
   const normalized = question
     .toLowerCase()
-    .replace(/[’']/g, '')
+    .replace(/['']/g, '')
     .replace(/[?!.,]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (
-    /\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b/.test(normalized)
-    || /^(hello|hi|hey)( lissa)?$/.test(normalized)
+    /\b(can you hear me|do you hear me|are you there|are you listening)\b/.test(normalized)
+    || /^(hello|hi|hey)( lissa| lisa)?$/.test(normalized)
   ) {
-    return 'Yes, Reverse, I can hear you. I am listening and ready to answer.';
-  }
-  if (/\bwhat are you listening for\b/.test(normalized)) {
-    return 'Reverse, I am listening for your questions about the screen and the prediction you are viewing.';
+    return "Yeah, I'm here.";
   }
   return null;
 }
@@ -70,7 +67,7 @@ function speakAndWait(text: string, onStart?: () => void, voice?: string): Promi
     const timeout = setTimeout(() => finish(false), Math.min(20_000, Math.max(1_500, text.length * 95)));
     Speech.speak(text, {
       language: 'en-US',
-      rate: 0.94,
+      rate: 1.08,
       pitch: 1.0,
       ...(voice ? { voice } : {}),
       onStart: () => {
@@ -257,29 +254,9 @@ export default function LissaVoiceAssistant({
   };
 
   const primeSpeech = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setVoiceMode('speaking');
-    stopListening(false);
-    try {
-      await Speech.stop();
-      const spoke = await speakAndWait(
-        'I am Lissa, your Reverse Picks assistant. I am ready, Reverse.',
-        () => setSpeechReady(true),
-        voiceRef.current,
-      );
-      setSpeechReady(spoke);
-    } catch {
-      setSpeechReady(false);
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-      if (armedRef.current) {
-        setVoiceMode('wake');
-        scheduleRestart(350);
-      }
-    }
+    // Silent — no intro announcement. Tap gesture unlocks iOS audio session;
+    // Lissa's first spoken answer confirms it's working.
+    setSpeechReady(true);
   };
 
   useEffect(() => {

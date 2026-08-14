@@ -1,10 +1,50 @@
 ---
 name: Lissa voice lifecycle
-description: Rules for keeping the owner-only voice layer continuously available without self-triggering or freezing.
+description: Architecture decisions for Lissa's activation, context wiring, AI path, and prompt design
 ---
 
-The voice layer must supervise recognition rather than trust one continuous session: iOS and Android can end a session after a final result, and transient busy/network/audio errors are recoverable. Do not restart recognition until spoken output has emitted `onDone`/`onStopped`, otherwise Lissa can capture her own answer or enter a busy loop. The message route must also cap optional AI generation and return the deterministic answer when the provider stalls. Browser speech synthesis may require a user-gesture unlock even after microphone permission is granted. Tab-local analysis context must be explicitly cleared or ignored outside My Picks because Expo tabs remain mounted. The global assistant must require the wake word; auto-submitting arbitrary final recognition fragments causes unsolicited answers. Treat the interaction as explicit states: wake, bounded question window, thinking, speaking, then wake again. For a domain assistant, recent-turn memory should clarify follow-ups, while the current structured app context remains the source of truth.
+# Lissa Voice Lifecycle
 
-**Why:** Native speech recognition sessions are segmented and speech synthesis is asynchronous even when its API call returns immediately.
+## Core architecture (as of 2026-08-14)
+- **Activation**: Tap → silent (no intro speech). `primeSpeech()` just sets `setSpeechReady(true)` without speaking. iOS audio session primed by tap gesture; first Lissa answer unlocks TTS.
+- **Wake word**: "Lissa" or "Lisa" detected by frontend regex. `requireWakeWord=true` on global instance.
+- **Speech rate**: 1.08 (up from 0.94). Sounds faster and more natural.
+- **Presence check**: "are you there/hello" → instant "Yeah, I'm here." (no backend call).
 
-**How to apply:** Keep one global owner-only recognizer in the authenticated shell, guard starts with refs/timers, use the latest recognition result rather than index 0, require “Lissa” or “Lisa” before submitting a question, expire an unanswered wake window quickly, reserve the visible control for permission recovery rather than normal stop/start interaction, provide a tap-to-unlock spoken welcome on web, pass only the active tab's context, and keep browser response latency bounded independently of the general prediction timeout.
+## Context wiring — all tabs
+Every tab feeds `LissaScreenContext` so Lissa sees the full screen:
+- **Predict** (`scan.tsx`): sets context when `phase === 'result'` with full `predictionState` (pick, analysis, factors, ledger)
+- **My Picks** (`picks.tsx`): sets context when analysis modal is open
+- **Community** (`community.tsx`): sets context with last 6 messages, participantCount, onlineCount
+- **Account** (`account.tsx`): sets context with accountType, isOwner, isLifetime, subscriptionStatus
+- **`_layout.tsx`**: `effectiveContext = { screen: screenContext, ...context }` — always merges; no tab filtering
+
+## Backend screen guard
+`_analysis_packet()` accepts screens: `{"my picks", "analysis", "pick analysis", "predict"}`. Other screens pass raw context fields (feed, accountType) directly to `_build_gemini_prompt`.
+
+## AI path (Gemini-first)
+1. Instant fast response (greeting/identity/screen-name) — no I/O
+2. Match/fixture search (5.5s timeout)
+3. `_smart_primary_response` — Gemini with full context (14s timeout)
+4. Deterministic fallback: `_analysis_fallback` (pick open) or `_match_player` + `_summary_text`
+
+## Picks cache
+`_load_owner_picks_cached()` caches Atlas reads for 30s. Reduces Lissa latency for repeated questions.
+
+## Frontend timeout
+`LISSA_TIMEOUT_MS = 22_000` in `mobile/lib/api.ts`. Atlas + AI can take 12-15s.
+
+## Prompt design rules (anti-bot)
+- Never say "Certainly", "Of course", "Great question", "I understand"
+- Never mention access limitations
+- First sentence = direct answer
+- Use real player names and actual numbers
+- Two or three short paragraphs max
+- Soccer intelligence block injected into every Gemini call
+
+**Why:** The default Gemini output sounds like customer support. Explicit instructions produce natural speech.
+
+## Error handling
+- Timeout → spoken: "I took too long to respond. Try again."
+- Unavailable → spoken: "Lissa is temporarily unavailable. Try again in a moment."
+- Errors are always spoken AND shown as text.

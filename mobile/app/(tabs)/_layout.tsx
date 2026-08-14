@@ -46,11 +46,9 @@ function GlobalLissa() {
             ? 'The owner account, subscription, and profile settings.'
             : 'The main Reverse Picks workspace.',
   };
-  // Predict (active prediction result) and My Picks (saved pick analysis) both
-  // carry valid pick context. Community and Account carry screen name only.
-  const effectiveContext = (screenName === 'My Picks' || screenName === 'Predict')
-    ? { screen: screenContext, ...context }
-    : { screen: screenContext };
+  // Every tab can contribute context via LissaScreenContext.setContext().
+  // Always merge whatever the active tab has set — Lissa sees the full picture.
+  const effectiveContext = { screen: screenContext, ...context };
 
   return (
     <View pointerEvents="box-none" style={styles.lissaOverlay}>

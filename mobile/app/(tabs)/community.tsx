@@ -12,6 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLissaScreenContext } from '@/contexts/LissaScreenContext';
 import {
   CommunityMessage,
   fetchCommunityMessages,
@@ -307,6 +308,7 @@ function CommunityScreen() {
   const lastTsRef = useRef<string | null>(null);
   const inputRef = useRef<TextInput>(null);
 
+  const { setContext: setLissaContext } = useLissaScreenContext();
   const [messages, setMessages] = useState<CommunityMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -322,6 +324,21 @@ function CommunityScreen() {
   const [showActiveUsers, setShowActiveUsers] = useState(false);
   const [mentionResults, setMentionResults] = useState<Participant[]>([]);
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
+
+  // Give Lissa visibility into the community feed
+  React.useEffect(() => {
+    const recent = messages.slice(-6).map((m: any) => {
+      const sender = m.senderName || m.username || 'Member';
+      const text = (m.text || m.content || '').slice(0, 120);
+      return `${sender}: ${text}`;
+    }).filter(Boolean);
+    setLissaContext({
+      feed: recent,
+      participantCount: participants.length,
+      onlineCount,
+    } as any);
+    return () => setLissaContext(undefined);
+  }, [messages, participants.length, onlineCount, setLissaContext]);
 
   // ── Data loading ──────────────────────────────────────────────────────────
 

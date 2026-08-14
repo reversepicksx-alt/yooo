@@ -117,6 +117,21 @@ async def _load_owner_picks(limit: int = 250) -> list[dict[str, Any]]:
         raise HTTPException(status_code=503, detail="Lissa could not read the owner ledger right now.")
 
 
+import time as _time
+_picks_cache: dict[str, tuple[list, float]] = {}
+_PICKS_CACHE_TTL = 30.0  # seconds
+
+
+async def _load_owner_picks_cached() -> list[dict[str, Any]]:
+    """Load picks with a 30-second in-memory cache so repeated Lissa questions don't hammer Atlas."""
+    cached = _picks_cache.get(OWNER_EMAIL)
+    if cached and (_time.monotonic() - cached[1]) < _PICKS_CACHE_TTL:
+        return cached[0]
+    picks = await _load_owner_picks()
+    _picks_cache[OWNER_EMAIL] = (picks, _time.monotonic())
+    return picks
+
+
 def _ledger_summary(picks: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {"HIT": 0, "MISS": 0, "PENDING": 0, "LIVE": 0, "PUSH": 0, "DNP": 0, "VOID": 0}
     sports: dict[str, int] = {}
@@ -824,25 +839,69 @@ async def _build_gemini_prompt(
             lines.append(f"Lissa: {t.get('assistant', '')[:300]}")
         convo_block = "\n--- RECENT CONVERSATION ---\n" + "\n".join(lines) + "\n--- END ---"
 
+    # Screen-specific context blocks
+    screen_lower = screen_name.lower()
+    extra_block = ""
+
+    # Community feed context
+    feed = context.get("feed") if isinstance(context, dict) else None
+    if isinstance(feed, list) and feed:
+        feed_lines = "\n".join(str(f) for f in feed[:6])
+        extra_block += f"\n--- COMMUNITY FEED (recent messages) ---\n{feed_lines}\n--- END ---"
+        online = context.get("onlineCount")
+        if online:
+            extra_block += f"\n{online} members currently online."
+
+    # Account context
+    acc_type = context.get("accountType") if isinstance(context, dict) else None
+    if acc_type:
+        is_owner = context.get("isOwner")
+        is_lifetime = context.get("isLifetime")
+        sub_status = context.get("subscriptionStatus")
+        acc_summary = f"Account type: {acc_type}"
+        if is_owner:
+            acc_summary += " (Owner — full access)"
+        elif is_lifetime:
+            acc_summary += " (Lifetime subscriber)"
+        if sub_status:
+            acc_summary += f" | Subscription detail: {str(sub_status)[:200]}"
+        extra_block += f"\n--- ACCOUNT ---\n{acc_summary}\n--- END ---"
+
     return (
-        "You are Lissa. You're the AI voice inside Reverse Picks — the owner's personal assistant.\n"
-        "The owner's name is Reverse.\n\n"
-        "YOU HAVE FULL VISIBILITY of whatever is on Reverse's screen right now — "
-        "the prediction analysis, the player data, the model factors, the pick ledger, everything below.\n"
-        "Never tell him your access is limited. Never say you can't see something that's in the data below. "
-        "If the data is there, use it. If it genuinely isn't, say what's missing in one short sentence.\n\n"
+        "You are Lissa — the owner's personal AI inside Reverse Picks.\n"
+        "The owner's name is Reverse. Use it naturally, like a friend would.\n\n"
+        "YOU SEE EVERYTHING on Reverse's screen right now. The data below is exactly what he's looking at.\n"
+        "Never say your access is limited. If data exists below, use it. If something genuinely isn't there, say so in one sentence and keep going.\n\n"
         "HOW YOU TALK:\n"
-        "- Talk like a sharp friend who knows the numbers inside out. Direct. Confident. Real.\n"
-        "- Short sentences. Contractions. No filler words.\n"
-        "- Never open with 'Certainly', 'Of course', 'Great question', 'I understand', or any acknowledgement.\n"
-        "- First sentence = the actual answer. Everything else is supporting detail.\n"
-        "- Use the player's real name. Quote the actual numbers from the data.\n"
-        "- Two or three short paragraphs max. No bullet points. No headings. No markdown.\n"
-        "- If asked what you can see: describe what's actually in the data below, specifically.\n\n"
+        "— Direct. Sharp. Like a friend who actually knows the game.\n"
+        "— Short sentences. Contractions. No padding.\n"
+        "— Never open with 'Certainly', 'Of course', 'Great question', or any acknowledgement. Just answer.\n"
+        "— First sentence = the actual answer. Then support it.\n"
+        "— Use real names and real numbers from the data. Be specific.\n"
+        "— Two or three short paragraphs max. No bullets. No headings. No markdown.\n"
+        "— If asked to explain what you see: describe it precisely — the player, prop, numbers, direction, key factors.\n\n"
+        "SOCCER ANALYSIS BRAIN:\n"
+        "You are deeply fluent in soccer props and tactics:\n"
+        "— PASS ATTEMPTS: possession teams 80–120 per game for midfielders, 40–70 for defenders, 30–60 for attackers. High press from opponent compresses this.\n"
+        "— SHOTS ON TARGET: front 3 average 1.5–3 SOT per game. Set-piece specialists inflate this.\n"
+        "— GOALS: 0.5 line = 'will this player score at all' — roughly 25–40% for a top forward, much less for defenders.\n"
+        "— KEY PASSES / ASSISTS: creative mids average 1–3 key passes; full-backs with offensive role inflate assists.\n"
+        "— CARDS: aggressive midfielders, defensive-role players in derbies or tight matches = higher card risk.\n"
+        "— SAVES: GK lines heavily dependent on expected opponent shots — xSOT is the key driver.\n"
+        "— xG (expected goals), xA (expected assists), PPDA (lower = more pressing intensity = opponent fewer passes).\n"
+        "— Formations: 4-3-3 (wide press), 4-2-3-1 (controlled), 3-5-2 (wing-heavy), 4-4-2 (direct), 5-3-2 (defensive).\n"
+        "— Position roles: GK (distribution), CB (aerial/clearances), LB/RB (overlaps/crosses), CDM (shield), CM (box-to-box), CAM (chance creation), LW/RW (dribbles/shots), CF/ST (goals/shots).\n"
+        "— Home/away splits matter heavily. Some teams flip style completely away (low block vs expansive home).\n"
+        "— H2H player history = how the player specifically performs against this opponent matters more than generic form.\n"
+        "— The app's 3-layer model: (1) Bayesian projection from recent logs + position baselines, (2) empirical calibration from historical HIT/MISS for that prop/player/venue, (3) AI tactical synthesis using opponent shape, press intensity, possession context.\n"
+        "— 'NO EDGE' means the projection gap is within noise. 'STRONG' = confident large gap with supporting evidence.\n"
+        "— HIST X%(N): X% of historical saved picks for this prop/direction HIT, from N samples. N<10 = thin evidence.\n"
+        "— OVER: model projects player will exceed the line. UNDER: model projects player will fall short.\n\n"
         f"SCREEN: {screen_name}\n"
         f"LEDGER: {ledger_line}\n"
         f"{pick_block}"
         f"{settled_block}"
+        f"{extra_block}"
         f"{convo_block}\n\n"
         f"Reverse says: {message}"
     )
@@ -908,10 +967,10 @@ async def lissa_message(req: LissaMessageRequest):
         )
         return await _finish_turn(req, session_id, response, "instant", _empty_summary())
 
-    # 4. Load durable context (picks + memory) in parallel
+    # 4. Load durable context (picks cached 30s + memory) in parallel
     try:
         picks, recent_turns = await aio.gather(
-            _load_owner_picks(),
+            _load_owner_picks_cached(),
             aio.wait_for(load_recent_turns(req.email, session_id), timeout=0.5),
             return_exceptions=True,
         )
