@@ -197,6 +197,7 @@ function AppBoot() {
         <Stack.Screen name="privacy" />
         <Stack.Screen name="dm" />
         <Stack.Screen name="dm-thread" />
+        <Stack.Screen name="lissa" options={{ headerShown: false }} />
       </Stack>
     </>
   );

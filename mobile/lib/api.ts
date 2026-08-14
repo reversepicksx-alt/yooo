@@ -14,7 +14,7 @@ const getApiBase = (): string => {
 };
 
 // Endpoints that involve structured synthesis — give them a generous timeout
-const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message'];
+const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview'];
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
@@ -136,6 +136,43 @@ export interface AuthResponse {
   email: string;
   session_token: string;
   access_type?: string;
+}
+
+export interface LissaSummary {
+  total: number;
+  settled: number;
+  hitRate: number | null;
+  counts: Record<string, number>;
+  sports: Record<string, number>;
+}
+
+export interface LissaResponse {
+  assistant: 'Lissa';
+  sessionId: string;
+  response?: string;
+  message?: string;
+  readOnly: boolean;
+  mode?: string;
+  summary: LissaSummary;
+}
+
+export async function startLissa(email: string, token: string): Promise<LissaResponse> {
+  return apiCall<LissaResponse>('/api/lissa/overview', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+}
+
+export async function sendLissaMessage(
+  email: string,
+  token: string,
+  sessionId: string,
+  message: string,
+): Promise<LissaResponse> {
+  return apiCall<LissaResponse>('/api/lissa/message', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, session_id: sessionId, message }),
+  });
 }
 
 export interface AccessCheckResponse {
