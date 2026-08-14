@@ -12,7 +12,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { useLissaScreenContext } from '@/contexts/LissaScreenContext';
 import { getUserProfile, setUsername, setProfileImage, getDmInbox } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
@@ -471,22 +470,10 @@ export default function AccountScreen() {
   // RevenueCat state (iOS native only)
   const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
 
-  const { setContext: setLissaContext } = useLissaScreenContext();
   const isStripeSub = session?.accessType?.toLowerCase().includes('stripe');
   const isLifetime = session?.accessType?.toLowerCase().includes('lifetime');
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
 
-  // Give Lissa visibility into the account screen
-  React.useEffect(() => {
-    setLissaContext({
-      accountType: session?.accessType || 'unknown',
-      email: session?.email || '',
-      isOwner,
-      isLifetime,
-      subscriptionStatus: subStatus ? JSON.stringify(subStatus) : null,
-    } as any);
-    return () => setLissaContext(undefined);
-  }, [session?.accessType, session?.email, isOwner, isLifetime, subStatus, setLissaContext]);
 
   // On iOS native: subscription section is always IAP-driven
   const isIOSNative = Platform.OS === 'ios';

@@ -3849,41 +3849,41 @@ async def predict(req: PredictionRequest):
         # Bound sources independently. A slow team-level enrichment must not
         # cancel the player's game logs, which are the primary Bayesian prior.
         required_wave2 = aio.gather(
-            _bounded_required(team_fixture_stats_task, "team fixture stats", 18),
-            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 18),
-            _bounded_required(player_game_logs_task, "player game logs", 60),
-            _bounded_required(situation_task, "match situation", 10),
+            _bounded_required(team_fixture_stats_task, "team fixture stats", 12),
+            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 12),
+            _bounded_required(player_game_logs_task, "player game logs", 18),
+            _bounded_required(situation_task, "match situation", 8),
             _bounded_required(
                 team_schedule_possession_task,
                 "team schedule possession",
-                18,
+                12,
             ),
             _bounded_required(
                 opponent_schedule_possession_task,
                 "opponent schedule possession",
-                18,
+                12,
             ),
             return_exceptions=True,
         )
         matchup_volume_wave = aio.gather(
-            _bounded_required(team_home_volume_task, "team home volume", 18),
-            _bounded_required(team_away_volume_task, "team away volume", 18),
-            _bounded_required(opponent_home_volume_task, "opponent home volume", 18),
-            _bounded_required(opponent_away_volume_task, "opponent away volume", 18),
+            _bounded_required(team_home_volume_task, "team home volume", 12),
+            _bounded_required(team_away_volume_task, "team away volume", 12),
+            _bounded_required(opponent_home_volume_task, "opponent home volume", 12),
+            _bounded_required(opponent_away_volume_task, "opponent away volume", 12),
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(statsbomb_task, return_exceptions=True)
         try:
-            required_results = await aio.wait_for(required_wave2, timeout=27)
+            required_results = await aio.wait_for(required_wave2, timeout=20)
         except aio.TimeoutError:
             required_results = [None] * 6
-            print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 27s for {req.playerName}")
+            print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 20s for {req.playerName}")
 
         try:
-            matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=22)
+            matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=14)
         except aio.TimeoutError:
             matchup_volume_results = [None] * 4
-            print(f"[MATCHUP VOLUME TIMEOUT] venue evidence exceeded 22s for {req.playerName}")
+            print(f"[MATCHUP VOLUME TIMEOUT] venue evidence exceeded 14s for {req.playerName}")
 
         try:
             optional_results = await aio.wait_for(optional_wave2, timeout=3)
@@ -4162,10 +4162,17 @@ async def predict(req: PredictionRequest):
                         f"fixtures by verified teamId={actual_team_id} "
                         f"(playerId={req.playerId})"
                     )
-                    _player_fixtures_raw = await api_football_request(
-                        "fixtures",
-                        {"team": actual_team_id, "last": 40, "status": "FT"},
-                    )
+                    try:
+                        _player_fixtures_raw = await aio.wait_for(
+                            api_football_request(
+                                "fixtures",
+                                {"team": actual_team_id, "last": 40, "status": "FT"},
+                            ),
+                            timeout=8,
+                        )
+                    except aio.TimeoutError:
+                        print(f"[PLAYER-DIRECT] {req.playerName}: club fixtures timed out after 8s")
+                        _player_fixtures_raw = []
                 if _player_fixtures_raw and actual_team_id:
                     # Keep the explicit team-ID guard even though the provider
                     # was queried by team. It protects against stale or
@@ -8405,29 +8412,40 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # season window broadens.
         if len(position_comparison) < 15 and safe_opp_id and not _is_bdl_league:
             _prior_season_rows = []
-            # A single or two-season lookback can still leave rare exact
-            # side-position cohorts thin (especially for LW/RW). Broaden the
-            # historical window before declaring the evidence limited, while
-            # preserving the same opponent, venue, minutes, and exact-position
-            # admission rules.
-            for _prior_season in range(CURRENT_SEASON - 1, CURRENT_SEASON - 8, -1):
+            # Fetch up to 4 prior seasons in parallel — sequential season fetches
+            # were a major prediction latency source (7 × ~1s = 7s). Capped at 4
+            # seasons which covers ~95% of position-cohort cases.
+            async def _fetch_prior_season(season: int):
                 try:
-                    _prior_raw = await api_football_request(
-                        "fixtures",
-                        {"team": safe_opp_id, "season": _prior_season},
+                    _raw = await aio.wait_for(
+                        api_football_request(
+                            "fixtures",
+                            {"team": safe_opp_id, "season": season},
+                        ),
+                        timeout=6,
                     )
-                    _prior_rows = _normalize_opponent_fixtures(_prior_raw)
-                    if _prior_rows:
-                        _prior_season_rows.extend(_prior_rows)
+                    rows = _normalize_opponent_fixtures(_raw)
+                    if rows:
                         print(
                             f"[POS COMP] Prior-season fallback: opponent={safe_opp_id} "
-                            f"season={_prior_season} fixtures={len(_prior_rows)}"
+                            f"season={season} fixtures={len(rows)}"
                         )
+                    return rows
                 except Exception as _prior_err:
                     print(
                         f"[POS COMP] Prior-season fallback failed for "
-                        f"{safe_opp_id}/{_prior_season}: {type(_prior_err).__name__}"
+                        f"{safe_opp_id}/{season}: {type(_prior_err).__name__}"
                     )
+                    return []
+
+            _prior_seasons = list(range(CURRENT_SEASON - 1, CURRENT_SEASON - 5, -1))
+            _prior_results = await aio.gather(
+                *[_fetch_prior_season(s) for s in _prior_seasons],
+                return_exceptions=True,
+            )
+            for _res in _prior_results:
+                if isinstance(_res, list):
+                    _prior_season_rows.extend(_res)
 
             if _prior_season_rows:
                 _existing_fixture_ids = {

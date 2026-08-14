@@ -31,7 +31,6 @@ import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, refreshPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { useLissaScreenContext } from '@/contexts/LissaScreenContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
@@ -1037,7 +1036,6 @@ const LEGACY_MODEL_FACTORS: AnalysisFactor[] = [
 export default function PicksScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout } = useAuth();
-  const { setContext: setLissaContext } = useLissaScreenContext();
   const qc = useQueryClient();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
@@ -1352,20 +1350,6 @@ export default function PicksScreen() {
     (analysisModal?.data as any)?.factorLedger
       ?? (analysisModal?.pick as any)?.factorLedger
   );
-  const activeLissaContext = useMemo(() => {
-    if (!isOwner || !analysisModal) return undefined;
-    return {
-      pick: analysisModal.pick as unknown as Record<string, unknown>,
-      analysis: (analysisModal.data ?? undefined) as Record<string, unknown> | undefined,
-      factors: modalFactors as unknown as Array<Record<string, unknown>>,
-      ledger: (modalLedger ?? {}) as Record<string, unknown>,
-    };
-  }, [isOwner, analysisModal, modalFactors, modalLedger]);
-
-  React.useEffect(() => {
-    setLissaContext(activeLissaContext);
-    return () => setLissaContext(undefined);
-  }, [activeLissaContext, setLissaContext]);
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
