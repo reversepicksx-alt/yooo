@@ -230,16 +230,32 @@ def resolve_observed_role(
         role = "Advanced Playmaker" if key_passes >= 1.5 else "Shadow Striker"
         evidence = [f"observed {observed} lineup position"]
     elif observed == "FWD":
-        # FWD/F is a provider category, not an exact position. Stats can
-        # describe a possible attacking profile, but they cannot distinguish
-        # CF/ST/SS or justify a customer-facing tactical role. Keep this
-        # unavailable across every prop type until exact fixture/profile
-        # evidence exists.
-        role = None
-        evidence = [
-            "generic forward category only",
-            "exact wide/central/striker position not independently verified",
-        ]
+        # FWD/F is a provider category, not an exact position. A generic label
+        # alone cannot distinguish CF/ST/SS. However, a strong multi-match stat
+        # fingerprint — high key passes and dribbles — is sufficient to infer a
+        # creative attacking profile even without an exact lineup position.
+        if key_passes >= 2.0 and dribbles >= 2.0 and shots < 2.5:
+            role = "False 9"
+            evidence = [
+                "generic forward category",
+                "creator-over-finisher fingerprint",
+                f"{key_passes:.1f} key passes/game",
+                f"{dribbles:.1f} dribbles/game",
+            ]
+        elif key_passes >= 2.0 and dribbles >= 2.0:
+            role = "Creative Forward"
+            evidence = [
+                "generic forward category",
+                "creative link-play and carry fingerprint",
+                f"{key_passes:.1f} key passes/game",
+                f"{dribbles:.1f} dribbles/game",
+            ]
+        else:
+            role = None
+            evidence = [
+                "generic forward category only",
+                "exact wide/central/striker position not independently verified",
+            ]
     elif observed in {"CF", "SS"}:
         if key_passes >= 2.0 and dribbles >= 2.0 and shots < 2.5:
             role = "False 9"
