@@ -28,7 +28,7 @@ type Props = {
   onAnswer?: (text: string) => void;
 };
 
-const WAKE_WORD = /\b(?:lissa|lisa|point\s*two|point\s*2)\b/i;
+const WAKE_WORD = /\b(?:reverse|lissa|lisa|point\s*two|point\s*2)\b/i;
 
 function stripWakeWord(text: string): string {
   return text.replace(WAKE_WORD, '').replace(/^[,.:;!?-\s]+/, '').trim();
@@ -43,15 +43,15 @@ function immediateResponse(question: string): string | null {
     .trim();
   if (
     /\b(can you hear me|do you hear me|are you there|are you listening)\b/.test(normalized)
-    || /^(hello|hi|hey)( lissa| lisa)?$/.test(normalized)
+    || /^(hello|hi|hey)( reverse| lissa| lisa)?$/.test(normalized)
   ) {
-    return "Yeah, I'm here.";
+    return "Yeah, I'm here, Jossel.";
   }
   return null;
 }
 
 function addressReverse(text: string): string {
-  return /\breverse\b/i.test(text) ? text : `Reverse, ${text}`;
+  return /\bjossel\b/i.test(text) ? text : `Jossel, ${text}`;
 }
 
 function speakAndWait(text: string, onStart?: () => void, voice?: string): Promise<boolean> {
@@ -264,7 +264,7 @@ export default function LissaVoiceAssistant({
         continuous: true,
         maxAlternatives: 1,
         addsPunctuation: true,
-        contextualStrings: ['Lissa', 'Lisa', 'point two', 'point 2', 'Reverse Picks', 'pass attempts', 'key passes'],
+        contextualStrings: ['Reverse', 'Lissa', 'Lisa', 'point two', 'Jossel', 'Reverse Picks', 'pass attempts', 'key passes'],
       });
     } catch (err) {
       recognitionActiveRef.current = false;
@@ -514,7 +514,7 @@ export default function LissaVoiceAssistant({
           <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
           <Text style={styles.minimalName}>.2</Text>
           <Text style={styles.minimalStatus}>
-          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say ".2"' : 'tap to enable'}
+          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say "Reverse"' : 'tap to enable'}
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>
@@ -540,7 +540,7 @@ export default function LissaVoiceAssistant({
         >
           <Ionicons name={armed ? 'mic' : 'mic-outline'} size={16} color={armed ? '#06110d' : Colors.primary} />
           <Text style={[styles.voiceButtonText, armed && styles.voiceButtonTextActive]}>
-            {armed ? (listening ? 'Listening for ".2"' : 'Reconnecting…') : 'Activate .2'}
+            {armed ? (listening ? 'Listening for "Reverse"' : 'Reconnecting…') : 'Activate .2'}
           </Text>
         </TouchableOpacity>
         {armed && (
@@ -552,7 +552,7 @@ export default function LissaVoiceAssistant({
       </View>
       {armed && (
         <Text style={styles.statusText}>
-           {awaitingQuestion ? 'Go ahead — ask your question now.' : 'Say ".2" or "point two" to activate. Won\'t answer background speech.'}
+           {awaitingQuestion ? 'Go ahead — ask your question now.' : 'Say "Reverse" to activate. Won\'t answer background speech.'}
         </Text>
       )}
       {!!transcript && !compact && <Text style={styles.transcript}>Heard: “{transcript}”</Text>}

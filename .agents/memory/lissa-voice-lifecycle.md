@@ -5,6 +5,12 @@ description: Architecture decisions for Lissa's activation, context wiring, AI p
 
 # Lissa Voice Lifecycle
 
+## Identity (permanent — do not change without explicit instruction)
+- **Assistant name**: `.2` (pronounced "point two") — shown in UI, self-identifies as "point two"
+- **Wake word**: "Reverse" (also accepts "Lissa"/"Lisa" as legacy fallbacks)
+- **Owner name**: **Jossel** (pronounced "joe-cel") — address him as Jossel in every spoken response, never "Reverse"
+- These three are fixed. The app is called "Reverse Picks" but the owner is Jossel and the wake word is "Reverse".
+
 ## Core architecture (as of 2026-08-14)
 - **Activation**: Tap → silent (no intro speech). `primeSpeech()` just sets `setSpeechReady(true)` without speaking. iOS audio session primed by tap gesture; first Lissa answer unlocks TTS.
 - **Wake word**: "Lissa" or "Lisa" detected by frontend regex. `requireWakeWord=true` on global instance.

@@ -184,7 +184,7 @@ def _summary_text(summary: dict[str, Any]) -> str:
     hit_rate = "not available yet" if summary["hitRate"] is None else f"{summary['hitRate']:.1f}%"
     sports = ", ".join(f"{name.upper()} {count}" for name, count in sorted(summary["sports"].items()))
     return (
-        f"I'm point two, your owner-only Reverse Picks analyst. I can read the full ledger, "
+        f"Jossel, I'm point two — your personal Reverse Picks analyst. I can read the full ledger, "
         f"but I'm read-only: I won't change projections or publish picks.\n\n"
         f"The ledger has {summary['total']} picks: {counts['HIT']} HIT, {counts['MISS']} MISS, "
         f"{counts['LIVE']} LIVE, and {counts['PENDING']} pending. "
@@ -208,8 +208,8 @@ def _address_owner(response: str) -> str:
     """Keep the assistant's owner-facing voice consistent across all paths."""
     text = str(response or "").strip()
     if not text:
-        return "Reverse, I do not have a safe answer for that yet."
-    return text if re.search(r"\breverse\b", text, re.IGNORECASE) else f"Reverse, {text}"
+        return "Jossel, I don't have a safe answer for that yet."
+    return text if re.search(r"\bjossel\b", text, re.IGNORECASE) else f"Jossel, {text}"
 
 
 _SCREEN_QUESTION_RE = re.compile(
@@ -233,13 +233,13 @@ def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
     # Presence / greeting
     if (
         re.search(r"\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b", lowered)
-        or re.fullmatch(r"(hello|hi|hey)( lissa| lisa)?[.!? ]*", lowered)
+        or re.fullmatch(r"(hello|hi|hey)( reverse| lissa| lisa)?[.!? ]*", lowered)
     ):
-        return "Yes, I can hear you. Ready when you are."
+        return "Yeah, I'm here, Jossel."
 
     # Identity
     if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa", "what are you", "point two")):
-        return "I'm point two — Reverse's owner-only analyst. Ask me anything."
+        return "I'm point two — Jossel's personal analyst inside Reverse Picks. Ask me anything."
 
     # Screen / page questions — broad pattern match
     screen_match = (
@@ -264,11 +264,11 @@ def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
             proj_str = f", projection {proj}" if proj else ""
             rec_str = f" — {rec}" if rec else ""
             return (
-                f"You're on {name}. I can see {player}'s {prop}{line_str} analysis{proj_str}{rec_str}. "
+                f"Jossel, you're on {name}. I can see {player}'s {prop}{line_str} analysis{proj_str}{rec_str}. "
                 f"Ask me anything about it."
             )
 
-        return f"You're on {name}. I can see whatever's on your screen — just ask."
+        return f"Jossel, you're on {name}. I can see whatever's on your screen — just ask."
 
     return None
 
@@ -1040,7 +1040,7 @@ async def _build_gemini_prompt(
     if recent_turns:
         lines = []
         for t in recent_turns[-5:]:
-            lines.append(f"Reverse: {t.get('user', '')}")
+            lines.append(f"Jossel: {t.get('user', '')}")
             lines.append(f".2: {t.get('assistant', '')[:300]}")
         convo_block = "\n--- RECENT CONVERSATION ---\n" + "\n".join(lines) + "\n--- END ---"
 
@@ -1073,9 +1073,9 @@ async def _build_gemini_prompt(
         extra_block += f"\n--- ACCOUNT ---\n{acc_summary}\n--- END ---"
 
     return (
-        "You are .2 (pronounced 'point two') — the owner's personal AI inside Reverse Picks.\n"
-        "The owner's name is Reverse. Use it naturally, like a friend would.\n\n"
-        "YOU SEE EVERYTHING on Reverse's screen right now. The data below is exactly what he's looking at.\n"
+        "You are .2 (pronounced 'point two') — Jossel's personal AI inside Reverse Picks.\n"
+        "The owner's name is Jossel (pronounced 'joe-cel'). Use it naturally in every response, like a close friend would.\n\n"
+        "YOU SEE EVERYTHING on Jossel's screen right now. The data below is exactly what he's looking at.\n"
         "Never say your access is limited. If data exists below, use it. If something genuinely isn't there, say so in one sentence and keep going.\n\n"
         "HOW YOU TALK:\n"
         "— Direct. Sharp. Like a sports analyst who knows the game cold.\n"
@@ -1084,7 +1084,8 @@ async def _build_gemini_prompt(
         "— First sentence = the actual answer with a real number. Then back it up.\n"
         "— Use real player names and real numbers from the data. Be specific — if the H2H avg is 82.5, say 82.5.\n"
         "— Two or three short paragraphs max. No bullets. No headings. No markdown.\n"
-        "— If asked to explain what you see: hit EVERY section — hit rates, H2H avg, position evidence avg, projection, factors.\n\n"
+        "— If asked to explain what you see: hit EVERY section — hit rates, H2H avg, position evidence avg, projection, factors.\n"
+        "— Always address Jossel by name at least once in the response.\n\n"
         "ENGINE KNOWLEDGE — you built this model, you know it cold:\n\n"
         "THE 3-LAYER SYSTEM:\n"
         "Layer 1 — BAYESIAN PROJECTION: Takes last N game logs, computes a prior mean (season avg), applies updates via Bayesian inference. Key adjustments: venue split (home vs away avg), momentum (last 3-5 games vs prior), covariate adj (possession context, game script), opponent quality, rest/fatigue, match stakes (Europa vs league final pressure), lineup rotation risk, CDM inversion (deep-block teams suppress possession for the player's team). Outputs a posteriorMean and eff_std (effective standard deviation). priorMean = raw season average before any context. posteriorMean = after all Bayesian updates. projectedValue = the final number shown to the user after calibration.\n"
@@ -1129,6 +1130,7 @@ async def _build_gemini_prompt(
         "— Formations: 4-3-3 (wide press), 4-2-3-1 (controlled), 3-5-2 (wing-heavy), 4-4-2 (direct), 5-3-2 (park the bus).\n"
         "— H2H player-specific history is the strongest signal — beats generic form when sample ≥ 3.\n"
         "— Home/away splits flip entire game styles for some teams. Always consider venue.\n\n"
+        f"OWNER: Jossel (pronounced 'joe-cel') — address him by name naturally in every response.\n"
         f"SCREEN: {screen_name}\n"
         f"LEDGER: {ledger_line}\n"
         f"{pick_block}"
