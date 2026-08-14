@@ -34,6 +34,25 @@ function stripWakeWord(text: string): string {
   return text.replace(WAKE_WORD, '').replace(/^[,.:;!?-\s]+/, '').trim();
 }
 
+function immediateResponse(question: string): string | null {
+  const normalized = question
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[?!.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (
+    /\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b/.test(normalized)
+    || /^(hello|hi|hey)( lissa)?$/.test(normalized)
+  ) {
+    return 'Yes, I can hear you. I am listening and ready to answer.';
+  }
+  if (/\bwhat are you listening for\b/.test(normalized)) {
+    return 'I am listening for your questions about the screen and the prediction you are viewing.';
+  }
+  return null;
+}
+
 function speakAndWait(text: string): Promise<void> {
   return new Promise((resolve) => {
     let finished = false;
@@ -224,8 +243,11 @@ export default function LissaVoiceAssistant({
     // question. It will be restarted after Speech.speak completes.
     stopListening(false);
     try {
-      const result = await sendLissaMessage(email, token, sessionId, clean, contextRef.current);
-      const text = result.response || 'I could not produce a safe answer for that analysis.';
+      const immediate = immediateResponse(clean);
+      const result = immediate
+        ? null
+        : await sendLissaMessage(email, token, sessionId, clean, contextRef.current);
+      const text = immediate || result?.response || 'I could not produce a safe answer for that analysis.';
       setAnswer(text);
       onAnswer?.(text);
       try {

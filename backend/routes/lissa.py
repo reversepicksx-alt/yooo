@@ -413,6 +413,10 @@ async def lissa_message(req: LissaMessageRequest):
         response = await _smart_analysis_response(message, packet)
         if not response:
             response = _analysis_fallback(message, packet)
+    elif re.search(r"\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b", lowered) or re.fullmatch(r"(hello|hi|hey)( lissa)?[.!? ]*", lowered):
+        # Presence checks must never wait for the ledger read, AI gateway, or
+        # provider enrichment. They are a local conversational handshake.
+        response = "Yes, I can hear you. I am listening and ready to answer."
     elif any(word in lowered for word in ("hello", "hi ", "hey", "who are you", "start")):
         response = _summary_text(summary)
     elif any(word in lowered for word in ("what can you", "capabilities", "help", "do for me")):
