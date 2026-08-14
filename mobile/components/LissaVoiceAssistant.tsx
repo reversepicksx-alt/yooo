@@ -28,7 +28,7 @@ type Props = {
   onAnswer?: (text: string) => void;
 };
 
-const WAKE_WORD = /\blissa\b/i;
+const WAKE_WORD = /\b(?:lissa|lisa)\b/i;
 
 function stripWakeWord(text: string): string {
   return text.replace(WAKE_WORD, '').replace(/^[,.:;!?-\s]+/, '').trim();
@@ -103,6 +103,7 @@ export default function LissaVoiceAssistant({
   const [answer, setAnswer] = useState('');
   const [speechReady, setSpeechReady] = useState(false);
   const [error, setError] = useState('');
+  const [voiceMode, setVoiceMode] = useState<'wake' | 'awaiting' | 'thinking' | 'speaking'>('wake');
   const armedRef = useRef(false);
   const awaitingRef = useRef(false);
   const busyRef = useRef(false);
@@ -110,6 +111,7 @@ export default function LissaVoiceAssistant({
   const startingRef = useRef(false);
   const lastFinalRef = useRef({ text: '', at: 0 });
   const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const questionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextRef = useRef(context);
   const voiceRef = useRef<string | undefined>(undefined);
   const sendQuestionRef = useRef<(text: string) => Promise<void>>(async () => undefined);
@@ -144,6 +146,33 @@ export default function LissaVoiceAssistant({
     }
   };
 
+  const clearQuestionTimer = () => {
+    if (questionTimer.current) {
+      clearTimeout(questionTimer.current);
+      questionTimer.current = null;
+    }
+  };
+
+  const closeQuestionWindow = () => {
+    clearQuestionTimer();
+    awaitingRef.current = false;
+    setAwaitingQuestion(false);
+    if (armedRef.current && !busyRef.current) setVoiceMode('wake');
+  };
+
+  const openQuestionWindow = () => {
+    clearQuestionTimer();
+    awaitingRef.current = true;
+    setAwaitingQuestion(true);
+    setVoiceMode('awaiting');
+    // A missed follow-up must not leave Lissa in a mode where unrelated
+    // speech is treated as a question minutes later.
+    questionTimer.current = setTimeout(() => {
+      questionTimer.current = null;
+      closeQuestionWindow();
+    }, 6500);
+  };
+
   const scheduleRestart = (delay = 350) => {
     clearRestartTimer();
     if (!armedRef.current || busyRef.current) return;
@@ -174,7 +203,7 @@ export default function LissaVoiceAssistant({
         continuous: true,
         maxAlternatives: 1,
         addsPunctuation: true,
-        contextualStrings: ['Lissa', 'Reverse Picks', 'pass attempts', 'key passes'],
+        contextualStrings: ['Lissa', 'Lisa', 'Reverse Picks', 'pass attempts', 'key passes'],
       });
     } catch (err) {
       recognitionActiveRef.current = false;
@@ -200,8 +229,7 @@ export default function LissaVoiceAssistant({
     if (disarm) {
       armedRef.current = false;
       setArmed(false);
-      awaitingRef.current = false;
-      setAwaitingQuestion(false);
+      closeQuestionWindow();
     }
   };
 
@@ -218,8 +246,8 @@ export default function LissaVoiceAssistant({
       }
       armedRef.current = true;
       setArmed(true);
-      setAwaitingQuestion(false);
-      awaitingRef.current = false;
+      closeQuestionWindow();
+      setVoiceMode('wake');
       await startRecognition();
     } catch (err) {
       armedRef.current = false;
@@ -232,6 +260,7 @@ export default function LissaVoiceAssistant({
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    setVoiceMode('speaking');
     stopListening(false);
     try {
       await Speech.stop();
@@ -246,7 +275,10 @@ export default function LissaVoiceAssistant({
     } finally {
       busyRef.current = false;
       setBusy(false);
-      if (armedRef.current) scheduleRestart(350);
+      if (armedRef.current) {
+        setVoiceMode('wake');
+        scheduleRestart(350);
+      }
     }
   };
 
@@ -281,10 +313,10 @@ export default function LissaVoiceAssistant({
     if (!clean || busyRef.current || !email || !token) return;
     busyRef.current = true;
     setBusy(true);
+    setVoiceMode('thinking');
     setError('');
     setTranscript(clean);
-    setAwaitingQuestion(false);
-    awaitingRef.current = false;
+    closeQuestionWindow();
     // Do not let the recognizer capture Lissa's spoken answer as the next
     // question. It will be restarted after Speech.speak completes.
     stopListening(false);
@@ -298,6 +330,7 @@ export default function LissaVoiceAssistant({
       onAnswer?.(text);
       try {
         await Speech.stop();
+        setVoiceMode('speaking');
         const spoke = await speakAndWait(text, () => setSpeechReady(true), voiceRef.current);
         if (!spoke) setSpeechReady(false);
       } catch {}
@@ -307,6 +340,7 @@ export default function LissaVoiceAssistant({
       busyRef.current = false;
       setBusy(false);
       if (armedRef.current) {
+        setVoiceMode('wake');
         scheduleRestart(500);
       }
     }
@@ -325,27 +359,38 @@ export default function LissaVoiceAssistant({
     scheduleRestart(350);
   });
   useSpeechRecognitionEvent('result', (event) => {
-    const text = event.results?.[0]?.transcript?.trim() || '';
+    // expo-speech-recognition can return a growing result list in continuous
+    // mode. The last result is the current utterance; index 0 may be an old
+    // wake-word fragment and can make Lissa answer a question never asked.
+    const text = event.results?.[event.results.length - 1]?.transcript?.trim() || '';
     if (!text) return;
-    setTranscript(text);
-    if (!event.isFinal || !armedRef.current || busyRef.current) return;
+    if (!event.isFinal) {
+      if (awaitingRef.current) setTranscript(text);
+      return;
+    }
+    if (!armedRef.current || busyRef.current) return;
     const now = Date.now();
-    if (text === lastFinalRef.current.text && now - lastFinalRef.current.at < 1500) return;
-    lastFinalRef.current = { text, at: now };
+    const normalizedText = text.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (normalizedText === lastFinalRef.current.text && now - lastFinalRef.current.at < 3000) return;
+    lastFinalRef.current = { text: normalizedText, at: now };
 
     if (awaitingRef.current) {
       const followUp = stripWakeWord(text);
-      if (followUp) void sendQuestionRef.current(followUp);
+      if (followUp && followUp.split(/\s+/).filter(Boolean).length >= 2) {
+        closeQuestionWindow();
+        setTranscript(followUp);
+        void sendQuestionRef.current(followUp);
+      }
       return;
     }
 
     if (WAKE_WORD.test(text)) {
       const command = stripWakeWord(text);
-      if (command) {
+      if (command && command.split(/\s+/).filter(Boolean).length >= 2) {
+        setTranscript(command);
         void sendQuestionRef.current(command);
       } else {
-        awaitingRef.current = true;
-        setAwaitingQuestion(true);
+        openQuestionWindow();
       }
     } else if (!requireWakeWord && text.split(/\s+/).filter(Boolean).length >= 2) {
       // Optional hands-free mode is retained for non-global callers, but the
@@ -373,6 +418,7 @@ export default function LissaVoiceAssistant({
 
   useEffect(() => () => {
     clearRestartTimer();
+    clearQuestionTimer();
     try {
       ExpoSpeechRecognitionModule.abort();
     } catch {}
@@ -413,7 +459,7 @@ export default function LissaVoiceAssistant({
           <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
           <Text style={styles.minimalName}>Lissa</Text>
           <Text style={styles.minimalStatus}>
-            {busy ? 'Speaking…' : armed && !speechReady ? 'tap for voice' : armed && listening ? 'listening' : 'tap to enable'}
+          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say “Lissa”' : 'tap to enable'}
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>
@@ -451,7 +497,7 @@ export default function LissaVoiceAssistant({
       </View>
       {armed && (
         <Text style={styles.statusText}>
-          {awaitingQuestion ? 'I’m listening. Ask your question now.' : 'Always listening for “Lissa”. Ask about the screen you are viewing.'}
+           {awaitingQuestion ? 'Go ahead — ask your question now.' : 'Say “Lissa” or “Lisa” first. I will not answer background speech.'}
         </Text>
       )}
       {!!transcript && !compact && <Text style={styles.transcript}>Heard: “{transcript}”</Text>}
