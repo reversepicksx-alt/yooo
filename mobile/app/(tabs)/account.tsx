@@ -982,14 +982,6 @@ export default function AccountScreen() {
 
         <Text style={styles.sectionLabel}>About</Text>
         <View style={styles.menuGroup}>
-          {isOwner && (
-            <MenuRow
-              icon="sparkles-outline"
-              label="Lissa"
-              value="Private owner assistant · read-only"
-              onPress={() => router.push('/lissa')}
-            />
-          )}
           <MenuRow icon="football-outline" label="Sport" value="Soccer (All Major Leagues)" />
           <MenuRow icon="analytics-outline" label="Engine" value="Reverse Formula + Model" />
           <MenuRow icon="information-circle-outline" label="Version" value="1.0.0" />

@@ -154,3 +154,4 @@
 - [Saved analysis log normalization](saved-analysis-log-normalization.md) — saved analysis uses `playerGameLogs.games`; shared history UI must normalize it alongside live `gameLogs`.
 - [Verified venue-history threshold](venue-history-threshold.md) — venue priors require 30 verified player appearances; search older competitions/seasons, then use full history with an explicit fallback.
 - [Passing correlation diagnostics](passing-correlation-diagnostics.md) — same-fixture picks are correlated evidence; exact-time settlement ties need deterministic ordering, not false leakage violations.
+- [Lissa voice lifecycle](lissa-voice-lifecycle.md) — supervise segmented recognition and wait for speech completion before restarting so Lissa does not freeze or hear her own answer.

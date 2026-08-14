@@ -22,6 +22,8 @@ type Props = {
   sessionId?: string;
   context?: LissaContext;
   compact?: boolean;
+  minimal?: boolean;
+  requireWakeWord?: boolean;
   autoStart?: boolean;
   onAnswer?: (text: string) => void;
 };
@@ -32,12 +34,35 @@ function stripWakeWord(text: string): string {
   return text.replace(WAKE_WORD, '').replace(/^[,.:;!?-\s]+/, '').trim();
 }
 
+function speakAndWait(text: string): Promise<void> {
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(finish, Math.min(30_000, Math.max(4_000, text.length * 95)));
+    Speech.speak(text, {
+      language: 'en-US',
+      rate: 0.96,
+      pitch: 1.0,
+      onDone: finish,
+      onStopped: finish,
+      onError: finish,
+    });
+  });
+}
+
 export default function LissaVoiceAssistant({
   email,
   token,
   sessionId = 'voice',
   context,
   compact = false,
+  minimal = false,
+  requireWakeWord = true,
   autoStart = true,
   onAnswer,
 }: Props) {
@@ -205,7 +230,7 @@ export default function LissaVoiceAssistant({
       onAnswer?.(text);
       try {
         await Speech.stop();
-        await Speech.speak(text, { language: 'en-US', rate: 0.96, pitch: 1.0 });
+        await speakAndWait(text);
       } catch {}
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lissa is temporarily unavailable.');
@@ -253,6 +278,11 @@ export default function LissaVoiceAssistant({
         awaitingRef.current = true;
         setAwaitingQuestion(true);
       }
+    } else if (!requireWakeWord && text.split(/\s+/).filter(Boolean).length >= 2) {
+      // The global assistant is already scoped to the owner and the current
+      // screen. Treat a completed natural sentence as a question so the owner
+      // does not have to repeat a wake word or touch the microphone.
+      void sendQuestionRef.current(text);
     }
   });
   useSpeechRecognitionEvent('error', (event) => {
@@ -281,10 +311,43 @@ export default function LissaVoiceAssistant({
   }, []);
 
   if (!supported) {
+    if (minimal) {
+      return (
+        <View style={styles.minimalUnavailable}>
+          <Ionicons name="mic-off-outline" size={14} color={Colors.textTertiary} />
+          <Text style={styles.minimalText}>Lissa unavailable</Text>
+        </View>
+      );
+    }
     return (
       <View style={[styles.unavailable, compact && styles.compactUnavailable]}>
         <Ionicons name="mic-off-outline" size={15} color={Colors.textTertiary} />
         <Text style={styles.unavailableText}>Voice recognition is not available in this build.</Text>
+      </View>
+    );
+  }
+
+  if (minimal) {
+    return (
+      <View style={styles.minimalWrap}>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={armed ? 'Lissa is listening' : 'Enable Lissa microphone'}
+          style={styles.minimalButton}
+          onPress={() => {
+            if (!armed) void activate();
+          }}
+          disabled={busy}
+        >
+          <View style={[styles.minimalDot, armed && listening && styles.minimalDotLive]} />
+          <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
+          <Text style={styles.minimalName}>Lissa</Text>
+          <Text style={styles.minimalStatus}>
+            {busy ? 'Answering…' : armed && listening ? 'listening' : 'tap to enable'}
+          </Text>
+          {busy && <ActivityIndicator size="small" color={Colors.primary} />}
+        </TouchableOpacity>
+        {!!error && <Text style={styles.minimalError} numberOfLines={1}>{error}</Text>}
       </View>
     );
   }
@@ -334,6 +397,58 @@ const styles = StyleSheet.create({
     marginVertical: 8,
     gap: 7,
   },
+  minimalWrap: {
+    alignItems: 'center',
+    maxWidth: '92%',
+  },
+  minimalButton: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 13,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#234d2c',
+    backgroundColor: '#07140b',
+    shadowColor: '#39FF14',
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  minimalDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: Colors.textTertiary,
+  },
+  minimalDotLive: {
+    backgroundColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOpacity: 0.9,
+    shadowRadius: 5,
+  },
+  minimalName: { color: Colors.text, fontSize: 13, fontWeight: '900' },
+  minimalStatus: { color: Colors.textSecondary, fontSize: 10 },
+  minimalError: {
+    color: '#ff8b83',
+    fontSize: 9,
+    marginTop: 3,
+    maxWidth: 260,
+    textAlign: 'center',
+  },
+  minimalUnavailable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: '#0b0b0b',
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  minimalText: { color: Colors.textTertiary, fontSize: 10 },
   compactWrap: { marginHorizontal: 0, marginVertical: 8 },
   controlRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   voiceButton: {

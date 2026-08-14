@@ -4,11 +4,36 @@ import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect, useRef } from 'react';
+import LissaVoiceAssistant from '@/components/LissaVoiceAssistant';
+import {
+  LissaScreenContextProvider,
+  useLissaScreenContext,
+} from '@/contexts/LissaScreenContext';
 
 function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focused: boolean }) {
   return (
     <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
       <Ionicons name={name} size={22} color={focused ? Colors.primary : Colors.textTertiary} />
+    </View>
+  );
+}
+
+function GlobalLissa() {
+  const { session } = useAuth();
+  const { context } = useLissaScreenContext();
+  const isOwner = session?.accessType?.toLowerCase() === 'owner';
+  if (!isOwner || !session?.email || !session.token) return null;
+
+  return (
+    <View pointerEvents="box-none" style={styles.lissaOverlay}>
+      <LissaVoiceAssistant
+        minimal
+        requireWakeWord={false}
+        email={session.email}
+        token={session.token}
+        sessionId="global-lissa"
+        context={context}
+      />
     </View>
   );
 }
@@ -41,77 +66,86 @@ export default function TabLayout() {
   if (!session) return <Redirect href="/auth" />;
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: {
-          backgroundColor: '#000000',
-          borderTopColor: Colors.tabBarBorder,
-          borderTopWidth: 0.5,
-          height: Platform.OS === 'web' ? 78 : 82,
-          paddingBottom: Platform.OS === 'web' ? 18 : 26,
-          paddingTop: 10,
-        },
-        tabBarActiveTintColor: Colors.primary,
-        // Keep inactive tabs legible on the black mobile shell; Community
-        // should not disappear when My Picks is selected.
-        tabBarInactiveTintColor: Colors.textSecondary,
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: '600',
-          letterSpacing: 0.3,
-          marginTop: 1,
-        },
-        tabBarHideOnKeyboard: false,
-      }}
-    >
-      <Tabs.Screen
-        name="scan"
-        options={{
-          title: 'Predict',
-          tabBarIcon: ({ focused }) => <TabIcon name="scan" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
-        name="picks"
-        options={{
-          title: 'My Picks',
-          tabBarIcon: ({ focused }) => <TabIcon name="bookmark" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
-        name="matchups"
-        options={{
-          // Temporarily hidden for all users while the matchup history screen
-          // is redesigned for performance. The route remains available for
-          // development and can be restored by removing this href override.
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="community"
-        options={{
-          title: 'Community',
-          tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
-        name="chat"
-        options={{ href: null }}
-      />
-      <Tabs.Screen
-        name="account"
-        options={{
-          title: 'Account',
-          tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen name="notifications" options={{ href: null }} />
-    </Tabs>
+    <LissaScreenContextProvider>
+      <View style={styles.shell}>
+        <Tabs
+          screenOptions={{
+            headerShown: false,
+            tabBarStyle: {
+              backgroundColor: '#000000',
+              borderTopColor: Colors.tabBarBorder,
+              borderTopWidth: 0.5,
+              height: Platform.OS === 'web' ? 78 : 82,
+              paddingBottom: Platform.OS === 'web' ? 18 : 26,
+              paddingTop: 10,
+            },
+            tabBarActiveTintColor: Colors.primary,
+            // Keep inactive tabs legible on the black mobile shell; Community
+            // should not disappear when My Picks is selected.
+            tabBarInactiveTintColor: Colors.textSecondary,
+            tabBarLabelStyle: {
+              fontSize: 10,
+              fontWeight: '600',
+              letterSpacing: 0.3,
+              marginTop: 1,
+            },
+            tabBarHideOnKeyboard: false,
+          }}
+        >
+          <Tabs.Screen
+            name="scan"
+            options={{
+              title: 'Predict',
+              tabBarIcon: ({ focused }) => <TabIcon name="scan" focused={focused} />,
+            }}
+          />
+          <Tabs.Screen
+            name="picks"
+            options={{
+              title: 'My Picks',
+              tabBarIcon: ({ focused }) => <TabIcon name="bookmark" focused={focused} />,
+            }}
+          />
+          <Tabs.Screen
+            name="matchups"
+            options={{
+              href: null,
+            }}
+          />
+          <Tabs.Screen
+            name="community"
+            options={{
+              title: 'Community',
+              tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
+            }}
+          />
+          <Tabs.Screen name="chat" options={{ href: null }} />
+          <Tabs.Screen
+            name="account"
+            options={{
+              title: 'Account',
+              tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
+            }}
+          />
+          <Tabs.Screen name="notifications" options={{ href: null }} />
+        </Tabs>
+        <GlobalLissa />
+      </View>
+    </LissaScreenContextProvider>
   );
 }
 
 const styles = StyleSheet.create({
+  shell: { flex: 1 },
+  lissaOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: Platform.OS === 'web' ? 82 : 94,
+    alignItems: 'center',
+    zIndex: 100,
+    elevation: 100,
+  },
   iconWrap: {
     width: 44,
     height: 30,
