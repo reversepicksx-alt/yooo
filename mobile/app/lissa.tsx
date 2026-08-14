@@ -17,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { sendLissaMessage, startLissa } from '@/lib/api';
+import LissaVoiceAssistant from '@/components/LissaVoiceAssistant';
 
 type Message = {
   id: string;
@@ -148,6 +149,16 @@ export default function LissaScreen() {
           <Text style={styles.privateText}>PRIVATE</Text>
         </View>
       </View>
+
+      <LissaVoiceAssistant
+        email={session?.email}
+        token={session?.token}
+        sessionId={sessionId || 'lissa-voice'}
+        onAnswer={(text) => setMessages((current) => [
+          ...current,
+          { id: `voice-${Date.now()}`, role: 'assistant', text },
+        ])}
+      />
 
       <FlatList
         ref={listRef}

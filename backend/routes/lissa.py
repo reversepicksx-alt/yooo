@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import uuid
+import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from config import OWNER_EMAIL, db
 from routes.admin import verify_owner
+from compact_explanation import _generate as _generate_explanation
+from compact_explanation import _within_daily_limit as _within_explanation_budget
 
 
 router = APIRouter(prefix="/api/lissa", tags=["lissa"])
@@ -27,6 +30,7 @@ class LissaMessageRequest(BaseModel):
     token: str
     message: str = Field(min_length=1, max_length=1200)
     session_id: Optional[str] = None
+    context: Optional[dict[str, Any]] = None
 
 
 class LissaOverviewRequest(BaseModel):
@@ -207,6 +211,121 @@ def _player_text(matches: list[dict[str, Any]]) -> str:
     )
 
 
+def _analysis_packet(context: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge the current screen snapshot with the durable owner pick.
+
+    The client supplies the visible analysis fields so Lissa can answer the
+    question the owner is asking right now.  The saved pick is re-read from
+    the owner ledger when a pickId is present, so the assistant has a durable
+    identity anchor rather than trusting a display-only name.
+    """
+    if not isinstance(context, dict):
+        return {}
+    pick = context.get("pick")
+    analysis = context.get("analysis")
+    if not isinstance(pick, dict):
+        pick = {}
+    if not isinstance(analysis, dict):
+        analysis = {}
+    return {
+        "pick": {**pick, **analysis},
+        "analysis": analysis,
+        "factors": context.get("factors") if isinstance(context.get("factors"), list) else [],
+        "ledger": context.get("ledger") if isinstance(context.get("ledger"), dict) else {},
+    }
+
+
+def _analysis_fallback(message: str, context: dict[str, Any]) -> str:
+    pick = context.get("pick") or {}
+    factors = context.get("factors") or pick.get("analysisFactors") or []
+    player = pick.get("playerName") or "This player"
+    team = pick.get("teamName") or "the player's team"
+    opponent = pick.get("opponentName") or "the opponent"
+    prop = _display_prop(pick.get("propType"))
+    line = _format_number(pick.get("line"))
+    projection = _format_number(pick.get("projectedValue") or pick.get("projection"))
+    recommendation = str(pick.get("recommendation") or "the current direction").upper()
+    venue = str(pick.get("venue") or "the recorded venue").lower()
+    confidence = _number(pick.get("confidence") or pick.get("confidenceScore"))
+
+    gap = ""
+    line_number = _number(pick.get("line"))
+    projection_number = _number(pick.get("projectedValue") or pick.get("projection"))
+    if line_number is not None and projection_number is not None:
+        difference = projection_number - line_number
+        gap = f" That is a {difference:+.1f} projection gap versus the line."
+
+    evidence_lines = []
+    for factor in factors[:6]:
+        if not isinstance(factor, dict):
+            continue
+        title = str(factor.get("title") or factor.get("id") or "").strip()
+        detail = str(factor.get("detail") or factor.get("summary") or "").strip()
+        direction = str(factor.get("direction") or "").strip()
+        if title and (detail or direction):
+            evidence_lines.append(f"{title}: {detail or direction}")
+
+    tactical = str(pick.get("tacticalBreakdown") or pick.get("reasoning") or "").strip()
+    answer = (
+        f"{player} is listed for {prop} at {line} against {opponent}. "
+        f"The saved projection is {projection}, so the deterministic ledger landed on {recommendation} "
+        f"from the {venue} matchup.{gap}"
+    )
+    if confidence is not None:
+        answer += f" Confidence is approximately {_format_number(confidence)}."
+    if evidence_lines:
+        answer += "\n\nThe strongest captured evidence is:\n" + "\n".join(f"• {line}" for line in evidence_lines[:4])
+    if tactical:
+        answer += "\n\nThe saved tactical read is: " + tactical[:1400]
+    answer += (
+        "\n\nThe important limitation is that this explains the finalized snapshot; "
+        "it does not invent missing provider data or change the displayed projection."
+    )
+    return answer
+
+
+async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str | None:
+    """Use the existing bounded explanation gateway when it is available.
+
+    Lissa must still work when generation is disabled or unavailable, so the
+    deterministic explanation remains the fallback and the prediction ledger
+    remains authoritative.
+    """
+    if os.environ.get("LISSA_AI_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
+        return None
+    if not await _within_explanation_budget():
+        return None
+    packet = {
+        "question": message,
+        "currentAnalysis": context,
+        "rules": [
+            "Answer the exact question about the current player analysis.",
+            "Use only values present in the current analysis snapshot.",
+            "Explain the deterministic projection; do not replace it.",
+            "Name the player, matchup, prop, line, projection, and recommendation when available.",
+            "Call out unavailable, thin, shadow-only, or fallback evidence explicitly.",
+            "Do not invent injuries, line movement, player roles, or statistics.",
+            "Do not promise a win and do not give financial advice.",
+            "Speak naturally as Lissa: concise first, then the evidence and risk.",
+        ],
+    }
+    import json
+    prompt = (
+        "You are Lissa, an owner-only voice assistant inside a soccer player-prop analytics app.\n"
+        "The user is looking at one exact analysis screen and asked a question about it.\n"
+        "Return a natural spoken answer, 2 to 5 short paragraphs, with no markdown bullets or headings.\n"
+        "Here is the structured analysis packet:\n"
+        f"{json.dumps(packet, ensure_ascii=False, default=str)[:18000]}\n\n"
+        f"User question: {message}"
+    )
+    try:
+        text = await _generate_explanation(prompt)
+        return text.strip() if text and len(text.strip()) >= 40 else None
+    except Exception as exc:
+        print(f"[LISSA AI] generation skipped: {type(exc).__name__}: {exc}")
+        return None
+
+
 async def _authorize(req: LissaMessageRequest | LissaOverviewRequest) -> None:
     await verify_owner(req.email, req.token)
 
@@ -232,8 +351,13 @@ async def lissa_message(req: LissaMessageRequest):
     summary = _ledger_summary(picks)
     message = req.message.strip()
     lowered = message.lower()
+    packet = _analysis_packet(req.context)
 
-    if any(word in lowered for word in ("hello", "hi ", "hey", "who are you", "start")):
+    if packet:
+        response = await _smart_analysis_response(message, packet)
+        if not response:
+            response = _analysis_fallback(message, packet)
+    elif any(word in lowered for word in ("hello", "hi ", "hey", "who are you", "start")):
         response = _summary_text(summary)
     elif any(word in lowered for word in ("what can you", "capabilities", "help", "do for me")):
         response = (

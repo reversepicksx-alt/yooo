@@ -156,6 +156,13 @@ export interface LissaResponse {
   summary: LissaSummary;
 }
 
+export interface LissaContext {
+  pick?: Record<string, unknown>;
+  analysis?: Record<string, unknown>;
+  factors?: Array<Record<string, unknown>>;
+  ledger?: Record<string, unknown>;
+}
+
 export async function startLissa(email: string, token: string): Promise<LissaResponse> {
   return apiCall<LissaResponse>('/api/lissa/overview', {
     method: 'POST',
@@ -168,10 +175,11 @@ export async function sendLissaMessage(
   token: string,
   sessionId: string,
   message: string,
+  context?: LissaContext,
 ): Promise<LissaResponse> {
   return apiCall<LissaResponse>('/api/lissa/message', {
     method: 'POST',
-    body: JSON.stringify({ email, token, session_id: sessionId, message }),
+    body: JSON.stringify({ email, token, session_id: sessionId, message, context }),
   });
 }
 

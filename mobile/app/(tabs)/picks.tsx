@@ -34,6 +34,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
+import LissaVoiceAssistant from '@/components/LissaVoiceAssistant';
 
 type Tab = 'live' | 'history';
 
@@ -1630,6 +1631,21 @@ export default function PicksScreen() {
               </Text>
             )}
           </View>
+
+          {isOwner && analysisModal?.data && (
+            <LissaVoiceAssistant
+              compact
+              email={session?.email}
+              token={session?.token}
+              sessionId={`analysis-${analysisModal.pick.pickId || analysisModal.pick.id || 'current'}`}
+              context={{
+                pick: analysisModal.pick as unknown as Record<string, unknown>,
+                analysis: analysisModal.data,
+                factors: modalFactors as unknown as Array<Record<string, unknown>>,
+                ledger: (modalLedger ?? {}) as Record<string, unknown>,
+              }}
+            />
+          )}
 
           {/* Edge-gap pill row — surfaces how far projection sits from the line
               and whether league calibration / game-script informed the call. */}

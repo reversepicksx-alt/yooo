@@ -21,6 +21,8 @@ export default {
         NSPhotoLibraryAddUsageDescription: "Reverse Picks needs access to save images.",
         NSUserNotificationsUsageDescription: "Reverse Picks sends you pick alerts and result notifications.",
         NSFaceIDUsageDescription: "Reverse Picks uses Face ID to sign you in quickly and securely.",
+        NSMicrophoneUsageDescription: "Lissa uses the microphone when you activate voice mode.",
+        NSSpeechRecognitionUsageDescription: "Lissa uses speech recognition when you activate voice mode.",
         CFBundleURLTypes: [{ CFBundleURLSchemes: ["reversepicks"] }],
       },
     },
