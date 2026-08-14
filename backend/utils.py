@@ -214,6 +214,28 @@ def is_quota_exhausted() -> bool:
     return _quota_tripped()
 
 
+async def breaker_midnight_sweep_loop():
+    """Background loop that proactively clears a stale in-memory quota breaker.
+
+    Without this, _quota_exhausted_date can hold a prior UTC day's date until
+    the first call to _quota_tripped() arrives after midnight.  Any background
+    loop that runs in that window (auto-settlement, live-tracking, etc.) would
+    incorrectly see the breaker as still active and skip all API calls.
+
+    This loop wakes every 60 seconds and calls _quota_tripped(), which already
+    contains the authoritative stale-date clearing logic.  60 s is short enough
+    to bound the stale window to under two minutes in the worst case (no
+    interactive traffic at all after midnight UTC).
+    """
+    import asyncio as _aio
+    while True:
+        try:
+            _quota_tripped()  # clears in-memory date if it belongs to a prior UTC day
+        except Exception:
+            pass
+        await _aio.sleep(60)
+
+
 def set_api_request_priority(priority: bool = True):
     """Mark API-Football calls in the current request context as user priority."""
     return _api_request_priority.set(priority)

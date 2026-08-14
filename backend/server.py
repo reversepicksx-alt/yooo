@@ -252,6 +252,12 @@ async def _run_startup_tasks():
     asyncio.create_task(auto_settlement_loop())
     asyncio.create_task(mlb_live_loop())
 
+    # Proactively clear a stale in-memory quota breaker after midnight UTC.
+    # Without this, background loops running between midnight and the first
+    # interactive API call could still see the prior day's exhausted state.
+    from utils import breaker_midnight_sweep_loop
+    asyncio.create_task(breaker_midnight_sweep_loop())
+
     # League-aware empirical calibration: load on startup, refresh every 6h
     from league_priors import ensure_loaded as ensure_league_priors_loaded
     asyncio.create_task(ensure_league_priors_loaded(db))
