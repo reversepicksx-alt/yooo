@@ -169,6 +169,60 @@ def _summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def _empty_summary() -> dict[str, Any]:
+    return {
+        "total": 0,
+        "counts": {"HIT": 0, "MISS": 0, "PENDING": 0, "LIVE": 0, "PUSH": 0, "DNP": 0, "VOID": 0},
+        "settled": 0,
+        "hitRate": None,
+        "sports": {},
+    }
+
+
+def _address_owner(response: str) -> str:
+    """Keep the assistant's owner-facing voice consistent across all paths."""
+    text = str(response or "").strip()
+    if not text:
+        return "Reverse, I do not have a safe answer for that yet."
+    return text if re.search(r"\breverse\b", text, re.IGNORECASE) else f"Reverse, {text}"
+
+
+def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
+    """Handle identity, presence, app, and screen questions without I/O."""
+    lowered = message.lower().strip()
+    if (
+        re.search(r"\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b", lowered)
+        or re.fullmatch(r"(hello|hi|hey)( lissa| lisa)?[.!? ]*", lowered)
+    ):
+        return "Yes, I can hear you. I am listening and ready to answer."
+    if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa")):
+        return (
+            "I am Lissa, Reverse Picks' owner-only intelligence assistant. "
+            "You can call me Lissa or Lisa; my name in the app is Lissa."
+        )
+    if any(term in lowered for term in ("what can you do", "capabilities", "what do you know", "help me")):
+        return (
+            "I can explain the Reverse Picks screen you are viewing, walk through a prediction's line, "
+            "projection, recommendation, confidence, evidence, tactical context, and limitations, "
+            "and read your saved ledger for performance, players, results, and missing data. "
+            "I am read-only: I do not change projections, settle picks, publish posts, or make decisions for you."
+        )
+    if any(term in lowered for term in ("what is reverse picks", "what is this app", "what does this app do")):
+        return (
+            "Reverse Picks is a structured player-props analysis app. "
+            "It combines verified matchup context, recent player evidence, historical and tactical signals, "
+            "calibration, and a final projection ledger so you can see why a direction was selected."
+        )
+    if any(term in lowered for term in ("what am i looking at", "what screen", "where am i", "what page", "what can you see")):
+        screen = context.get("screen") if isinstance(context, dict) else {}
+        if isinstance(screen, dict):
+            name = str(screen.get("name") or "the current Reverse Picks screen")
+            description = str(screen.get("description") or "").strip()
+            return f"You are on the {name} screen. {description}".strip()
+        return "You are inside Reverse Picks. I can describe the exact screen once its context is available."
+    return None
+
+
 def _match_player(picks: list[dict[str, Any]], message: str) -> list[dict[str, Any]]:
     normalized = re.sub(r"[^a-z0-9 ]+", " ", message.lower())
     tokens = [token for token in normalized.split() if len(token) >= 3]
@@ -311,6 +365,8 @@ async def _smart_ledger_response(
         "savedPicks": [_pick_snapshot(pick) for pick in picks[:160]],
         "rules": [
             "Answer the owner's exact ledger question using only the supplied saved picks.",
+            "Your name is Lissa (pronounced Lisa), and address the owner as Reverse.",
+            "Speak as a calm, highly intelligent, well-spoken woman inside the app.",
             "Do not claim a prediction exists when no matching saved pick is present.",
             "Distinguish exact line/fixture matches from nearby lines or different matchups.",
             "Name unavailable, pending, duplicate, or thin evidence explicitly.",
@@ -320,7 +376,8 @@ async def _smart_ledger_response(
         ],
     }
     prompt = (
-        "You are Lissa, the owner-only intelligence assistant inside Reverse Picks.\n"
+        "You are Lissa (pronounced Lisa), the owner-only intelligence assistant inside Reverse Picks.\n"
+        "You are a calm, well-spoken woman. Address the owner as Reverse when speaking directly to him.\n"
         "The owner is asking about the saved prediction ledger, not asking for a new wager.\n"
         "Use the durable records below. Be precise about what is and is not recorded.\n"
         f"{json.dumps(packet, ensure_ascii=False, default=str)[:18000]}\n\n"
@@ -353,6 +410,8 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
         "currentAnalysis": context,
         "rules": [
             "Answer the exact question about the current player analysis.",
+            "Your name is Lissa (pronounced Lisa), and address the owner as Reverse.",
+            "Speak as a calm, highly intelligent, well-spoken woman; make the first sentence useful when heard aloud.",
             "Use only values present in the current analysis snapshot.",
             "Explain the deterministic projection; do not replace it.",
             "Name the player, matchup, prop, line, projection, and recommendation when available.",
@@ -364,7 +423,8 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
     }
     import json
     prompt = (
-        "You are Lissa, an owner-only voice assistant inside a soccer player-prop analytics app.\n"
+        "You are Lissa (pronounced Lisa), a well-spoken woman and owner-only voice assistant inside Reverse Picks.\n"
+        "Address the owner as Reverse. Never call him by another name.\n"
         "The user is looking at one exact analysis screen and asked a question about it.\n"
         "Return a natural spoken answer, 2 to 5 short paragraphs, with no markdown bullets or headings.\n"
         "Here is the structured analysis packet:\n"
@@ -395,7 +455,7 @@ async def lissa_overview(req: LissaOverviewRequest):
         "assistant": "Lissa",
         "readOnly": True,
         "summary": summary,
-        "message": _summary_text(summary),
+        "message": _address_owner(_summary_text(summary)),
         "sessionId": f"lissa-{uuid.uuid4().hex[:12]}",
     }
 
@@ -403,72 +463,73 @@ async def lissa_overview(req: LissaOverviewRequest):
 @router.post("/message")
 async def lissa_message(req: LissaMessageRequest):
     await _authorize(req)
-    picks = await _load_owner_picks()
-    summary = _ledger_summary(picks)
     message = req.message.strip()
-    lowered = message.lower()
+    fast = _fast_response(message, req.context)
+    if fast:
+        return {
+            "assistant": "Lissa",
+            "sessionId": req.session_id or f"lissa-{uuid.uuid4().hex[:12]}",
+            "response": _address_owner(fast),
+            "readOnly": True,
+            "mode": "instant",
+            "summary": _empty_summary(),
+        }
+
     packet = _analysis_packet(req.context)
+    summary = _empty_summary()
 
     if packet:
         response = await _smart_analysis_response(message, packet)
         if not response:
             response = _analysis_fallback(message, packet)
-    elif re.search(r"\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b", lowered) or re.fullmatch(r"(hello|hi|hey)( lissa)?[.!? ]*", lowered):
-        # Presence checks must never wait for the ledger read, AI gateway, or
-        # provider enrichment. They are a local conversational handshake.
-        response = "Yes, I can hear you. I am listening and ready to answer."
-    elif any(word in lowered for word in ("hello", "hi ", "hey", "who are you", "start")):
-        response = _summary_text(summary)
-    elif any(word in lowered for word in ("what can you", "capabilities", "help", "do for me")):
-        response = (
-            "I’m Lissa. In this first owner-only release I can read your saved pick ledger, "
-            "summarize settled performance, find a player’s saved picks, and highlight whether "
-            "a pick is missing a projection or result.\n\n"
-            "I am intentionally read-only. I cannot create, edit, settle, or publish a pick yet. "
-            "Ask “show my recent performance,” “find my passing picks,” or name a player."
-        )
-    elif any(word in lowered for word in ("recent", "performance", "record", "hit rate", "ledger", "picks")):
-        counts = summary["counts"]
-        rate = "not available" if summary["hitRate"] is None else f"{summary['hitRate']:.1f}%"
-        passing = [
-            pick for pick in picks
-            if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "key_pass", "cross"))
-        ]
-        response = (
-            f"Your current owner ledger contains {summary['total']} picks. "
-            f"Settled record: {counts['HIT']} HIT / {counts['MISS']} MISS "
-            f"({rate} HIT rate). There are {counts['LIVE']} live and {counts['PENDING']} pending picks."
-            f"\n\nI found {len(passing)} passing-related pick(s). "
-            "The next useful step is to inspect them by player, venue, line timestamp, and evidence coverage—"
-            "not just by raw average."
-        )
     else:
-        response = await _smart_ledger_response(message, picks, summary)
-        if not response:
-            matches = _match_player(picks, message)
-            if matches:
-                response = _player_text(matches)
-            elif any(term in lowered for term in ("passing", "passes", "pass prop")):
-                passing = [
-                    pick for pick in picks
-                    if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "cross"))
-                ]
-                response = (
-                    f"I found {len(passing)} passing-related saved pick(s). "
-                    "I can inspect a specific player next. Include the player’s full name so I do not merge "
-                    "same-name identities."
-                )
-            else:
-                response = (
-                    "I can read your owner ledger, but I do not have enough context to answer that safely yet. "
-                    "Try asking for recent performance, passing picks, or a specific player. "
-                    "I will say when the saved evidence is unavailable instead of guessing."
-                )
+        picks = await _load_owner_picks()
+        summary = _ledger_summary(picks)
+        lowered = message.lower()
+        if any(word in lowered for word in ("hello", "hi ", "hey", "start")):
+            response = _summary_text(summary)
+        elif any(word in lowered for word in ("recent", "performance", "record", "hit rate", "ledger", "picks")):
+            counts = summary["counts"]
+            rate = "not available" if summary["hitRate"] is None else f"{summary['hitRate']:.1f}%"
+            passing = [
+                pick for pick in picks
+                if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "key_pass", "cross"))
+            ]
+            response = (
+                f"Your current owner ledger contains {summary['total']} picks. "
+                f"Settled record: {counts['HIT']} HIT / {counts['MISS']} MISS "
+                f"({rate} HIT rate). There are {counts['LIVE']} live and {counts['PENDING']} pending picks."
+                f"\n\nI found {len(passing)} passing-related pick(s). "
+                "The next useful step is to inspect them by player, venue, line timestamp, and evidence coverage—"
+                "not just by raw average."
+            )
+        else:
+            response = await _smart_ledger_response(message, picks, summary)
+            if not response:
+                matches = _match_player(picks, message)
+                if matches:
+                    response = _player_text(matches)
+                elif any(term in lowered for term in ("passing", "passes", "pass prop")):
+                    passing = [
+                        pick for pick in picks
+                        if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "cross"))
+                    ]
+                    response = (
+                        f"I found {len(passing)} passing-related saved pick(s). "
+                        "I can inspect a specific player next. Include the player’s full name so I do not merge "
+                        "same-name identities."
+                    )
+                else:
+                    response = (
+                        "I can read your owner ledger, but I do not have enough context to answer that safely yet. "
+                        "Try asking for recent performance, passing picks, or a specific player. "
+                        "I will say when the saved evidence is unavailable instead of guessing."
+                    )
 
     return {
         "assistant": "Lissa",
         "sessionId": req.session_id or f"lissa-{uuid.uuid4().hex[:12]}",
-        "response": response,
+        "response": _address_owner(response),
         "readOnly": True,
         "mode": "deterministic-ledger",
         "summary": summary,

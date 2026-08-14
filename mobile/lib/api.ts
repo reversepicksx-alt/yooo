@@ -159,6 +159,7 @@ export interface LissaResponse {
 }
 
 export interface LissaContext {
+  screen?: Record<string, unknown>;
   pick?: Record<string, unknown>;
   analysis?: Record<string, unknown>;
   factors?: Array<Record<string, unknown>>;

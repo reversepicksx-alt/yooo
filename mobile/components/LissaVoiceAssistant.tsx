@@ -45,31 +45,41 @@ function immediateResponse(question: string): string | null {
     /\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b/.test(normalized)
     || /^(hello|hi|hey)( lissa)?$/.test(normalized)
   ) {
-    return 'Yes, I can hear you. I am listening and ready to answer.';
+    return 'Yes, Reverse, I can hear you. I am listening and ready to answer.';
   }
   if (/\bwhat are you listening for\b/.test(normalized)) {
-    return 'I am listening for your questions about the screen and the prediction you are viewing.';
+    return 'Reverse, I am listening for your questions about the screen and the prediction you are viewing.';
   }
   return null;
 }
 
-function speakAndWait(text: string): Promise<void> {
+function addressReverse(text: string): string {
+  return /\breverse\b/i.test(text) ? text : `Reverse, ${text}`;
+}
+
+function speakAndWait(text: string, onStart?: () => void, voice?: string): Promise<boolean> {
   return new Promise((resolve) => {
     let finished = false;
-    const finish = () => {
+    let started = false;
+    const finish = (success = started) => {
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
-      resolve();
+      resolve(success);
     };
-    const timeout = setTimeout(finish, Math.min(30_000, Math.max(4_000, text.length * 95)));
+    const timeout = setTimeout(() => finish(false), Math.min(20_000, Math.max(1_500, text.length * 95)));
     Speech.speak(text, {
       language: 'en-US',
-      rate: 0.96,
+      rate: 0.94,
       pitch: 1.0,
-      onDone: finish,
-      onStopped: finish,
-      onError: finish,
+      ...(voice ? { voice } : {}),
+      onStart: () => {
+        started = true;
+        onStart?.();
+      },
+      onDone: () => finish(true),
+      onStopped: () => finish(started),
+      onError: () => finish(false),
     });
   });
 }
@@ -91,6 +101,7 @@ export default function LissaVoiceAssistant({
   const [busy, setBusy] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [answer, setAnswer] = useState('');
+  const [speechReady, setSpeechReady] = useState(false);
   const [error, setError] = useState('');
   const armedRef = useRef(false);
   const awaitingRef = useRef(false);
@@ -100,6 +111,7 @@ export default function LissaVoiceAssistant({
   const lastFinalRef = useRef({ text: '', at: 0 });
   const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextRef = useRef(context);
+  const voiceRef = useRef<string | undefined>(undefined);
   const sendQuestionRef = useRef<(text: string) => Promise<void>>(async () => undefined);
 
   useEffect(() => {
@@ -112,6 +124,17 @@ export default function LissaVoiceAssistant({
     } catch {
       return false;
     }
+  }, []);
+
+  useEffect(() => {
+    void Speech.getAvailableVoicesAsync().then((voices) => {
+      const english = voices.filter((voice) => String(voice.language || '').toLowerCase().startsWith('en'));
+      const female = english.find((voice) => String((voice as any).gender || '').toLowerCase() === 'female');
+      const named = english.find((voice) =>
+        /samantha|karen|ava|victoria|zira|jenny|aria|female|siri/i.test(String((voice as any).name || '')),
+      );
+      voiceRef.current = (female || named || english[0])?.identifier;
+    }).catch(() => undefined);
   }, []);
 
   const clearRestartTimer = () => {
@@ -182,9 +205,10 @@ export default function LissaVoiceAssistant({
     }
   };
 
-  const activate = async () => {
+  const activate = async (primeVoice = Platform.OS !== 'web') => {
     setError('');
     try {
+      if (primeVoice) await primeSpeech();
       const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!permission.granted) {
         armedRef.current = false;
@@ -201,6 +225,28 @@ export default function LissaVoiceAssistant({
       armedRef.current = false;
       setArmed(false);
       setError(err instanceof Error ? err.message : 'Voice mode could not start.');
+    }
+  };
+
+  const primeSpeech = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    stopListening(false);
+    try {
+      await Speech.stop();
+      const spoke = await speakAndWait(
+        'I am Lissa, your Reverse Picks assistant. I am ready, Reverse.',
+        () => setSpeechReady(true),
+        voiceRef.current,
+      );
+      setSpeechReady(spoke);
+    } catch {
+      setSpeechReady(false);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+      if (armedRef.current) scheduleRestart(350);
     }
   };
 
@@ -247,12 +293,13 @@ export default function LissaVoiceAssistant({
       const result = immediate
         ? null
         : await sendLissaMessage(email, token, sessionId, clean, contextRef.current);
-      const text = immediate || result?.response || 'I could not produce a safe answer for that analysis.';
+      const text = addressReverse(immediate || result?.response || 'I could not produce a safe answer for that analysis.');
       setAnswer(text);
       onAnswer?.(text);
       try {
         await Speech.stop();
-        await speakAndWait(text);
+        const spoke = await speakAndWait(text, () => setSpeechReady(true), voiceRef.current);
+        if (!spoke) setSpeechReady(false);
       } catch {}
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lissa is temporarily unavailable.');
@@ -354,10 +401,11 @@ export default function LissaVoiceAssistant({
       <View style={styles.minimalWrap}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={armed ? 'Lissa is listening' : 'Enable Lissa microphone'}
+          accessibilityLabel={armed ? 'Enable Lissa spoken answers' : 'Enable Lissa microphone and spoken answers'}
           style={styles.minimalButton}
           onPress={() => {
-            if (!armed) void activate();
+            if (armed) void primeSpeech();
+            else void activate(true);
           }}
           disabled={busy}
         >
@@ -365,7 +413,7 @@ export default function LissaVoiceAssistant({
           <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
           <Text style={styles.minimalName}>Lissa</Text>
           <Text style={styles.minimalStatus}>
-            {busy ? 'Answering…' : armed && listening ? 'listening' : 'tap to enable'}
+            {busy ? 'Speaking…' : armed && !speechReady ? 'tap for voice' : armed && listening ? 'listening' : 'tap to enable'}
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>

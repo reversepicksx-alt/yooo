@@ -1,4 +1,4 @@
-import { Tabs, Redirect, router } from 'expo-router';
+import { Tabs, Redirect, router, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '@/constants/colors';
@@ -21,8 +21,31 @@ function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focu
 function GlobalLissa() {
   const { session } = useAuth();
   const { context } = useLissaScreenContext();
+  const pathname = usePathname();
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
   if (!isOwner || !session?.email || !session.token) return null;
+  const screenName = pathname.includes('/picks')
+    ? 'My Picks'
+    : pathname.includes('/community')
+      ? 'Community'
+      : pathname.includes('/account')
+        ? 'Account'
+        : pathname.includes('/scan')
+          ? 'Predict'
+          : 'Reverse Picks';
+  const screenContext = {
+    name: screenName,
+    path: pathname,
+    description: screenName === 'Predict'
+      ? 'The prediction workspace where Reverse selects a sport, player, prop, and line.'
+      : screenName === 'My Picks'
+        ? 'Saved live and historical picks, analysis, results, and owner performance.'
+        : screenName === 'Community'
+          ? 'The community feed for sharing and discussing picks.'
+          : screenName === 'Account'
+            ? 'The owner account, subscription, and profile settings.'
+            : 'The main Reverse Picks workspace.',
+  };
 
   return (
     <View pointerEvents="box-none" style={styles.lissaOverlay}>
@@ -32,7 +55,7 @@ function GlobalLissa() {
         email={session.email}
         token={session.token}
         sessionId="global-lissa"
-        context={context}
+        context={{ screen: screenContext, ...context }}
       />
     </View>
   );
