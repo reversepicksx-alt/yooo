@@ -136,7 +136,9 @@ function speakAndWait(text: string, onStart?: () => void, voice?: string): Promi
       clearTimeout(timeout);
       resolve(success);
     };
-    const timeout = setTimeout(() => finish(false), Math.min(20_000, Math.max(1_500, text.length * 95)));
+    // Short timeout — browser TTS on iOS is often blocked from non-gesture contexts;
+    // fail fast so the caller can show the "Tap to hear" button instead of hanging.
+    const timeout = setTimeout(() => finish(false), Math.min(6_000, Math.max(1_200, text.length * 40)));
     Speech.speak(text, {
       language: 'en-US',
       rate: 1.08,
@@ -218,6 +220,8 @@ export default function LissaVoiceAssistant({
   const [busy, setBusy] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [answer, setAnswer] = useState('');
+  const [pendingSpeak, setPendingSpeak] = useState(''); // text queued for gesture-triggered TTS
+  const [isSpeaking, setIsSpeaking] = useState(false);  // true while TTS is playing
   const [speechReady, setSpeechReady] = useState(false);
   const [error, setError] = useState('');
   const [voiceMode, setVoiceMode] = useState<'wake' | 'awaiting' | 'thinking' | 'speaking'>('wake');
@@ -413,6 +417,20 @@ export default function LissaVoiceAssistant({
     };
   }, [autoStart, supported, email, token]);
 
+  // Speak text from a gesture handler — 100% reliable on iOS Safari.
+  const speakNow = (text: string) => {
+    if (!text) return;
+    setPendingSpeak('');
+    setIsSpeaking(true);
+    void Speech.stop();
+    // speakWithAI: if audio element is unlocked, tries Gemini TTS first
+    void speakWithAI(text, email ?? '', token ?? '', () => setSpeechReady(true), voiceRef.current)
+      .finally(() => {
+        setIsSpeaking(false);
+        if (armedRef.current) scheduleRestart(300);
+      });
+  };
+
   const submitQuestion = async (question: string) => {
     const clean = question.trim();
     if (!clean || busyRef.current || !email || !token) return;
@@ -420,10 +438,9 @@ export default function LissaVoiceAssistant({
     setBusy(true);
     setVoiceMode('thinking');
     setError('');
+    setPendingSpeak('');
     setTranscript(clean);
     closeQuestionWindow();
-    // Do not let the recognizer capture Lissa's spoken answer as the next
-    // question. It will be restarted after Speech.speak completes.
     stopListening(false);
     try {
       const immediate = immediateResponse(clean);
@@ -431,27 +448,37 @@ export default function LissaVoiceAssistant({
         ? null
         : await sendLissaMessage(email, token, sessionId, clean, contextRef.current);
       const text = addressReverse(immediate || result?.response || 'I could not produce a safe answer for that analysis.');
+
+      // ★ Unblock the UI immediately — show the answer text right away
       setAnswer(text);
       onAnswer?.(text);
-      try {
-        await Speech.stop();
-        setVoiceMode('speaking');
-        const spoke = await speakWithAI(text, email ?? '', token ?? '', () => setSpeechReady(true), voiceRef.current);
-        if (!spoke) setSpeechReady(false);
-      } catch {}
+      busyRef.current = false;
+      setBusy(false);
+      setVoiceMode('wake');
+      if (armedRef.current) scheduleRestart(500);
+
+      // Queue text for gesture-triggered playback ("Tap to hear" button)
+      setPendingSpeak(text);
+
+      // Also attempt background TTS — if audio element is already unlocked this will
+      // play automatically without needing the button tap.
+      void Speech.stop();
+      void speakWithAI(text, email ?? '', token ?? '', () => {
+        setSpeechReady(true);
+        setPendingSpeak(''); // clear button once audio actually starts
+        setIsSpeaking(true);
+      }, voiceRef.current).then(spoke => {
+        setIsSpeaking(false);
+        if (!spoke) {
+          // TTS failed — keep "Tap to hear" button visible so user can still hear it
+        }
+      });
     } catch (err) {
       const isTimeout = err instanceof Error && err.message.toLowerCase().includes('timed out');
       const errText = isTimeout
-        ? "I took too long to respond. Try again."
-        : '.2 is temporarily unavailable. Try again in a moment.';
+        ? "Took too long. Try again."
+        : '.2 is temporarily unavailable.';
       setError(errText);
-      // Speak the error so the user hears what happened, not just sees it
-      try {
-        await Speech.stop();
-        setVoiceMode('speaking');
-        await speakWithAI(addressReverse(errText), email ?? '', token ?? '', () => setSpeechReady(true), voiceRef.current);
-      } catch {}
-    } finally {
       busyRef.current = false;
       setBusy(false);
       if (armedRef.current) {
@@ -578,10 +605,24 @@ export default function LissaVoiceAssistant({
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>
-        {!!answer && !busy && (
-          <Text style={styles.minimalAnswer} numberOfLines={2}>
+        {!!answer && (
+          <Text style={styles.minimalAnswer} numberOfLines={4}>
             {answer}
           </Text>
+        )}
+        {!!pendingSpeak && !isSpeaking && (
+          <TouchableOpacity
+            style={styles.hearButton}
+            onPress={() => speakNow(pendingSpeak)}
+            accessibilityRole="button"
+            accessibilityLabel="Tap to hear .2's answer"
+          >
+            <Ionicons name="volume-high-outline" size={13} color={Colors.primary} />
+            <Text style={styles.hearButtonText}>Tap to hear</Text>
+          </TouchableOpacity>
+        )}
+        {isSpeaking && (
+          <Text style={styles.minimalStatus}>🔊 speaking…</Text>
         )}
         {!!error && <Text style={styles.minimalError} numberOfLines={1}>{error}</Text>}
       </View>
@@ -675,11 +716,28 @@ const styles = StyleSheet.create({
   },
   minimalAnswer: {
     color: Colors.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 15,
     maxWidth: 300,
-    marginTop: 4,
+    marginTop: 5,
     textAlign: 'center',
+  },
+  hearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: 'rgba(0,255,100,0.07)',
+  },
+  hearButtonText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '600',
   },
   minimalUnavailable: {
     flexDirection: 'row',
