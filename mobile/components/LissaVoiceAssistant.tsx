@@ -254,8 +254,12 @@ export default function LissaVoiceAssistant({
   };
 
   const primeSpeech = async () => {
-    // Silent — no intro announcement. Tap gesture unlocks iOS audio session;
-    // Lissa's first spoken answer confirms it's working.
+    // Safari/iOS requires speechSynthesis.speak() to fire inside the tap handler
+    // before any later audio works. Speak a zero-width space at max rate — it
+    // produces no audible sound but unlocks the audio session for all future calls.
+    if (!speechReady) {
+      await speakAndWait('\u200B', () => setSpeechReady(true), voiceRef.current);
+    }
     setSpeechReady(true);
   };
 
@@ -444,9 +448,9 @@ export default function LissaVoiceAssistant({
         >
           <View style={[styles.minimalDot, armed && listening && styles.minimalDotLive]} />
           <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
-          <Text style={styles.minimalName}>Lissa</Text>
+          <Text style={styles.minimalName}>.2</Text>
           <Text style={styles.minimalStatus}>
-          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say “Lissa”' : 'tap to enable'}
+          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say "Lissa"' : 'tap to enable'}
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>
