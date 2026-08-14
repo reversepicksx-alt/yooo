@@ -190,39 +190,81 @@ def _address_owner(response: str) -> str:
     return text if re.search(r"\breverse\b", text, re.IGNORECASE) else f"Reverse, {text}"
 
 
+_SCREEN_QUESTION_RE = re.compile(
+    r"\b("
+    r"what (page|screen|tab) (is this|am i on|are (we|you) on)"
+    r"|what (is|'s|are) (this|here|open|on screen)"
+    r"|what am i (looking at|seeing|on|viewing)"
+    r"|what are (we|you) (looking at|seeing|on)"
+    r"|where am i"
+    r"|which (page|screen|tab)"
+    r"|what can you see"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
     """Handle identity, presence, app, and screen questions without I/O."""
     lowered = message.lower().strip()
+
+    # Presence / greeting
     if (
         re.search(r"\b(can you hear me|do you hear me|are you there|are you listening|can you listen)\b", lowered)
         or re.fullmatch(r"(hello|hi|hey)( lissa| lisa)?[.!? ]*", lowered)
     ):
-        return "Yes, I can hear you. I am listening and ready to answer."
+        return "Yes, I can hear you. Ready when you are."
+
+    # Identity
     if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa")):
+        return "I'm Lissa — Reverse Picks' owner-only assistant. You can call me Lissa or Lisa."
+
+    # Capabilities
+    if any(term in lowered for term in ("what can you do", "capabilities", "what do you know", "help me", "how do i use")):
         return (
-            "I am Lissa, Reverse Picks' owner-only intelligence assistant. "
-            "You can call me Lissa or Lisa; my name in the app is Lissa."
+            "When you have a pick analysis open, ask me things like 'why the over,' 'explain this pick,' "
+            "or 'what's the projection.' I can also answer questions about your saved ledger — "
+            "hit rate, specific players, patterns. And I can look up upcoming fixtures if you name a team. "
+            "I'm read-only; I can't change picks or settle results."
         )
-    if any(term in lowered for term in ("what can you do", "capabilities", "what do you know", "help me")):
-        return (
-            "I can explain the Reverse Picks screen you are viewing, walk through a prediction's line, "
-            "projection, recommendation, confidence, evidence, tactical context, and limitations, "
-            "and read your saved ledger for performance, players, results, and missing data. "
-            "I am read-only: I do not change projections, settle picks, publish posts, or make decisions for you."
-        )
+
+    # App description
     if any(term in lowered for term in ("what is reverse picks", "what is this app", "what does this app do")):
         return (
             "Reverse Picks is a structured player-props analysis app. "
-            "It combines verified matchup context, recent player evidence, historical and tactical signals, "
-            "calibration, and a final projection ledger so you can see why a direction was selected."
+            "It builds a verified matchup picture — player form, opponent data, odds, tactical role — "
+            "and uses that to project a direction with an explicit evidence trail."
         )
-    if any(term in lowered for term in ("what am i looking at", "what screen", "where am i", "what page", "what can you see")):
-        screen = context.get("screen") if isinstance(context, dict) else {}
-        if isinstance(screen, dict):
-            name = str(screen.get("name") or "the current Reverse Picks screen")
-            description = str(screen.get("description") or "").strip()
-            return f"You are on the {name} screen. {description}".strip()
-        return "You are inside Reverse Picks. I can describe the exact screen once its context is available."
+
+    # Screen / page questions — broad pattern match
+    screen_match = (
+        _SCREEN_QUESTION_RE.search(lowered)
+        or any(term in lowered for term in ("what page", "what screen", "where am i", "what tab"))
+    )
+    if screen_match:
+        ctx = context if isinstance(context, dict) else {}
+        screen = ctx.get("screen") if isinstance(ctx, dict) else {}
+        name = str(screen.get("name") or "Reverse Picks") if isinstance(screen, dict) else "Reverse Picks"
+
+        # If a pick card is open in My Picks, mention it briefly — don't launch into analysis
+        pick = ctx.get("pick") if isinstance(ctx, dict) else None
+        if isinstance(pick, dict) and pick.get("playerName") and name == "My Picks":
+            player = str(pick.get("playerName") or "a player")
+            prop = _display_prop(pick.get("propType"))
+            rec = str(pick.get("recommendation") or "").upper()
+            line = _format_number(pick.get("line"))
+            line_str = f" {line}" if line else ""
+            rec_str = f", leaning {rec}" if rec else ""
+            return (
+                f"You're on My Picks. {player}'s {prop}{line_str} analysis is open{rec_str}. "
+                f"Ask me to explain the pick or walk through the evidence."
+            )
+
+        description = str(screen.get("description") or "").strip() if isinstance(screen, dict) else ""
+        if description:
+            return f"You're on {name}. {description}"
+        return f"You're on {name}."
+
     return None
 
 
@@ -452,52 +494,73 @@ def _analysis_packet(context: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _analysis_fallback(message: str, context: dict[str, Any]) -> str:
+    """Natural spoken analysis using only values present in the saved pick."""
     pick = context.get("pick") or {}
     factors = context.get("factors") or pick.get("analysisFactors") or []
-    player = pick.get("playerName") or "This player"
-    team = pick.get("teamName") or "the player's team"
-    opponent = pick.get("opponentName") or "the opponent"
+    player = str(pick.get("playerName") or "the player")
+    opponent = str(pick.get("opponentName") or "the opponent")
     prop = _display_prop(pick.get("propType"))
     line = _format_number(pick.get("line"))
-    projection = _format_number(pick.get("projectedValue") or pick.get("projection"))
-    recommendation = str(pick.get("recommendation") or "the current direction").upper()
-    venue = str(pick.get("venue") or "the recorded venue").lower()
+    recommendation = str(pick.get("recommendation") or "").upper()
+    venue = str(pick.get("venue") or "").lower()
     confidence = _number(pick.get("confidence") or pick.get("confidenceScore"))
 
-    gap_phrase = "close to the line"
     line_number = _number(pick.get("line"))
     projection_number = _number(pick.get("projectedValue") or pick.get("projection"))
-    if line_number is not None and projection_number is not None:
-        difference = projection_number - line_number
-        direction = "above" if difference > 0 else "below" if difference < 0 else "right on"
-        gap_phrase = f"{abs(difference):.1f} {direction} the line"
+    projection = _format_number(projection_number)
 
-    evidence_lines = []
+    sentences: list[str] = []
+
+    # Opening — establish the pick
+    venue_phrase = f" at {venue}" if venue in ("home", "away") else ""
+    rec_phrase = f" The model leans {recommendation}." if recommendation else ""
+    if player and prop and line:
+        sentences.append(
+            f"{player} is on {prop} {line} against {opponent}{venue_phrase}.{rec_phrase}"
+        )
+
+    # Projection gap
+    if line_number is not None and projection_number is not None:
+        diff = projection_number - line_number
+        direction = "above" if diff > 0 else "below"
+        conf_str = f" with {_format_number(confidence)} confidence" if confidence is not None else ""
+        sentences.append(
+            f"The projection is {projection} — {abs(diff):.1f} points {direction} the line{conf_str}."
+        )
+    elif projection:
+        sentences.append(f"The projection is {projection}.")
+
+    # Evidence factors — plain language, not a list
+    good_factors: list[str] = []
     for factor in factors[:6]:
         if not isinstance(factor, dict):
             continue
         title = str(factor.get("title") or factor.get("id") or "").strip()
         detail = str(factor.get("detail") or factor.get("summary") or "").strip()
-        direction = str(factor.get("direction") or "").strip()
-        if title and (detail or direction):
-            evidence_lines.append(f"{title}: {detail or direction}")
+        fdir = str(factor.get("direction") or "").strip()
+        value = detail or fdir
+        if title and value:
+            good_factors.append(f"{title}: {value}")
 
+    if good_factors:
+        joined = "; ".join(good_factors[:3])
+        sentences.append(f"The main signals behind it — {joined}.")
+
+    # Tactical read — first two sentences only, keep it brief
     tactical = str(pick.get("tacticalBreakdown") or pick.get("reasoning") or "").strip()
-    answer = (
-        f"Here’s the short version: {player} is at {prop} {line} against {opponent}, "
-        f"and the model leans {recommendation}. The projection is {projection}, "
-        f"which puts it {gap_phrase} in this {venue} matchup."
-    )
-    if confidence is not None:
-        answer += f" Confidence is approximately {_format_number(confidence)}."
-    if evidence_lines:
-        answer += "\n\nThe main reasons captured were: " + "; ".join(evidence_lines[:4]) + "."
     if tactical:
-        answer += "\n\nThe tactical read was: " + tactical[:1000]
-    answer += (
-        "\n\nThat’s what the saved analysis says; I won’t make up missing data or pretend I changed the pick."
-    )
-    return answer
+        tac_sentences = re.split(r"(?<=[.!?])\s+", tactical)
+        brief = " ".join(tac_sentences[:2]).strip()
+        if brief:
+            sentences.append(f"The tactical read: {brief[:400]}")
+
+    if not sentences:
+        return (
+            f"I can see {player}'s analysis is open, but the key fields are empty. "
+            "The pick may not have a completed analysis saved."
+        )
+
+    return " ".join(sentences)
 
 
 async def _smart_ledger_response(
@@ -572,33 +635,44 @@ async def _smart_analysis_response(
         return None
     if not await _within_explanation_budget():
         return None
-    packet = {
-        "question": message,
-        "currentAnalysis": context,
-        "recentConversation": (recent_turns or [])[-6:],
-        "rules": [
-            "Answer the exact question about the current player analysis.",
-            "Your name is Lissa (pronounced Lisa), and address the owner as Reverse.",
-            "Speak as a calm, highly intelligent, well-spoken woman; make the first sentence useful when heard aloud.",
-            "Use only values present in the current analysis snapshot.",
-            "Explain the deterministic projection; do not replace it.",
-            "Name the player, matchup, prop, line, projection, and recommendation when available.",
-            "Call out unavailable, thin, shadow-only, or fallback evidence explicitly.",
-            "Do not invent injuries, line movement, player roles, or statistics.",
-            "Do not promise a win and do not give financial advice.",
-            "Sound like a smart friend, not a report. Use contractions and plain language. No headings, bullets, or robotic disclaimers.",
-            "Use recent conversation only to understand follow-ups; the current analysis packet is the source of truth.",
-        ],
-    }
     import json
+    # Pull the key pick fields to the top of the prompt so Gemini sees them
+    # first instead of having to parse the full nested packet.
+    pick = context.get("pick") or {}
+    player_name = pick.get("playerName") or "the player"
+    prop_label = _display_prop(pick.get("propType"))
+    line_val = _format_number(pick.get("line"))
+    proj_val = _format_number(pick.get("projectedValue") or pick.get("projection"))
+    rec_val = str(pick.get("recommendation") or "").upper()
+    conf_val = _format_number(pick.get("confidence") or pick.get("confidenceScore"))
+    opp_val = pick.get("opponentName") or "the opponent"
+    venue_val = str(pick.get("venue") or "").lower()
+
+    pick_summary = (
+        f"Player: {player_name} | Prop: {prop_label} {line_val} | "
+        f"Projection: {proj_val} | Direction: {rec_val} | "
+        f"Confidence: {conf_val} | Opponent: {opp_val} | Venue: {venue_val}"
+    )
+    packet = {
+        "pickSummary": pick_summary,
+        "question": message,
+        "fullAnalysis": context,
+        "recentConversation": (recent_turns or [])[-4:],
+    }
     prompt = (
-        "You are Lissa (pronounced Lisa), a well-spoken woman and owner-only voice assistant inside Reverse Picks.\n"
-        "Address the owner as Reverse. Never call him by another name.\n"
-        "The user is looking at one exact analysis screen and asked a question about it.\n"
-        "Return a natural spoken answer in one to three short paragraphs, with no markdown bullets or headings.\n"
-        "Here is the structured analysis packet:\n"
-        f"{json.dumps(packet, ensure_ascii=False, default=str)[:18000]}\n\n"
-        f"User question: {message}"
+        "You are Lissa (pronounced Lisa), the owner-only assistant inside Reverse Picks.\n"
+        "You are a calm, intelligent woman. Speak like a smart friend who knows the data — "
+        "direct, no fluff, no bullet points, no headings, no markdown.\n"
+        "Address the owner as 'Reverse' when speaking to him directly.\n\n"
+        f"The pick currently open: {pick_summary}\n\n"
+        "Here is the full analysis data:\n"
+        f"{json.dumps(packet, ensure_ascii=False, default=str)[:16000]}\n\n"
+        f"Owner's question: {message}\n\n"
+        "Answer in one to three short spoken paragraphs. "
+        "Start with the most direct answer to the question. "
+        "Do not repeat the pick summary unless it directly answers the question. "
+        "Call out thin or missing evidence honestly — don't gloss over gaps. "
+        "Never promise a win or give financial advice."
     )
     try:
         text = await aio.wait_for(
@@ -701,11 +775,29 @@ async def lissa_message(req: LissaMessageRequest):
         print(f"[LISSA MEMORY] turn load skipped: {type(exc).__name__}: {exc}")
         recent_turns = []
 
+    # "this pick / this analysis / explain this" — proximal reference with no open card
+    _THIS_RE = re.compile(
+        r"\b(this pick|this analysis|this one|this prediction|explain this|"
+        r"what.s this|what is this pick|why this|why the (over|under)|"
+        r"break this|walk me through this|tell me about this)\b",
+        re.IGNORECASE,
+    )
+
     if packet:
         response = await _smart_analysis_response(message, packet, recent_turns)
         if not response:
             response = _analysis_fallback(message, packet)
     else:
+        # If the question refers to something on-screen ("this pick") but there's
+        # no open analysis card, redirect clearly rather than searching the ledger.
+        if _THIS_RE.search(message):
+            active_screen = _screen_name(req.context) or "the current screen"
+            response = (
+                f"I don't have a pick open right now on {active_screen}. "
+                "Open a pick card in My Picks and ask me again — I'll walk through the analysis."
+            )
+            return await _finish_turn(req, session_id, response, "instant", _empty_summary())
+
         picks = await _load_owner_picks()
         summary = _ledger_summary(picks)
         lowered = message.lower()
