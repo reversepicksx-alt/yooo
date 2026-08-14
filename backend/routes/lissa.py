@@ -746,99 +746,217 @@ async def lissa_overview(req: LissaOverviewRequest):
     }
 
 
+_THIS_RE = re.compile(
+    r"\b(this pick|this analysis|this one|this prediction|explain this|"
+    r"what.s this|what is this pick|why this|why the (over|under)|"
+    r"break this|walk me through this|tell me about this)\b",
+    re.IGNORECASE,
+)
+
+
+async def _build_gemini_prompt(
+    message: str,
+    packet: dict[str, Any],
+    picks: list[dict[str, Any]],
+    summary: dict[str, Any],
+    recent_turns: list[dict[str, Any]],
+    context: dict[str, Any] | None,
+) -> str:
+    """Build a single self-contained prompt for Gemini covering all Lissa context."""
+    import json
+
+    screen_name = _screen_name(context) or "Reverse Picks"
+
+    # Ledger summary
+    counts = summary.get("counts", {})
+    hit_rate = summary.get("hitRate")
+    rate_str = f"{hit_rate:.1f}% HIT rate" if hit_rate else "HIT rate unavailable"
+    ledger_line = (
+        f"{summary.get('total', 0)} picks total — "
+        f"{counts.get('HIT', 0)} HIT / {counts.get('MISS', 0)} MISS ({rate_str}), "
+        f"{counts.get('LIVE', 0)} live, {counts.get('PENDING', 0)} pending"
+    )
+
+    # Active pick context (only when the screen is My Picks)
+    pick_block = ""
+    if packet:
+        pick = packet.get("pick") or {}
+        player = str(pick.get("playerName") or "unknown player")
+        prop = _display_prop(pick.get("propType"))
+        line = _format_number(pick.get("line"))
+        rec = str(pick.get("recommendation") or "").upper()
+        proj = _format_number(pick.get("projectedValue") or pick.get("projection"))
+        conf = _format_number(pick.get("confidence") or pick.get("confidenceScore"))
+        opp = str(pick.get("opponentName") or "unknown opponent")
+        venue = str(pick.get("venue") or "").lower()
+        line_n = _number(pick.get("line"))
+        proj_n = _number(pick.get("projectedValue") or pick.get("projection"))
+        gap_line = ""
+        if line_n is not None and proj_n is not None:
+            diff = proj_n - line_n
+            gap_line = f" — projection is {abs(diff):.1f} pts {'above' if diff > 0 else 'below'} the line"
+
+        factors = packet.get("factors") or []
+        factor_lines = []
+        for f in factors[:5]:
+            if isinstance(f, dict):
+                t = str(f.get("title") or "").strip()
+                d = str(f.get("detail") or f.get("summary") or "").strip()
+                if t and d:
+                    factor_lines.append(f"  • {t}: {d}")
+        tactical = str(pick.get("tacticalBreakdown") or "").strip()
+
+        pick_block = (
+            f"\n--- OPEN PICK ANALYSIS ---\n"
+            f"Player: {player} | Prop: {prop} {line} | Rec: {rec} | "
+            f"Projection: {proj}{gap_line} | Confidence: {conf} | vs {opp} ({venue})\n"
+        )
+        if factor_lines:
+            pick_block += "Key model factors:\n" + "\n".join(factor_lines) + "\n"
+        if tactical:
+            pick_block += f"Tactical read: {tactical[:600]}\n"
+        pick_block += "--- END PICK ---"
+
+    # Recent settled picks (last 12) for ledger questions
+    settled = [p for p in picks if str(p.get("result") or "") in ("HIT", "MISS")][-12:]
+    settled_lines = []
+    for p in settled:
+        name = str(p.get("playerName") or "?")
+        prop = _display_prop(p.get("propType"))
+        res = str(p.get("result") or "?")
+        line = _format_number(p.get("line"))
+        opp = str(p.get("opponentName") or "")
+        opp_str = f" vs {opp}" if opp else ""
+        settled_lines.append(f"{name} — {prop} {line}{opp_str} → {res}")
+    settled_block = ""
+    if settled_lines:
+        settled_block = "\n--- RECENT SETTLED PICKS ---\n" + "\n".join(settled_lines) + "\n--- END ---"
+
+    # Recent conversation
+    convo_block = ""
+    if recent_turns:
+        lines = []
+        for t in recent_turns[-5:]:
+            lines.append(f"Reverse: {t.get('user', '')}")
+            lines.append(f"Lissa: {t.get('assistant', '')[:300]}")
+        convo_block = "\n--- RECENT CONVERSATION ---\n" + "\n".join(lines) + "\n--- END ---"
+
+    return (
+        "You are Lissa (pronounced Lisa), the owner-only AI assistant inside Reverse Picks.\n"
+        "You are calm, direct, and intelligent — like a brilliant friend who knows the data inside out.\n"
+        "Address the owner as 'Reverse' naturally in conversation — not robotically at the start of every sentence.\n"
+        "Never use bullet points, markdown, headings, or lists — only natural spoken paragraphs.\n"
+        "Keep answers short: one to three paragraphs. Lead with the direct answer.\n"
+        "You are read-only: you cannot change picks, settle results, or run new predictions.\n"
+        "If something is not in the data provided, say so honestly — never make up stats or outcomes.\n"
+        "You can discuss: the open pick analysis, the owner's saved pick ledger, upcoming fixtures.\n\n"
+        f"CURRENT SCREEN: {screen_name}\n"
+        f"LEDGER: {ledger_line}\n"
+        f"{pick_block}"
+        f"{settled_block}"
+        f"{convo_block}\n\n"
+        f"Reverse asks: {message}\n\n"
+        "Answer naturally and directly. If a pick is open, explain it. "
+        "If asking about the ledger, use the settled picks above. "
+        "If you genuinely can't answer from the data, say what's missing."
+    )
+
+
+async def _smart_primary_response(
+    message: str,
+    packet: dict[str, Any],
+    picks: list[dict[str, Any]],
+    summary: dict[str, Any],
+    recent_turns: list[dict[str, Any]],
+    context: dict[str, Any] | None,
+) -> str | None:
+    """Gemini-powered primary response — handles all non-trivial questions."""
+    if os.environ.get("LISSA_AI_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
+        return None
+    if not await _within_explanation_budget():
+        return None
+    prompt = await _build_gemini_prompt(message, packet, picks, summary, recent_turns, context)
+    try:
+        text = await aio.wait_for(
+            _generate_explanation(prompt),
+            timeout=14.0,
+        )
+        cleaned = text.strip() if text else ""
+        return cleaned if len(cleaned) >= 20 else None
+    except Exception as exc:
+        print(f"[LISSA AI] primary response failed: {type(exc).__name__}: {exc}")
+        return None
+
+
 @router.post("/message")
 async def lissa_message(req: LissaMessageRequest):
     await _authorize(req)
     message = req.message.strip()
     session_id = _session_id(req)
-    try:
-        match_response = await aio.wait_for(_upcoming_match_response(message), timeout=5.5)
-    except aio.TimeoutError:
-        match_response = "The fixture search is taking too long, so I stopped it rather than make you wait."
-    except Exception as exc:
-        print(f"[LISSA MATCH] turn lookup failed: {type(exc).__name__}: {exc}")
-        match_response = None
-    if match_response:
-        return await _finish_turn(req, session_id, match_response, "match-search", _empty_summary())
+
+    # 1. Instant screen/identity responses — no I/O needed
     fast = _fast_response(message, req.context)
     if fast:
         return await _finish_turn(req, session_id, fast, "instant", _empty_summary())
 
-    packet = _analysis_packet(req.context)
-    summary = _empty_summary()
+    # 2. Fixture schedule lookup
     try:
-        recent_turns = await aio.wait_for(
-            load_recent_turns(req.email, session_id),
-            timeout=0.35,
-        )
+        match_response = await aio.wait_for(_upcoming_match_response(message), timeout=5.5)
+    except aio.TimeoutError:
+        match_response = "The fixture search timed out. Try a more specific team name."
     except Exception as exc:
-        print(f"[LISSA MEMORY] turn load skipped: {type(exc).__name__}: {exc}")
-        recent_turns = []
+        print(f"[LISSA MATCH] failed: {type(exc).__name__}: {exc}")
+        match_response = None
+    if match_response:
+        return await _finish_turn(req, session_id, match_response, "match-search", _empty_summary())
 
-    # "this pick / this analysis / explain this" — proximal reference with no open card
-    _THIS_RE = re.compile(
-        r"\b(this pick|this analysis|this one|this prediction|explain this|"
-        r"what.s this|what is this pick|why this|why the (over|under)|"
-        r"break this|walk me through this|tell me about this)\b",
-        re.IGNORECASE,
+    # 3. Check if a pick card is open (My Picks screen only)
+    packet = _analysis_packet(req.context)
+
+    # Redirect "this pick" when no card is open
+    if _THIS_RE.search(message) and not packet:
+        active_screen = _screen_name(req.context) or "the current screen"
+        response = (
+            f"I don't have a pick open right now on {active_screen}. "
+            "Open a pick card in My Picks and ask me again."
+        )
+        return await _finish_turn(req, session_id, response, "instant", _empty_summary())
+
+    # 4. Load durable context (picks + memory) in parallel
+    try:
+        picks, recent_turns = await aio.gather(
+            _load_owner_picks(),
+            aio.wait_for(load_recent_turns(req.email, session_id), timeout=0.5),
+            return_exceptions=True,
+        )
+        if isinstance(picks, Exception):
+            print(f"[LISSA] picks load failed: {picks}")
+            picks = []
+        if isinstance(recent_turns, Exception):
+            recent_turns = []
+    except Exception as exc:
+        print(f"[LISSA] context load failed: {type(exc).__name__}: {exc}")
+        picks, recent_turns = [], []
+
+    summary = _ledger_summary(picks)
+
+    # 5. Gemini is the primary path — it handles analysis, ledger, and general questions
+    response = await _smart_primary_response(
+        message, packet, picks, summary, recent_turns, req.context,
     )
 
-    if packet:
-        response = await _smart_analysis_response(message, packet, recent_turns)
-        if not response:
+    # 6. Deterministic fallback when AI is unavailable
+    if not response:
+        if packet:
             response = _analysis_fallback(message, packet)
-    else:
-        # If the question refers to something on-screen ("this pick") but there's
-        # no open analysis card, redirect clearly rather than searching the ledger.
-        if _THIS_RE.search(message):
-            active_screen = _screen_name(req.context) or "the current screen"
-            response = (
-                f"I don't have a pick open right now on {active_screen}. "
-                "Open a pick card in My Picks and ask me again — I'll walk through the analysis."
-            )
-            return await _finish_turn(req, session_id, response, "instant", _empty_summary())
-
-        picks = await _load_owner_picks()
-        summary = _ledger_summary(picks)
-        lowered = message.lower()
-        if any(word in lowered for word in ("hello", "hi ", "hey", "start")):
-            response = _summary_text(summary)
-        elif any(word in lowered for word in ("recent", "performance", "record", "hit rate", "ledger", "picks")):
-            counts = summary["counts"]
-            rate = "not available" if summary["hitRate"] is None else f"{summary['hitRate']:.1f}%"
-            passing = [
-                pick for pick in picks
-                if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "key_pass", "cross"))
-            ]
-            response = (
-                f"Your current owner ledger contains {summary['total']} picks. "
-                f"Settled record: {counts['HIT']} HIT / {counts['MISS']} MISS "
-                f"({rate} HIT rate). There are {counts['LIVE']} live and {counts['PENDING']} pending picks."
-                f"\n\nI found {len(passing)} passing-related pick(s). "
-                "The next useful step is to inspect them by player, venue, line timestamp, and evidence coverage—"
-                "not just by raw average."
-            )
         else:
-            response = await _smart_ledger_response(message, picks, summary, recent_turns)
-            if not response:
-                matches = _match_player(picks, message)
-                if matches:
-                    response = _player_text(matches)
-                elif any(term in lowered for term in ("passing", "passes", "pass prop")):
-                    passing = [
-                        pick for pick in picks
-                        if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "cross"))
-                    ]
-                    response = (
-                        f"I found {len(passing)} passing-related saved pick(s). "
-                        "I can inspect a specific player next. Include the player’s full name so I do not merge "
-                        "same-name identities."
-                    )
-                else:
-                    response = (
-                        "I can read your owner ledger, but I do not have enough context to answer that safely yet. "
-                        "Try asking for recent performance, passing picks, or a specific player. "
-                        "I will say when the saved evidence is unavailable instead of guessing."
-                    )
+            matches = _match_player(picks, message)
+            if matches:
+                response = _player_text(matches)
+            else:
+                response = _summary_text(summary) if summary.get("total") else (
+                    "I'm having trouble reaching my AI right now. "
+                    "Try again in a moment, or ask me something specific like your hit rate or a player's name."
+                )
 
-    return await _finish_turn(req, session_id, response, "deterministic-ledger", summary)
+    return await _finish_turn(req, session_id, response, "ai-primary", summary)

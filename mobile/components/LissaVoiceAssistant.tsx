@@ -335,7 +335,17 @@ export default function LissaVoiceAssistant({
         if (!spoke) setSpeechReady(false);
       } catch {}
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lissa is temporarily unavailable.');
+      const isTimeout = err instanceof Error && err.message.toLowerCase().includes('timed out');
+      const errText = isTimeout
+        ? "I took too long to respond. Try again."
+        : 'Lissa is temporarily unavailable. Try again in a moment.';
+      setError(errText);
+      // Speak the error so the user hears what happened, not just sees it
+      try {
+        await Speech.stop();
+        setVoiceMode('speaking');
+        await speakAndWait(addressReverse(errText), () => setSpeechReady(true), voiceRef.current);
+      } catch {}
     } finally {
       busyRef.current = false;
       setBusy(false);
