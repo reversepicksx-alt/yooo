@@ -20,7 +20,7 @@ import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbP
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
-import { useLissaScreenContext } from '@/contexts/LissaScreenContext';
+import { callLissaSpeak } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
@@ -34,6 +34,100 @@ import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenu
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
+
+// ── Auto-narration (plays the tactical breakdown aloud when a prediction loads) ──
+// Web: pre-unlock an <audio> element during the "Analyze" tap gesture so iOS
+// Safari allows non-gesture playback when the result arrives.
+let _nEl: HTMLAudioElement | null = null;
+let _nReady = false;
+const _N_SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+function unlockNarrationAudio(): void {
+  if (typeof document === 'undefined') return;
+  try {
+    if (!_nEl) { _nEl = document.createElement('audio'); _nEl.preload = 'auto'; }
+    _nEl.src = _N_SILENT;
+    void _nEl.play().catch(() => {});
+    _nReady = true;
+  } catch {}
+}
+
+function _buildWav(pcm: Uint8Array, rate: number): ArrayBuffer {
+  const buf = new ArrayBuffer(44 + pcm.byteLength);
+  const v = new DataView(buf);
+  const s = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  s(0, 'RIFF'); v.setUint32(4, 36 + pcm.byteLength, true);
+  s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  s(36, 'data'); v.setUint32(40, pcm.byteLength, true);
+  new Uint8Array(buf).set(pcm, 44);
+  return buf;
+}
+
+function _buildNarrationText(p: any): string {
+  const player = p.playerName ?? '';
+  const prop = (p.propType ?? '').replace(/_/g, ' ');
+  const rec = p.recommendation ?? '';
+  const conf = p.confidenceLevel ?? '';
+  const line = p.line != null ? ` over/under ${p.line}` : '';
+  const raw = (p.tacticalBreakdown ?? p.reasoning ?? p.sharpSummary ?? '')
+    .replace(/#{1,3}\s*/g, '').replace(/\*\*/g, '').replace(/\*/g, '')
+    .replace(/^[-•]\s*/gm, '').replace(/\[.*?\]/g, '').trim();
+  // First 2 sentences of breakdown (up to ~400 chars)
+  const sentences = raw.split(/(?<=[.!?])\s+/);
+  const excerpt = sentences.slice(0, 3).join(' ').slice(0, 450).trim();
+  let intro = '';
+  if (player && rec) {
+    intro = `${player}, ${prop}${line}. ${rec}`;
+    if (conf) intro += `, ${conf} confidence`;
+    intro += '. ';
+  }
+  return (intro + excerpt).trim();
+}
+
+async function autoNarrate(text: string, email: string, token: string): Promise<void> {
+  if (!text) return;
+  // Native iOS: expo-speech has no autoplay restriction
+  if (Platform.OS !== 'web') {
+    try {
+      const { default: Speech } = await import('expo-speech');
+      void (Speech as any).speak(text, { language: 'en-US', rate: 1.0, pitch: 1.0 });
+    } catch {}
+    return;
+  }
+  // Web: use pre-unlocked <audio> element + Gemini TTS (owner) or speechSynthesis fallback
+  if (_nReady && _nEl && email && token) {
+    try {
+      const tts = await Promise.race([
+        callLissaSpeak(email, token, text, 'Kore'),
+        new Promise<null>(r => setTimeout(() => r(null), 12_000)),
+      ]);
+      if (tts?.audio) {
+        const pcm = Uint8Array.from(atob(tts.audio), c => c.charCodeAt(0));
+        const wav = _buildWav(pcm, tts.sampleRate ?? 24000);
+        const blob = new Blob([wav], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        _nEl.onended = () => URL.revokeObjectURL(url);
+        _nEl.src = url;
+        void _nEl.play().catch(() => _fallbackSpeak(text));
+        return;
+      }
+    } catch {}
+  }
+  _fallbackSpeak(text);
+}
+
+function _fallbackSpeak(text: string): void {
+  if (typeof speechSynthesis === 'undefined') return;
+  try {
+    speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'en-US'; utt.rate = 1.0;
+    speechSynthesis.speak(utt);
+  } catch {}
+}
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 type RenderPredictionValue<T> =
   T extends (...args: any[]) => any ? T :
@@ -306,7 +400,7 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType, loginWithResponse } = useAuth();
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
-  const { setContext: setLissaContext } = useLissaScreenContext();
+  const narrationPlayedRef = useRef(false);
   const { isSubscribed: hasNativeAppleEntitlement } = useSubscription();
   // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
   const isNoSub = (!accessType || accessType === 'NoSubscription')
@@ -694,26 +788,21 @@ export default function ScanScreen() {
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
   // User can still tap any grey tile to restore it.
-  // Feed the active prediction into Lissa's context so she can explain it
+  // Auto-narrate the tactical breakdown when a prediction loads.
+  // The <audio> element was pre-unlocked by the Analyze tap, so iOS Safari
+  // allows playback here even though this is an async callback.
   useEffect(() => {
-    if (!isOwner || phase !== 'result' || !predictionState) {
-      setLissaContext(undefined);
+    if (phase !== 'result' || !predictionState) {
+      narrationPlayedRef.current = false;
       return;
     }
-    const factors = (predictionState as any).analysisFactors ?? [];
-    const ledger = (predictionState as any).factorLedger ?? {};
-    setLissaContext({
-      pick: predictionState as unknown as Record<string, unknown>,
-      analysis: predictionState as unknown as Record<string, unknown>,
-      factors: factors as Array<Record<string, unknown>>,
-      ledger: ledger as Record<string, unknown>,
-      // Pass the live evidence sections so .2 can reference them directly
-      h2hPlayerStats: (predictionState as any).h2hPlayerStats ?? undefined,
-      positionComparison: (predictionState as any).positionComparison ?? undefined,
-      hitRates: (predictionState as any).hitRates ?? undefined,
-    });
-    return () => setLissaContext(undefined);
-  }, [isOwner, phase, predictionState, setLissaContext]);
+    if (narrationPlayedRef.current) return;
+    narrationPlayedRef.current = true;
+    const text = _buildNarrationText(predictionState as any);
+    if (text && session?.email && session?.token) {
+      void autoNarrate(text, session.email, session.token);
+    }
+  }, [phase, predictionState]);
 
   useEffect(() => {
     if (!prediction?.gameLogs) {
@@ -1204,6 +1293,7 @@ export default function ScanScreen() {
   };
 
   const handleManualAnalyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio(); // must be before any await
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
@@ -1249,6 +1339,7 @@ export default function ScanScreen() {
   };
 
   const handleCs2Analyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
@@ -1300,6 +1391,7 @@ export default function ScanScreen() {
 
   // ── WTA handlers ─────────────────────────────────────────────────────────
   const handleWtaAnalyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
@@ -1352,6 +1444,7 @@ export default function ScanScreen() {
 
   // ── NBA handlers ─────────────────────────────────────────────────────────
   const handleNbaAnalyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nbaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -1389,6 +1482,7 @@ export default function ScanScreen() {
 
   // ── NHL handlers ─────────────────────────────────────────────────────────
   const handleNhlAnalyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nhlPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -1426,6 +1520,7 @@ export default function ScanScreen() {
 
   // ── NFL handlers ─────────────────────────────────────────────────────────
   const handleNflAnalyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nflPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -1485,6 +1580,7 @@ export default function ScanScreen() {
 
   // ── MLB handlers ─────────────────────────────────────────────────────────
   const handleMlbAnalyze = async () => {
+    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!mlbPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
