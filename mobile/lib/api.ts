@@ -15,6 +15,7 @@ const getApiBase = (): string => {
 
 // Endpoints that involve structured synthesis — give them a generous timeout
 const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview'];
+const LISSA_TIMEOUT_MS = 10_000;
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
@@ -72,9 +73,10 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const url = `${base}${endpoint}`;
   const isCs2Predict = endpoint.startsWith(CS2_PREDICT_PATH);
   const isPlayerSearch = endpoint.startsWith(PLAYER_SEARCH_PATH);
+  const isLissa = endpoint.startsWith('/api/lissa/');
   const isLong   = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const isMedium = MEDIUM_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
-  const timeoutMs = isPlayerSearch ? PLAYER_SEARCH_TIMEOUT_MS : isCs2Predict ? CS2_TIMEOUT_MS : isLong ? LONG_TIMEOUT_MS : isMedium ? MEDIUM_TIMEOUT_MS : SHORT_TIMEOUT_MS;
+  const timeoutMs = isLissa ? LISSA_TIMEOUT_MS : isPlayerSearch ? PLAYER_SEARCH_TIMEOUT_MS : isCs2Predict ? CS2_TIMEOUT_MS : isLong ? LONG_TIMEOUT_MS : isMedium ? MEDIUM_TIMEOUT_MS : SHORT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // Wire caller-supplied external signal into the internal controller so a user cancel also aborts the fetch

@@ -347,6 +347,11 @@ export default function LissaVoiceAssistant({
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>
+        {!!answer && !busy && (
+          <Text style={styles.minimalAnswer} numberOfLines={2}>
+            {answer}
+          </Text>
+        )}
         {!!error && <Text style={styles.minimalError} numberOfLines={1}>{error}</Text>}
       </View>
     );
@@ -435,6 +440,14 @@ const styles = StyleSheet.create({
     fontSize: 9,
     marginTop: 3,
     maxWidth: 260,
+    textAlign: 'center',
+  },
+  minimalAnswer: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    maxWidth: 300,
+    marginTop: 4,
     textAlign: 'center',
   },
   minimalUnavailable: {

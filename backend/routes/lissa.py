@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import uuid
 import os
+import asyncio as aio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -23,6 +24,7 @@ from compact_explanation import _within_daily_limit as _within_explanation_budge
 
 
 router = APIRouter(prefix="/api/lissa", tags=["lissa"])
+_LISSA_AI_TIMEOUT_SECONDS = 3.5
 
 
 class LissaMessageRequest(BaseModel):
@@ -325,7 +327,10 @@ async def _smart_ledger_response(
         f"Owner question: {message}"
     )
     try:
-        text = await _generate_explanation(prompt)
+        text = await aio.wait_for(
+            _generate_explanation(prompt),
+            timeout=_LISSA_AI_TIMEOUT_SECONDS,
+        )
         return text.strip() if text and len(text.strip()) >= 40 else None
     except Exception as exc:
         print(f"[LISSA AI] ledger generation skipped: {type(exc).__name__}: {exc}")
@@ -367,7 +372,10 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
         f"User question: {message}"
     )
     try:
-        text = await _generate_explanation(prompt)
+        text = await aio.wait_for(
+            _generate_explanation(prompt),
+            timeout=_LISSA_AI_TIMEOUT_SECONDS,
+        )
         return text.strip() if text and len(text.strip()) >= 40 else None
     except Exception as exc:
         print(f"[LISSA AI] generation skipped: {type(exc).__name__}: {exc}")
