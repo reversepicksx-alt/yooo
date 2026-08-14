@@ -20,6 +20,7 @@ import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbP
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLissaScreenContext } from '@/contexts/LissaScreenContext';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
@@ -304,6 +305,8 @@ type Sport = 'soccer' | 'cs2' | 'wta' | 'nba' | 'nhl' | 'mlb' | 'nfl';
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType, loginWithResponse } = useAuth();
+  const isOwner = session?.accessType?.toLowerCase() === 'owner';
+  const { setContext: setLissaContext } = useLissaScreenContext();
   const { isSubscribed: hasNativeAppleEntitlement } = useSubscription();
   // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
   const isNoSub = (!accessType || accessType === 'NoSubscription')
@@ -691,6 +694,23 @@ export default function ScanScreen() {
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
   // User can still tap any grey tile to restore it.
+  // Feed the active prediction into Lissa's context so she can explain it
+  useEffect(() => {
+    if (!isOwner || phase !== 'result' || !predictionState) {
+      setLissaContext(undefined);
+      return;
+    }
+    const factors = (predictionState as any).analysisFactors ?? [];
+    const ledger = (predictionState as any).factorLedger ?? {};
+    setLissaContext({
+      pick: predictionState as unknown as Record<string, unknown>,
+      analysis: predictionState as unknown as Record<string, unknown>,
+      factors: factors as Array<Record<string, unknown>>,
+      ledger: ledger as Record<string, unknown>,
+    });
+    return () => setLissaContext(undefined);
+  }, [isOwner, phase, predictionState, setLissaContext]);
+
   useEffect(() => {
     if (!prediction?.gameLogs) {
       setDeselectedLogIndices(new Set());

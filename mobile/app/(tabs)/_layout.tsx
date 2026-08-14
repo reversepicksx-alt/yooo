@@ -46,9 +46,9 @@ function GlobalLissa() {
             ? 'The owner account, subscription, and profile settings.'
             : 'The main Reverse Picks workspace.',
   };
-  // Tabs stay mounted for fast switching. A pick-analysis packet from My Picks
-  // must never travel with Lissa onto Predict, Community, or Account.
-  const effectiveContext = screenName === 'My Picks'
+  // Predict (active prediction result) and My Picks (saved pick analysis) both
+  // carry valid pick context. Community and Account carry screen name only.
+  const effectiveContext = (screenName === 'My Picks' || screenName === 'Predict')
     ? { screen: screenContext, ...context }
     : { screen: screenContext };
 
