@@ -21,6 +21,8 @@ from config import OWNER_EMAIL, db
 from routes.admin import verify_owner
 from compact_explanation import _generate as _generate_explanation
 from compact_explanation import _within_daily_limit as _within_explanation_budget
+from team_resolver import find_team
+from utils import priority_api_football_request
 
 
 router = APIRouter(prefix="/api/lissa", tags=["lissa"])
@@ -223,6 +225,155 @@ def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _match_search_parts(message: str) -> tuple[str, str | None] | None:
+    """Extract a human team-search request without guessing from unrelated text."""
+    lowered = re.sub(r"[?!,.:;]+", " ", message.lower())
+    lowered = re.sub(r"\s+", " ", lowered).strip()
+    has_schedule_intent = any(term in lowered for term in (
+        "upcoming", "next match", "next game", "next fixture", "fixtures",
+        "schedule", "playing next", "plays next",
+    ))
+    has_specific_match = bool(re.search(r"\s+(?:vs?\.?|against)\s+", lowered))
+    if not has_schedule_intent and not has_specific_match:
+        return None
+
+    opponent = None
+    versus = re.search(r"\s+(?:vs?\.?|against)\s+(.+?)\s*$", lowered)
+    if versus:
+        opponent = versus.group(1).strip()
+        lowered = lowered[:versus.start()].strip()
+        opponent = re.sub(r"\s+(?:upcoming|next|match|game|fixture)$", "", opponent).strip()
+
+    direct = re.match(r"^what(?: is|'s) (.+?)'s next (?:match|game|fixture)$", lowered)
+    if direct:
+        return direct.group(1).strip(), opponent
+    direct = re.match(r"^who is (.+?) playing next$", lowered)
+    if direct:
+        return direct.group(1).strip(), opponent
+
+    prefixes = (
+        r"^what upcoming matches are there for\s+",
+        r"^what are the upcoming matches for\s+",
+        r"^show me the upcoming matches for\s+",
+        r"^show me the upcoming fixtures for\s+",
+        r"^tell me about the upcoming matches for\s+",
+        r"^tell me about upcoming matches for\s+",
+        r"^what are the upcoming fixtures for\s+",
+        r"^upcoming matches for\s+",
+        r"^upcoming fixtures for\s+",
+        r"^matches for\s+",
+        r"^fixtures for\s+",
+        r"^schedule for\s+",
+        r"^what is the next match for\s+",
+        r"^what.s the next match for\s+",
+        r"^when does\s+",
+        r"^who does\s+",
+        r"^next match for\s+",
+        r"^next game for\s+",
+    )
+    team_query = lowered
+    for prefix in prefixes:
+        stripped = re.sub(prefix, "", team_query).strip()
+        if stripped != team_query:
+            team_query = stripped
+            break
+    team_query = re.sub(r"^(?:show me|find|search for|look up)\s+", "", team_query).strip()
+    team_query = re.sub(r"\s+(?:play|plays|playing|next|match|game|fixture|fixtures|schedule)\s*$", "", team_query).strip()
+    team_query = re.sub(r"'s$", "", team_query).strip()
+    if not team_query or team_query in {"there", "they", "the team", "a team"}:
+        return None
+    return team_query, opponent
+
+
+def _fixture_kickoff_text(fixture: dict[str, Any]) -> str:
+    raw = str((fixture.get("fixture") or {}).get("date") or "")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        # Keep the user's familiar Central time while labeling it clearly.
+        from zoneinfo import ZoneInfo
+        local = parsed.astimezone(ZoneInfo("America/Chicago"))
+        return local.strftime("%a, %b %-d at %-I:%M %p CT")
+    except (TypeError, ValueError):
+        return raw or "time unavailable"
+
+
+async def _upcoming_match_response(message: str) -> str | None:
+    parts = _match_search_parts(message)
+    if not parts:
+        return None
+    team_query, opponent_query = parts
+    try:
+        team = await find_team(team_query)
+    except Exception as exc:
+        print(f"[LISSA MATCH] team resolution skipped: {type(exc).__name__}: {exc}")
+        return f"I couldn't match “{team_query}” to a team yet."
+    if not team:
+        return f"I couldn't match “{team_query}” to a team yet. Try the full club or country name."
+
+    opponent = None
+    if opponent_query:
+        try:
+            opponent = await find_team(opponent_query)
+        except Exception:
+            opponent = None
+
+    try:
+        fixtures = await priority_api_football_request(
+            "fixtures", {"team": int(team["teamId"]), "next": 10},
+        )
+    except Exception as exc:
+        print(f"[LISSA MATCH] fixture lookup skipped: {type(exc).__name__}: {exc}")
+        return f"I found {team['teamName']}, but the fixture feed is unavailable right now."
+
+    now = datetime.now(timezone.utc)
+    upcoming: list[dict[str, Any]] = []
+    for fixture in fixtures or []:
+        if not isinstance(fixture, dict):
+            continue
+        meta = fixture.get("fixture") or {}
+        status = str((meta.get("status") or {}).get("short") or "").upper()
+        if status in {"FT", "AET", "PEN", "ABD", "AWD", "WO", "CANC", "PST"}:
+            continue
+        raw_date = str(meta.get("date") or "")
+        try:
+            kickoff = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+            if kickoff.tzinfo is None:
+                kickoff = kickoff.replace(tzinfo=timezone.utc)
+            if kickoff < now and status not in {"1H", "HT", "2H", "ET", "BT", "P", "LIVE"}:
+                continue
+        except (TypeError, ValueError):
+            continue
+        teams = fixture.get("teams") or {}
+        home = teams.get("home") or {}
+        away = teams.get("away") or {}
+        if opponent:
+            if int(home.get("id") or 0) != int(opponent.get("teamId") or 0) and int(away.get("id") or 0) != int(opponent.get("teamId") or 0):
+                continue
+        upcoming.append(fixture)
+
+    if not upcoming:
+        if opponent_query:
+            return f"I couldn't find an upcoming {team['teamName']} versus {opponent_query} fixture."
+        return f"I couldn't find an upcoming fixture for {team['teamName']} in the current schedule."
+
+    lines = []
+    for fixture in upcoming[:3]:
+        teams = fixture.get("teams") or {}
+        home = teams.get("home") or {}
+        away = teams.get("away") or {}
+        league = fixture.get("league") or {}
+        lines.append(
+            f"{home.get('name', 'Home')} vs {away.get('name', 'Away')} — "
+            f"{_fixture_kickoff_text(fixture)}"
+            + (f" ({league.get('name')})" if league.get("name") else "")
+        )
+    if len(lines) == 1:
+        return f"{team['teamName']}'s next match is {lines[0]}."
+    return f"Here are the next matches I found for {team['teamName']}:\n" + "\n".join(lines)
+
+
 def _match_player(picks: list[dict[str, Any]], message: str) -> list[dict[str, Any]]:
     normalized = re.sub(r"[^a-z0-9 ]+", " ", message.lower())
     tokens = [token for token in normalized.split() if len(token) >= 3]
@@ -257,14 +408,14 @@ def _player_text(matches: list[dict[str, Any]]) -> str:
             if snapshot["projection"] is not None else ""
         )
         lines.append(
-            f"• {snapshot['date'] or 'undated'} — {snapshot['recommendation']} "
+            f"{snapshot['date'] or 'undated'}: {snapshot['recommendation']} "
             f"{snapshot['propType']} { _format_number(snapshot['line']) }"
             f"{projection}{actual} — {result}{matchup}"
         )
     return (
-        f"I found {len(matches)} saved pick(s) for {first}. Here is the verified ledger view:\n\n"
+        f"I found {len(matches)} saved pick(s) for {first}:\n\n"
         + "\n".join(lines)
-        + "\n\nI can summarize these results, but I will not reinterpret missing provider data as a measured zero."
+        + "\n\nIf you want, ask me about one of these matches or why a specific pick landed where it did."
     )
 
 
@@ -305,12 +456,13 @@ def _analysis_fallback(message: str, context: dict[str, Any]) -> str:
     venue = str(pick.get("venue") or "the recorded venue").lower()
     confidence = _number(pick.get("confidence") or pick.get("confidenceScore"))
 
-    gap = ""
+    gap_phrase = "close to the line"
     line_number = _number(pick.get("line"))
     projection_number = _number(pick.get("projectedValue") or pick.get("projection"))
     if line_number is not None and projection_number is not None:
         difference = projection_number - line_number
-        gap = f" That is a {difference:+.1f} projection gap versus the line."
+        direction = "above" if difference > 0 else "below" if difference < 0 else "right on"
+        gap_phrase = f"{abs(difference):.1f} {direction} the line"
 
     evidence_lines = []
     for factor in factors[:6]:
@@ -324,19 +476,18 @@ def _analysis_fallback(message: str, context: dict[str, Any]) -> str:
 
     tactical = str(pick.get("tacticalBreakdown") or pick.get("reasoning") or "").strip()
     answer = (
-        f"{player} is listed for {prop} at {line} against {opponent}. "
-        f"The saved projection is {projection}, so the deterministic ledger landed on {recommendation} "
-        f"from the {venue} matchup.{gap}"
+        f"Here’s the short version: {player} is at {prop} {line} against {opponent}, "
+        f"and the model leans {recommendation}. The projection is {projection}, "
+        f"which puts it {gap_phrase} in this {venue} matchup."
     )
     if confidence is not None:
         answer += f" Confidence is approximately {_format_number(confidence)}."
     if evidence_lines:
-        answer += "\n\nThe strongest captured evidence is:\n" + "\n".join(f"• {line}" for line in evidence_lines[:4])
+        answer += "\n\nThe main reasons captured were: " + "; ".join(evidence_lines[:4]) + "."
     if tactical:
-        answer += "\n\nThe saved tactical read is: " + tactical[:1400]
+        answer += "\n\nThe tactical read was: " + tactical[:1000]
     answer += (
-        "\n\nThe important limitation is that this explains the finalized snapshot; "
-        "it does not invent missing provider data or change the displayed projection."
+        "\n\nThat’s what the saved analysis says; I won’t make up missing data or pretend I changed the pick."
     )
     return answer
 
@@ -372,14 +523,15 @@ async def _smart_ledger_response(
             "Name unavailable, pending, duplicate, or thin evidence explicitly.",
             "Do not invent provider statistics, injuries, roles, or future results.",
             "Lissa is read-only and must not suggest that she changed or settled anything.",
-            "Speak naturally in 2 to 5 short paragraphs with no markdown headings.",
+            "Sound like a smart friend, not a report. Use contractions and plain language.",
+            "Answer the question directly in one to three short spoken paragraphs. No headings, bullets, disclaimers, or robotic phrases.",
         ],
     }
     prompt = (
         "You are Lissa (pronounced Lisa), the owner-only intelligence assistant inside Reverse Picks.\n"
         "You are a calm, well-spoken woman. Address the owner as Reverse when speaking directly to him.\n"
         "The owner is asking about the saved prediction ledger, not asking for a new wager.\n"
-        "Use the durable records below. Be precise about what is and is not recorded.\n"
+        "Use the durable records below. Be precise, but do not dump the whole record when one sentence answers the question.\n"
         f"{json.dumps(packet, ensure_ascii=False, default=str)[:18000]}\n\n"
         f"Owner question: {message}"
     )
@@ -418,7 +570,7 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
             "Call out unavailable, thin, shadow-only, or fallback evidence explicitly.",
             "Do not invent injuries, line movement, player roles, or statistics.",
             "Do not promise a win and do not give financial advice.",
-            "Speak naturally as Lissa: concise first, then the evidence and risk.",
+            "Sound like a smart friend, not a report. Use contractions and plain language. No headings, bullets, or robotic disclaimers.",
         ],
     }
     import json
@@ -426,7 +578,7 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
         "You are Lissa (pronounced Lisa), a well-spoken woman and owner-only voice assistant inside Reverse Picks.\n"
         "Address the owner as Reverse. Never call him by another name.\n"
         "The user is looking at one exact analysis screen and asked a question about it.\n"
-        "Return a natural spoken answer, 2 to 5 short paragraphs, with no markdown bullets or headings.\n"
+        "Return a natural spoken answer in one to three short paragraphs, with no markdown bullets or headings.\n"
         "Here is the structured analysis packet:\n"
         f"{json.dumps(packet, ensure_ascii=False, default=str)[:18000]}\n\n"
         f"User question: {message}"
@@ -464,6 +616,16 @@ async def lissa_overview(req: LissaOverviewRequest):
 async def lissa_message(req: LissaMessageRequest):
     await _authorize(req)
     message = req.message.strip()
+    match_response = await _upcoming_match_response(message)
+    if match_response:
+        return {
+            "assistant": "Lissa",
+            "sessionId": req.session_id or f"lissa-{uuid.uuid4().hex[:12]}",
+            "response": _address_owner(match_response),
+            "readOnly": True,
+            "mode": "match-search",
+            "summary": _empty_summary(),
+        }
     fast = _fast_response(message, req.context)
     if fast:
         return {

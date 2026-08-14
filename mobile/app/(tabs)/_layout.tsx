@@ -46,6 +46,11 @@ function GlobalLissa() {
             ? 'The owner account, subscription, and profile settings.'
             : 'The main Reverse Picks workspace.',
   };
+  // Tabs stay mounted for fast switching. A pick-analysis packet from My Picks
+  // must never travel with Lissa onto Predict, Community, or Account.
+  const effectiveContext = screenName === 'My Picks'
+    ? { screen: screenContext, ...context }
+    : { screen: screenContext };
 
   return (
     <View pointerEvents="box-none" style={styles.lissaOverlay}>
@@ -55,7 +60,7 @@ function GlobalLissa() {
         email={session.email}
         token={session.token}
         sessionId="global-lissa"
-        context={{ screen: screenContext, ...context }}
+        context={effectiveContext}
       />
     </View>
   );
