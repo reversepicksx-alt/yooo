@@ -869,6 +869,99 @@ async def _build_gemini_prompt(
         if tactical:
             pick_block += f"Tactical read: {tactical[:600]}\n"
 
+        # ── Bayesian engine internals ──────────────────────────────────────────
+        bm = pick.get("matchFactors", {}).get("bayesian") or pick.get("bayesianMetrics") or {}
+        if not bm:
+            bm = {}
+        def _fp(k): v = bm.get(k); return float(v) if v is not None else None  # noqa
+        pm = _fp("priorMean") or _number(pick.get("priorMean"))
+        posterior = _fp("posteriorMean")
+        p_over = _fp("pOver") or _fp("pOverLine")
+        p_under = _fp("pUnder") or _fp("pUnderLine")
+        n_games = bm.get("priorSamples") or bm.get("sampleSize") or pick.get("priorSamples")
+        mom = _fp("momentumEffect")
+        mom_label = str(bm.get("momentumLabel") or "")
+        eff_std = _fp("effStd") or _fp("eff_std")
+        opp_allowed_avg = _fp("oppAllowedAvg") or _fp("rawOppAllowedAvg")
+        pair_share = _fp("pairShare")
+        comp_season = _fp("compSeasonAvg")
+        bm_parts = []
+        if pm is not None: bm_parts.append(f"prior mean={pm:.1f}")
+        if posterior is not None: bm_parts.append(f"posterior={posterior:.1f}")
+        if p_over is not None: bm_parts.append(f"P(OVER)={p_over:.0f}%")
+        if p_under is not None: bm_parts.append(f"P(UNDER)={p_under:.0f}%")
+        if n_games is not None: bm_parts.append(f"n={int(n_games)} log games")
+        if mom is not None and abs(mom) > 0.05: bm_parts.append(f"momentum={mom:+.2f} ({mom_label})" if mom_label else f"momentum={mom:+.2f}")
+        if eff_std is not None: bm_parts.append(f"eff_std={eff_std:.2f}")
+        if opp_allowed_avg is not None: bm_parts.append(f"opp_allowed_avg={opp_allowed_avg:.1f}")
+        if pair_share is not None: bm_parts.append(f"pair_share={pair_share:.2f}")
+        if comp_season is not None: bm_parts.append(f"comp_season_avg={comp_season:.1f}")
+        if bm_parts:
+            pick_block += f"Bayesian engine: {', '.join(bm_parts)}\n"
+
+        # Calibration layers (scenario priors, odds-tier priors, league calib)
+        lc = bm.get("leagueCalib") or {}
+        sp = bm.get("scenarioPriors") or {}
+        calib_parts = []
+        if lc.get("multiplier") is not None: calib_parts.append(f"league_calib={float(lc['multiplier']):.4f} (n={lc.get('n',0)})")
+        if sp.get("multiplier") is not None: calib_parts.append(f"scenario_priors={float(sp['multiplier']):.4f} (n={sp.get('n',0)})")
+        if calib_parts:
+            pick_block += f"Calibration: {', '.join(calib_parts)}\n"
+
+        # Analysis summary (venue avg, opp-allowed)
+        as_ = pick.get("analysisSummary") or {}
+        venue_avg = _number(as_.get("venueAverage"))
+        venue_n = as_.get("venueSampleSize")
+        opp_avg_allowed = _number(as_.get("opponentAllowedAverage"))
+        gk_sot = _number(as_.get("opponentShotsOnTarget"))
+        if venue_avg is not None:
+            v_n_str = f" over {int(venue_n)} games" if venue_n else ""
+            pick_block += f"Player {venue} avg: {venue_avg:.1f}{v_n_str}\n"
+        if opp_avg_allowed is not None:
+            pick_block += f"Opponent-allowed avg (same position): {opp_avg_allowed:.1f}\n"
+        if gk_sot is not None:
+            pick_block += f"Opponent shots-on-target (GK context): {gk_sot:.1f} per game\n"
+
+        # Recent game logs — raw values so .2 can reference specific games
+        logs_raw = pick.get("gameLogs") or []
+        if isinstance(logs_raw, dict):
+            logs_raw = logs_raw.get("games") or []
+        if logs_raw and isinstance(logs_raw, list):
+            log_entries = []
+            for g in logs_raw[-12:]:
+                if not isinstance(g, dict): continue
+                v = g.get("value")
+                if v is None: continue
+                v_str = f"{int(v)}" if isinstance(v, float) and v == int(v) else f"{round(float(v), 1)}"
+                opp_g = str(g.get("opponent") or g.get("opponentName") or "")
+                venue_g = str(g.get("venue") or ("home" if g.get("isHome") else "away" if g.get("isHome") is False else ""))
+                mins = g.get("minutes")
+                entry = v_str
+                if opp_g: entry += f"(vs {opp_g[:12]}"
+                if venue_g: entry += f" {venue_g}"
+                if mins: entry += f" {int(mins)}min"
+                if opp_g or venue_g or mins: entry += ")"
+                log_entries.append(entry)
+            if log_entries:
+                pick_block += f"Recent game logs (oldest→newest): {', '.join(log_entries)}\n"
+
+        # Line deviation hit rate
+        ldhr = _number(pick.get("lineDeviationHitRate"))
+        if ldhr is not None:
+            pick_block += f"Line deviation hit rate: {ldhr:.0f}% (historical hit rate when line is set this far from avg)\n"
+
+        # Game script + possession
+        gs = pick.get("gameScript") or {}
+        gs_finding = str(gs.get("key_finding") or "").strip()
+        if gs_finding:
+            pick_block += f"Game script: {gs_finding[:300]}\n"
+        ep = pick.get("expectedPossession") or pick.get("matchFactors", {}).get("expectedPoss")
+        if isinstance(ep, dict):
+            hp, ap = ep.get("home"), ep.get("away")
+            if hp is not None: pick_block += f"Expected possession: home {hp}% / away {ap}%\n"
+        elif isinstance(ep, (int, float)):
+            pick_block += f"Expected possession: {ep}%\n"
+
         # H2H player vs this opponent
         h2h = packet.get("h2hPlayerStats") or {}
         if h2h and h2h.get("avgVsOpponent") is not None:
@@ -992,23 +1085,50 @@ async def _build_gemini_prompt(
         "— Use real player names and real numbers from the data. Be specific — if the H2H avg is 82.5, say 82.5.\n"
         "— Two or three short paragraphs max. No bullets. No headings. No markdown.\n"
         "— If asked to explain what you see: hit EVERY section — hit rates, H2H avg, position evidence avg, projection, factors.\n\n"
-        "SOCCER ANALYSIS BRAIN:\n"
-        "You are deeply fluent in soccer props and tactics:\n"
-        "— PASS ATTEMPTS: possession teams 80–120 per game for midfielders, 40–70 for defenders, 30–60 for attackers. High press from opponent compresses this.\n"
-        "— SHOTS ON TARGET: front 3 average 1.5–3 SOT per game. Set-piece specialists inflate this.\n"
-        "— GOALS: 0.5 line = 'will this player score at all' — roughly 25–40% for a top forward, much less for defenders.\n"
-        "— KEY PASSES / ASSISTS: creative mids average 1–3 key passes; full-backs with offensive role inflate assists.\n"
-        "— CARDS: aggressive midfielders, defensive-role players in derbies or tight matches = higher card risk.\n"
-        "— SAVES: GK lines heavily dependent on expected opponent shots — xSOT is the key driver.\n"
+        "ENGINE KNOWLEDGE — you built this model, you know it cold:\n\n"
+        "THE 3-LAYER SYSTEM:\n"
+        "Layer 1 — BAYESIAN PROJECTION: Takes last N game logs, computes a prior mean (season avg), applies updates via Bayesian inference. Key adjustments: venue split (home vs away avg), momentum (last 3-5 games vs prior), covariate adj (possession context, game script), opponent quality, rest/fatigue, match stakes (Europa vs league final pressure), lineup rotation risk, CDM inversion (deep-block teams suppress possession for the player's team). Outputs a posteriorMean and eff_std (effective standard deviation). priorMean = raw season average before any context. posteriorMean = after all Bayesian updates. projectedValue = the final number shown to the user after calibration.\n"
+        "Layer 2 — EMPIRICAL CALIBRATION: Uses settled pick history to learn bias. Three sub-layers stack multiplicatively: (a) league calibration (how accurate the model is for this league/prop, n= the settled pick count, mult= the correction factor), (b) scenario priors (matches the exact prop/direction/position/venue bucket with James-Stein shrinkage so thin buckets borrow from parent), (c) odds-tier priors (adjusts based on whether the team is a favourite, close, or heavy underdog per moneyline). A multiplier > 1.0 means the model historically underestimated; < 1.0 means overestimated. You can see leagueCalib.multiplier and scenarioPriors.multiplier in the data.\n"
+        "Layer 3 — AI TACTICAL SYNTHESIS: Gemini analyses opponent shape (formation, pressing style, how they defend in possession), player role (CDM shield, pressing forward, ball-playing CB), home/away game script, weather, and produces a prose tactical read that either confirms or challenges the math.\n\n"
+        "GUARDS AND CAPS (why confidence can drop below the raw Bayesian level):\n"
+        "— COIN-FLIP GUARD: if P(max) < 55%, confidence is capped at 52% regardless.\n"
+        "— TIGHT EDGE GUARD: if projection gap is less than 0.5 units above the line, capped at 58%.\n"
+        "— BASE-RATE CONFLICT: if season avg is on the opposite side of the line from the recommendation, -25% conf penalty.\n"
+        "— CONVICTION FILTER: P(max) < 60% → cap at 54%.\n"
+        "— EDGE CAL: edgeZ measures the projected edge relative to historical variance; negative edgeZ = additional confidence cut.\n"
+        "— LOW CONV: P(max) < 57% with a medium Bayesian confidence → capped at 52%.\n\n"
+        "EVIDENCE LABELS:\n"
+        "— VERIFIES: the evidence actively confirms the pick direction.\n"
+        "— WEAKENS: the evidence contradicts or undermines the pick.\n"
+        "— NEUTRAL: evidence available but not clearly directional.\n"
+        "— STRONG EDGE / SAFE: projection gap is large, historical hit rate is above 60%, both aligned.\n"
+        "— NO EDGE / RISKY: projection gap is within noise, or historical hit rate is flat.\n"
+        "— HIST X%(N): X% of previously saved picks for this player/prop/direction HIT. N = sample count. N < 10 = thin — treat cautiously.\n"
+        "— P(OVER) / P(UNDER): Monte Carlo probability from sampling the posterior distribution 5000+ times.\n\n"
+        "CONFIDENCE LEVELS: 48–54% = Low (borderline), 55–60% = Medium (lean), 61–70% = High (solid edge), 71–80% = Very High, 81%+ = Extreme (rare). Calibrated probability is NOT the same as confidence — calibrated prob is the raw Bayesian/Monte Carlo output; confidence is the post-guard, post-calibration actionability score.\n\n"
+        "KEY METRICS TO EXPLAIN ON DEMAND:\n"
+        "— priorMean: season average before context. posteriorMean: after Bayesian updates.\n"
+        "— eff_std: effective standard deviation of the posterior — wider = more uncertain.\n"
+        "— momentumEffect: positive = player is trending above their average recently.\n"
+        "— covariateAdj: possession/game-script adjustment. Positive = model expects more of the prop.\n"
+        "— oppAllowedAvg: how much the opponent typically allows for this position/prop.\n"
+        "— pairShare: how the player's production compares to their team's overall output in this prop.\n"
+        "— compSeasonAvg: comparable players' season average — context for whether the prior is high or low.\n"
+        "— lineDeviationHitRate: when a line is set X% above/below the player's avg, how often does the pick hit historically.\n"
+        "— venue avg: the player's specific average in home or away games (not overall season avg).\n"
+        "— H2H avg: how this player has specifically performed against this exact opponent historically.\n"
+        "— exact position evidence: what comparable players (same position, same venue) averaged vs this same opponent — the strongest directional signal.\n\n"
+        "SOCCER PROPS BENCHMARKS:\n"
+        "— Pass attempts: GKs 20–35, CBs 50–90, LB/RB 40–70, CDMs 60–100, CMs 50–80, CAMs 40–70, Wingers 30–55, Forwards 20–45. Possession teams inflate everyone. High press from opponent compresses.\n"
+        "— Shots on target: Forward 1.5–3.0, Midfielders 0.5–1.5, Defenders 0.2–0.5 per game.\n"
+        "— Goals: 0.5 line = will this player score at all. Top forwards ~30–40% per game, mid 10–20%, defenders 3–8%.\n"
+        "— Key passes: CAM/CM 1–3 per game. Full-backs with offensive license 0.5–1.5.\n"
+        "— Saves: GK lines driven by opponent xSOT. High-press teams force more saves.\n"
+        "— Cards: aggressive CDMs in derby or 50/50 matches = elevated risk.\n"
         "— xG (expected goals), xA (expected assists), PPDA (lower = more pressing intensity = opponent fewer passes).\n"
-        "— Formations: 4-3-3 (wide press), 4-2-3-1 (controlled), 3-5-2 (wing-heavy), 4-4-2 (direct), 5-3-2 (defensive).\n"
-        "— Position roles: GK (distribution), CB (aerial/clearances), LB/RB (overlaps/crosses), CDM (shield), CM (box-to-box), CAM (chance creation), LW/RW (dribbles/shots), CF/ST (goals/shots).\n"
-        "— Home/away splits matter heavily. Some teams flip style completely away (low block vs expansive home).\n"
-        "— H2H player history = how the player specifically performs against this opponent matters more than generic form.\n"
-        "— The app's 3-layer model: (1) Bayesian projection from recent logs + position baselines, (2) empirical calibration from historical HIT/MISS for that prop/player/venue, (3) AI tactical synthesis using opponent shape, press intensity, possession context.\n"
-        "— 'NO EDGE' means the projection gap is within noise. 'STRONG' = confident large gap with supporting evidence.\n"
-        "— HIST X%(N): X% of historical saved picks for this prop/direction HIT, from N samples. N<10 = thin evidence.\n"
-        "— OVER: model projects player will exceed the line. UNDER: model projects player will fall short.\n\n"
+        "— Formations: 4-3-3 (wide press), 4-2-3-1 (controlled), 3-5-2 (wing-heavy), 4-4-2 (direct), 5-3-2 (park the bus).\n"
+        "— H2H player-specific history is the strongest signal — beats generic form when sample ≥ 3.\n"
+        "— Home/away splits flip entire game styles for some teams. Always consider venue.\n\n"
         f"SCREEN: {screen_name}\n"
         f"LEDGER: {ledger_line}\n"
         f"{pick_block}"
