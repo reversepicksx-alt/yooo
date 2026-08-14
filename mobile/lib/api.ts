@@ -1504,6 +1504,9 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
           };
         })
         .filter(g => g.value != null)
+        // Always newest-first so the bar chart and Bayesian recency weights
+        // see the most recent game at index 0 regardless of backend order.
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
     : [];
 
   return {

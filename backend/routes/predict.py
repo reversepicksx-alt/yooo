@@ -3235,7 +3235,9 @@ async def predict(req: PredictionRequest):
             # below is evidence/shadow-only until replay validates it.
             legacy_unique = []
             legacy_seen_names = set()
-            for row in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
+            # Dedup by most-recent fixture first so the selected appearance
+            # per player reflects current form, not a historical outlier.
+            for row in sorted(all_players, key=lambda x: str(x.get("date") or ""), reverse=True):
                 name_key = str(row.get("name") or "").strip().lower()
                 if not name_key or name_key in legacy_seen_names:
                     continue
@@ -8489,6 +8491,15 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         position_comparison_scope = (
                             "exact_opponent_same_position_same_venue_plus_prior_seasons"
                         )
+
+        # Always show most-recent appearances first so subscribers see
+        # current-form evidence before older historical data.
+        if position_comparison:
+            position_comparison = sorted(
+                position_comparison,
+                key=lambda x: str(x.get("date") or ""),
+                reverse=True,
+            )
 
         print(
             f"[POS COMP] target={req.playerName} position={specific_position or display_position} "
