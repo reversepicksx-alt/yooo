@@ -264,7 +264,7 @@ export default function LissaVoiceAssistant({
         continuous: true,
         maxAlternatives: 1,
         addsPunctuation: true,
-        contextualStrings: ['Lissa', 'Lisa', 'Reverse Picks', 'pass attempts', 'key passes'],
+        contextualStrings: ['Lissa', 'Lisa', 'point two', 'point 2', 'Reverse Picks', 'pass attempts', 'key passes'],
       });
     } catch (err) {
       recognitionActiveRef.current = false;
@@ -302,7 +302,7 @@ export default function LissaVoiceAssistant({
       if (!permission.granted) {
         armedRef.current = false;
         setArmed(false);
-        setError('Microphone and speech permission are required for Lissa voice mode.');
+        setError('Microphone and speech permission are required for .2 voice mode.');
         return;
       }
       armedRef.current = true;
@@ -343,7 +343,7 @@ export default function LissaVoiceAssistant({
         }
       } catch {
         if (!cancelled && Platform.OS !== 'web') {
-          setError('Voice mode is reconnecting. Tap Activate Lissa if needed.');
+          setError('Voice mode is reconnecting. Tap Activate .2 if needed.');
         }
       }
     };
@@ -461,7 +461,7 @@ export default function LissaVoiceAssistant({
     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
       armedRef.current = false;
       setArmed(false);
-      setError('Voice permission is unavailable. Tap Activate Lissa to try again.');
+      setError('Voice permission is unavailable. Tap Activate .2 to try again.');
       return;
     }
     if (armedRef.current) {
@@ -485,7 +485,7 @@ export default function LissaVoiceAssistant({
       return (
         <View style={styles.minimalUnavailable}>
           <Ionicons name="mic-off-outline" size={14} color={Colors.textTertiary} />
-          <Text style={styles.minimalText}>Lissa unavailable</Text>
+          <Text style={styles.minimalText}>.2 unavailable</Text>
         </View>
       );
     }
@@ -502,7 +502,7 @@ export default function LissaVoiceAssistant({
       <View style={styles.minimalWrap}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={armed ? 'Enable Lissa spoken answers' : 'Enable Lissa microphone and spoken answers'}
+          accessibilityLabel={armed ? 'Enable .2 spoken answers' : 'Enable .2 microphone and spoken answers'}
           style={styles.minimalButton}
           onPress={() => {
             if (armed) void primeSpeech();
@@ -514,7 +514,7 @@ export default function LissaVoiceAssistant({
           <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
           <Text style={styles.minimalName}>.2</Text>
           <Text style={styles.minimalStatus}>
-          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say "Lissa"' : 'tap to enable'}
+          {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say ".2"' : 'tap to enable'}
           </Text>
           {busy && <ActivityIndicator size="small" color={Colors.primary} />}
         </TouchableOpacity>
@@ -533,14 +533,14 @@ export default function LissaVoiceAssistant({
       <View style={styles.controlRow}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={armed ? 'Turn off Lissa wake mode' : 'Activate Lissa wake mode'}
+          accessibilityLabel={armed ? 'Turn off .2 wake mode' : 'Activate .2 wake mode'}
           style={[styles.voiceButton, armed && styles.voiceButtonActive]}
           onPress={() => (armed ? stopListening() : activate())}
           disabled={busy}
         >
           <Ionicons name={armed ? 'mic' : 'mic-outline'} size={16} color={armed ? '#06110d' : Colors.primary} />
           <Text style={[styles.voiceButtonText, armed && styles.voiceButtonTextActive]}>
-            {armed ? (listening ? 'Listening for “Lissa”' : 'Reconnecting…') : 'Activate Lissa'}
+            {armed ? (listening ? 'Listening for ".2"' : 'Reconnecting…') : 'Activate .2'}
           </Text>
         </TouchableOpacity>
         {armed && (
@@ -552,7 +552,7 @@ export default function LissaVoiceAssistant({
       </View>
       {armed && (
         <Text style={styles.statusText}>
-           {awaitingQuestion ? 'Go ahead — ask your question now.' : 'Say “Lissa” or “Lisa” first. I will not answer background speech.'}
+           {awaitingQuestion ? 'Go ahead — ask your question now.' : 'Say ".2" or "point two" to activate. Won\'t answer background speech.'}
         </Text>
       )}
       {!!transcript && !compact && <Text style={styles.transcript}>Heard: “{transcript}”</Text>}

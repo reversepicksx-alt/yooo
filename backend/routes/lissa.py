@@ -732,7 +732,7 @@ async def _finish_turn(
     except Exception as exc:
         print(f"[LISSA MEMORY] turn save skipped: {type(exc).__name__}: {exc}")
     return {
-        "assistant": "Lissa",
+        "assistant": ".2",
         "sessionId": session_id,
         "response": text,
         "readOnly": True,
