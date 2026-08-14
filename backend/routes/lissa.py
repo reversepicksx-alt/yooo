@@ -143,6 +143,7 @@ def _pick_snapshot(pick: dict[str, Any]) -> dict[str, Any]:
         "line": _number(pick.get("line")),
         "recommendation": str(pick.get("recommendation") or "—").upper(),
         "projection": _number(pick.get("projectedValue")),
+        "confidence": _number(pick.get("confidenceScore") or pick.get("confidence")),
         "status": _pick_status(pick),
         "actual": _number(pick.get("actualValue")),
         "teamName": pick.get("teamName"),
@@ -284,6 +285,53 @@ def _analysis_fallback(message: str, context: dict[str, Any]) -> str:
     return answer
 
 
+async def _smart_ledger_response(
+    message: str,
+    picks: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> str | None:
+    """Answer a general ledger question with the same bounded AI gateway.
+
+    The analysis-modal path already sends a full current-pick packet.  This
+    companion path gives the standalone Lissa screen enough durable context
+    to answer questions about a player, result, line, or pattern instead of
+    falling back to a generic "inspect the ledger" sentence.
+    """
+    if os.environ.get("LISSA_AI_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
+        return None
+    if not await _within_explanation_budget():
+        return None
+    import json
+
+    packet = {
+        "question": message,
+        "summary": summary,
+        "savedPicks": [_pick_snapshot(pick) for pick in picks[:160]],
+        "rules": [
+            "Answer the owner's exact ledger question using only the supplied saved picks.",
+            "Do not claim a prediction exists when no matching saved pick is present.",
+            "Distinguish exact line/fixture matches from nearby lines or different matchups.",
+            "Name unavailable, pending, duplicate, or thin evidence explicitly.",
+            "Do not invent provider statistics, injuries, roles, or future results.",
+            "Lissa is read-only and must not suggest that she changed or settled anything.",
+            "Speak naturally in 2 to 5 short paragraphs with no markdown headings.",
+        ],
+    }
+    prompt = (
+        "You are Lissa, the owner-only intelligence assistant inside Reverse Picks.\n"
+        "The owner is asking about the saved prediction ledger, not asking for a new wager.\n"
+        "Use the durable records below. Be precise about what is and is not recorded.\n"
+        f"{json.dumps(packet, ensure_ascii=False, default=str)[:18000]}\n\n"
+        f"Owner question: {message}"
+    )
+    try:
+        text = await _generate_explanation(prompt)
+        return text.strip() if text and len(text.strip()) >= 40 else None
+    except Exception as exc:
+        print(f"[LISSA AI] ledger generation skipped: {type(exc).__name__}: {exc}")
+        return None
+
+
 async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str | None:
     """Use the existing bounded explanation gateway when it is available.
 
@@ -383,25 +431,27 @@ async def lissa_message(req: LissaMessageRequest):
             "not just by raw average."
         )
     else:
-        matches = _match_player(picks, message)
-        if matches:
-            response = _player_text(matches)
-        elif any(term in lowered for term in ("passing", "passes", "pass prop")):
-            passing = [
-                pick for pick in picks
-                if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "cross"))
-            ]
-            response = (
-                f"I found {len(passing)} passing-related saved pick(s). "
-                "I can inspect a specific player next. Include the player’s full name so I do not merge "
-                "same-name identities."
-            )
-        else:
-            response = (
-                "I can read your owner ledger, but I do not have enough context to answer that safely yet. "
-                "Try asking for recent performance, passing picks, or a specific player. "
-                "I will say when the saved evidence is unavailable instead of guessing."
-            )
+        response = await _smart_ledger_response(message, picks, summary)
+        if not response:
+            matches = _match_player(picks, message)
+            if matches:
+                response = _player_text(matches)
+            elif any(term in lowered for term in ("passing", "passes", "pass prop")):
+                passing = [
+                    pick for pick in picks
+                    if any(term in str(pick.get("propType") or "").lower() for term in ("pass", "cross"))
+                ]
+                response = (
+                    f"I found {len(passing)} passing-related saved pick(s). "
+                    "I can inspect a specific player next. Include the player’s full name so I do not merge "
+                    "same-name identities."
+                )
+            else:
+                response = (
+                    "I can read your owner ledger, but I do not have enough context to answer that safely yet. "
+                    "Try asking for recent performance, passing picks, or a specific player. "
+                    "I will say when the saved evidence is unavailable instead of guessing."
+                )
 
     return {
         "assistant": "Lissa",

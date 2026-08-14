@@ -12,7 +12,7 @@ export default {
     ios: {
       supportsTablet: false,
       bundleIdentifier: "com.reversepicks.app",
-      buildNumber: "118",
+    buildNumber: "119",
       icon: "./assets/rp-icon.png",
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
@@ -60,6 +60,13 @@ export default {
         },
       ],
       "expo-font",
+      [
+        "expo-speech-recognition",
+        {
+          microphonePermission: "Lissa uses the microphone when you activate voice mode.",
+          speechRecognitionPermission: "Lissa uses speech recognition when you activate voice mode.",
+        },
+      ],
       [
         "expo-local-authentication",
         {
