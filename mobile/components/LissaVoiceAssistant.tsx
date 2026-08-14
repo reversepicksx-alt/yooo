@@ -348,9 +348,9 @@ export default function LissaVoiceAssistant({
         setAwaitingQuestion(true);
       }
     } else if (!requireWakeWord && text.split(/\s+/).filter(Boolean).length >= 2) {
-      // The global assistant is already scoped to the owner and the current
-      // screen. Treat a completed natural sentence as a question so the owner
-      // does not have to repeat a wake word or touch the microphone.
+      // Optional hands-free mode is retained for non-global callers, but the
+      // authenticated global assistant requires the wake word so ambient or
+      // segmented recognition never produces an unsolicited answer.
       void sendQuestionRef.current(text);
     }
   });

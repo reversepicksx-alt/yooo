@@ -56,7 +56,10 @@ function GlobalLissa() {
     <View pointerEvents="box-none" style={styles.lissaOverlay}>
       <LissaVoiceAssistant
         minimal
-        requireWakeWord={false}
+        // Do not submit every two-word recognition fragment. Continuous
+        // browser/iOS recognition can emit ambient speech and partial
+        // segments; Lissa must be explicitly addressed before answering.
+        requireWakeWord
         email={session.email}
         token={session.token}
         sessionId="global-lissa"
