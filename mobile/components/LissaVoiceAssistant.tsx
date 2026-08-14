@@ -14,7 +14,7 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import Colors from '@/constants/colors';
-import { LissaContext, sendLissaMessage } from '@/lib/api';
+import { LissaContext, sendLissaMessage, callLissaSpeak } from '@/lib/api';
 
 type Props = {
   email?: string;
@@ -28,7 +28,7 @@ type Props = {
   onAnswer?: (text: string) => void;
 };
 
-const WAKE_WORD = /\b(?:lissa|lisa)\b/i;
+const WAKE_WORD = /\b(?:lissa|lisa|point\s*two|point\s*2)\b/i;
 
 function stripWakeWord(text: string): string {
   return text.replace(WAKE_WORD, '').replace(/^[,.:;!?-\s]+/, '').trim();
@@ -79,6 +79,70 @@ function speakAndWait(text: string, onStart?: () => void, voice?: string): Promi
       onError: () => finish(false),
     });
   });
+}
+
+/**
+ * Decode base64 L16 PCM audio and play it via the Web Audio API.
+ * The mimeType string contains the sample rate, e.g. "audio/L16;rate=24000".
+ */
+function playPcmAudio(base64: string, mimeType: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const rateMatch = mimeType.match(/rate=(\d+)/i);
+      const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+      const raw = atob(base64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const samples = new Int16Array(bytes.buffer);
+      const floats = new Float32Array(samples.length);
+      for (let i = 0; i < samples.length; i++) floats[i] = samples[i] / 32768;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx({ sampleRate });
+      const buf = ctx.createBuffer(1, floats.length, sampleRate);
+      buf.copyToChannel(floats, 0);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.onended = () => { ctx.close().catch(() => {}); resolve(true); };
+      src.start(0);
+    } catch { resolve(false); }
+  });
+}
+
+/**
+ * Try Gemini TTS on web first (human-quality voice); fall back to browser TTS on failure or native.
+ */
+async function speakWithAI(
+  text: string,
+  email: string,
+  token: string,
+  onStart?: () => void,
+  fallbackVoice?: string,
+): Promise<boolean> {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.AudioContext !== 'undefined') {
+    try {
+      const tts = await callLissaSpeak(email, token, text, 'Kore');
+      if (tts?.audio) {
+        onStart?.();
+        const mimeType = tts.mimeType || 'audio/L16;rate=24000';
+        if (mimeType.toLowerCase().includes('l16') || mimeType.toLowerCase().includes('pcm')) {
+          const ok = await playPcmAudio(tts.audio, mimeType);
+          if (ok) return true;
+        } else {
+          // MP3 or other browser-native format
+          const ok = await new Promise<boolean>((res) => {
+            const a = new Audio(`data:${mimeType};base64,${tts.audio}`);
+            a.onended = () => res(true);
+            a.onerror = () => res(false);
+            a.play().catch(() => res(false));
+          });
+          if (ok) return true;
+        }
+      }
+    } catch { /* fall through to browser TTS */ }
+  }
+  return speakAndWait(text, onStart, fallbackVoice);
 }
 
 export default function LissaVoiceAssistant({
@@ -312,20 +376,20 @@ export default function LissaVoiceAssistant({
       try {
         await Speech.stop();
         setVoiceMode('speaking');
-        const spoke = await speakAndWait(text, () => setSpeechReady(true), voiceRef.current);
+        const spoke = await speakWithAI(text, email ?? '', token ?? '', () => setSpeechReady(true), voiceRef.current);
         if (!spoke) setSpeechReady(false);
       } catch {}
     } catch (err) {
       const isTimeout = err instanceof Error && err.message.toLowerCase().includes('timed out');
       const errText = isTimeout
         ? "I took too long to respond. Try again."
-        : 'Lissa is temporarily unavailable. Try again in a moment.';
+        : '.2 is temporarily unavailable. Try again in a moment.';
       setError(errText);
       // Speak the error so the user hears what happened, not just sees it
       try {
         await Speech.stop();
         setVoiceMode('speaking');
-        await speakAndWait(addressReverse(errText), () => setSpeechReady(true), voiceRef.current);
+        await speakWithAI(addressReverse(errText), email ?? '', token ?? '', () => setSpeechReady(true), voiceRef.current);
       } catch {}
     } finally {
       busyRef.current = false;

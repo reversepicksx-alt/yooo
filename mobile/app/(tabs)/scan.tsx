@@ -707,6 +707,10 @@ export default function ScanScreen() {
       analysis: predictionState as unknown as Record<string, unknown>,
       factors: factors as Array<Record<string, unknown>>,
       ledger: ledger as Record<string, unknown>,
+      // Pass the live evidence sections so .2 can reference them directly
+      h2hPlayerStats: (predictionState as any).h2hPlayerStats ?? undefined,
+      positionComparison: (predictionState as any).positionComparison ?? undefined,
+      hitRates: (predictionState as any).hitRates ?? undefined,
     });
     return () => setLissaContext(undefined);
   }, [isOwner, phase, predictionState, setLissaContext]);

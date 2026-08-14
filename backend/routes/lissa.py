@@ -43,6 +43,13 @@ class LissaOverviewRequest(BaseModel):
     token: str
 
 
+class LissaSpeakRequest(BaseModel):
+    email: str
+    token: str
+    text: str = Field(min_length=1, max_length=1200)
+    voice: str = "Kore"
+
+
 _PICK_PROJECTION = {
     "_id": 0,
     "pickId": 1,
@@ -177,8 +184,8 @@ def _summary_text(summary: dict[str, Any]) -> str:
     hit_rate = "not available yet" if summary["hitRate"] is None else f"{summary['hitRate']:.1f}%"
     sports = ", ".join(f"{name.upper()} {count}" for name, count in sorted(summary["sports"].items()))
     return (
-        f"I’m Lissa, your owner-only Reverse Picks assistant. I can read the saved ledger, "
-        f"but I’m read-only right now: I will not change projections or publish picks.\n\n"
+        f"I'm point two, your owner-only Reverse Picks analyst. I can read the full ledger, "
+        f"but I'm read-only: I won't change projections or publish picks.\n\n"
         f"The ledger has {summary['total']} picks: {counts['HIT']} HIT, {counts['MISS']} MISS, "
         f"{counts['LIVE']} LIVE, and {counts['PENDING']} pending. "
         f"Settled HIT/MISS rate: {hit_rate}."
@@ -231,8 +238,8 @@ def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
         return "Yes, I can hear you. Ready when you are."
 
     # Identity
-    if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa")):
-        return "I'm Lissa — Reverse Picks' owner-only assistant. You can call me Lissa or Lisa."
+    if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa", "what are you", "point two")):
+        return "I'm point two — Reverse's owner-only analyst. Ask me anything."
 
     # Screen / page questions — broad pattern match
     screen_match = (
@@ -488,6 +495,10 @@ def _analysis_packet(context: dict[str, Any] | None) -> dict[str, Any]:
         "analysis": analysis,
         "factors": context.get("factors") if isinstance(context.get("factors"), list) else [],
         "ledger": context.get("ledger") if isinstance(context.get("ledger"), dict) else {},
+        # Live evidence panels sent from the prediction screen
+        "h2hPlayerStats": context.get("h2hPlayerStats") if isinstance(context.get("h2hPlayerStats"), dict) else {},
+        "positionComparison": context.get("positionComparison") if isinstance(context.get("positionComparison"), dict) else {},
+        "hitRates": context.get("hitRates") if isinstance(context.get("hitRates"), dict) else {},
     }
 
 
@@ -736,12 +747,56 @@ async def lissa_overview(req: LissaOverviewRequest):
     picks = await _load_owner_picks()
     summary = _ledger_summary(picks)
     return {
-        "assistant": "Lissa",
+        "assistant": ".2",
         "readOnly": True,
         "summary": summary,
         "message": _address_owner(_summary_text(summary)),
         "sessionId": f"lissa-{uuid.uuid4().hex[:12]}",
     }
+
+
+@router.post("/speak")
+async def lissa_speak(req: LissaSpeakRequest):
+    """Gemini TTS — returns raw L16 PCM audio as base64 for human-quality voice."""
+    await _authorize(req)
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "no_tts"}, status_code=503)
+
+    # Clean text — strip markdown asterisks, brackets, etc.
+    text = re.sub(r"[*_`\[\]#>|]", "", req.text).strip()
+    if not text:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "empty_text"}, status_code=400)
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": req.voice}
+                }
+            },
+        },
+    }
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        f"models/gemini-2.5-flash-preview-tts:generateContent?key={api_key}"
+    )
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
+        return {"audio": inline["data"], "mimeType": inline.get("mimeType", "audio/L16;rate=24000")}
+    except Exception as exc:
+        print(f"[LISSA TTS] failed: {type(exc).__name__}: {exc}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "tts_failed"}, status_code=503)
 
 
 _THIS_RE = re.compile(
@@ -813,6 +868,63 @@ async def _build_gemini_prompt(
             pick_block += "Key model factors:\n" + "\n".join(factor_lines) + "\n"
         if tactical:
             pick_block += f"Tactical read: {tactical[:600]}\n"
+
+        # H2H player vs this opponent
+        h2h = packet.get("h2hPlayerStats") or {}
+        if h2h and h2h.get("avgVsOpponent") is not None:
+            h2h_avg = h2h.get("avgVsOpponent")
+            h2h_n = h2h.get("sampleSize") or 0
+            matches = h2h.get("matches") or []
+            vals = []
+            for m in matches[:5]:
+                v = m.get("value") or m.get("statValue")
+                if v is not None:
+                    vals.append(str(round(float(v), 0) if isinstance(v, float) else v))
+            venue_meetings = h2h.get("teamMeetingsByVenue") or {}
+            home_avg = venue_meetings.get("home", {}).get("average") if isinstance(venue_meetings.get("home"), dict) else None
+            away_avg = venue_meetings.get("away", {}).get("average") if isinstance(venue_meetings.get("away"), dict) else None
+            h2h_str = f"H2H vs {opp}: avg {float(h2h_avg):.1f} over {h2h_n} apps"
+            if home_avg is not None:
+                h2h_str += f" (home avg {float(home_avg):.1f}"
+                if away_avg is not None:
+                    h2h_str += f", away avg {float(away_avg):.1f}"
+                h2h_str += ")"
+            if vals:
+                h2h_str += f" | Recent games: {', '.join(vals)}"
+            pick_block += f"H2H data: {h2h_str}\n"
+
+        # Exact position evidence (comparable players vs same opponent)
+        pc = packet.get("positionComparison") or {}
+        if pc:
+            pc_avg = pc.get("avgAllowed") or pc.get("average") or pc.get("avgVsOpponent")
+            pc_n = pc.get("distinctPlayers") or pc.get("sampleSize") or pc.get("n")
+            pc_over = pc.get("overPercent") or pc.get("overPct") or pc.get("pctOver")
+            pc_pos = pc.get("positionLabel") or pc.get("position") or pc.get("positionGroup")
+            pc_status = pc.get("status") or ""
+            comp_parts = []
+            if pc_avg is not None:
+                comp_parts.append(f"comparable {pc_pos or 'position'} avg {float(pc_avg):.1f}")
+            if pc_n:
+                comp_parts.append(f"{pc_n} players")
+            if pc_over is not None:
+                comp_parts.append(f"{float(pc_over):.0f}% OVER / {100 - float(pc_over):.0f}% UNDER this line")
+            if pc_status:
+                comp_parts.append(f"({pc_status})")
+            if comp_parts:
+                pick_block += f"Exact position evidence: {', '.join(comp_parts)}\n"
+
+        # Historical hit rates for this prop/direction
+        hr = packet.get("hitRates") or {}
+        if hr and hr.get("overPct") is not None:
+            over_pct = float(hr.get("overPct") or 0)
+            over_hits = hr.get("overHits") or 0
+            total = hr.get("total") or 0
+            under_hits = total - over_hits if total else 0
+            pick_block += (
+                f"Hit rates (this prop history): OVER {over_pct:.1f}% ({int(over_hits)}/{int(total)} hits) "
+                f"| UNDER {100 - over_pct:.1f}% ({int(under_hits)}/{int(total)} hits)\n"
+            )
+
         pick_block += "--- END PICK ---"
 
     # Recent settled picks (last 12) for ledger questions
@@ -836,7 +948,7 @@ async def _build_gemini_prompt(
         lines = []
         for t in recent_turns[-5:]:
             lines.append(f"Reverse: {t.get('user', '')}")
-            lines.append(f"Lissa: {t.get('assistant', '')[:300]}")
+            lines.append(f".2: {t.get('assistant', '')[:300]}")
         convo_block = "\n--- RECENT CONVERSATION ---\n" + "\n".join(lines) + "\n--- END ---"
 
     # Screen-specific context blocks
@@ -868,18 +980,18 @@ async def _build_gemini_prompt(
         extra_block += f"\n--- ACCOUNT ---\n{acc_summary}\n--- END ---"
 
     return (
-        "You are Lissa — the owner's personal AI inside Reverse Picks.\n"
+        "You are .2 (pronounced 'point two') — the owner's personal AI inside Reverse Picks.\n"
         "The owner's name is Reverse. Use it naturally, like a friend would.\n\n"
         "YOU SEE EVERYTHING on Reverse's screen right now. The data below is exactly what he's looking at.\n"
         "Never say your access is limited. If data exists below, use it. If something genuinely isn't there, say so in one sentence and keep going.\n\n"
         "HOW YOU TALK:\n"
-        "— Direct. Sharp. Like a friend who actually knows the game.\n"
-        "— Short sentences. Contractions. No padding.\n"
+        "— Direct. Sharp. Like a sports analyst who knows the game cold.\n"
+        "— Short sentences. Contractions. No filler words, no padding.\n"
         "— Never open with 'Certainly', 'Of course', 'Great question', or any acknowledgement. Just answer.\n"
-        "— First sentence = the actual answer. Then support it.\n"
-        "— Use real names and real numbers from the data. Be specific.\n"
+        "— First sentence = the actual answer with a real number. Then back it up.\n"
+        "— Use real player names and real numbers from the data. Be specific — if the H2H avg is 82.5, say 82.5.\n"
         "— Two or three short paragraphs max. No bullets. No headings. No markdown.\n"
-        "— If asked to explain what you see: describe it precisely — the player, prop, numbers, direction, key factors.\n\n"
+        "— If asked to explain what you see: hit EVERY section — hit rates, H2H avg, position evidence avg, projection, factors.\n\n"
         "SOCCER ANALYSIS BRAIN:\n"
         "You are deeply fluent in soccer props and tactics:\n"
         "— PASS ATTEMPTS: possession teams 80–120 per game for midfielders, 40–70 for defenders, 30–60 for attackers. High press from opponent compresses this.\n"
