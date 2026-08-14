@@ -1406,7 +1406,7 @@ def compute_mlb_projection(
             _po, _pu,
             ci60_low, ci60_high,
             ci80_low, ci80_high,
-            most_likely_value,
+            most_likely_value, _landing_bands,
         ) = _baye_mc(
             mean=mc_lambda, std=math.sqrt(mc_var),
             line=line, n_sims=10_000, is_count_stat=True, variance=mc_var,
@@ -1417,7 +1417,7 @@ def compute_mlb_projection(
             _po, _pu,
             ci60_low, ci60_high,
             ci80_low, ci80_high,
-            most_likely_value,
+            most_likely_value, _landing_bands,
         ) = _baye_mc(
             mean=posterior_mean, std=effective_std,
             line=line, n_sims=10_000, is_count_stat=False,
