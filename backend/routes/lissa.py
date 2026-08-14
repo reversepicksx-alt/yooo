@@ -1078,14 +1078,16 @@ async def _build_gemini_prompt(
         "YOU SEE EVERYTHING on Jossel's screen right now. The data below is exactly what he's looking at.\n"
         "Never say your access is limited. If data exists below, use it. If something genuinely isn't there, say so in one sentence and keep going.\n\n"
         "HOW YOU TALK:\n"
-        "— Direct. Sharp. Like a sports analyst who knows the game cold.\n"
+        "— Direct. Sharp. Like a top sports analyst who knows the game cold. Think Jarvis — concise but complete.\n"
         "— Short sentences. Contractions. No filler words, no padding.\n"
         "— Never open with 'Certainly', 'Of course', 'Great question', or any acknowledgement. Just answer.\n"
-        "— First sentence = the actual answer with a real number. Then back it up.\n"
+        "— First sentence = the actual answer or main verdict with a real number. Then back it up with evidence.\n"
         "— Use real player names and real numbers from the data. Be specific — if the H2H avg is 82.5, say 82.5.\n"
-        "— Two or three short paragraphs max. No bullets. No headings. No markdown.\n"
-        "— If asked to explain what you see: hit EVERY section — hit rates, H2H avg, position evidence avg, projection, factors.\n"
-        "— Always address Jossel by name at least once in the response.\n\n"
+        "— No bullets. No headings. No markdown. Flowing prose like a real analyst on a call.\n"
+        "— DEPTH RULE: For quick factual questions, 2-3 sentences is enough. For 'explain this', 'walk me through', 'why', or 'full analysis' — go as deep as the question demands. Never cut off mid-analysis.\n"
+        "— When asked to explain a full page/pick: cover ALL sections in order — projection vs line, Bayesian layers, evidence labels, H2H avg, position avg, hit rates, guards/caps that fired, tactical factors. Don't stop after one section.\n"
+        "— You have Google Search available — use it for current injury news, tactical form guides, transfer updates, opponent press style, and any real-world context the app data doesn't cover.\n"
+        "— Always address Jossel by name at least once.\n\n"
         "ENGINE KNOWLEDGE — you built this model, you know it cold:\n\n"
         "THE 3-LAYER SYSTEM:\n"
         "Layer 1 — BAYESIAN PROJECTION: Takes last N game logs, computes a prior mean (season avg), applies updates via Bayesian inference. Key adjustments: venue split (home vs away avg), momentum (last 3-5 games vs prior), covariate adj (possession context, game script), opponent quality, rest/fatigue, match stakes (Europa vs league final pressure), lineup rotation risk, CDM inversion (deep-block teams suppress possession for the player's team). Outputs a posteriorMean and eff_std (effective standard deviation). priorMean = raw season average before any context. posteriorMean = after all Bayesian updates. projectedValue = the final number shown to the user after calibration.\n"
@@ -1137,8 +1139,54 @@ async def _build_gemini_prompt(
         f"{settled_block}"
         f"{extra_block}"
         f"{convo_block}\n\n"
-        f"Reverse says: {message}"
+        f"Jossel: {message}"
     )
+
+
+_LISSA_PRO_MODEL = os.environ.get("LISSA_PRO_MODEL", "gemini-2.5-pro")
+
+
+async def _lissa_pro_ai(prompt: str) -> str | None:
+    """
+    Dedicated .2 AI call — Gemini 2.5 Pro with Google Search grounding.
+    Separate from the pick-card explanation pipeline so it has no word caps,
+    no caching, and full tactical search capability.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return None
+    payload: dict[str, Any] = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {
+            "temperature": 0.75,
+            "maxOutputTokens": 2048,
+        },
+    }
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{_LISSA_PRO_MODEL}:generateContent?key={api_key}"
+    )
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=26.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            print(f"[LISSA PRO] no candidates in response")
+            return None
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
+        # Strip any markdown formatting — this is spoken audio
+        text = re.sub(r"\*\*|[*_`#>]", "", text)
+        text = re.sub(r"\n{2,}", " ", text).strip()
+        print(f"[LISSA PRO] {_LISSA_PRO_MODEL} responded ({len(text)} chars)")
+        return text if len(text) >= 15 else None
+    except Exception as exc:
+        print(f"[LISSA PRO] failed: {type(exc).__name__}: {exc}")
+        return None
 
 
 async def _smart_primary_response(
@@ -1149,19 +1197,29 @@ async def _smart_primary_response(
     recent_turns: list[dict[str, Any]],
     context: dict[str, Any] | None,
 ) -> str | None:
-    """Gemini-powered primary response — handles all non-trivial questions."""
+    """Gemini 2.5 Pro primary response with Google Search grounding."""
     if os.environ.get("LISSA_AI_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
-        return None
-    if not await _within_explanation_budget():
         return None
     prompt = await _build_gemini_prompt(message, packet, picks, summary, recent_turns, context)
     try:
         text = await aio.wait_for(
-            _generate_explanation(prompt),
-            timeout=14.0,
+            _lissa_pro_ai(prompt),
+            timeout=25.0,
         )
-        cleaned = text.strip() if text else ""
-        return cleaned if len(cleaned) >= 20 else None
+        cleaned = (text or "").strip()
+        return cleaned if len(cleaned) >= 15 else None
+    except aio.TimeoutError:
+        print("[LISSA PRO] timed out after 25s — falling back")
+        # Fast fallback using Flash if Pro times out
+        try:
+            text = await aio.wait_for(
+                _generate_explanation(prompt),
+                timeout=10.0,
+            )
+            cleaned = (text or "").strip()
+            return cleaned if len(cleaned) >= 15 else None
+        except Exception:
+            return None
     except Exception as exc:
         print(f"[LISSA AI] primary response failed: {type(exc).__name__}: {exc}")
         return None
