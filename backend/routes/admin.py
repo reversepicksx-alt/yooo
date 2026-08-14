@@ -675,6 +675,83 @@ async def backfill_positions_from_api_sports(req: _PositionBackfillRequest):
     )
 
 
+class _RepairStalePickPositionsRequest(BaseModel):
+    email: str
+    token: str
+    stalePickPositions: list = []   # list of stale items from backfill result
+
+
+@router.post("/positions/repair-stale-pick-positions")
+async def repair_stale_pick_positions(req: _RepairStalePickPositionsRequest):
+    """Owner-only: apply corrected positions to picks/predictions flagged as stale
+    after a position backfill run.
+
+    Guard: a pick is only updated when its stored ``position`` field still
+    matches the reported stale value.  Arbitrary field rewrites are not possible
+    through this endpoint — only the ``position`` field is ever touched.
+    """
+    from datetime import datetime, timezone as _tz
+    await verify_owner(req.email, req.token)
+    items = req.stalePickPositions or []
+    if not items:
+        return {"success": True, "updated": 0, "skipped": 0, "errors": 0,
+                "message": "Nothing to repair."}
+
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    for item in items:
+        collection = str(item.get("collection") or "").strip()
+        pick_id = item.get("pickId")
+        stored_pos = str(item.get("storedPosition") or "").strip().upper()
+        new_pos = str(item.get("newPosition") or "").strip().upper()
+
+        if collection not in ("picks", "predictions") or not pick_id or not stored_pos or not new_pos:
+            skipped += 1
+            continue
+        if stored_pos == new_pos:
+            skipped += 1
+            continue
+
+        try:
+            # Guard: only match the document if its position still equals the
+            # previously-reported wrong value.  This prevents overwriting any
+            # pick that was already corrected by another source.
+            result = await db[collection].update_one(
+                {
+                    "$or": [{"pickId": pick_id}, {"trackingId": pick_id}],
+                    "position": {"$regex": f"^{stored_pos}$", "$options": "i"},
+                },
+                {
+                    "$set": {
+                        "position": new_pos,
+                        "positionRepairedAt": datetime.now(_tz.utc).isoformat(),
+                        "positionRepairSource": "api_sports_lineup_history",
+                    }
+                },
+            )
+            if result.matched_count:
+                updated += 1
+            else:
+                skipped += 1
+        except Exception as exc:
+            print(f"[POSITION REPAIR] error {collection}/{pick_id}: {exc}")
+            errors += 1
+
+    return {
+        "success": True,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "message": (
+            f"Repaired {updated} pick position(s)."
+            + (f" {skipped} skipped (already correct or guard blocked)." if skipped else "")
+            + (f" {errors} errors." if errors else "")
+        ),
+    }
+
+
 _OWNER_ACCESS_CODE = os.environ.get("OWNER_ACCESS_CODE", "").strip()
 
 async def _verify_owner_or_code(email: str, token: str):

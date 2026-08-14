@@ -3934,3 +3934,58 @@ export interface ReplaySportEntry {
   classification: ReplayClassification;
   projection: ReplayProjection;
 }
+
+// ─── Position backfill & repair ─────────────────────────────────────────────
+
+export interface StalePickPosition {
+  collection: string;
+  pickId: string;
+  playerName: string;
+  playerId: string | number;
+  storedPosition: string;
+  newPosition: string;
+  sport?: string;
+  propType?: string;
+}
+
+export interface PositionBackfillResult {
+  startedAt: string;
+  finishedAt: string;
+  scanned: number;
+  updated: number;
+  changed: number;
+  alreadyTrusted: number;
+  noFixtureHistory: number;
+  noExactLineupEvidence: number;
+  insufficientRepeatedEvidence: number;
+  categoryMismatch: number;
+  errors: number;
+  changedProfiles: Array<{
+    playerId: string;
+    playerName: string;
+    previousPosition?: string;
+    newPosition: string;
+  }>;
+  stalePickPositions: StalePickPosition[];
+}
+
+export async function runPositionBackfill(
+  email: string,
+  token: string,
+): Promise<PositionBackfillResult> {
+  return apiCall('/api/admin/positions/backfill-api-sports', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+}
+
+export async function repairStalePickPositions(
+  email: string,
+  token: string,
+  stalePickPositions: StalePickPosition[],
+): Promise<{ success: boolean; updated: number; skipped: number; errors: number; message: string }> {
+  return apiCall('/api/admin/positions/repair-stale-pick-positions', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, stalePickPositions }),
+  });
+}

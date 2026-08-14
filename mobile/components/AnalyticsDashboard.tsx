@@ -11,11 +11,15 @@ import {
   getStorageHealth,
   triggerStorageCleanup,
   runModelReplay,
+  runPositionBackfill,
+  repairStalePickPositions,
   Pick,
   AnalyticsData,
   ModelReplayResult,
   PassingDiagnosticBucket,
   PassingReplayBucket,
+  PositionBackfillResult,
+  StalePickPosition,
 } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -246,6 +250,12 @@ export default function AnalyticsDashboard({
   const [replayResult, setReplayResult] = React.useState<ModelReplayResult | null>(null);
   const [replayError, setReplayError] = React.useState<string | null>(null);
 
+  const [backfillRunning, setBackfillRunning] = React.useState(false);
+  const [backfillResult, setBackfillResult] = React.useState<PositionBackfillResult | null>(null);
+  const [backfillError, setBackfillError] = React.useState<string | null>(null);
+  const [repairRunning, setRepairRunning] = React.useState(false);
+  const [repairMessage, setRepairMessage] = React.useState<string | null>(null);
+
   const handleRunReplay = async () => {
     if (!session || replayRunning) return;
     setReplayRunning(true);
@@ -258,6 +268,42 @@ export default function AnalyticsDashboard({
       setReplayError(err?.message ?? 'Replay failed');
     } finally {
       setReplayRunning(false);
+    }
+  };
+
+  const handleRunBackfill = async () => {
+    if (!session || backfillRunning) return;
+    setBackfillRunning(true);
+    setBackfillError(null);
+    setBackfillResult(null);
+    setRepairMessage(null);
+    try {
+      const result = await runPositionBackfill(session.email, session.token);
+      setBackfillResult(result);
+    } catch (err: any) {
+      setBackfillError(err?.message ?? 'Backfill failed');
+    } finally {
+      setBackfillRunning(false);
+    }
+  };
+
+  const handleRepairPositions = async () => {
+    if (!session || repairRunning || !backfillResult?.stalePickPositions?.length) return;
+    setRepairRunning(true);
+    setRepairMessage(null);
+    try {
+      const result = await repairStalePickPositions(
+        session.email,
+        session.token,
+        backfillResult.stalePickPositions,
+      );
+      setRepairMessage(result.message);
+      // Clear stale list after repair so the button disappears
+      setBackfillResult(prev => prev ? { ...prev, stalePickPositions: [] } : prev);
+    } catch (err: any) {
+      setRepairMessage(`Error: ${err?.message ?? 'Repair failed'}`);
+    } finally {
+      setRepairRunning(false);
     }
   };
 
@@ -497,6 +543,83 @@ export default function AnalyticsDashboard({
     );
   };
 
+  const renderPositionRepair = () => {
+    const staleCount = backfillResult?.stalePickPositions?.length ?? 0;
+    const changedCount = backfillResult?.changed ?? 0;
+    return (
+      <View style={s.positionRepairCard}>
+        <View style={s.chartHeader}>
+          <Text style={s.chartTitle}>POSITION BACKFILL</Text>
+          <Text style={s.chartSubtitle}>GRID CORRECTION REPAIR</Text>
+        </View>
+        <Text style={s.ownerHealthMeta}>
+          Re-derives each soccer player's exact position from recent API-Sports lineup grids and reports saved picks whose stored position is now stale.
+        </Text>
+        {backfillResult && (
+          <View style={{ marginTop: 8, gap: 2 }}>
+            <Text style={s.ownerHealthMeta}>
+              Scanned {backfillResult.scanned} profiles · {backfillResult.updated} updated · {changedCount} position{changedCount !== 1 ? 's' : ''} changed
+            </Text>
+            {staleCount > 0 ? (
+              <Text style={[s.ownerHealthMeta, { color: '#f59e0b' }]}>
+                ⚠ {staleCount} saved pick{staleCount !== 1 ? 's' : ''} ha{staleCount !== 1 ? 've' : 's'} a stale position that doesn't match the corrected value
+              </Text>
+            ) : changedCount > 0 ? (
+              <Text style={[s.ownerHealthMeta, { color: '#4ade80' }]}>
+                ✓ No stale pick positions found — all saved picks are consistent
+              </Text>
+            ) : null}
+            {backfillResult.changedProfiles.slice(0, 5).map((p) => (
+              <Text key={p.playerId} style={s.ownerHealthMeta}>
+                {p.playerName}: {p.previousPosition ?? '?'} → {p.newPosition}
+              </Text>
+            ))}
+            {backfillResult.changed > 5 && (
+              <Text style={s.ownerHealthMeta}>… and {backfillResult.changed - 5} more</Text>
+            )}
+          </View>
+        )}
+        {backfillError && (
+          <Text style={[s.ownerHealthMeta, { color: '#ef4444', marginTop: 4 }]}>
+            Error: {backfillError}
+          </Text>
+        )}
+        {repairMessage && (
+          <Text style={[s.ownerHealthMeta, {
+            color: repairMessage.startsWith('Error') ? '#ef4444' : '#4ade80',
+            marginTop: 4,
+          }]}>
+            {repairMessage}
+          </Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <TouchableOpacity
+            style={[s.replayBtn, backfillRunning && s.cleanupBtnDisabled]}
+            onPress={handleRunBackfill}
+            disabled={backfillRunning}
+          >
+            <Ionicons name="refresh-outline" size={13} color={backfillRunning ? '#6b7280' : '#a78bfa'} />
+            <Text style={[s.cleanupBtnText, { color: backfillRunning ? '#6b7280' : '#a78bfa' }]}>
+              {backfillRunning ? 'Running backfill…' : 'Run position backfill'}
+            </Text>
+          </TouchableOpacity>
+          {staleCount > 0 && (
+            <TouchableOpacity
+              style={[s.replayBtn, repairRunning && s.cleanupBtnDisabled, { borderColor: 'rgba(245,158,11,0.4)', backgroundColor: 'rgba(245,158,11,0.08)' }]}
+              onPress={handleRepairPositions}
+              disabled={repairRunning}
+            >
+              <Ionicons name="build-outline" size={13} color={repairRunning ? '#6b7280' : '#f59e0b'} />
+              <Text style={[s.cleanupBtnText, { color: repairRunning ? '#6b7280' : '#f59e0b' }]}>
+                {repairRunning ? 'Repairing…' : `Repair ${staleCount} pick position${staleCount !== 1 ? 's' : ''}`}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   const renderPassingDiagnostics = () => {
     const diagnostics = ownerData?.passingDiagnostics;
     if (!diagnostics || diagnostics.scope.scoredEvents === 0) return null;
@@ -631,6 +754,7 @@ export default function AnalyticsDashboard({
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
             {renderStorageHealth()}
+            {renderPositionRepair()}
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>
                 <View style={s.chartHeader}>
@@ -1080,6 +1204,14 @@ const s = StyleSheet.create({
   ownerPropList: { marginTop: 9, gap: 3 },
   ownerPropRow: { fontSize: 10, color: Colors.textSecondary, lineHeight: 14, textTransform: 'capitalize' },
   ownerHealthReplay: { fontSize: 10, color: Colors.primary, marginTop: 6, fontWeight: '700' },
+  positionRepairCard: {
+    backgroundColor: 'rgba(167,139,250,0.06)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(167,139,250,0.22)',
+  },
   passingDiagCard: {
     marginTop: 12,
     padding: 10,
