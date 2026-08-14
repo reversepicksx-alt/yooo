@@ -21,6 +21,7 @@ from config import OWNER_EMAIL, db
 from routes.admin import verify_owner
 from compact_explanation import _generate as _generate_explanation
 from compact_explanation import _within_daily_limit as _within_explanation_budget
+from lissa_memory import load_recent_turns, remember_turn
 from team_resolver import find_team
 from utils import priority_api_football_request
 
@@ -429,6 +430,13 @@ def _analysis_packet(context: dict[str, Any] | None) -> dict[str, Any]:
     """
     if not isinstance(context, dict):
         return {}
+    # The client normally scopes this packet to My Picks, but the backend must
+    # enforce the boundary too. A stale mobile tab, old bundle, or malformed
+    # caller must not make Predict answer as if an old player modal is open.
+    screen = context.get("screen")
+    screen_name = str(screen.get("name") or "").strip().lower() if isinstance(screen, dict) else ""
+    if screen_name and screen_name not in {"my picks", "analysis", "pick analysis"}:
+        return {}
     pick = context.get("pick")
     analysis = context.get("analysis")
     if not isinstance(pick, dict):
@@ -496,6 +504,7 @@ async def _smart_ledger_response(
     message: str,
     picks: list[dict[str, Any]],
     summary: dict[str, Any],
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Answer a general ledger question with the same bounded AI gateway.
 
@@ -513,6 +522,7 @@ async def _smart_ledger_response(
     packet = {
         "question": message,
         "summary": summary,
+        "recentConversation": (recent_turns or [])[-6:],
         "savedPicks": [_pick_snapshot(pick) for pick in picks[:160]],
         "rules": [
             "Answer the owner's exact ledger question using only the supplied saved picks.",
@@ -525,6 +535,7 @@ async def _smart_ledger_response(
             "Lissa is read-only and must not suggest that she changed or settled anything.",
             "Sound like a smart friend, not a report. Use contractions and plain language.",
             "Answer the question directly in one to three short spoken paragraphs. No headings, bullets, disclaimers, or robotic phrases.",
+            "Use recent conversation only to understand follow-ups; never treat a prior assistant statement as new evidence.",
         ],
     }
     prompt = (
@@ -546,7 +557,11 @@ async def _smart_ledger_response(
         return None
 
 
-async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str | None:
+async def _smart_analysis_response(
+    message: str,
+    context: dict[str, Any],
+    recent_turns: list[dict[str, Any]] | None = None,
+) -> str | None:
     """Use the existing bounded explanation gateway when it is available.
 
     Lissa must still work when generation is disabled or unavailable, so the
@@ -560,6 +575,7 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
     packet = {
         "question": message,
         "currentAnalysis": context,
+        "recentConversation": (recent_turns or [])[-6:],
         "rules": [
             "Answer the exact question about the current player analysis.",
             "Your name is Lissa (pronounced Lisa), and address the owner as Reverse.",
@@ -571,6 +587,7 @@ async def _smart_analysis_response(message: str, context: dict[str, Any]) -> str
             "Do not invent injuries, line movement, player roles, or statistics.",
             "Do not promise a win and do not give financial advice.",
             "Sound like a smart friend, not a report. Use contractions and plain language. No headings, bullets, or robotic disclaimers.",
+            "Use recent conversation only to understand follow-ups; the current analysis packet is the source of truth.",
         ],
     }
     import json
@@ -598,6 +615,49 @@ async def _authorize(req: LissaMessageRequest | LissaOverviewRequest) -> None:
     await verify_owner(req.email, req.token)
 
 
+def _session_id(req: LissaMessageRequest) -> str:
+    return req.session_id or f"lissa-{uuid.uuid4().hex[:12]}"
+
+
+def _screen_name(context: dict[str, Any] | None) -> str | None:
+    if not isinstance(context, dict) or not isinstance(context.get("screen"), dict):
+        return None
+    value = str(context["screen"].get("name") or "").strip()
+    return value or None
+
+
+async def _finish_turn(
+    req: LissaMessageRequest,
+    session_id: str,
+    response: str,
+    mode: str,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    text = _address_owner(response)
+    try:
+        await aio.wait_for(
+            remember_turn(
+                req.email,
+                session_id,
+                req.message.strip(),
+                text,
+                mode,
+                _screen_name(req.context),
+            ),
+            timeout=0.4,
+        )
+    except Exception as exc:
+        print(f"[LISSA MEMORY] turn save skipped: {type(exc).__name__}: {exc}")
+    return {
+        "assistant": "Lissa",
+        "sessionId": session_id,
+        "response": text,
+        "readOnly": True,
+        "mode": mode,
+        "summary": summary,
+    }
+
+
 @router.post("/overview")
 async def lissa_overview(req: LissaOverviewRequest):
     await _authorize(req)
@@ -616,32 +676,33 @@ async def lissa_overview(req: LissaOverviewRequest):
 async def lissa_message(req: LissaMessageRequest):
     await _authorize(req)
     message = req.message.strip()
-    match_response = await _upcoming_match_response(message)
+    session_id = _session_id(req)
+    try:
+        match_response = await aio.wait_for(_upcoming_match_response(message), timeout=5.5)
+    except aio.TimeoutError:
+        match_response = "The fixture search is taking too long, so I stopped it rather than make you wait."
+    except Exception as exc:
+        print(f"[LISSA MATCH] turn lookup failed: {type(exc).__name__}: {exc}")
+        match_response = None
     if match_response:
-        return {
-            "assistant": "Lissa",
-            "sessionId": req.session_id or f"lissa-{uuid.uuid4().hex[:12]}",
-            "response": _address_owner(match_response),
-            "readOnly": True,
-            "mode": "match-search",
-            "summary": _empty_summary(),
-        }
+        return await _finish_turn(req, session_id, match_response, "match-search", _empty_summary())
     fast = _fast_response(message, req.context)
     if fast:
-        return {
-            "assistant": "Lissa",
-            "sessionId": req.session_id or f"lissa-{uuid.uuid4().hex[:12]}",
-            "response": _address_owner(fast),
-            "readOnly": True,
-            "mode": "instant",
-            "summary": _empty_summary(),
-        }
+        return await _finish_turn(req, session_id, fast, "instant", _empty_summary())
 
     packet = _analysis_packet(req.context)
     summary = _empty_summary()
+    try:
+        recent_turns = await aio.wait_for(
+            load_recent_turns(req.email, session_id),
+            timeout=0.35,
+        )
+    except Exception as exc:
+        print(f"[LISSA MEMORY] turn load skipped: {type(exc).__name__}: {exc}")
+        recent_turns = []
 
     if packet:
-        response = await _smart_analysis_response(message, packet)
+        response = await _smart_analysis_response(message, packet, recent_turns)
         if not response:
             response = _analysis_fallback(message, packet)
     else:
@@ -666,7 +727,7 @@ async def lissa_message(req: LissaMessageRequest):
                 "not just by raw average."
             )
         else:
-            response = await _smart_ledger_response(message, picks, summary)
+            response = await _smart_ledger_response(message, picks, summary, recent_turns)
             if not response:
                 matches = _match_player(picks, message)
                 if matches:
@@ -688,11 +749,4 @@ async def lissa_message(req: LissaMessageRequest):
                         "I will say when the saved evidence is unavailable instead of guessing."
                     )
 
-    return {
-        "assistant": "Lissa",
-        "sessionId": req.session_id or f"lissa-{uuid.uuid4().hex[:12]}",
-        "response": _address_owner(response),
-        "readOnly": True,
-        "mode": "deterministic-ledger",
-        "summary": summary,
-    }
+    return await _finish_turn(req, session_id, response, "deterministic-ledger", summary)
