@@ -54,6 +54,26 @@ function addressReverse(text: string): string {
   return /\bjossel\b/i.test(text) ? text : `Jossel, ${text}`;
 }
 
+// Shared WebAudio context — created and resumed inside the primeSpeech tap-gesture
+// handler so iOS Safari's audio suspension requirement is satisfied once for the session.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _audioCtx: AudioContext | null = null;
+function getSharedAudioCtx(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!Ctor) return null;
+    if (!_audioCtx || _audioCtx.state === 'closed') {
+      _audioCtx = new Ctor();
+    }
+    if (_audioCtx.state === 'suspended') {
+      void _audioCtx.resume();
+    }
+    return _audioCtx;
+  } catch { return null; }
+}
+
 function speakAndWait(text: string, onStart?: () => void, voice?: string): Promise<boolean> {
   return new Promise((resolve) => {
     let finished = false;
@@ -82,10 +102,12 @@ function speakAndWait(text: string, onStart?: () => void, voice?: string): Promi
 }
 
 /**
- * Decode base64 L16 PCM audio and play it via the Web Audio API.
- * The mimeType string contains the sample rate, e.g. "audio/L16;rate=24000".
+ * Decode base64 L16 PCM audio and play it via the shared WebAudio context.
+ * Uses the pre-unlocked shared context so iOS Safari never blocks playback.
  */
 function playPcmAudio(base64: string, mimeType: string): Promise<boolean> {
+  const ctx = getSharedAudioCtx();
+  if (!ctx) return Promise.resolve(false);
   return new Promise((resolve) => {
     try {
       const rateMatch = mimeType.match(/rate=(\d+)/i);
@@ -96,15 +118,13 @@ function playPcmAudio(base64: string, mimeType: string): Promise<boolean> {
       const samples = new Int16Array(bytes.buffer);
       const floats = new Float32Array(samples.length);
       for (let i = 0; i < samples.length; i++) floats[i] = samples[i] / 32768;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioCtx({ sampleRate });
+      // createBuffer with the PCM sample rate — Web Audio resamples to context rate automatically
       const buf = ctx.createBuffer(1, floats.length, sampleRate);
       buf.copyToChannel(floats, 0);
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(ctx.destination);
-      src.onended = () => { ctx.close().catch(() => {}); resolve(true); };
+      src.onended = () => resolve(true);
       src.start(0);
     } catch { resolve(false); }
   });
@@ -120,9 +140,18 @@ async function speakWithAI(
   onStart?: () => void,
   fallbackVoice?: string,
 ): Promise<boolean> {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.AudioContext !== 'undefined') {
+  // Check for Web Audio support — Safari uses webkitAudioContext, not AudioContext
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const hasWebAudio = Platform.OS === 'web' && typeof window !== 'undefined'
+    && !!(window.AudioContext || (window as any).webkitAudioContext)
+    && getSharedAudioCtx() !== null; // only proceed if context is unlocked
+
+  if (hasWebAudio) {
     try {
-      const tts = await callLissaSpeak(email, token, text, 'Kore');
+      const tts = await Promise.race([
+        callLissaSpeak(email, token, text, 'Kore'),
+        new Promise<null>((res) => setTimeout(() => res(null), 9_000)),
+      ]);
       if (tts?.audio) {
         onStart?.();
         const mimeType = tts.mimeType || 'audio/L16;rate=24000';
@@ -318,12 +347,16 @@ export default function LissaVoiceAssistant({
   };
 
   const primeSpeech = async () => {
-    // Safari/iOS requires speechSynthesis.speak() to fire inside the tap handler
-    // before any later audio works. Speak a zero-width space at max rate — it
-    // produces no audible sound but unlocks the audio session for all future calls.
+    // iOS Safari requires speechSynthesis.speak() AND AudioContext.resume() to be
+    // called directly inside a user-gesture handler. We do both here on tap so
+    // every subsequent TTS call (browser or Gemini PCM) works without restriction.
     if (!speechReady) {
-      await speakAndWait('\u200B', () => setSpeechReady(true), voiceRef.current);
+      // A single period at high speed is barely audible but guaranteed to be
+      // processed as a phoneme — unlike '\u200B' which Safari may silently ignore.
+      await speakAndWait('.', () => setSpeechReady(true), voiceRef.current);
     }
+    // Also unlock the shared WebAudio context for Gemini TTS PCM playback.
+    if (Platform.OS === 'web') getSharedAudioCtx();
     setSpeechReady(true);
   };
 
