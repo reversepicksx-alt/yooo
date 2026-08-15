@@ -32,6 +32,8 @@ kb_stats()                                      → dict
 from __future__ import annotations
 
 import asyncio as aio
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -542,7 +544,7 @@ async def get_player_kb(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def kb_stats() -> dict:
-    """Return collection-level counts and freshness metrics."""
+    """Return collection-level counts and freshness metrics including miss counter."""
     try:
         cutoff = _ts_now() - _KB_TTL_SECONDS
         results = await aio.gather(
@@ -550,21 +552,390 @@ async def kb_stats() -> dict:
             db.knowledge_teams.count_documents({"_ts": {"$gt": cutoff}}),
             db.knowledge_players.count_documents({}),
             db.knowledge_players.count_documents({"_ts": {"$gt": cutoff}}),
+            db.knowledge_heuristics.count_documents({}),
+            db.knowledge_stats.find_one({"_id": "kb_misses"}),
             return_exceptions=True,
         )
-        team_total, team_fresh, player_total, player_fresh = results
+        team_total, team_fresh, player_total, player_fresh, h_total, miss_doc = results
+        kb_misses = (miss_doc.get("count", 0) if isinstance(miss_doc, dict) else 0)
         return {
-            "teamsTotal":   team_total   if isinstance(team_total,   int) else 0,
-            "teamsFresh":   team_fresh   if isinstance(team_fresh,   int) else 0,
-            "playersTotal": player_total if isinstance(player_total, int) else 0,
-            "playersFresh": player_fresh if isinstance(player_fresh, int) else 0,
-            "ttlHours":     _KB_TTL_SECONDS // 3600,
+            "teamsTotal":      team_total   if isinstance(team_total,   int) else 0,
+            "teamsFresh":      team_fresh   if isinstance(team_fresh,   int) else 0,
+            "playersTotal":    player_total if isinstance(player_total, int) else 0,
+            "playersFresh":    player_fresh if isinstance(player_fresh, int) else 0,
+            "heuristicsTotal": h_total      if isinstance(h_total,      int) else 0,
+            "kbMisses":        kb_misses,
+            "ttlHours":        _KB_TTL_SECONDS // 3600,
         }
     except Exception as e:
         return {
-            "error":        str(e),
-            "teamsTotal":   0,
-            "teamsFresh":   0,
-            "playersTotal": 0,
-            "playersFresh": 0,
+            "error":           str(e),
+            "teamsTotal":      0,
+            "teamsFresh":      0,
+            "playersTotal":    0,
+            "playersFresh":    0,
+            "heuristicsTotal": 0,
+            "kbMisses":        0,
         }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Stage 2 — Heuristics seed, miss counter, and fact-bundle assembly
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_HEURISTICS_SEED: list[dict] = [
+    # pass_attempts / passes
+    {"role": "Ball-playing CB", "opponentStyleTag": "counter_attacking",   "prop": "pass_attempts",
+     "direction": "UNDER", "deltaPercent": -12.0, "confidence": "medium",
+     "note": "Counter-attacks bypass CBs; time-on-ball shrinks as opponent plays direct"},
+    {"role": "Ball-playing CB", "opponentStyleTag": "possession_dominant", "prop": "pass_attempts",
+     "direction": "OVER",  "deltaPercent":  10.0, "confidence": "medium",
+     "note": "Both teams cycle possession; ball-playing CB recycles constantly"},
+    {"role": "Ball-playing CB", "opponentStyleTag": "deep_block",          "prop": "pass_attempts",
+     "direction": "UNDER", "deltaPercent":  -8.0, "confidence": "low",
+     "note": "Compact defense limits build-up depth; CBs take fewer forward passes"},
+    {"role": "Ball-playing CB", "opponentStyleTag": "high_line",           "prop": "pass_attempts",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "low",
+     "note": "High defensive line creates space for CB to play into"},
+    {"role": "Anchor",          "opponentStyleTag": "deep_block",          "prop": "pass_attempts",
+     "direction": "UNDER", "deltaPercent":  -8.0, "confidence": "medium",
+     "note": "Low block compresses central midfield; fewer urgent distribution passes for pivot"},
+    {"role": "Anchor",          "opponentStyleTag": "possession_dominant", "prop": "pass_attempts",
+     "direction": "OVER",  "deltaPercent":  10.0, "confidence": "medium",
+     "note": "Ball-dominant teams cycle through the pivot constantly"},
+    {"role": "Anchor",          "opponentStyleTag": "high_line",           "prop": "pass_attempts",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "low",
+     "note": "High press leaves space for CDM to exploit with quick distribution"},
+    {"role": "Box-to-Box",      "opponentStyleTag": "possession_dominant", "prop": "pass_attempts",
+     "direction": "OVER",  "deltaPercent":  12.0, "confidence": "high",
+     "note": "Box-to-box midfielder is primary ball-carrier in possession systems"},
+    {"role": "Box-to-Box",      "opponentStyleTag": "counter_attacking",   "prop": "pass_attempts",
+     "direction": "UNDER", "deltaPercent": -10.0, "confidence": "medium",
+     "note": "Fewer possession phases reduce pass opportunities for box-to-box"},
+    {"role": "Pressing Forward","opponentStyleTag": "deep_block",          "prop": "pass_attempts",
+     "direction": "UNDER", "deltaPercent": -10.0, "confidence": "medium",
+     "note": "Low block limits touch count for pressing forwards who press high"},
+    {"role": "Inverted Winger", "opponentStyleTag": "possession_dominant", "prop": "pass_attempts",
+     "direction": "OVER",  "deltaPercent":   6.0, "confidence": "low",
+     "note": "More possession cycles increase winger touches and pass involvement"},
+    # saves
+    {"role": "Goalkeeper",      "opponentStyleTag": "possession_dominant", "prop": "saves",
+     "direction": "UNDER", "deltaPercent": -15.0, "confidence": "high",
+     "note": "Opponent controlling ball means fewer shots on target conceded"},
+    {"role": "Goalkeeper",      "opponentStyleTag": "counter_attacking",   "prop": "saves",
+     "direction": "OVER",  "deltaPercent":  15.0, "confidence": "high",
+     "note": "Counter-attacking teams create more direct shots; save demand rises"},
+    {"role": "Goalkeeper",      "opponentStyleTag": "high_line",           "prop": "saves",
+     "direction": "UNDER", "deltaPercent":  -8.0, "confidence": "low",
+     "note": "High-possession opponent (high line) keeps ball away from goal; keeper faces fewer shots"},
+    {"role": "Goalkeeper",      "opponentStyleTag": "deep_block",          "prop": "saves",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "low",
+     "note": "Low-possession opponent (deep block) relies on direct transitions; save demand rises on the break"},
+    # shots
+    {"role": "Pressing Forward","opponentStyleTag": "deep_block",          "prop": "shots",
+     "direction": "UNDER", "deltaPercent": -12.0, "confidence": "high",
+     "note": "Parked bus blocks shooting lanes; pressing forward rarely gets a clean look on goal"},
+    {"role": "Pressing Forward","opponentStyleTag": "high_line",           "prop": "shots",
+     "direction": "OVER",  "deltaPercent":  12.0, "confidence": "high",
+     "note": "Space behind high defensive line creates 1v1 goal opportunities for pressing forward"},
+    {"role": "False 9",         "opponentStyleTag": "possession_dominant", "prop": "shots",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "medium",
+     "note": "Possession phases give False 9 more interior touches and shooting chances"},
+    {"role": "Inverted Winger", "opponentStyleTag": "deep_block",          "prop": "shots",
+     "direction": "OVER",  "deltaPercent":   6.0, "confidence": "low",
+     "note": "Opponent sitting deep cedes possession; inverted winger benefits from more touches and cut-inside opportunities"},
+    {"role": "Inverted Winger", "opponentStyleTag": "counter_attacking",   "prop": "shots",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "medium",
+     "note": "Fast transitions suit the inverted wide player cutting inside on the break"},
+    # key_passes
+    {"role": "False 9",         "opponentStyleTag": "deep_block",          "prop": "key_passes",
+     "direction": "UNDER", "deltaPercent": -12.0, "confidence": "medium",
+     "note": "Compact defense leaves no space for creative through-balls by False 9"},
+    {"role": "Box-to-Box",      "opponentStyleTag": "possession_dominant", "prop": "key_passes",
+     "direction": "OVER",  "deltaPercent":  10.0, "confidence": "medium",
+     "note": "High possession cycles = more chance-creation opportunities from box-to-box"},
+    {"role": "Inverted Winger", "opponentStyleTag": "possession_dominant", "prop": "key_passes",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "low",
+     "note": "More touches in final third unlock winger creativity and assist opportunities"},
+    # tackles
+    {"role": "Pressing Forward","opponentStyleTag": "possession_dominant", "prop": "tackles",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "medium",
+     "note": "Press-intensive role generates more tackle attempts in opponent half"},
+    {"role": "Anchor",          "opponentStyleTag": "counter_attacking",   "prop": "tackles",
+     "direction": "OVER",  "deltaPercent":   6.0, "confidence": "medium",
+     "note": "Opponent transitions create more defensive duties and tackle attempts for pivot"},
+    {"role": "Ball-playing CB", "opponentStyleTag": "counter_attacking",   "prop": "tackles",
+     "direction": "OVER",  "deltaPercent":  10.0, "confidence": "medium",
+     "note": "Counter-attacking opponent advances more; ball-playing CB makes more tackles"},
+    # clearances
+    {"role": "Ball-playing CB", "opponentStyleTag": "counter_attacking",   "prop": "clearances",
+     "direction": "OVER",  "deltaPercent":  12.0, "confidence": "medium",
+     "note": "Direct ball forward increases aerial duels and clearance demand for CB"},
+    {"role": "Pressing CB",     "opponentStyleTag": "counter_attacking",   "prop": "clearances",
+     "direction": "OVER",  "deltaPercent":  15.0, "confidence": "high",
+     "note": "Aggressive pressing CB + direct counter opponent = highest clearance volume"},
+    {"role": "Ball-playing CB", "opponentStyleTag": "possession_dominant", "prop": "clearances",
+     "direction": "UNDER", "deltaPercent":  -8.0, "confidence": "medium",
+     "note": "Possession opponents rarely reach danger zones requiring clearances from CB"},
+    # composite
+    {"role": "Target Forward",  "opponentStyleTag": "possession_dominant", "prop": "shots",
+     "direction": "OVER",  "deltaPercent":   8.0, "confidence": "medium",
+     "note": "Possession teams generate more crosses; target forward gets more headers and shots"},
+]
+
+
+async def seed_knowledge_heuristics() -> int:
+    """
+    Idempotent upsert of curated heuristics into knowledge_heuristics.
+    Keyed by role|opponentStyleTag|prop|direction.
+    Returns the number of upserted/updated documents.
+    """
+    count = 0
+    for rule in _HEURISTICS_SEED:
+        key = f"{rule['role']}|{rule['opponentStyleTag']}|{rule['prop']}|{rule['direction']}"
+        doc = {**rule, "_key": key, "source": "curated", "version": 1}
+        try:
+            await db.knowledge_heuristics.update_one(
+                {"_key": key},
+                {"$set": doc},
+                upsert=True,
+            )
+            count += 1
+        except Exception as e:
+            print(f"[KB seed] heuristic upsert failed key={key}: {e}")
+    if count:
+        print(f"[KB seed] knowledge_heuristics: {count} rules seeded/updated")
+    return count
+
+
+async def _bump_kb_miss_counter() -> None:
+    """Atomically increment the lifetime KB-miss counter in knowledge_stats."""
+    try:
+        await db.knowledge_stats.update_one(
+            {"_id": "kb_misses"},
+            {"$inc": {"count": 1}},
+            upsert=True,
+        )
+    except Exception:
+        pass  # miss counter is advisory; never block the prediction path
+
+
+def _normalize_prop_for_kb(prop_type: str) -> str:
+    """Map raw propType values to the canonical KB prop keys used in heuristics."""
+    pt = (prop_type or "").lower().replace("_", " ")
+    if "pass" in pt and "key" not in pt:
+        return "pass_attempts"
+    if "save" in pt:
+        return "saves"
+    if "shot" in pt:
+        return "shots"
+    if "key" in pt or "chance creat" in pt:
+        return "key_passes"
+    if "tackle" in pt or "intercept" in pt:
+        return "tackles"
+    if "clear" in pt:
+        return "clearances"
+    return pt.replace(" ", "_")
+
+
+def _role_matches(heuristic_role: str, player_role: str) -> bool:
+    """Return True if the heuristic's role tag fuzzy-matches the player's KB role.
+
+    Uses substring matching first (fast path), then falls back to a strict
+    token-subset check: ALL tokens in the heuristic role must appear in the
+    player role.  This prevents "Pressing CB" from matching "Ball-playing CB"
+    just because both share the token "CB".
+    """
+    if not heuristic_role or heuristic_role.lower() in ("any", ""):
+        return True
+    if not player_role:
+        return False
+    pl = player_role.lower()
+    hr = heuristic_role.lower()
+    # Fast path: direct substring match (either direction)
+    if hr in pl or pl in hr:
+        return True
+    # Token-level: ALL heuristic tokens must be present in player role tokens.
+    # Using issubset (not intersection) stops shared positional suffixes like
+    # "CB" from causing false positives across distinct roles.
+    _stop = {"the", "a", "an", "of", "in", "and"}
+    hr_toks = set(hr.replace("-", " ").split()) - _stop
+    pl_toks = set(pl.replace("-", " ").split()) - _stop
+    return bool(hr_toks) and hr_toks.issubset(pl_toks)
+
+
+async def assemble_fact_bundle(
+    player_id: int,
+    team_id: int,
+    opponent_id: int,
+    prop_type: str,
+    venue: str,
+    league_id: int,
+    season: int = CURRENT_SEASON,
+) -> dict:
+    """
+    Assemble a verified fact bundle for Stage 2 Gemini prompt injection.
+
+    Reads player KB + opponent team KB + curated heuristics — all fast indexed
+    MongoDB reads with no external API calls.
+
+    Returns:
+        {
+          "hit":     bool — True if at least one KB source had data,
+          "bundle":  dict — raw bundle fields for downstream logic,
+          "text":    str  — pre-rendered FACT BUNDLE block for the prompt,
+          "version": str  — 12-char hash of stable content (for cache versioning),
+        }
+    """
+    try:
+        # ── 1. Read KB docs in parallel ───────────────────────────────────────
+        player_kb, opponent_kb = await aio.gather(
+            get_player_kb(player_id, league_id),
+            get_team_kb(opponent_id, league_id, season),
+            return_exceptions=True,
+        )
+        player_kb   = player_kb   if isinstance(player_kb,   dict) else None
+        opponent_kb = opponent_kb if isinstance(opponent_kb, dict) else None
+
+        # ── 2. Match curated heuristics ───────────────────────────────────────
+        normalized_prop = _normalize_prop_for_kb(prop_type)
+        opponent_tags: set[str] = set()
+        if opponent_kb:
+            for tag_key in ("buildUpStyle", "defensiveLineHeight"):
+                tag = opponent_kb.get(tag_key)
+                if tag and tag != "unknown":
+                    opponent_tags.add(tag)
+
+        player_role = (player_kb or {}).get("role") or ""
+        matched_heuristics: list[dict] = []
+
+        if opponent_tags:
+            try:
+                async for h in db.knowledge_heuristics.find(
+                    {
+                        "prop": normalized_prop,
+                        "opponentStyleTag": {"$in": list(opponent_tags)},
+                    },
+                    {"_id": 0},
+                ).limit(10):
+                    if _role_matches(h.get("role", "any"), player_role):
+                        matched_heuristics.append(h)
+                        if len(matched_heuristics) >= 2:
+                            break
+            except Exception as _h_exc:
+                print(f"[KB] heuristics query failed: {_h_exc}")
+
+        # ── 3. Decide hit / miss ──────────────────────────────────────────────
+        hit = bool(player_kb or opponent_kb or matched_heuristics)
+
+        if not hit:
+            await _bump_kb_miss_counter()
+            print(
+                f"[KB MISS] player={player_id} opponent={opponent_id}"
+                f" prop={normalized_prop} league={league_id}"
+            )
+            return {"hit": False, "bundle": {}, "text": "", "version": "no_bundle"}
+
+        # ── 4. Render the FACT BUNDLE text block ──────────────────────────────
+        lines: list[str] = []
+
+        if player_kb:
+            pos_label = " / ".join(
+                p for p in [player_kb.get("specificPosition"), player_kb.get("role")] if p
+            ) or "unknown"
+            passes90 = player_kb.get("passesPer90")
+            apps = player_kb.get("appearances") or 0
+            lines.append(
+                f"Player profile: {pos_label}"
+                + (f" | Season passes/90: {passes90}" if passes90 is not None else "")
+                + f" | Appearances: {apps}"
+            )
+            home_avg = player_kb.get("homePassAvg")
+            away_avg = player_kb.get("awayPassAvg")
+            if home_avg is not None or away_avg is not None:
+                lines.append(
+                    f"Venue pass split:"
+                    f" home avg {home_avg if home_avg is not None else 'n/a'}"
+                    f" | away avg {away_avg if away_avg is not None else 'n/a'}"
+                    + (f" (playing {venue})" if venue else "")
+                )
+            tend_flags = [k for k, v in (player_kb.get("tendencies") or {}).items() if v]
+            if tend_flags:
+                lines.append(f"Tendencies: {', '.join(tend_flags)}")
+        else:
+            lines.append("Player profile: no KB data available")
+
+        if opponent_kb:
+            poss_label = (
+                f"{opponent_kb['seasonAvgPoss']:.1f}% avg possession"
+                if opponent_kb.get("seasonAvgPoss") is not None
+                else "possession unknown"
+            )
+            lines.append(
+                f"Opponent style: {opponent_kb.get('buildUpStyle', 'unknown')}"
+                f" | Defensive line: {opponent_kb.get('defensiveLineHeight', 'unknown')}"
+                f" | {poss_label}"
+            )
+        else:
+            lines.append("Opponent style: no KB data available")
+
+        if matched_heuristics:
+            for h in matched_heuristics:
+                conf  = h.get("confidence", "")
+                delta = h.get("deltaPercent")
+                sign  = "+" if (delta or 0) > 0 else ""
+                delta_str = f" ({sign}{delta}%)" if delta is not None else ""
+                lines.append(
+                    f"Matchup rule [{h.get('prop')} × {h.get('opponentStyleTag')}]:"
+                    f" {h.get('note', '')} → lean {h.get('direction')}{delta_str}"
+                    + (f" | confidence: {conf}" if conf else "")
+                )
+        else:
+            lines.append(
+                "Matchup rule: no curated rule for this role × opponent style combination"
+            )
+
+        bundle_text = "\n".join(lines)
+
+        # ── 5. Stable version hash (excludes TTL timestamps) ──────────────────
+        hash_input = {
+            "playerRole":  player_role,
+            "playerPos":   (player_kb or {}).get("specificPosition"),
+            "passes90":    (player_kb or {}).get("passesPer90"),
+            "appearances": (player_kb or {}).get("appearances"),  # rendered in bundle text
+            "homePass":    (player_kb or {}).get("homePassAvg"),
+            "awayPass":    (player_kb or {}).get("awayPassAvg"),
+            "tendencies":  sorted((player_kb or {}).get("tendencies", {}).keys()),
+            "oppStyle":    (opponent_kb or {}).get("buildUpStyle"),
+            "defLine":     (opponent_kb or {}).get("defensiveLineHeight"),
+            "oppPoss":     (opponent_kb or {}).get("seasonAvgPoss"),
+            # Full heuristic content — any rule edit (note/direction/delta) must invalidate cache.
+            "heuristics": sorted(
+                [
+                    {
+                        "key":        h.get("_key", ""),
+                        "note":       h.get("note", ""),
+                        "direction":  h.get("direction", ""),
+                        "delta":      h.get("deltaPercent"),
+                        "confidence": h.get("confidence", ""),
+                        "version":    h.get("version", 1),
+                    }
+                    for h in matched_heuristics
+                ],
+                key=lambda x: x["key"],
+            ),
+        }
+        version = hashlib.sha256(
+            json.dumps(hash_input, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+
+        bundle = {
+            "playerKb":   player_kb,
+            "opponentKb": opponent_kb,
+            "heuristics": matched_heuristics,
+        }
+        return {"hit": True, "bundle": bundle, "text": bundle_text, "version": version}
+
+    except Exception as e:
+        print(f"[KB] assemble_fact_bundle error: {e}")
+        return {"hit": False, "bundle": {}, "text": "", "version": "error"}

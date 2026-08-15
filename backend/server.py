@@ -237,6 +237,9 @@ async def _run_startup_tasks():
         import logging
         logging.getLogger("server").warning(f"TTL index setup skipped: {_ttl_err}")
     asyncio.create_task(seed_cache())
+    # Seed curated KB heuristics (idempotent — runs on every startup)
+    from knowledge_base import seed_knowledge_heuristics
+    asyncio.create_task(seed_knowledge_heuristics())
     # Build master team cache for smart opponent resolution
     # force=True ensures Portugal/Turkey + leaguePriority field are included
     from team_resolver import build_teams_cache

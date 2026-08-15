@@ -363,10 +363,11 @@ export default function AnalyticsDashboard({
 
   const renderKnowledgeStats = () => {
     if (!kbStats) return null;
-    const teamFreshPct  = kbStats.teamsTotal   > 0 ? Math.round((kbStats.teamsFresh   / kbStats.teamsTotal)   * 100) : 0;
+    const teamFreshPct   = kbStats.teamsTotal   > 0 ? Math.round((kbStats.teamsFresh   / kbStats.teamsTotal)   * 100) : 0;
     const playerFreshPct = kbStats.playersTotal > 0 ? Math.round((kbStats.playersFresh / kbStats.playersTotal) * 100) : 0;
-    const teamColor  = teamFreshPct  >= 75 ? Colors.success : teamFreshPct  >= 40 ? '#f59e0b' : Colors.error;
+    const teamColor   = teamFreshPct   >= 75 ? Colors.success : teamFreshPct   >= 40 ? '#f59e0b' : Colors.error;
     const playerColor = playerFreshPct >= 75 ? Colors.success : playerFreshPct >= 40 ? '#f59e0b' : Colors.error;
+    const missColor   = (kbStats.kbMisses ?? 0) === 0 ? Colors.success : '#f59e0b';
     return (
       <View style={s.kbCard}>
         <View style={s.storageHeader}>
@@ -376,6 +377,7 @@ export default function AnalyticsDashboard({
         {kbStats.error && (
           <Text style={{ fontSize: 11, color: Colors.error, marginBottom: 8 }}>{kbStats.error}</Text>
         )}
+        {/* Row 1: Teams / Players freshness */}
         <View style={s.kbRow}>
           <View style={s.kbCell}>
             <Text style={[s.kbNum, { color: teamColor }]}>{kbStats.teamsFresh}</Text>
@@ -387,6 +389,20 @@ export default function AnalyticsDashboard({
             <Text style={[s.kbNum, { color: playerColor }]}>{kbStats.playersFresh}</Text>
             <Text style={s.kbSub}>/ {kbStats.playersTotal} fresh</Text>
             <Text style={s.kbLabel}>PLAYERS</Text>
+          </View>
+        </View>
+        {/* Row 2: Heuristics rules / prompt misses */}
+        <View style={[s.kbRow, { marginTop: 8 }]}>
+          <View style={s.kbCell}>
+            <Text style={[s.kbNum, { color: Colors.primary }]}>{kbStats.heuristicsTotal ?? 0}</Text>
+            <Text style={s.kbSub}>curated rules</Text>
+            <Text style={s.kbLabel}>HEURISTICS</Text>
+          </View>
+          <View style={s.kbDivider} />
+          <View style={s.kbCell}>
+            <Text style={[s.kbNum, { color: missColor }]}>{kbStats.kbMisses ?? 0}</Text>
+            <Text style={s.kbSub}>lifetime</Text>
+            <Text style={s.kbLabel}>MISSES</Text>
           </View>
         </View>
         <TouchableOpacity

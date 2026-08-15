@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config import db
+from knowledge_base import assemble_fact_bundle
 
 
 _MODEL = os.environ.get("GEMINI_EXPLANATION_MODEL", "gemini-2.5-flash")
@@ -428,12 +429,32 @@ async def build_compact_explanation(
     back to the cache (overwriting the old entry) so future reads are fast.
     """
     packet = build_evidence_packet(prediction)
+    # ── Stage 2: fact-bundle lookup (fast indexed MongoDB reads, no API calls) ─
+    _bundle_result: dict = {}
+    if str(prediction.get("sport") or "soccer").lower() == "soccer":
+        try:
+            _bundle_result = await assemble_fact_bundle(
+                player_id=int(prediction.get("playerId") or 0),
+                team_id=int(
+                    prediction.get("teamId") or prediction.get("fixtureTeamId") or 0
+                ),
+                opponent_id=int(
+                    prediction.get("opponentId") or prediction.get("fixtureOpponentId") or 0
+                ),
+                prop_type=str(prediction.get("propType") or ""),
+                venue=str(prediction.get("venue") or "home"),
+                league_id=int(prediction.get("leagueId") or 0),
+            )
+        except Exception as _kb_exc:
+            print(f"[COMPACT KB] assemble_fact_bundle failed: {_kb_exc}")
+    _fact_bundle_version = _bundle_result.get("version") or "no_bundle"
     raw_identity = {
         "playerId": prediction.get("playerId"),
         "fixtureId": prediction.get("fixtureId"),
         "propType": prediction.get("propType"),
         "line": prediction.get("line"),
         "ledger": ledger_fingerprint,
+        "factBundleVersion": _fact_bundle_version,
     }
     cache_key = _CACHE_VERSION + "-" + hashlib.sha256(
         json.dumps(raw_identity, sort_keys=True, default=str).encode()
@@ -501,16 +522,38 @@ async def build_compact_explanation(
             evidence_lines.append(f"Model limitations noted: {'; '.join(lims)}")
         evidence_block = "\n".join(evidence_lines)
 
+        _bundle_text = _bundle_result.get("text") or ""
+        _bundle_hit  = _bundle_result.get("hit", False)
+        # Prepend the verified fact bundle when KB had data for this matchup.
+        _bundle_section = (
+            f"FACT BUNDLE\n{_bundle_text}\n\n" if _bundle_hit and _bundle_text else ""
+        )
+        # Instruction changes when a fact bundle is present: ground claims in
+        # verified facts rather than asking Gemini to use its own knowledge.
+        if _bundle_hit:
+            _tactic_instruction = (
+                f"The FACT BUNDLE above contains verified facts about {player_name}'s "
+                f"role and {opponent}'s tactical style. Use these as your primary foundation. "
+                f"You may explain broader soccer mechanisms, but all specific claims about "
+                f"this player's position/role or the opponent's tactical identity must come "
+                f"from the bundle — do not invent facts beyond it."
+            )
+        else:
+            _tactic_instruction = (
+                f"You know who {player_name} is, what {team} look like tactically, "
+                f"and how {opponent} press and defend. Use that real-world knowledge as "
+                f"your primary foundation. The numbers above are anchors — reference them "
+                f"when they support the argument, but build the reasoning from actual soccer "
+                f"tactics, not from re-reading the stats back to the subscriber."
+            )
         prompt = (
             f"You are a soccer prop analyst writing for subscribers of a player prop analytics platform.\n\n"
+            f"{_bundle_section}"
             f"THE PICK\n"
             f"{evidence_block}\n\n"
             f"TASK\n"
             f"Write a focused ~500-word tactical explanation (4-5 paragraphs, no headings, no bullets, no markdown). "
-            f"You know who {player_name} is, what {team} look like tactically, and how {opponent} press and defend. "
-            f"Use that real-world knowledge as your primary foundation. The numbers above are anchors — "
-            f"reference them when they support the argument, but build the reasoning from actual soccer tactics, "
-            f"not from re-reading the stats back to the subscriber.\n\n"
+            f"{_tactic_instruction}\n\n"
             f"Cover these four things:\n"
             f"1. {player_name}'s actual position and role, and why that role specifically does or does not generate "
             f"high {prop_label} volume — describe the real on-pitch mechanism.\n"

@@ -2676,6 +2676,8 @@ export interface KnowledgeStats {
   teamsFresh: number;
   playersTotal: number;
   playersFresh: number;
+  heuristicsTotal: number;
+  kbMisses: number;
   ttlHours: number;
   error?: string;
 }
