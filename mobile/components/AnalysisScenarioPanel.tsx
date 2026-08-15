@@ -41,6 +41,7 @@ type Props = AnalysisScenarioInput & {
   onLineStep?: (delta: number) => void;
   onReset: () => void;
   embedded?: boolean;
+  compact?: boolean;
 };
 
 function finiteNumber(value: unknown): number | null {
@@ -273,6 +274,7 @@ export default function AnalysisScenarioPanel({
   onLineStep,
   onReset,
   embedded = false,
+  compact = false,
 }: Props) {
   const [draftLine, setDraftLine] = useState(String(line));
   const draftLineRef = useRef(String(line));
@@ -341,6 +343,57 @@ export default function AnalysisScenarioPanel({
       suppressBlurTimer.current = null;
     }, 250);
   };
+
+  if (compact) {
+    return (
+      <View style={styles.compactLineControl}>
+        <View style={styles.compactLineCopy}>
+          <Text style={styles.compactLineLabel}>LINE</Text>
+          <Text style={styles.compactLineState}>
+            {scenario.isBaseLine ? 'SET' : 'WHAT-IF'}
+          </Text>
+        </View>
+        <View style={styles.compactStepper}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Decrease line"
+            onPressIn={markStepperPress}
+            onPressOut={releaseStepperPress}
+            onPress={() => changeLine(-step)}
+            style={({ pressed }) => [styles.compactStepButton, pressed && styles.pressed]}
+          >
+            <Ionicons name="remove" size={13} color={Colors.text} />
+          </Pressable>
+          <TextInput
+            value={draftLine}
+            onChangeText={(value) => {
+              draftLineRef.current = value;
+              setDraftLine(value);
+            }}
+            onBlur={() => {
+              if (!suppressBlurCommit.current) commitDraft();
+            }}
+            onSubmitEditing={commitDraft}
+            keyboardType="decimal-pad"
+            returnKeyType="done"
+            selectTextOnFocus
+            style={styles.compactLineInput}
+            accessibilityLabel="Scenario line"
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Increase line"
+            onPressIn={markStepperPress}
+            onPressOut={releaseStepperPress}
+            onPress={() => changeLine(step)}
+            style={({ pressed }) => [styles.compactStepButton, pressed && styles.pressed]}
+          >
+            <Ionicons name="add" size={13} color={Colors.text} />
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[embedded ? styles.embeddedCard : styles.card, !embedded && { borderColor: accent + '55' }]}>
@@ -535,6 +588,55 @@ const styles = {
     backgroundColor: 'transparent',
   },
   lineEditorCopy: { flex: 1 },
+  compactLineControl: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+  },
+  compactLineCopy: {
+    alignItems: 'flex-end' as const,
+    minWidth: 28,
+  },
+  compactLineLabel: {
+    fontSize: 7,
+    color: Colors.textTertiary,
+    fontWeight: '900' as const,
+    letterSpacing: 0.7,
+  },
+  compactLineState: {
+    marginTop: 1,
+    fontSize: 6,
+    color: Colors.primary,
+    fontWeight: '900' as const,
+    letterSpacing: 0.4,
+  },
+  compactStepper: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+    overflow: 'hidden' as const,
+  },
+  compactStepButton: {
+    width: 24,
+    height: 27,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  compactLineInput: {
+    width: 39,
+    height: 27,
+    paddingHorizontal: 2,
+    textAlign: 'center' as const,
+    color: Colors.text,
+    fontSize: 11,
+    fontWeight: '900' as const,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
   lineLabel: {
     fontSize: 8,
     color: Colors.text,

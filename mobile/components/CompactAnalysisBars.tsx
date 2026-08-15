@@ -68,7 +68,8 @@ type CompactPrediction = {
   [key: string]: any;
 };
 
-export type CompactAnalysisSection = 'overview' | 'form' | 'matchup' | 'model';
+export type CompactAnalysisSection = 'overview' | 'read' | 'form' | 'matchup' | 'model';
+export type RecentVenueFilter = 'all' | 'home' | 'away';
 
 const RECENT_LOG_VALUE_FIELDS: Record<string, string> = {
   pass_attempts: 'passes_total',
@@ -256,9 +257,11 @@ function VolumeMetric({
 export function CompactAnalysisBars({
   prediction,
   section = 'overview',
+  lineEditor,
 }: {
   prediction: CompactPrediction;
   section?: CompactAnalysisSection;
+  lineEditor?: React.ReactNode;
 }) {
   const historyContext = prediction.historyContext ?? null;
   const preferredVenue = normalizeVenue(
@@ -298,17 +301,21 @@ export function CompactAnalysisBars({
         ?? game.stat
         ?? null,
     })) as Array<Record<string, any>>;
-  const venueCounts = {
-    home: normalizedLogs.filter((game) => !game.synthetic && game.value != null && rowVenue(game) === 'home').length,
-    away: normalizedLogs.filter((game) => !game.synthetic && game.value != null && rowVenue(game) === 'away').length,
-  };
-  const logs = normalizedLogs
+  const allLogs = normalizedLogs
     .filter((game) => (
       !game.synthetic
       && game.value != null
     ))
     .sort(newestFirst)
     .slice(0, 40);
+  const venueCounts = {
+    home: allLogs.filter((game) => rowVenue(game) === 'home').length,
+    away: allLogs.filter((game) => rowVenue(game) === 'away').length,
+  };
+  const [recentVenueFilter, setRecentVenueFilter] = useState<RecentVenueFilter>('all');
+  const logs = recentVenueFilter === 'all'
+    ? allLogs
+    : allLogs.filter((game) => rowVenue(game) === recentVenueFilter);
   const historicalHitRates = prediction.modelHitRates
     ?? prediction.playerGameLogs?.modelHitRates
     ?? (prediction as any).hitRates
@@ -425,12 +432,20 @@ export function CompactAnalysisBars({
   );
   const hasHistoryCard = logs.length > 0 || hasHistoryEvidence || hasH2hContext;
   const showForm = section === 'overview' || section === 'form';
-  const showMatchup = section === 'overview' || section === 'matchup';
-  const showModel = section === 'overview' || section === 'model';
+  const showMatchup = section === 'overview' || section === 'matchup' || section === 'model';
+  const showModel = section === 'overview' || section === 'matchup' || section === 'model';
   const showRecent = showForm && logs.length > 0;
   const showHistory = showModel && hasHistoryEvidence;
   const showH2H = showMatchup && hasH2hContext;
   const showMarket = showMatchup && hasMarketEvidence;
+  const chartMaxValue = Math.max(
+    ...logs.map((item) => Number(item.value) || 0),
+    prediction.line ?? 0,
+    1,
+  ) * 1.18;
+  const chartLineOffset = prediction.line != null
+    ? 34 + Math.max(0, Math.min(78, (Number(prediction.line) / chartMaxValue) * 78))
+    : null;
   const tacticalProfiles: Array<Record<string, any>> = Array.isArray(
     (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles,
   )
@@ -484,6 +499,14 @@ export function CompactAnalysisBars({
   useEffect(() => {
     setSelected(safeInitialSelection);
   }, [prediction.fixtureId, prediction.playerName, prediction.line, preferredVenue, h2hRows.length, safeInitialSelection?.index]);
+
+  useEffect(() => {
+    setRecentVenueFilter('all');
+  }, [prediction.fixtureId, prediction.playerId, prediction.playerName]);
+
+  useEffect(() => {
+    setSelected(null);
+  }, [recentVenueFilter]);
 
   const selectBar = (group: 'recent' | 'h2h', index: number) => {
     setSelected((current) => current?.group === group && current.index === index ? null : { group, index });
@@ -561,11 +584,13 @@ export function CompactAnalysisBars({
               <View style={styles.headerStack}>
                 <Text style={styles.title}>
                   {/* Contract marker: RECENT MATCHES · {logs.length} */}
-                  {logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
+                   {logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
                 </Text>
                 {logs.length > 0 && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                    ALL VENUES · MATCHES SHOWN
+                     {recentVenueFilter === 'all'
+                       ? 'ALL VENUES · MATCHES SHOWN'
+                       : `${recentVenueFilter.toUpperCase()} MATCHES · FILTERED`}
                   </Text>
                 )}
                 <Text style={styles.recentInlineStats} numberOfLines={1}>
@@ -579,16 +604,40 @@ export function CompactAnalysisBars({
                 )}
               </View>
             </View>
-            {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
+            {lineEditor || (prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>)}
           </View>}
+          {showRecent && (
+            <View style={styles.venueFilterRow}>
+              <Text style={styles.venueFilterLabel}>VENUE</Text>
+              {(['all', 'home', 'away'] as RecentVenueFilter[]).map((venue) => (
+                <TouchableOpacity
+                  key={venue}
+                  onPress={() => {
+                    setRecentVenueFilter(venue);
+                    Haptics.selectionAsync().catch(() => undefined);
+                  }}
+                  activeOpacity={0.75}
+                  style={[styles.venueFilterPill, recentVenueFilter === venue && styles.venueFilterPillActive]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: recentVenueFilter === venue }}
+                >
+                  <Text style={[styles.venueFilterText, recentVenueFilter === venue && styles.venueFilterTextActive]}>
+                    {venue === 'all' ? 'ALL' : venue.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <Text style={styles.venueFilterCounts}>
+                H {venueCounts.home} · A {venueCounts.away}
+              </Text>
+            </View>
+          )}
           {showRecent && <>{logs.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
               <View style={{ width: logs.length * 45 + 10 }}>
-              <View style={styles.chart}>
+               <View style={styles.chart}>
                 {logs.map((game, index) => {
                   const value = Number(game.value);
-                  const maxValue = Math.max(...logs.map((item) => Number(item.value) || 0), prediction.line ?? 0, 1) * 1.18;
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
-                   const height = Math.max(7, (value / maxValue) * 78);
+                    const height = Math.max(7, (value / chartMaxValue) * 78);
                   const date = game.date ? displayH2HDate(game.date) : '—';
                    const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
                   const minutes = game.minutesPlayed ?? game.minutes;
@@ -638,6 +687,12 @@ export function CompactAnalysisBars({
                     </TouchableOpacity>
                   );
                 })}
+               {chartLineOffset != null && (
+                 <View
+                   pointerEvents="none"
+                   style={[styles.chartReferenceLine, { bottom: chartLineOffset }]}
+                 />
+               )}
               </View>
               {selectedGame && (
                 <Text style={styles.detail}>
@@ -1128,6 +1183,14 @@ const styles = {
     marginBottom: 4,
   },
   chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
+  chartReferenceLine: {
+    position: 'absolute' as const,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    zIndex: 2,
+  },
   blockVenueLabel: {
     fontSize: 5.5,
     lineHeight: 7,
@@ -1140,6 +1203,48 @@ const styles = {
     fontWeight: '800' as const,
     letterSpacing: 0.45,
     marginTop: 2,
+  },
+  venueFilterRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingBottom: 8,
+  },
+  venueFilterLabel: {
+    color: Colors.textTertiary,
+    fontSize: 7,
+    fontWeight: '900' as const,
+    letterSpacing: 0.7,
+    marginRight: 2,
+  },
+  venueFilterPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'transparent',
+  },
+  venueFilterPillActive: {
+    borderColor: Colors.primary + '88',
+    backgroundColor: Colors.primary + '12',
+  },
+  venueFilterText: {
+    color: Colors.textTertiary,
+    fontSize: 7,
+    fontWeight: '900' as const,
+    letterSpacing: 0.5,
+  },
+  venueFilterTextActive: {
+    color: Colors.primary,
+  },
+  venueFilterCounts: {
+    marginLeft: 'auto' as const,
+    color: Colors.textTertiary,
+    fontSize: 7,
+    fontWeight: '800' as const,
+    letterSpacing: 0.35,
   },
   historyInline: {
     marginHorizontal: 14,

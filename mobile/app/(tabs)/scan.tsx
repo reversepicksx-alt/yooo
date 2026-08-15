@@ -514,13 +514,12 @@ const BAND_LABEL: Record<string, string> = {
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
 type Sport = 'soccer' | 'cs2' | 'wta' | 'nba' | 'nhl' | 'mlb' | 'nfl';
-type AnalysisTab = 'read' | 'form' | 'matchup' | 'model';
+type AnalysisTab = 'read' | 'form' | 'matchup';
 
 const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
   { key: 'read', label: 'READ', icon: 'flash-outline' },
   { key: 'form', label: 'FORM', icon: 'pulse-outline' },
   { key: 'matchup', label: 'MATCHUP', icon: 'swap-horizontal-outline' },
-  { key: 'model', label: 'MODEL', icon: 'analytics-outline' },
 ];
 
 export default function ScanScreen() {
@@ -3547,27 +3546,6 @@ export default function ScanScreen() {
                 );
               })()}
 
-               {predictionBaseLine != null && activeScenarioLine != null && (
-                 <View style={{ paddingHorizontal: 14, paddingTop: 2, paddingBottom: 4 }}>
-                   <AnalysisScenarioPanel
-                     baseLine={predictionBaseLine}
-                     line={activeScenarioLine}
-                     projection={predictionProjection}
-                     pOver={predictionPOver}
-                     pUnder={predictionPUnder}
-                     posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
-                     baseLandingBands={predictionLandingBands}
-                     baseRecommendation={prediction?.recommendation}
-                     baseConfidence={Number(prediction?.confidence)}
-                     propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
-                     onLineChange={setScenarioLine}
-                     onLineStep={changeScanScenarioLine}
-                     onReset={() => setScenarioLine(predictionBaseLine)}
-                     embedded
-                   />
-                 </View>
-               )}
-
                {/* Stats Row */}
               <View style={styles.analysisStats}>
                 <View style={styles.analysisStat}>
@@ -3609,7 +3587,7 @@ export default function ScanScreen() {
                     : 'CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.'}
                 </Text>
               )}
-              {analysisTab === 'model' && (() => {
+              {analysisTab === 'matchup' && (() => {
                 const landingBands = scenarioChanged && liveScenario?.landingBands?.length
                   ? liveScenario.landingBands
                   : predictionLandingBands.length > 0
@@ -3643,7 +3621,7 @@ export default function ScanScreen() {
               })()}
 
               {/* Confidence Gauge — visual meter 50%→100% */}
-              {analysisTab === 'model' && confPct != null && (
+              {analysisTab === 'matchup' && confPct != null && (
                 <View style={styles.confGaugeWrap}>
                   <View style={styles.confGaugeTrack}>
                     <LinearGradient
@@ -3667,7 +3645,7 @@ export default function ScanScreen() {
               )}
 
               {/* Evidence Quality Callout — shown when confidence was capped due to limited data */}
-              {analysisTab === 'model' && (prediction as any).qualityConfidenceCapped && (() => {
+              {analysisTab === 'matchup' && (prediction as any).qualityConfidenceCapped && (() => {
                 const eq = (prediction as any).evidenceQuality as Record<string, unknown> | undefined;
                 const logCount = (eq?.realPlayerLogCount as number | undefined) ?? null;
                 const capReasons = (eq?.capReasons as string[] | undefined) ?? [];
@@ -3696,7 +3674,7 @@ export default function ScanScreen() {
 
                {/* Compact evidence ledger — the visible model context is numeric,
                    not a second prose explanation. */}
-               {analysisTab === 'model' && <View style={{ paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.borderSubtle }}>
+               {analysisTab === 'matchup' && <View style={{ paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.borderSubtle }}>
                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                    {prediction.priorMean != null && (
                      <View style={styles.compactMetricChip}>
@@ -4599,8 +4577,26 @@ export default function ScanScreen() {
                  } : {}),
                }}
                section={analysisTab}
+               lineEditor={predictionBaseLine != null && activeScenarioLine != null ? (
+                 <AnalysisScenarioPanel
+                   baseLine={predictionBaseLine}
+                   line={activeScenarioLine}
+                   projection={predictionProjection}
+                   pOver={predictionPOver}
+                   pUnder={predictionPUnder}
+                   posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
+                   baseLandingBands={predictionLandingBands}
+                   baseRecommendation={prediction?.recommendation}
+                   baseConfidence={Number(prediction?.confidence)}
+                   propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
+                   onLineChange={setScenarioLine}
+                   onLineStep={changeScanScenarioLine}
+                   onReset={() => setScenarioLine(predictionBaseLine)}
+                   compact
+                 />
+               ) : undefined}
              />
-             {analysisTab === 'model' && (
+                 {analysisTab === 'matchup' && (
                <>
                  <EventEvidenceCard
                    data={(prediction as any).tacticalContext?.positionPassesReceived}
