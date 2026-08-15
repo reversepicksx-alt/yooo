@@ -68,6 +68,8 @@ type CompactPrediction = {
   [key: string]: any;
 };
 
+export type CompactAnalysisSection = 'overview' | 'form' | 'matchup' | 'model';
+
 const RECENT_LOG_VALUE_FIELDS: Record<string, string> = {
   pass_attempts: 'passes_total',
   passes: 'passes_total',
@@ -251,7 +253,13 @@ function VolumeMetric({
   );
 }
 
-export function CompactAnalysisBars({ prediction }: { prediction: CompactPrediction }) {
+export function CompactAnalysisBars({
+  prediction,
+  section = 'overview',
+}: {
+  prediction: CompactPrediction;
+  section?: CompactAnalysisSection;
+}) {
   const historyContext = prediction.historyContext ?? null;
   const preferredVenue = normalizeVenue(
     prediction.venue
@@ -416,6 +424,13 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       || h2h.venueSplits?.away,
   );
   const hasHistoryCard = logs.length > 0 || hasHistoryEvidence || hasH2hContext;
+  const showForm = section === 'overview' || section === 'form';
+  const showMatchup = section === 'overview' || section === 'matchup';
+  const showModel = section === 'overview' || section === 'model';
+  const showRecent = showForm && logs.length > 0;
+  const showHistory = showModel && hasHistoryEvidence;
+  const showH2H = showMatchup && hasH2hContext;
+  const showMarket = showMatchup && hasMarketEvidence;
   const tacticalProfiles: Array<Record<string, any>> = Array.isArray(
     (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles,
   )
@@ -512,7 +527,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
 
   return (
     <>
-      {showPossessionContext && hasExpectedPossession && (
+      {showMatchup && showPossessionContext && hasExpectedPossession && (
         <View style={styles.possessionCard}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -538,9 +553,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
         </View>
       )}
 
-      {hasHistoryCard && (
+      {(showRecent || showHistory || showH2H || showMarket) && (
         <View style={styles.card}>
-          <View style={styles.header}>
+          {showRecent && <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Ionicons name="pulse" size={11} color={Colors.primary} />
               <View style={styles.headerStack}>
@@ -565,8 +580,8 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               </View>
             </View>
             {prediction.line != null && <Text style={styles.meta}>LINE {prediction.line}</Text>}
-          </View>
-          {logs.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          </View>}
+          {showRecent && <>{logs.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
               <View style={{ width: logs.length * 45 + 10 }}>
               <View style={styles.chart}>
                 {logs.map((game, index) => {
@@ -646,7 +661,8 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               TP H {tpHomeSplit?.average?.toFixed(0) ?? '—'}% · TP A {tpAwaySplit?.average?.toFixed(0) ?? '—'}%
             </Text>
           )}
-          {hasHistoryEvidence && (
+          </>}
+          {showHistory && (
             <View style={styles.historyInline}>
               <View style={styles.historyInlineHeader}>
                 <View style={styles.headerLeft}>
@@ -687,7 +703,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               </Text>
             </View>
           )}
-          <View style={styles.h2hSection}>
+          {showH2H && <View style={styles.h2hSection}>
             <View style={styles.h2hHeader}>
               <View style={styles.headerLeft}>
                 <Ionicons name="swap-horizontal-outline" size={10} color={Colors.primary} />
@@ -796,8 +812,8 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
             ) : (
               <Text style={styles.empty}>No verified history for this opponent</Text>
             )}
-          </View>
-          {hasMarketEvidence && (
+          </View>}
+          {showMarket && (
             <View style={styles.marketEvidence}>
               <Text style={styles.volumeSectionTitle}>
                 {isGkProp ? 'GOALKEEPER CONTEXT' : 'PASS VOLUME CONTEXT'}
@@ -1031,21 +1047,18 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
 
 const styles = {
   possessionCard: {
-    marginTop: 8,
-    backgroundColor: '#0A0A0A',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.16)',
-    paddingBottom: 11,
-    overflow: 'hidden' as const,
+    marginTop: 6,
+    backgroundColor: 'transparent',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+    paddingBottom: 9,
   },
   card: {
-    marginTop: 8,
-    backgroundColor: '#0A0A0A',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    overflow: 'hidden' as const,
+    marginTop: 6,
+    backgroundColor: 'transparent',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+    paddingBottom: 5,
   },
   header: {
     paddingHorizontal: 14,
@@ -1168,10 +1181,11 @@ const styles = {
   },
   h2hSplitItem: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.025)',
-    borderRadius: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
+    backgroundColor: 'transparent',
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(255,255,255,0.12)',
+    paddingLeft: 7,
+    paddingVertical: 2,
   },
   h2hSplitLabel: { fontSize: 7, fontWeight: '900' as const, letterSpacing: 0.8 },
   h2hSplitValue: { color: '#D8DEE9', fontSize: 8, fontWeight: '800' as const, marginTop: 1 },

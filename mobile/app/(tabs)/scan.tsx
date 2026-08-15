@@ -514,6 +514,14 @@ const BAND_LABEL: Record<string, string> = {
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
 type Sport = 'soccer' | 'cs2' | 'wta' | 'nba' | 'nhl' | 'mlb' | 'nfl';
+type AnalysisTab = 'read' | 'form' | 'matchup' | 'model';
+
+const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
+  { key: 'read', label: 'READ', icon: 'flash-outline' },
+  { key: 'form', label: 'FORM', icon: 'pulse-outline' },
+  { key: 'matchup', label: 'MATCHUP', icon: 'swap-horizontal-outline' },
+  { key: 'model', label: 'MODEL', icon: 'analytics-outline' },
+];
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -581,6 +589,7 @@ export default function ScanScreen() {
   // Line edit (scan mode)
   const [showLineEdit, setShowLineEdit] = useState(false);
   const [lineEditValue, setLineEditValue] = useState('');
+  const [analysisTab, setAnalysisTab] = useState<AnalysisTab>('read');
   // Live what-if line. This only changes the result view; the requested and
   // saved prediction line remains the original posted line.
   const [scenarioLine, setScenarioLine] = useState<number | null>(null);
@@ -645,6 +654,17 @@ export default function ScanScreen() {
     : visibleIsUnder
       ? Colors.error
       : Colors.textSecondary;
+
+  useEffect(() => {
+    if (prediction?.fixtureId || prediction?.playerId) {
+      setAnalysisTab('read');
+    }
+  }, [prediction?.fixtureId, prediction?.playerId]);
+
+  const selectAnalysisTab = (tab: AnalysisTab) => {
+    setAnalysisTab(tab);
+    Haptics.selectionAsync().catch(() => undefined);
+  };
 
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
@@ -3589,7 +3609,7 @@ export default function ScanScreen() {
                     : 'CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.'}
                 </Text>
               )}
-              {(() => {
+              {analysisTab === 'model' && (() => {
                 const landingBands = scenarioChanged && liveScenario?.landingBands?.length
                   ? liveScenario.landingBands
                   : predictionLandingBands.length > 0
@@ -3623,7 +3643,7 @@ export default function ScanScreen() {
               })()}
 
               {/* Confidence Gauge — visual meter 50%→100% */}
-              {confPct != null && (
+              {analysisTab === 'model' && confPct != null && (
                 <View style={styles.confGaugeWrap}>
                   <View style={styles.confGaugeTrack}>
                     <LinearGradient
@@ -3647,7 +3667,7 @@ export default function ScanScreen() {
               )}
 
               {/* Evidence Quality Callout — shown when confidence was capped due to limited data */}
-              {(prediction as any).qualityConfidenceCapped && (() => {
+              {analysisTab === 'model' && (prediction as any).qualityConfidenceCapped && (() => {
                 const eq = (prediction as any).evidenceQuality as Record<string, unknown> | undefined;
                 const logCount = (eq?.realPlayerLogCount as number | undefined) ?? null;
                 const capReasons = (eq?.capReasons as string[] | undefined) ?? [];
@@ -3676,7 +3696,7 @@ export default function ScanScreen() {
 
                {/* Compact evidence ledger — the visible model context is numeric,
                    not a second prose explanation. */}
-               <View style={{ paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.borderSubtle }}>
+               {analysisTab === 'model' && <View style={{ paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.borderSubtle }}>
                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                    {prediction.priorMean != null && (
                      <View style={styles.compactMetricChip}>
@@ -3719,7 +3739,7 @@ export default function ScanScreen() {
                      <Text style={styles.compactInputText}>OPP {prediction.currentOppTier}</Text>
                    )}
                  </View>
-               </View>
+               </View>}
 
                {/* The detailed script, formula, and tactical prose stay in the
                    deterministic payload but are not repeated in the customer UI. */}
@@ -4546,6 +4566,30 @@ export default function ScanScreen() {
               })()}
                </>)}
             </View>
+             <View style={styles.analysisTabs} accessibilityRole="tablist">
+               {ANALYSIS_TABS.map((tab) => {
+                 const active = analysisTab === tab.key;
+                 return (
+                   <TouchableOpacity
+                     key={tab.key}
+                     style={[styles.analysisTab, active && styles.analysisTabActive]}
+                     onPress={() => selectAnalysisTab(tab.key)}
+                     activeOpacity={0.75}
+                     accessibilityRole="tab"
+                     accessibilityState={{ selected: active }}
+                   >
+                     <Ionicons
+                       name={tab.icon}
+                       size={13}
+                       color={active ? visibleRecColor : Colors.textTertiary}
+                     />
+                     <Text style={[styles.analysisTabText, active && { color: visibleRecColor }]}>
+                       {tab.label}
+                     </Text>
+                   </TouchableOpacity>
+                 );
+               })}
+             </View>
              <CompactAnalysisBars
                prediction={{
                  ...(prediction as any),
@@ -4554,24 +4598,29 @@ export default function ScanScreen() {
                    recommendation: liveScenario?.recommendation ?? prediction.recommendation,
                  } : {}),
                }}
+               section={analysisTab}
              />
-            <EventEvidenceCard
-              data={(prediction as any).tacticalContext?.positionPassesReceived}
-            />
-             <SameRoleEvidenceCard
-               data={(prediction as any).positionComparison
-                 || (prediction as any).tacticalIntelligence?.positionCohort}
-                recommendation={liveScenario?.recommendation ?? prediction.recommendation}
-                line={activeScenarioLine ?? prediction.line}
-             />
-             <TacticalNarrativeCard
-               narrative={(prediction as any).tacticalBreakdown
-                 || tacticalAnalysis
-                 || (prediction as any).reasoning
-                 || (prediction as any).sharpSummary}
-               recommendation={prediction.recommendation}
-                tacticalContext={(prediction as any).tacticalContext}
-             />
+             {analysisTab === 'model' && (
+               <>
+                 <EventEvidenceCard
+                   data={(prediction as any).tacticalContext?.positionPassesReceived}
+                 />
+                 <SameRoleEvidenceCard
+                   data={(prediction as any).positionComparison
+                     || (prediction as any).tacticalIntelligence?.positionCohort}
+                   recommendation={liveScenario?.recommendation ?? prediction.recommendation}
+                   line={activeScenarioLine ?? prediction.line}
+                 />
+                 <TacticalNarrativeCard
+                   narrative={(prediction as any).tacticalBreakdown
+                     || tacticalAnalysis
+                     || (prediction as any).reasoning
+                     || (prediction as any).sharpSummary}
+                   recommendation={prediction.recommendation}
+                   tacticalContext={(prediction as any).tacticalContext}
+                 />
+               </>
+             )}
             {/* ─── MATCHUP OVERVIEW (non-soccer sports) ─── */}
             {false && (<>
             {((prediction as any).matchupOverview) && prediction.sport !== 'soccer' && (() => {
@@ -6801,24 +6850,25 @@ const styles = StyleSheet.create({
   pickerOptionText: { color: Colors.textSecondary, fontSize: 15 },
   pickerOptionTextActive: { color: Colors.primary, fontWeight: '700' },
 
-  /* Analysis card — glass panel treatment */
+  /* Analysis reading surface — content-led, not card-led */
   analysisCard: {
-    backgroundColor: '#0A0B0D', borderRadius: 28,
-    borderWidth: 1, borderColor: 'rgba(57,255,20,0.14)', overflow: 'hidden', marginBottom: 16,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.5, shadowRadius: 26, elevation: 8,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    overflow: 'hidden',
+    marginBottom: 5,
     position: 'relative',
   },
   glassSheenTop: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 130, zIndex: 0,
+    position: 'absolute', top: 0, left: 0, right: 0, height: 90, zIndex: 0, opacity: 0.55,
   },
   glassHairline: {
-    position: 'absolute', top: 0, left: 24, right: 24, height: 1.5,
+    position: 'absolute', top: 0, left: 0, right: 0, height: 1,
     backgroundColor: 'rgba(57,255,20,0.5)', opacity: 0.6, zIndex: 1,
   },
   analysisHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'flex-start', padding: 18,
+    alignItems: 'flex-start', paddingHorizontal: 2, paddingTop: 12, paddingBottom: 10,
   },
   ownerMediaStrip: {
     width: 54, marginRight: 10, alignItems: 'center', gap: 5,
@@ -6830,18 +6880,44 @@ const styles = StyleSheet.create({
     width: 22, height: 22, resizeMode: 'contain' as const,
   },
   analysisPlayerInfo: { flex: 1, marginRight: 12 },
-  analysisPlayer: { fontSize: 20, fontWeight: '800', color: Colors.text },
-  analysisTeam: { fontSize: 12, color: Colors.textSecondary, marginTop: 3 },
-  analysisVenue: { fontSize: 11, color: Colors.textTertiary, marginTop: 3, letterSpacing: 0.5 },
-  recBadge: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10 },
-  recText: { fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
+  analysisPlayer: { fontSize: 19, fontWeight: '800', color: Colors.text },
+  analysisTeam: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },
+  analysisVenue: { fontSize: 10, color: Colors.textTertiary, marginTop: 2, letterSpacing: 0.5 },
+  recBadge: { paddingHorizontal: 11, paddingVertical: 6, borderRadius: 7 },
+  recText: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
   analysisDivider: { height: 1, backgroundColor: Colors.borderSubtle },
-  analysisStats: { flexDirection: 'row', paddingVertical: 4 },
-  analysisStat: { flex: 1, alignItems: 'center', padding: 16, gap: 4 },
+  analysisStats: { flexDirection: 'row', paddingVertical: 2 },
+  analysisStat: { flex: 1, alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, gap: 3 },
   analysisStatLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600' },
-  analysisStatVal: { fontSize: 22, fontWeight: '800', color: Colors.text },
-  analysisStatSub: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.8 },
-  analysisStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 14 },
+  analysisStatVal: { fontSize: 19, fontWeight: '800', color: Colors.text },
+  analysisStatSub: { fontSize: 8, color: Colors.textTertiary, letterSpacing: 0.7 },
+  analysisStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 8 },
+  analysisTabs: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.borderSubtle,
+    marginBottom: 5,
+  },
+  analysisTab: {
+    flex: 1,
+    minHeight: 43,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  analysisTabActive: {
+    borderBottomColor: Colors.primary,
+  },
+  analysisTabText: {
+    fontSize: 8,
+    color: Colors.textTertiary,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
   probabilityExplainer: {
     paddingHorizontal: 16,
     paddingBottom: 7,
@@ -6887,8 +6963,10 @@ const styles = StyleSheet.create({
     minWidth: 66,
     paddingHorizontal: 7,
     paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderRadius: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'transparent',
   },
   landingBandLabel: {
     color: Colors.textTertiary,
@@ -7013,10 +7091,11 @@ const styles = StyleSheet.create({
   compactMetricChip: {
     minWidth: 68,
     flexGrow: 1,
-    backgroundColor: 'rgba(255,255,255,0.035)',
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: Colors.primary + '55',
     paddingHorizontal: 8,
     paddingVertical: 6,
     alignItems: 'center',
