@@ -2,7 +2,7 @@
 // The active result path is the compact deterministic layout below; Expo/Babel
 // remains the source-of-truth compiler for the intentionally dormant legacy tree.
 // @ts-nocheck
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image, Dimensions,
@@ -621,25 +621,35 @@ export default function ScanScreen() {
       ?? []
   ) as Array<{ label: string; lower?: number | null; upper?: number | null; probability: number }>;
   const activeScenarioLine = scenarioLine ?? predictionBaseLine;
-  const changeScanScenarioLine = (delta: number) => {
+  const changeScanScenarioLine = useCallback((delta: number) => {
     setScenarioLine((current) => {
       const nextBase = current ?? predictionBaseLine ?? 0;
       return Math.max(0, Math.round((nextBase + delta) * 2) / 2);
     });
-  };
-  const liveScenario = predictionBaseLine != null && activeScenarioLine != null
-    ? calculateAnalysisScenario({
-        baseLine: predictionBaseLine,
-        line: activeScenarioLine,
-        projection: predictionProjection,
-        pOver: predictionPOver,
-        pUnder: predictionPUnder,
-        posteriorStd: Number((prediction as any)?.bayesianMetrics?.posteriorStd),
-        baseLandingBands: predictionLandingBands,
-        baseRecommendation: prediction?.recommendation,
-        baseConfidence: Number(prediction?.confidence),
-      })
-    : null;
+  }, [predictionBaseLine]);
+  const liveScenario = useMemo(() => (
+    predictionBaseLine != null && activeScenarioLine != null
+      ? calculateAnalysisScenario({
+          baseLine: predictionBaseLine,
+          line: activeScenarioLine,
+          projection: predictionProjection,
+          pOver: predictionPOver,
+          pUnder: predictionPUnder,
+          posteriorStd: Number((prediction as any)?.bayesianMetrics?.posteriorStd),
+          baseLandingBands: predictionLandingBands,
+          baseRecommendation: prediction?.recommendation,
+          baseConfidence: Number(prediction?.confidence),
+        })
+      : null
+  ), [
+    activeScenarioLine,
+    prediction,
+    predictionBaseLine,
+    predictionLandingBands,
+    predictionPOver,
+    predictionPUnder,
+    predictionProjection,
+  ]);
   const scenarioChanged = Boolean(
     liveScenario
       && predictionBaseLine != null
@@ -653,6 +663,49 @@ export default function ScanScreen() {
     : visibleIsUnder
       ? Colors.error
       : Colors.textSecondary;
+  const scenarioPrediction = useMemo(() => (
+    activeScenarioLine != null
+      ? {
+          ...(prediction as any),
+          line: activeScenarioLine,
+          recommendation: liveScenario?.recommendation ?? prediction.recommendation,
+        }
+      : prediction
+  ), [activeScenarioLine, liveScenario?.recommendation, prediction]);
+  const resetScenarioLine = useCallback(() => {
+    if (predictionBaseLine != null) setScenarioLine(predictionBaseLine);
+  }, [predictionBaseLine]);
+  const scenarioLineEditor = useMemo(() => {
+    if (predictionBaseLine == null || activeScenarioLine == null) return undefined;
+    return (
+      <AnalysisScenarioPanel
+        baseLine={predictionBaseLine}
+        line={activeScenarioLine}
+        projection={predictionProjection}
+        pOver={predictionPOver}
+        pUnder={predictionPUnder}
+        posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
+        baseLandingBands={predictionLandingBands}
+        baseRecommendation={prediction?.recommendation}
+        baseConfidence={Number(prediction?.confidence)}
+        propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
+        onLineChange={setScenarioLine}
+        onLineStep={changeScanScenarioLine}
+        onReset={resetScenarioLine}
+        compact
+      />
+    );
+  }, [
+    activeScenarioLine,
+    changeScanScenarioLine,
+    prediction,
+    predictionBaseLine,
+    predictionLandingBands,
+    predictionPOver,
+    predictionPUnder,
+    predictionProjection,
+    resetScenarioLine,
+  ]);
 
   useEffect(() => {
     if (prediction?.fixtureId || prediction?.playerId) {
@@ -4569,32 +4622,9 @@ export default function ScanScreen() {
                })}
              </View>
              <CompactAnalysisBars
-               prediction={{
-                 ...(prediction as any),
-                 ...(activeScenarioLine != null ? {
-                   line: activeScenarioLine,
-                   recommendation: liveScenario?.recommendation ?? prediction.recommendation,
-                 } : {}),
-               }}
+                prediction={scenarioPrediction}
                section={analysisTab}
-               lineEditor={predictionBaseLine != null && activeScenarioLine != null ? (
-                 <AnalysisScenarioPanel
-                   baseLine={predictionBaseLine}
-                   line={activeScenarioLine}
-                   projection={predictionProjection}
-                   pOver={predictionPOver}
-                   pUnder={predictionPUnder}
-                   posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
-                   baseLandingBands={predictionLandingBands}
-                   baseRecommendation={prediction?.recommendation}
-                   baseConfidence={Number(prediction?.confidence)}
-                   propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
-                   onLineChange={setScenarioLine}
-                   onLineStep={changeScanScenarioLine}
-                   onReset={() => setScenarioLine(predictionBaseLine)}
-                   compact
-                 />
-               ) : undefined}
+                lineEditor={scenarioLineEditor}
              />
                  {analysisTab === 'matchup' && (
                <>

@@ -254,7 +254,7 @@ function VolumeMetric({
   );
 }
 
-export function CompactAnalysisBars({
+export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   prediction,
   section = 'overview',
   lineEditor,
@@ -364,58 +364,17 @@ export function CompactAnalysisBars({
   // here; the team/opponent volume estimates were confusing and redundant.
   const hasMarketEvidence = Boolean(matchupVolume?.available && (isSotProp || isGkProp));
   const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
-  const meetingsByVenue = h2h.teamMeetingsByVenue ?? {};
-  const teamMeetings = [
-    ...(Array.isArray(meetingsByVenue.home)
-      ? meetingsByVenue.home.map((meeting: any) => ({
-          ...meeting,
-          venue: 'home',
-          possession: meeting.homePossession,
-          opponentPossession: meeting.awayPossession,
-        }))
-      : []),
-    ...(Array.isArray(meetingsByVenue.away)
-      ? meetingsByVenue.away.map((meeting: any) => ({
-          ...meeting,
-          venue: 'away',
-          possession: meeting.awayPossession,
-          opponentPossession: meeting.homePossession,
-        }))
-      : []),
-  ];
-  const venueMeetingPossession = (venue: 'home' | 'away') => {
-    const rows = Array.isArray(meetingsByVenue[venue]) ? meetingsByVenue[venue] : [];
-    const values = rows
-      .map((meeting: any) => ({
-        team: Number(venue === 'home' ? meeting.homePossession : meeting.awayPossession),
-        opponent: Number(venue === 'home' ? meeting.awayPossession : meeting.homePossession),
-      }))
-      .filter((value: { team: number; opponent: number }) => (
-        Number.isFinite(value.team) && Number.isFinite(value.opponent)
-      ));
-    if (values.length === 0) return null;
-    return {
-      team: values.reduce((sum, value) => sum + value.team, 0) / values.length,
-      opponent: values.reduce((sum, value) => sum + value.opponent, 0) / values.length,
-      sampleSize: values.length,
-    };
-  };
-  const venueMeetingPossessionAverages = {
-    home: venueMeetingPossession('home'),
-    away: venueMeetingPossession('away'),
-  };
-  const h2hRows = playerMatches.length
-    ? playerMatches.slice().sort(newestFirst).slice(0, 20).map((match: any) => ({
-        ...match,
-        possession: match.teamPossession,
-        displayValue: match.targetStat,
-        teamOnly: false,
-      }))
-    : teamMeetings.slice().sort(newestFirst).slice(0, 20).map((meeting: any) => ({
-        ...meeting,
-        displayValue: meeting.possession,
-        teamOnly: true,
-      }));
+  // Player H2H is intentionally separate from team-vs-team meetings. The
+  // FORM tab should only show games where this exact player logged the prop.
+  const h2hRows = playerMatches
+    .slice()
+    .sort(newestFirst)
+    .slice(0, 20)
+    .map((match: any) => ({
+      ...match,
+      possession: match.teamPossession,
+      displayValue: match.targetStat,
+    }));
 
   const homeSplit = prediction.homeAvg != null
     ? { average: Number(prediction.homeAvg), count: venueCounts.home }
@@ -436,7 +395,7 @@ export function CompactAnalysisBars({
   const showModel = section === 'overview' || section === 'matchup' || section === 'model';
   const showRecent = showForm && logs.length > 0;
   const showHistory = showModel && hasHistoryEvidence;
-  const showH2H = showMatchup && hasH2hContext;
+  const showH2H = showForm && hasH2hContext;
   const showMarket = showMatchup && hasMarketEvidence;
   const chartMaxValue = Math.max(
     ...logs.map((item) => Number(item.value) || 0),
@@ -445,6 +404,14 @@ export function CompactAnalysisBars({
   ) * 1.18;
   const chartLineOffset = prediction.line != null
     ? 34 + Math.max(0, Math.min(78, (Number(prediction.line) / chartMaxValue) * 78))
+    : null;
+  const h2hChartMaxValue = Math.max(
+    ...h2hRows.map((item: any) => Number(item.displayValue) || 0),
+    prediction.line ?? 0,
+    1,
+  ) * 1.18;
+  const h2hChartLineOffset = prediction.line != null
+    ? 34 + Math.max(0, Math.min(78, (Number(prediction.line) / h2hChartMaxValue) * 78))
     : null;
   const tacticalProfiles: Array<Record<string, any>> = Array.isArray(
     (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles,
@@ -763,7 +730,7 @@ export function CompactAnalysisBars({
               <View style={styles.headerLeft}>
                 <Ionicons name="swap-horizontal-outline" size={10} color={Colors.primary} />
                 <Text style={styles.subsectionTitle}>
-                  H2H · {h2h.sampleSize ? `${h2h.sampleSize} APPS` : h2hRows.length ? `${h2hRows.length} TEAM MEETS` : 'NO VERIFIED HISTORY'}
+                  PLAYER H2H · {h2h.sampleSize ? `${h2h.sampleSize} APPS` : h2hRows.length ? `${h2hRows.length} APPS` : 'NO VERIFIED HISTORY'}
                 </Text>
               </View>
               {h2h.avgVsOpponent != null && <Text style={styles.meta}>AVG {Number(h2h.avgVsOpponent).toFixed(1)}</Text>}
@@ -788,47 +755,17 @@ export function CompactAnalysisBars({
                 })}
               </View>
             )}
-            {(venueMeetingPossessionAverages.home || venueMeetingPossessionAverages.away) && (
-              <View style={styles.h2hPossessionSummary}>
-                <Text style={styles.h2hPossessionSummaryLabel}>
-                  VENUE AVG POSSESSION · VS OPPONENT
-                </Text>
-                <View style={styles.h2hSplitRow}>
-                  {(['home', 'away'] as const).map((venue) => {
-                    const average = venueMeetingPossessionAverages[venue];
-                    return (
-                      <View key={`poss-${venue}`} style={styles.h2hSplitItem}>
-                        <Text style={[styles.h2hSplitLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
-                          TEAM {venue.toUpperCase()}
-                        </Text>
-                        <Text style={styles.h2hSplitValue}>
-                          {average
-                            ? `${average.team.toFixed(1)}% · OPP ${average.opponent.toFixed(1)}%`
-                            : '—'}
-                        </Text>
-                        <Text style={styles.h2hSplitMeta}>
-                          {average ? `N=${average.sampleSize} team meetings` : 'NO VERIFIED MEETINGS'}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
             {h2hRows.length > 0 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
-                <View style={{ width: h2hRows.length * (H2H_COLUMN_WIDTH + 5) + 10 }}>
+                <View style={{ width: h2hRows.length * 45 + 10 }}>
                   <View style={styles.h2hChart}>
                     {h2hRows.map((row: any, index: number) => {
                       const value = typeof row.displayValue === 'number' ? row.displayValue : null;
-                      const maxValue = Math.max(...h2hRows.map((item: any) => Number(item.displayValue) || 0), row.teamOnly ? 100 : prediction.line ?? 0, 1) * 1.18;
-                      const isOver = value != null && !row.teamOnly && prediction.line != null && value > prediction.line;
-                      const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
-                      const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
-                      const possession = showPossessionContext
-                        ? row.possession != null
-                          ? `TP ${Number(row.possession).toFixed(0)}%${row.teamOnly && row.opponentPossession != null ? ` · OPP ${Number(row.opponentPossession).toFixed(0)}%` : ''}`
-                          : 'TP —'
+                      const isOver = value != null && prediction.line != null && value > prediction.line;
+                      const color = isOver ? Colors.success : value != null ? Colors.error : '#444';
+                      const height = value != null ? Math.max(7, (value / h2hChartMaxValue) * 78) : 7;
+                      const possession = showPossessionContext && row.possession != null
+                        ? `TP ${Number(row.possession).toFixed(0)}%`
                         : null;
                       const date = row.date ? displayH2HDate(row.date) : '—';
                       const minutes = Number(row.minutesPlayed ?? row.minutes);
@@ -837,30 +774,42 @@ export function CompactAnalysisBars({
                         <TouchableOpacity
                           key={`${date}-${index}`}
                           style={[
-                            styles.h2hBarColumn,
+                            styles.barColumn,
                             preferredVenue && rowVenue(row) === preferredVenue && styles.barColumnVenueSelected,
                             isSelected && styles.barColumnSelected,
                           ]}
                           onPress={() => selectBar('h2h', index)}
                           activeOpacity={0.8}
-                          accessibilityLabel={`${row.opponent || row.homeTeam || 'H2H meeting'}, ${row.teamOnly ? 'team meeting' : `${value ?? 'unavailable'} stat`}`}
+                          accessibilityLabel={`${row.opponent || row.homeTeam || 'Player H2H'}, ${value ?? 'unavailable'} stat`}
                         >
-                          <Text style={[styles.h2hValue, { color: value != null && !row.teamOnly ? color : Colors.textTertiary }]}>
-                            {value != null && !row.teamOnly ? value : row.teamOnly && value != null ? `${value}%` : '—'}
+                          <Text style={[styles.value, { color: value != null ? color : Colors.textTertiary }]}>
+                            {value != null ? value : '—'}
                           </Text>
-                          <View style={[styles.h2hBar, { height, backgroundColor: color + 'B8' }]} />
-                          <Text style={styles.h2hDate} numberOfLines={1} ellipsizeMode="clip">{date}</Text>
+                          <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]} />
+                          <Text style={styles.date} numberOfLines={1} ellipsizeMode="clip">{date}</Text>
                           <Text
-                            style={[styles.h2hMeta, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}
+                            style={[styles.opponent, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}
                             numberOfLines={1}
                             ellipsizeMode="clip"
                           >
-                            {venueMark(rowVenue(row))} · {Number.isFinite(minutes) && minutes > 0 ? `${Math.round(minutes)}'` : 'MIN —'}
-                            {possession ? ` · ${possession}` : ''}
+                            {shortOpponent(opponentName(row))}
+                          </Text>
+                          {showPossessionContext && <Text style={styles.possessionLabel}>{possession || 'TP —'}</Text>}
+                          <Text style={styles.possessionLabel}>
+                            MIN {Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : '—'}
+                          </Text>
+                          <Text style={[styles.venueLabel, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}>
+                            {venueMark(rowVenue(row))}
                           </Text>
                         </TouchableOpacity>
                       );
                     })}
+                    {h2hChartLineOffset != null && (
+                      <View
+                        pointerEvents="none"
+                        style={[styles.chartReferenceLine, { bottom: h2hChartLineOffset }]}
+                      />
+                    )}
                   </View>
                 </View>
               </ScrollView>
@@ -1015,90 +964,9 @@ export function CompactAnalysisBars({
         </View>
       )}
 
-      {false && <View style={styles.card}>
-        <View style={styles.h2hHeader}>
-          <View style={styles.headerLeft}>
-            <Ionicons name="swap-horizontal-outline" size={11} color={Colors.primary} />
-            <Text style={styles.title}>
-              H2H · {h2h.sampleSize ? `${h2h.sampleSize} APPS` : h2hRows.length ? `${h2hRows.length} TEAM MEETS` : 'NO VERIFIED HISTORY'}
-            </Text>
-          </View>
-          {h2h.avgVsOpponent != null && <Text style={styles.meta}>AVG {Number(h2h.avgVsOpponent).toFixed(1)}</Text>}
-        </View>
-        {h2h.venueSplits && (h2h.venueSplits.home || h2h.venueSplits.away) && (
-          <View style={styles.h2hSplitRow}>
-            {(['home', 'away'] as const).map((venue) => {
-              const split = h2h.venueSplits?.[venue];
-              return (
-                <View key={venue} style={styles.h2hSplitItem}>
-                  <Text style={[styles.h2hSplitLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
-                    {venue.toUpperCase()}
-                  </Text>
-                  <Text style={styles.h2hSplitValue}>
-                    {split ? `${Number(split.average).toFixed(1)} AVG · ${Number(split.overPct).toFixed(1)}% O` : '—'}
-                  </Text>
-                  <Text style={styles.h2hSplitMeta}>
-                    {split ? `N=${split.sampleSize} · ${Math.round(Number(split.minutesAverage))}' AVG` : 'NO VERIFIED APPS'}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        )}
-        {h2hRows.length > 0 ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
-            <View style={{ width: h2hRows.length * (H2H_COLUMN_WIDTH + 5) + 10 }}>
-              <View style={styles.h2hChart}>
-                {h2hRows.map((row: any, index: number) => {
-                  const value = typeof row.displayValue === 'number' ? row.displayValue : null;
-                  const maxValue = Math.max(...h2hRows.map((item: any) => Number(item.displayValue) || 0), row.teamOnly ? 100 : prediction.line ?? 0, 1) * 1.18;
-                  const isOver = value != null && !row.teamOnly && prediction.line != null && value > prediction.line;
-                  const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
-                  const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
-                   const possession = showPossessionContext
-                     ? row.possession != null ? `TP ${Number(row.possession).toFixed(0)}%` : 'TP —'
-                     : null;
-                  const date = row.date ? displayH2HDate(row.date) : '—';
-                  const minutes = Number(row.minutesPlayed ?? row.minutes);
-                  const isSelected = selected?.group === 'h2h' && selected.index === index;
-                  return (
-                    <TouchableOpacity
-                      key={`${date}-${index}`}
-                       style={[
-                          styles.h2hBarColumn,
-                         preferredVenue && rowVenue(row) === preferredVenue && styles.barColumnVenueSelected,
-                         isSelected && styles.barColumnSelected,
-                       ]}
-                      onPress={() => selectBar('h2h', index)}
-                      activeOpacity={0.8}
-                      accessibilityLabel={`${row.opponent || row.homeTeam || 'H2H meeting'}, ${row.teamOnly ? 'team meeting' : `${value ?? 'unavailable'} stat`}`}
-                    >
-                      <Text style={[styles.h2hValue, { color: value != null && !row.teamOnly ? color : Colors.textTertiary }]}>
-                        {value != null && !row.teamOnly ? value : row.teamOnly && value != null ? `${value}%` : '—'}
-                      </Text>
-                      <View style={[styles.h2hBar, { height, backgroundColor: color + 'B8' }]} />
-                      <Text style={styles.h2hDate} numberOfLines={1} ellipsizeMode="clip">{date}</Text>
-                      <Text
-                        style={[styles.h2hMeta, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}
-                        numberOfLines={1}
-                        ellipsizeMode="clip"
-                      >
-                        {Number.isFinite(minutes) && minutes > 0 ? `${Math.round(minutes)}' · ` : ''}
-                        {possession ? `${possession} · ` : ''}{venueMark(rowVenue(row))}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </ScrollView>
-        ) : (
-          <Text style={styles.empty}>No verified history for this opponent</Text>
-        )}
-      </View>}
     </>
   );
-}
+});
 
 const styles = {
   possessionCard: {

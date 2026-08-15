@@ -260,7 +260,7 @@ function directionColor(direction: string) {
     : Colors.textSecondary;
 }
 
-export default function AnalysisScenarioPanel({
+export default React.memo(function AnalysisScenarioPanel({
   baseLine,
   line,
   projection,
@@ -524,7 +524,7 @@ export default function AnalysisScenarioPanel({
       </View>}
     </View>
   );
-}
+});
 
 const styles = {
   embeddedCard: {
