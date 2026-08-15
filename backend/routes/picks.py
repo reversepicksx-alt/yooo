@@ -5257,6 +5257,28 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                     getter = SOCCER_STAT_MAP.get(prop_type)
                     if getter:
                         actual_value = getter(pstats)
+                        # Incomplete-data guard for pass props: API-Football populates
+                        # fixture/player stats incrementally after a game finishes. When
+                        # passes.total == int(passes.accuracy) (100% pass accuracy) AND
+                        # the count is low, the stat is almost certainly not yet fully
+                        # populated — real midfielders do not complete 100% of their
+                        # passes. Defer so the background loop retries with correct data.
+                        if (
+                            actual_value is not None
+                            and prop_type in ("passes", "pass_attempts")
+                            and actual_value < 20
+                        ):
+                            try:
+                                raw_acc = pstats.get("passes", {}).get("accuracy")
+                                if raw_acc is not None and int(float(raw_acc)) == int(actual_value):
+                                    print(
+                                        f"[SETTLE-DEFER] {pick.get('playerName','')} {prop_type} — "
+                                        f"passes.total({actual_value})==passes.accuracy({raw_acc!r}): "
+                                        f"100% pass accuracy signals incomplete API data; deferring"
+                                    )
+                                    actual_value = None
+                            except (ValueError, TypeError):
+                                pass
                         if actual_value is not None:
                             settlement_source = _soccer_settlement_provenance(
                                 provider="api-football",
