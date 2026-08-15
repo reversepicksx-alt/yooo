@@ -11879,7 +11879,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             if isinstance(game, dict)
         ]
         try:
-            from tactical_intelligence import build_tactical_intelligence
+            from tactical_intelligence import (
+                build_tactical_explanation,
+                build_tactical_intelligence,
+            )
             prediction["tacticalIntelligence"] = build_tactical_intelligence(
                 prediction=prediction,
                 prop_type=req.propType,
@@ -12210,6 +12213,51 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 _ti_player["positionSource"] = (
                     _observed_role.get("source") if _observed_role else None
                 )
+
+            _tactical_h2h = historical_data.get("h2hPlayerStats") or {}
+            _team_pass_values = [
+                float(row.get("totalPasses"))
+                for row in (team_fixture_stats or [])
+                if isinstance(row, dict)
+                and row.get("totalPasses") is not None
+            ]
+            _team_pass_average = (
+                sum(_team_pass_values) / len(_team_pass_values)
+                if _team_pass_values
+                else None
+            )
+            _tactical_player_history = prediction.get("playerGameLogs") or historical_data.get("playerGameLogs") or {}
+            prediction["tacticalBreakdown"] = build_tactical_explanation({
+                "playerName": req.playerName,
+                "teamName": player_team_display,
+                "opponentName": req.opponentName,
+                "venue": player_venue,
+                "propType": req.propType,
+                "position": specific_position or player_position,
+                "role": display_role or player_role,
+                "line": req.line,
+                "projectedValue": prediction.get("projectedValue"),
+                "recommendation": prediction.get("recommendation"),
+                "pOver": (real_bayes or {}).get("pOver"),
+                "pUnder": (real_bayes or {}).get("pUnder"),
+                "seasonAverage": (real_bayes or {}).get("priorMean"),
+                "venueAverage": venue_avg,
+                "recentAverage": _tactical_player_history.get("rawAvg"),
+                "expectedPossession": match_dominance.get("expectedPoss"),
+                "opponentExpectedPossession": match_dominance.get("oppExpectedPoss"),
+                "possessionSource": match_dominance.get("possessionSource"),
+                "teamPassAverage": _team_pass_average,
+                "pressureResponse": _pressure_response,
+                "gameScript": prediction.get("gameScript"),
+                "positionCohort": position_comp_data,
+                "h2h": _tactical_h2h,
+                "uncertaintyBand": prediction.get("range80") or prediction.get("confidenceInterval"),
+                "limitations": (
+                    (prediction.get("tacticalIntelligence") or {}).get("limitations")
+                    if isinstance(prediction.get("tacticalIntelligence"), dict)
+                    else None
+                ),
+            })
         except Exception as _tactical_refresh_err:
             print(f"[TACTICAL INTELLIGENCE] scenario refresh failed: {_tactical_refresh_err}")
 

@@ -18,6 +18,7 @@ from routes.predict import (
     _recompute_landing_bands,
     _reconcile_deterministic_confidence,
 )
+from tactical_intelligence import build_tactical_explanation
 
 
 def test_fbref_parser_reads_visible_and_commented_tables():
@@ -66,6 +67,53 @@ def test_markdown_transport_fallback_maps_only_known_schema_fields():
 def test_existing_percentage_parser_remains_intact():
     assert _parse_pct("48.3%") == 48.3
     assert _parse_pct(None) is None
+
+
+def test_deterministic_tactical_explanation_uses_role_cohort_and_venue_h2h():
+    explanation = build_tactical_explanation({
+        "playerName": "Florian Lejeune",
+        "teamName": "Rayo Vallecano",
+        "opponentName": "Sevilla",
+        "venue": "away",
+        "propType": "pass_attempts",
+        "position": "CB",
+        "role": "Ball-Playing CB",
+        "line": 64.5,
+        "projectedValue": 52,
+        "recommendation": "UNDER",
+        "pOver": 11.6,
+        "pUnder": 88.4,
+        "seasonAverage": 55.97,
+        "venueAverage": 53.82,
+        "recentAverage": 53.82,
+        "expectedPossession": 48.3,
+        "opponentExpectedPossession": 51.7,
+        "teamPassAverage": 415.2,
+        "positionCohort": {
+            "positionShort": "CB",
+            "avgStatValue": 41.3,
+            "sampleSize": 15,
+            "venue": "away",
+        },
+        "h2h": {
+            "sampleSize": 8,
+            "venueSplits": {
+                "away": {
+                    "sampleSize": 4,
+                    "average": 48.8,
+                    "overPct": 25,
+                    "underPct": 75,
+                },
+            },
+        },
+    })
+    assert "Ball-Playing CB" in explanation
+    assert "same-role opponent cohort" in explanation
+    assert "15 comparable centre-back (CB) players" in explanation
+    assert "matching away fixtures" in explanation
+    assert "4 verified away appearances" in explanation
+    assert "48.8 pass attempts" in explanation
+    assert "52 against 64.5" in explanation
 
 
 def test_fbref_ppda_thresholds_are_explicit_and_fallback_is_not_ppda():

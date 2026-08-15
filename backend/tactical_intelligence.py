@@ -165,6 +165,218 @@ def _opponent_role_matchup(
     }
 
 
+def build_tactical_explanation(context: dict[str, Any]) -> str:
+    """Render a grounded, role-specific explanation from the tactical packet.
+
+    This is intentionally deterministic. It is the user-facing explanation
+    fallback when generation is unavailable, so a valid prediction still
+    explains the exact role, venue, same-role opponent cohort, H2H split, and
+    game environment that shaped the read.
+    """
+    context = context if isinstance(context, dict) else {}
+    player = _clean(context.get("playerName")) or "The player"
+    team = _clean(context.get("teamName")) or "the player's team"
+    opponent = _clean(context.get("opponentName")) or "the opponent"
+    venue = _clean(context.get("venue")).lower() or "unknown"
+    venue_label = venue.upper() if venue in {"home", "away"} else "UNKNOWN VENUE"
+    position = _clean(context.get("position")) or "unspecified position"
+    role = _clean(context.get("role")) or position
+    prop_type = _clean(context.get("propType"))
+    prop_label = prop_type.replace("_", " ") or "the selected prop"
+    recommendation = _clean(context.get("recommendation")).upper() or "PASS"
+    line = _num(context.get("line"))
+    projection = _num(context.get("projectedValue"))
+    p_over = _num(context.get("pOver"))
+    p_under = _num(context.get("pUnder"))
+
+    def fmt(value: Any, digits: int = 1) -> str:
+        number = _num(value)
+        if number is None:
+            return "unavailable"
+        return f"{number:.{digits}f}".rstrip("0").rstrip(".")
+
+    paragraphs: list[str] = []
+
+    if prop_type in PASS_PROPS:
+        mechanism = (
+            f"{player} is being evaluated as a {position} / {role}. "
+            f"For a {prop_label} prop, that role creates volume through build-out "
+            "circulation, back-pass recycling, and the number of settled possessions "
+            "the team can sustain—not through attacking touches."
+        )
+    elif prop_type in DEFENSIVE_PROPS:
+        mechanism = (
+            f"{player} is being evaluated as a {position} / {role}. "
+            f"The {prop_label} mechanism is defensive workload against the opponent's "
+            "attacking phases, with role and match script separated from generic form."
+        )
+    elif prop_type in ATTACK_PROPS:
+        mechanism = (
+            f"{player} is being evaluated as a {position} / {role}. "
+            f"The {prop_label} mechanism depends on his role receiving or creating "
+            "attacking sequences against the opponent's defensive shape."
+        )
+    else:
+        mechanism = (
+            f"{player} is being evaluated as a {position} / {role}; the explanation "
+            f"keeps the {prop_label} mechanism tied to that role rather than using a generic player trend."
+        )
+    paragraphs.append(
+        f"**Tactical role read** — {mechanism} The fixture is {team} at {opponent}, "
+        f"with {player} on the {venue_label} side."
+    )
+
+    cohort = context.get("positionCohort") or {}
+    cohort_avg = _num(cohort.get("avgStatValue") or cohort.get("average"))
+    cohort_n = cohort.get("sampleSize") or 0
+    cohort_position = _clean(cohort.get("positionShort") or cohort.get("position") or position)
+    cohort_venue = _clean(cohort.get("venue")).lower() or venue
+    cohort_venue_label = cohort_venue.upper() if cohort_venue in {"home", "away"} else venue_label
+    cohort_sentence = ""
+    if cohort_avg is not None and cohort_n:
+        cohort_position_label = (
+            "centre-back (CB)" if cohort_position.upper() in {"CB", "LCB", "RCB"}
+            else cohort_position
+        )
+        cohort_sentence = (
+            f"The same-role opponent cohort is the key matchup anchor: {cohort_n} "
+            f"comparable {cohort_position_label} players produced {fmt(cohort_avg)} "
+            f"{prop_label} against {opponent} in matching {cohort_venue_label.lower()} fixtures. "
+            "That is opponent-specific role evidence, not a generic league average."
+        )
+    else:
+        cohort_position_label = (
+            "centre-back (CB)" if cohort_position.upper() in {"CB", "LCB", "RCB"}
+            else cohort_position
+        )
+        cohort_sentence = (
+            f"No verified same-role {cohort_position_label} cohort is available against {opponent}; "
+            "the matchup conclusion therefore stays conservative."
+        )
+
+    h2h = context.get("h2h") or {}
+    venue_splits = h2h.get("venueSplits") if isinstance(h2h, dict) else {}
+    venue_split = (venue_splits or {}).get(venue) if isinstance(venue_splits, dict) else None
+    h2h_sentence = ""
+    if isinstance(venue_split, dict) and (venue_split.get("sampleSize") or 0) > 0:
+        h2h_n = int(venue_split.get("sampleSize") or 0)
+        h2h_avg = fmt(venue_split.get("average"))
+        h2h_over = fmt(venue_split.get("overPct"))
+        h2h_under = fmt(venue_split.get("underPct"))
+        h2h_sentence = (
+            f"Direct player H2H is split by venue: {player} has {h2h_n} verified "
+            f"{venue_label.lower()} appearance{'s' if h2h_n != 1 else ''} against {opponent}, "
+            f"averaging {h2h_avg} {prop_label} ({h2h_over}% OVER / {h2h_under}% UNDER). "
+            "The all-venue H2H average is not allowed to hide this location-specific split."
+        )
+    else:
+        h2h_n = int(h2h.get("sampleSize") or 0) if isinstance(h2h, dict) else 0
+        h2h_avg = fmt(h2h.get("avgVsOpponent")) if isinstance(h2h, dict) else "unavailable"
+        if h2h_n:
+            h2h_sentence = (
+                f"Direct player H2H has {h2h_n} verified appearances against {opponent} "
+                f"with an all-venue average of {h2h_avg} {prop_label}, but no usable "
+                f"{venue_label.lower()} split was available, so it is not treated as venue-specific evidence."
+            )
+        else:
+            h2h_sentence = (
+                f"No verified player H2H appearance is available at this {venue_label.lower()} venue "
+                f"against {opponent}."
+            )
+
+    paragraphs.append(f"**Same-role opponent evidence** — {cohort_sentence} {h2h_sentence}")
+
+    environment: list[str] = []
+    expected_possession = _num(context.get("expectedPossession"))
+    opponent_possession = _num(context.get("opponentExpectedPossession"))
+    if expected_possession is not None:
+        opponent_possession_text = (
+            f" versus {fmt(opponent_possession)}% for {opponent}"
+            if opponent_possession is not None else ""
+        )
+        source = _clean(context.get("possessionSource"))
+        environment.append(
+            f"{team} is projected at {fmt(expected_possession)}% possession"
+            f"{opponent_possession_text}"
+            f" ({'verified fixture data' if source in {'fixture_stats', 'h2h_fixture_stats'} else 'bounded matchup estimate'})."
+        )
+    team_pass_average = _num(context.get("teamPassAverage"))
+    if team_pass_average is not None and prop_type in PASS_PROPS:
+        environment.append(
+            f"The team opportunity baseline is {fmt(team_pass_average)} total passes per match."
+        )
+
+    pressure = context.get("pressureResponse") or {}
+    if isinstance(pressure, dict) and pressure.get("status") == "classified":
+        high = fmt(pressure.get("highPressurePassesPer90"))
+        low = fmt(pressure.get("lowPressurePassesPer90"))
+        high_n = pressure.get("highPressureSamples") or 0
+        low_n = pressure.get("lowPressureSamples") or 0
+        label = _clean(pressure.get("label")) or "classified pressure response"
+        environment.append(
+            f"{player}'s pressure profile is {label.lower()}: {high} passes/90 in "
+            f"high-pressure samples (n={high_n}) versus {low} in lower-pressure samples "
+            f"(n={low_n}), which supports the {recommendation} risk direction for this prop. "
+            "This is a player-response proxy, not verified PPDA."
+        )
+
+    script = context.get("gameScript") or {}
+    if isinstance(script, dict):
+        script_label = _clean(script.get("key_finding") or script.get("dominant"))
+        script_probability = _num(script.get("dominant_probability"))
+        if script_label:
+            probability_text = (
+                f" ({fmt(script_probability * 100, 0)}% model probability)"
+                if script_probability is not None and script_probability <= 1
+                else ""
+            )
+            environment.append(
+                f"The dominant pre-match script is {script_label.lower()}{probability_text}; "
+                "an early goal, red card, or substitution can still change the role."
+            )
+    if environment:
+        paragraphs.append("**Match mechanism** — " + " ".join(environment))
+
+    season_average = _num(context.get("seasonAverage"))
+    venue_average = _num(context.get("venueAverage"))
+    recent_average = _num(context.get("recentAverage"))
+    history_parts = []
+    if season_average is not None:
+        history_parts.append(f"season average {fmt(season_average)}")
+    if venue_average is not None:
+        history_parts.append(f"{venue_label.lower()} average {fmt(venue_average)}")
+    if recent_average is not None:
+        history_parts.append(f"recent sample average {fmt(recent_average)}")
+    if history_parts:
+        uncertainty_band = context.get("uncertaintyBand") or context.get("confidenceInterval")
+        if isinstance(uncertainty_band, (list, tuple)) and len(uncertainty_band) >= 2:
+            uncertainty_read = (
+                f"The 80% landing band is {fmt(uncertainty_band[0])}–{fmt(uncertainty_band[1])}; "
+                "the remaining uncertainty is driven by the pre-match script and the lack of a verified direct marking assignment."
+            )
+        else:
+            uncertainty_read = (
+                "The read is probabilistic, not a certainty; the remaining uncertainty is driven by "
+                "the pre-match script and the lack of a verified direct marking assignment."
+            )
+        paragraphs.append(
+            "**Decision synthesis** — "
+            + "; ".join(history_parts)
+            + ". "
+            + (
+                f"The final projection is {fmt(projection)} against {fmt(line)} with "
+                f"P(OVER) {fmt(p_over, 1)}% and P(UNDER) {fmt(p_under, 1)}%, so the "
+                f"model calls {recommendation}."
+                if projection is not None and line is not None
+                else f"The model calls {recommendation} from the evidence above."
+            )
+            + " "
+            + uncertainty_read
+        )
+
+    return "\n\n".join(paragraphs)
+
+
 def _formal_match_script(
     *,
     market_status: str,

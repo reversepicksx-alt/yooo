@@ -703,8 +703,8 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                             numberOfLines={1}
                             ellipsizeMode="clip"
                           >
-                            {Number.isFinite(minutes) && minutes > 0 ? `${Math.round(minutes)}' · ` : ''}
-                            {possession ? `${possession} · ` : ''}{venueMark(rowVenue(row))}
+                            {venueMark(rowVenue(row))} · {Number.isFinite(minutes) && minutes > 0 ? `${Math.round(minutes)}'` : 'MIN —'}
+                            {possession ? ` · ${possession}` : ''}
                           </Text>
                         </TouchableOpacity>
                       );

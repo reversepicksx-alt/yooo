@@ -601,7 +601,13 @@ export function renderH2HIntelligence(
             return (
               <View key={i} style={aStyles.h2hRow}>
                 <Text style={aStyles.h2hDate}>{(m.date ?? '').slice(0, 10)}</Text>
-                <Text style={aStyles.h2hVenue}>{(m.venue ?? '?').slice(0, 1).toUpperCase()}</Text>
+                <Text style={aStyles.h2hVenue}>
+                  {String(m.venue ?? '').toLowerCase() === 'home'
+                    ? 'HOME'
+                    : String(m.venue ?? '').toLowerCase() === 'away'
+                    ? 'AWAY'
+                    : 'VENUE —'}
+                </Text>
                 <Text style={aStyles.h2hOpp} numberOfLines={1}>
                   {m.opponent ?? '?'}
                 </Text>
