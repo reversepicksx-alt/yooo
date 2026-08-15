@@ -155,6 +155,16 @@ def _event_key(row: dict) -> str:
         "sport", "playerId", "playerName", "teamId", "opponentId",
         "propType", "line", "venue",
     )]
+    # If both player identity fields are blank the timestamp bucket alone
+    # cannot distinguish two genuinely different unknown players saved in the
+    # same minute.  Append the row's trackingId as a stable per-row sentinel
+    # so blank-identity rows never collapse unless they share the same
+    # trackingId (i.e. they are the same save action repeated).
+    player_id = str(row.get("playerId") or "").strip()
+    player_name = str(row.get("playerName") or "").strip()
+    if not player_id and not player_name:
+        sentinel = str(row.get("trackingId") or "")
+        return "|".join([*parts, timestamp_bucket, recommendation, sentinel])
     # Append the bucket directly as a value — do NOT use it as a dict key.
     return "|".join([*parts, timestamp_bucket, recommendation])
 

@@ -304,6 +304,82 @@ def test_timestamp_bucket_same_player_same_minute_collapses():
     assert deduped[0]["settledAt"] == "2025-07-15T09:22:45+00:00"
 
 
+def test_blank_identity_rows_same_minute_stay_distinct():
+    """Two rows with no playerId and no playerName saved in the same minute must
+    NOT collapse — they are genuinely different unknown players and their
+    trackingIds act as the distinguishing sentinel."""
+    shared_minute = "2025-06-01T14:05:00+00:00"
+    unknown_a = {
+        "trackingId": "TRK-UNKNOWN-A",
+        "sport": "soccer",
+        # Fully-blank player identity — no playerId, no playerName
+        "teamId": 7,
+        "opponentId": 8,
+        "propType": "passes",
+        "line": 30.5,
+        "recommendation": "over",
+        "result": "hit",
+        "timestamp": shared_minute,
+        "settledAt": shared_minute,
+    }
+    unknown_b = {
+        "trackingId": "TRK-UNKNOWN-B",
+        "sport": "soccer",
+        # Same minute, same prop/team/opponent, also fully-blank identity
+        "teamId": 7,
+        "opponentId": 8,
+        "propType": "passes",
+        "line": 30.5,
+        "recommendation": "over",
+        "result": "hit",
+        "timestamp": shared_minute,
+        "settledAt": shared_minute,
+    }
+
+    deduped = dedupe_prediction_rows([unknown_a, unknown_b])
+
+    assert len(deduped) == 2, (
+        "Two blank-identity rows saved in the same minute must remain as two "
+        "distinct events — they should not silently collapse into one"
+    )
+    tracking_ids = {row["trackingId"] for row in deduped}
+    assert tracking_ids == {"TRK-UNKNOWN-A", "TRK-UNKNOWN-B"}
+
+
+def test_blank_identity_row_saved_twice_with_same_tracking_id_collapses():
+    """A blank-identity row that is genuinely saved twice (same trackingId) must
+    still collapse to one event — the sentinel preserves deduplication for
+    repeated saves of the exact same row."""
+    base = {
+        "trackingId": "TRK-SAME-SAVE",
+        "sport": "soccer",
+        # Fully-blank player identity
+        "teamId": 7,
+        "opponentId": 8,
+        "propType": "passes",
+        "line": 30.5,
+        "recommendation": "over",
+        "result": "hit",
+        "timestamp": "2025-06-01T14:05:00+00:00",
+        "settledAt": "2025-06-01T14:05:00+00:00",
+    }
+    second_save = dict(
+        base,
+        # Same trackingId, slightly different second within the same minute
+        timestamp="2025-06-01T14:05:45+00:00",
+        settledAt="2025-06-01T14:05:45+00:00",
+    )
+
+    deduped = dedupe_prediction_rows([base, second_save])
+
+    assert len(deduped) == 1, (
+        "A blank-identity row saved twice with the same trackingId must "
+        "collapse to a single unique event"
+    )
+    # The newer save wins
+    assert deduped[0]["settledAt"] == "2025-06-01T14:05:45+00:00"
+
+
 def test_build_scorecard_labels_raw_unique_and_scored_counts_separately():
     """Scorecard must expose rawN (rows), n (unique events), and scoredN (HIT/MISS events)."""
     rows = [
