@@ -4790,6 +4790,22 @@ export default function ScanScreen() {
                     const CHART_H = 112;
                     const BAR_W = 34;
                     const BAR_GAP = 5;
+                    const tacticalProfiles = (
+                      (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles
+                      || []
+                    ) as any[];
+                    const profileForLog = (g: any) => {
+                      const byFixture = tacticalProfiles.find(profile =>
+                        profile?.fixtureId != null
+                        && g?.fixtureId != null
+                        && String(profile.fixtureId) === String(g.fixtureId)
+                      );
+                      if (byFixture) return byFixture;
+                      return tacticalProfiles.find(profile =>
+                        String(profile?.date || '').slice(0, 10) === String(g?.date || '').slice(0, 10)
+                        && String(profile?.opponent || '').toLowerCase() === String(g?.opponent || '').toLowerCase()
+                      );
+                    };
                     const vals = filteredWithIdx.map(({ log: g }) => g.value).filter((v): v is number => v != null);
                     if (vals.length === 0) return null;
                     const maxVal = Math.max(...vals, effectiveLine ?? 0) * 1.18;
@@ -4882,6 +4898,12 @@ export default function ScanScreen() {
                           <View style={{ flexDirection: 'row', gap: BAR_GAP, marginTop: 5 }}>
                             {filteredWithIdx.map(({ log: g }, i) => {
                               const isSoc = (g.sport || 'soccer') === 'soccer';
+                              const tactical = profileForLog(g);
+                              const blockLabel = String(tactical?.blockProfile?.label || '')
+                                .replace('_BLOCK', '')
+                                .replace('UNAVAILABLE', '—');
+                              const opponentFormation = tactical?.formation?.opponentFormation;
+                              const ppda = tactical?.ppda;
                               const dateStr = g.date ? (() => {
                                 const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
                                 return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
@@ -4895,6 +4917,35 @@ export default function ScanScreen() {
                                 <View key={i} style={{ width: BAR_W, alignItems: 'center' }}>
                                   <Text style={{ fontSize: 7, color: '#555', fontWeight: '600', lineHeight: 10 }}>{dateStr}</Text>
                                   <Text style={{ fontSize: 7, color: venueC, fontWeight: '700', lineHeight: 10 }}>{oppShort}</Text>
+                                  {isSoc ? (
+                                    <>
+                                      <Text
+                                        numberOfLines={1}
+                                        style={{ fontSize: 5.5, color: opponentFormation ? '#999' : '#333', fontWeight: '700', lineHeight: 8 }}
+                                      >
+                                        {opponentFormation || '—'}
+                                      </Text>
+                                      <Text
+                                        numberOfLines={1}
+                                        style={{
+                                          fontSize: 5.5,
+                                          color: blockLabel && blockLabel !== '—' ? '#8EDB8A' : '#333',
+                                          fontWeight: '800',
+                                          lineHeight: 8,
+                                        }}
+                                      >
+                                        {blockLabel || 'TACT —'}
+                                      </Text>
+                                      {ppda != null ? (
+                                        <Text
+                                          numberOfLines={1}
+                                          style={{ fontSize: 5.5, color: '#79A7FF', fontWeight: '800', lineHeight: 8 }}
+                                        >
+                                          {`PPDA ${Number(ppda).toFixed(1)}`}
+                                        </Text>
+                                      ) : null}
+                                    </>
+                                  ) : null}
                                 </View>
                               );
                             })}
@@ -4906,6 +4957,46 @@ export default function ScanScreen() {
                           </Text>
                         </View>
                       </ScrollView>
+                    );
+                  })()}
+
+                  {/* ── Per-match pressure/block provenance ── */}
+                  {prediction.sport === 'soccer' && !allSynthetic && !isH2H && (() => {
+                    const tactical = (prediction.tacticalContext as any)?.recentOpponentBlockProfiles;
+                    if (!tactical || !tactical.sampleSize) return null;
+                    const status = String(tactical.status || 'warming').toUpperCase();
+                    return (
+                      <View style={{
+                        marginHorizontal: 16,
+                        marginTop: 3,
+                        marginBottom: 7,
+                        paddingHorizontal: 9,
+                        paddingVertical: 7,
+                        borderRadius: 7,
+                        backgroundColor: 'rgba(57,255,20,0.035)',
+                        borderWidth: 1,
+                        borderColor: 'rgba(57,255,20,0.12)',
+                      }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="shield-checkmark-outline" size={12} color="#8EDB8A" />
+                          <Text style={{ fontSize: 8, color: '#8EDB8A', fontWeight: '900', letterSpacing: 0.7 }}>
+                            OPPONENT TACTICAL PROFILE
+                          </Text>
+                          <Text style={{ marginLeft: 'auto', fontSize: 7, color: '#666', fontWeight: '800' }}>
+                            {status}
+                          </Text>
+                        </View>
+                        <Text style={{ marginTop: 4, fontSize: 8, color: '#888', lineHeight: 12 }}>
+                          {tactical.verifiedMatches ?? 0}/{tactical.sampleSize} matches verified ·
+                          {' '}{tactical.ppdaMatches ?? 0} event PPDA ·
+                          {' '}{tactical.formationMatches ?? 0} confirmed formations
+                        </Text>
+                        <Text style={{ marginTop: 2, fontSize: 7.5, color: '#555', lineHeight: 11 }}>
+                          PPDA is exact-match event data where covered. HIGH/MID/LOW labels are
+                          pressure-location classifications corroborated by formation, not tracking-derived line height.
+                          Explanatory only; no projection adjustment.
+                        </Text>
+                      </View>
                     );
                   })()}
 

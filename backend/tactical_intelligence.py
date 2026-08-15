@@ -720,6 +720,11 @@ def build_tactical_intelligence(
             "status": "unavailable",
             "projectionInfluence": "explanation_only",
         },
+        "recentOpponentBlockProfiles": (
+            (prediction.get("tacticalContext") or {}).get("recentOpponentBlockProfiles")
+            if isinstance(prediction.get("tacticalContext"), dict)
+            else None
+        ),
         "matchScript": match_script_packet,
         "positionalReality": positional_reality,
         "propMechanism": {

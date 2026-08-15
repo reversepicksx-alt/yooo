@@ -41,6 +41,9 @@ from tactical_evidence import (
 from role_evidence import build_role_evidence_packet
 from matchup_volume import build_matchup_volume_packet
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
+from opponent_block_profile import (
+    fetch_recent_opponent_block_profiles as _fetch_recent_opponent_block_profiles,
+)
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
@@ -2138,6 +2141,8 @@ async def predict(req: PredictionRequest):
                         if not minutes:
                             continue
                         gl = dict(d)
+                        gl["fixtureId"] = str(fid_str)
+                        gl["_fid"] = str(fid_str)
                         gl["date"] = ""
                         gl["score"] = ""
                         gl["league"] = ""
@@ -2505,6 +2510,7 @@ async def predict(req: PredictionRequest):
                                     gl["competitionId"] = fix_league_id
                                     gl["competitionName"] = fix_league
                                     gl["round"] = fix_round
+                                    gl["fixtureId"] = str(fid)
                                     raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                                     if raw_val is not None and minutes > 0:
                                         gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
@@ -2616,6 +2622,7 @@ async def predict(req: PredictionRequest):
                         if raw_val is not None and minutes > 0:
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
                         gl["_fid"] = str(fid)
+                        gl["fixtureId"] = str(fid)
                         gl = await _enrich_possession(gl)
                         gl = await _enrich_opponent_sot(gl)
                         if (
@@ -4022,10 +4029,10 @@ async def predict(req: PredictionRequest):
         _fallback_team_rows = []
         _fallback_opponent_rows = []
         for _gl in player_game_logs or []:
-            if not isinstance(_gl, dict) or not _gl.get("_fid"):
+            if not isinstance(_gl, dict) or not (_gl.get("_fid") or _gl.get("fixtureId")):
                 continue
             _base = {
-                "fixtureId": _gl.get("_fid"),
+                "fixtureId": _gl.get("_fid") or _gl.get("fixtureId"),
                 "date": _gl.get("date", ""),
                 "opponent": _gl.get("opponent", ""),
                 "venue": _gl.get("venue"),
@@ -4089,7 +4096,9 @@ async def predict(req: PredictionRequest):
             if isinstance(row, dict) and row.get("date")
         }
         for _gl in player_game_logs or []:
-            _volume_row = _volume_by_fixture.get(str(_gl.get("_fid")))
+            _volume_row = _volume_by_fixture.get(
+                str(_gl.get("_fid") or _gl.get("fixtureId"))
+            )
             if _volume_row is None and _gl.get("date"):
                 _volume_row = _volume_by_date.get(str(_gl.get("date"))[:10])
             if _volume_row:
@@ -4116,6 +4125,79 @@ async def predict(req: PredictionRequest):
                 f"ppda={_sb_metrics.get('ppda')} "
                 f"pressures={_sb_metrics.get('pressureEvents')}"
             )
+
+        # Recent-match opponent pressure/block profiles are optional and
+        # cache-first. They never hold the player-stat prior hostage and they
+        # never change the deterministic projection. The shield lets any
+        # uncached warming continue after the bounded response window so later
+        # predictions can return more verified rows.
+        _recent_profile_stat_fields = {
+            "goals": "goals_total", "assists": "goals_assists",
+            "shots_assisted": "passes_key", "pass_attempts": "passes_total",
+            "passes": "passes_total", "shots": "shots_total",
+            "shots_on_target": "shots_on", "tackles": "tackles_total",
+            "key_passes": "passes_key", "saves": "goals_saves",
+            "goalie_saves": "goals_saves", "interceptions": "tackles_interceptions",
+            "blocks": "tackles_blocks", "dribbles": "dribbles_attempts",
+            "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+            "crosses": "passes_crosses", "clearances": "tackles_clearances",
+            "duels_won": "duels_won",
+        }
+        _recent_profile_rows = []
+        _recent_profile_field = _recent_profile_stat_fields.get(req.propType)
+        for _recent_log in player_game_logs or []:
+            if not isinstance(_recent_log, dict):
+                continue
+            if not (_recent_log.get("_fid") or _recent_log.get("fixtureId")):
+                continue
+            _recent_row = dict(_recent_log)
+            _recent_row["value"] = (
+                _recent_log.get(_recent_profile_field)
+                if _recent_profile_field
+                else None
+            )
+            _recent_profile_rows.append(_recent_row)
+        _recent_block_profile_task = aio.create_task(
+            _fetch_recent_opponent_block_profiles(
+                db,
+                _recent_profile_rows,
+                league_id=req.leagueId,
+                league_name=_sit_match_league or "",
+                team_name=player_team_display or req.teamName,
+                player_name=req.playerName,
+                limit=_RECENT_ARCHIVE_TARGET,
+                max_network_matches=12,
+            )
+        )
+        try:
+            recent_block_profiles = await aio.wait_for(
+                aio.shield(_recent_block_profile_task),
+                timeout=5.0,
+            )
+        except Exception as _recent_profile_err:
+            print(
+                f"[RECENT BLOCK PROFILE] bounded response window: "
+                f"{type(_recent_profile_err).__name__}"
+            )
+            recent_block_profiles = {
+                "status": "warming",
+                "available": False,
+                "profiles": [],
+                "sampleSize": len(_recent_profile_rows),
+                "verifiedMatches": 0,
+                "ppdaMatches": 0,
+                "formationMatches": 0,
+                "source": "StatsBomb Open Data + API-Football fixture lineups",
+                "projectionInfluence": "explanation_only",
+                "shadowWeighting": {
+                    "status": "shadow_only",
+                    "projectionAdjustment": 0.0,
+                },
+                "limitations": [
+                    "Recent opponent profiles are still warming from cache/provider.",
+                    "Missing coverage is unavailable, not a guessed block.",
+                ],
+            }
 
         # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
         _manager_ctx = {}
@@ -11832,6 +11914,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 or _tc_poss_player is not None
                 or _fbref_available
                 or _understat_pressure.get("status") in {"available", "verified_team_level"}
+                or recent_block_profiles.get("available")
             ),
             "position": _tc_position or None,
             "role": _tc_role or None,
@@ -11862,6 +11945,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             ),
             "pressureResponse": _pressure_response,
             "understatPressure": _understat_pressure,
+            "recentOpponentBlockProfiles": recent_block_profiles,
             "opponentProfileTier": _tc_opp_profile.get("tier"),
             "opponentProfileDiffPct": _tc_opp_profile.get("diffPct"),
             "venueAverage": venue_avg,

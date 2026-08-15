@@ -400,6 +400,7 @@ export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<S
 
 export interface GameLog {
   date: string;
+  fixtureId?: number | string | null;
   opponent?: string | null;
   venue: string;
   value: number | null;
@@ -645,6 +646,52 @@ export interface PredictionResult {
       targetTeamOppPpda?: number | null;
       pressureRouteVerified?: boolean;
       reason?: string | null;
+    } | null;
+    recentOpponentBlockProfiles?: {
+      status?: string;
+      available?: boolean;
+      sampleSize?: number;
+      verifiedMatches?: number;
+      ppdaMatches?: number;
+      formationMatches?: number;
+      source?: string | null;
+      projectionInfluence?: string;
+      profiles?: Array<{
+        fixtureId?: number | string | null;
+        date?: string | null;
+        opponent?: string | null;
+        venue?: string | null;
+        playerValue?: number | null;
+        minutes?: number | null;
+        score?: string | null;
+        status?: string;
+        verified?: boolean;
+        ppda?: number | null;
+        ppdaStatus?: string | null;
+        pressureByThird?: Record<string, number> | null;
+        formation?: {
+          status?: string;
+          teamFormation?: string | null;
+          opponentFormation?: string | null;
+        } | null;
+        blockProfile?: {
+          label?: string;
+          status?: string;
+          confidence?: string;
+          dominantPressureShare?: number;
+        } | null;
+        shadowWeight?: number;
+        source?: {
+          pressure?: string | null;
+          formation?: string | null;
+        } | null;
+      }>;
+      shadowWeighting?: {
+        status?: string;
+        projectionAdjustment?: number;
+        weights?: Record<string, number>;
+      };
+      limitations?: string[];
     } | null;
     fbrefEnrichment?: {
       available?: boolean;
@@ -1518,6 +1565,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
               ?? null;
           return {
             date: (g.date as string) || '',
+            fixtureId: (g.fixtureId as number | string | null) ?? null,
             opponent: (g.opponent as string) || '',
             venue: (g.venue as string) || '',
             value,
