@@ -2671,6 +2671,35 @@ export async function triggerStorageCleanup(
   });
 }
 
+export interface KnowledgeStats {
+  teamsTotal: number;
+  teamsFresh: number;
+  playersTotal: number;
+  playersFresh: number;
+  ttlHours: number;
+  error?: string;
+}
+
+export async function getKnowledgeStats(
+  email: string,
+  token: string,
+): Promise<KnowledgeStats> {
+  return apiCall(`/api/admin/knowledge/stats?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, {
+    method: 'GET',
+  });
+}
+
+export async function refreshKnowledge(
+  email: string,
+  token: string,
+  opts: { teamId?: number; playerId?: number; leagueId?: number } = {},
+): Promise<{ success: boolean; results: Record<string, unknown> }> {
+  return apiCall('/api/admin/knowledge/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, ...opts }),
+  });
+}
+
 export interface PlayerPickRow {
   playerName: string;
   position: string;

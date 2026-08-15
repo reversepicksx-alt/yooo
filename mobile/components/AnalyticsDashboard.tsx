@@ -13,6 +13,8 @@ import {
   runModelReplay,
   runPositionBackfill,
   repairStalePickPositions,
+  getKnowledgeStats,
+  refreshKnowledge,
   Pick,
   AnalyticsData,
   ModelReplayResult,
@@ -20,6 +22,7 @@ import {
   PassingReplayBucket,
   PositionBackfillResult,
   StalePickPosition,
+  KnowledgeStats,
 } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -246,6 +249,13 @@ export default function AnalyticsDashboard({
     enabled: visible && !!session,
     staleTime: 5 * 60_000,   // 5 minutes — lightweight call, no need to hammer
   });
+  const { data: kbStats, refetch: refetchKb } = useQuery<KnowledgeStats>({
+    queryKey: ['knowledgeStats', session?.email],
+    queryFn: () => getKnowledgeStats(session!.email, session!.token),
+    enabled: visible && !!session,
+    staleTime: 5 * 60_000,
+  });
+  const [kbRefreshing, setKbRefreshing] = React.useState(false);
   const [replayRunning, setReplayRunning] = React.useState(false);
   const [replayResult, setReplayResult] = React.useState<ModelReplayResult | null>(null);
   const [replayError, setReplayError] = React.useState<string | null>(null);
@@ -328,10 +338,70 @@ export default function AnalyticsDashboard({
       setCleanupRunning(false);
     }
   };
+  const handleKbRefresh = async () => {
+    if (!session || kbRefreshing) return;
+    setKbRefreshing(true);
+    try {
+      const result = await refreshKnowledge(session.email, session.token);
+      await refetchKb();
+      const r = result.results as any;
+      const batchMsg = r.batchRefreshed != null
+        ? `Batch-refreshed ${r.batchRefreshed} stale team docs.`
+        : 'Refresh triggered.';
+      Alert.alert('KB Refresh', batchMsg);
+    } catch (err: any) {
+      Alert.alert('KB Refresh Failed', err?.message ?? 'Unknown error');
+    } finally {
+      setKbRefreshing(false);
+    }
+  };
+
   // Insights is the ReversePicks system ledger. Personal picks remain the
   // source for Live/Settled Picks and are never used for this report when the
   // owner dataset is available.
   const stats = (ownerData?.insights ?? localStats) as ReturnType<typeof computeAnalytics>;
+
+  const renderKnowledgeStats = () => {
+    if (!kbStats) return null;
+    const teamFreshPct  = kbStats.teamsTotal   > 0 ? Math.round((kbStats.teamsFresh   / kbStats.teamsTotal)   * 100) : 0;
+    const playerFreshPct = kbStats.playersTotal > 0 ? Math.round((kbStats.playersFresh / kbStats.playersTotal) * 100) : 0;
+    const teamColor  = teamFreshPct  >= 75 ? Colors.success : teamFreshPct  >= 40 ? '#f59e0b' : Colors.error;
+    const playerColor = playerFreshPct >= 75 ? Colors.success : playerFreshPct >= 40 ? '#f59e0b' : Colors.error;
+    return (
+      <View style={s.kbCard}>
+        <View style={s.storageHeader}>
+          <Text style={s.chartTitle}>KNOWLEDGE BASE</Text>
+          <Text style={[s.storageStatus, { color: Colors.textTertiary }]}>TTL {kbStats.ttlHours}h</Text>
+        </View>
+        {kbStats.error && (
+          <Text style={{ fontSize: 11, color: Colors.error, marginBottom: 8 }}>{kbStats.error}</Text>
+        )}
+        <View style={s.kbRow}>
+          <View style={s.kbCell}>
+            <Text style={[s.kbNum, { color: teamColor }]}>{kbStats.teamsFresh}</Text>
+            <Text style={s.kbSub}>/ {kbStats.teamsTotal} fresh</Text>
+            <Text style={s.kbLabel}>TEAMS</Text>
+          </View>
+          <View style={s.kbDivider} />
+          <View style={s.kbCell}>
+            <Text style={[s.kbNum, { color: playerColor }]}>{kbStats.playersFresh}</Text>
+            <Text style={s.kbSub}>/ {kbStats.playersTotal} fresh</Text>
+            <Text style={s.kbLabel}>PLAYERS</Text>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={[s.cleanupBtn, kbRefreshing && s.cleanupBtnDisabled]}
+          onPress={handleKbRefresh}
+          disabled={kbRefreshing}
+        >
+          <Ionicons name="refresh-outline" size={13} color={kbRefreshing ? Colors.textTertiary : Colors.text} />
+          <Text style={[s.cleanupBtnText, kbRefreshing && { color: Colors.textTertiary }]}>
+            {kbRefreshing ? 'Refreshing…' : 'Refresh stale docs'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   const renderStorageHealth = () => {
     if (!storageHealth) return null;
@@ -754,6 +824,7 @@ export default function AnalyticsDashboard({
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
             {renderStorageHealth()}
+            {renderKnowledgeStats()}
             {renderPositionRepair()}
             {ownerData?.scorecard && (
               <View style={s.ownerHealthCard}>
@@ -1412,4 +1483,46 @@ const s = StyleSheet.create({
   },
   cleanupBtnDisabled: { opacity: 0.5 },
   cleanupBtnText: { fontSize: 12, fontWeight: '700', color: Colors.text },
+  // Knowledge Base card
+  kbCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  kbRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  kbCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  kbDivider: {
+    width: 1,
+    height: 44,
+    backgroundColor: Colors.borderSubtle,
+    marginHorizontal: 8,
+  },
+  kbNum: {
+    fontSize: 26,
+    fontWeight: '800',
+    lineHeight: 30,
+  },
+  kbSub: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    marginTop: 1,
+  },
+  kbLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: Colors.textTertiary,
+    letterSpacing: 0.8,
+    marginTop: 3,
+  },
 });

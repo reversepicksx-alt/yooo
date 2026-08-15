@@ -1,6 +1,7 @@
 import os
 import httpx
 import stripe
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from config import (
@@ -2183,3 +2184,72 @@ async def admin_trigger_cleanup(req: _StorageHealthRequest):
     )
     print(f"[ATLAS MANUAL CLEANUP] {results} | total_deleted={total}")
     return {"success": True, "deleted": results, "totalDeleted": total}
+
+
+# ── Knowledge Base ────────────────────────────────────────────────────────────
+
+class _KnowledgeRefreshRequest(BaseModel):
+    email: str
+    token: str
+    teamId: Optional[int] = None
+    playerId: Optional[int] = None
+    leagueId: int = 0
+    season: Optional[int] = None
+
+
+@router.get("/knowledge/stats")
+async def admin_knowledge_stats(email: str, token: str):
+    """
+    Return knowledge_teams and knowledge_players collection counts and
+    freshness metrics for the owner dashboard.
+    """
+    await verify_owner(email, token)
+    from knowledge_base import kb_stats
+    return await kb_stats()
+
+
+@router.post("/knowledge/refresh")
+async def admin_knowledge_refresh(req: _KnowledgeRefreshRequest):
+    """
+    Trigger a knowledge-base recompile for a specific team/player, or —
+    if neither teamId nor playerId are given — batch-refresh up to 20 stale
+    team docs.
+    """
+    await verify_owner(req.email, req.token)
+    from knowledge_base import (
+        compile_team_style, compile_player_profile,
+        _KB_TTL_SECONDS, _ts_now,
+    )
+    from config import CURRENT_SEASON
+
+    season = req.season or CURRENT_SEASON
+    results: dict = {}
+
+    if req.teamId:
+        doc = await compile_team_style(req.teamId, req.leagueId or 0, season)
+        results["team"] = {"teamId": req.teamId, "compiled": doc is not None}
+
+    if req.playerId:
+        doc = await compile_player_profile(req.playerId, req.leagueId or 0, season)
+        results["player"] = {"playerId": req.playerId, "compiled": doc is not None}
+
+    if not req.teamId and not req.playerId:
+        # Batch: recompile the oldest stale team docs
+        cutoff = _ts_now() - _KB_TTL_SECONDS
+        stale_teams = []
+        async for doc in db.knowledge_teams.find(
+            {"_ts": {"$lt": cutoff}},
+            {"teamId": 1, "leagueId": 1, "season": 1},
+        ).limit(20):
+            stale_teams.append(doc)
+        refreshed = 0
+        for t in stale_teams:
+            compiled = await compile_team_style(
+                t["teamId"], t["leagueId"], t.get("season", season)
+            )
+            if compiled:
+                refreshed += 1
+        results["batchRefreshed"] = refreshed
+        results["staleFound"] = len(stale_teams)
+
+    return {"success": True, "results": results}

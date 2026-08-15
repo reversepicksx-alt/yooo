@@ -13324,6 +13324,27 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         if access == "Owner":
             await _attach_owner_prediction_media(safe_prediction, req.email)
 
+        # ── Knowledge Base: fire-and-forget compilation ───────────────────────
+        # Compile team style + player profile from this prediction's data so the
+        # KB stays warm for Stage 2 prompt injection.  Any failure is logged and
+        # swallowed — it must never affect the prediction response.
+        try:
+            from knowledge_base import fire_and_forget_compile
+            _kb_opp_id = (
+                safe_prediction.get("opponentId")
+                or safe_prediction.get("fixtureOpponentId")
+                or 0
+            )
+            await fire_and_forget_compile(
+                player_id=req.playerId or 0,
+                team_id=req.teamId or 0,
+                league_id=req.leagueId or 0,
+                opponent_id=int(_kb_opp_id) if _kb_opp_id else 0,
+                season=req.season if hasattr(req, "season") and req.season else __import__("config").CURRENT_SEASON,
+            )
+        except Exception as _kb_err:
+            print(f"[KB fire-and-forget] scheduling error: {_kb_err}")
+
         return safe_prediction
     except (json.JSONDecodeError, aio.TimeoutError):
         # Return a safe fallback deterministic model prediction
