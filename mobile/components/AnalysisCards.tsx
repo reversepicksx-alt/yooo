@@ -337,7 +337,7 @@ export function renderTacticalVerdict(
     ? `${lineup.formation} vs ${lineup.opponentFormation}`
     : null;
   const shapeRead = shape
-    ? `The projected shape is ${shape}. It supports the role context, but it does not prove a direct marking assignment or exact in-possession zone.`
+    ? `The projected shape is ${shape}. It supports the role context, but it does not prove a player-level pressure route or exact in-possession zone.`
     : '';
 
   const h2h = ti.playerOpponentHistory ?? (data as any)?.h2hPlayerStats?.opponentHitRate;
@@ -360,7 +360,7 @@ export function renderTacticalVerdict(
   const limitations: string[] = [];
   const pressure = tc.pressureResponse ?? (data as any)?.pressureResponse;
   if (pressure?.status === 'insufficient_evidence') limitations.push('no player pressure-response classification');
-  if (comparison.directMarkingVerified === false) limitations.push('no verified direct marking assignment');
+  if (comparison.directMarkingVerified === false) limitations.push('no verified player-level pressure route');
   if (positional.mode === 'shadow' || mechanism.projectionAdjustmentStatus) limitations.push('tactical signal is context-only, not an extra projection adjustment');
 
   const conclusion = Number.isFinite(projection) && Number.isFinite(line)
@@ -399,10 +399,16 @@ export function renderTacticalContext(
 ) {
   const enrichment = ((data as any)?.tacticalContext?.fbrefEnrichment
     ?? (data as any)?.fbrefEnrichment) as any;
-  if (!enrichment?.available) return null;
+  const understat = ((data as any)?.tacticalContext?.understatPressure
+    ?? (data as any)?.tacticalIntelligence?.understatPressure) as any;
+  const understatPress = understat?.opponentPress ?? {};
+  const hasUnderstat =
+    ['available', 'verified_team_level'].includes(understat?.status)
+    && understatPress.ppda != null;
+  if (!enrichment?.available && !hasUnderstat) return null;
   const pressure = enrichment.pressure ?? {};
   const zones = enrichment.zones ?? {};
-  const hasPressure = pressure.label || pressure.ppda != null || pressure.pressures != null;
+  const hasPressure = hasUnderstat || pressure.label || pressure.ppda != null || pressure.pressures != null;
   const hasZones =
     zones.dominance
     || zones.defThirdSharePct != null
@@ -433,12 +439,27 @@ export function renderTacticalContext(
         {hasPressure ? (
           <View style={aStyles.tacticalContextCell}>
             <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE</Text>
-            <Text style={aStyles.tacticalContextValue}>{pressureLabel}</Text>
+            <Text style={aStyles.tacticalContextValue}>
+              {hasUnderstat
+                ? String(understatPress.label ?? 'classified').replace(/_/g, ' ').toUpperCase()
+                : pressureLabel}
+            </Text>
             <Text style={aStyles.proCardNote}>
-              {pressure.ppda != null
+              {hasUnderstat
+                ? `PPDA ${Number(understatPress.ppda).toFixed(1)}`
+                : pressure.ppda != null
                 ? `PPDA ${Number(pressure.ppda).toFixed(1)}`
                 : 'PPDA unavailable · pressure-volume profile'}
             </Text>
+            {hasUnderstat ? (
+              <Text style={aStyles.proCardNote}>
+                {understatPress.leaguePercentile != null
+                  ? `${Number(understatPress.leaguePercentile).toFixed(0)}th pct · `
+                  : ''}
+                {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} · ` : ''}
+                {understatPress.sampleSize ?? 0} matches
+              </Text>
+            ) : null}
           </View>
         ) : null}
         {hasZones ? (
@@ -457,7 +478,9 @@ export function renderTacticalContext(
         </Text>
       ) : null}
       <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
-        Context only; it does not add an unvalidated projection adjustment.
+        {hasUnderstat
+          ? 'Understat team pressure is explanatory only; no one-to-one marker is verified.'
+          : 'Context only; it does not add an unvalidated projection adjustment.'}
       </Text>
     </View>
   );

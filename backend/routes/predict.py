@@ -11794,12 +11794,44 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "progressiveCarries": _fbref_player_kb.get("progressiveCarries"),
             }
         _fbref_available = bool(_fbref_pressure or _fbref_zones)
+        _understat_pressure = {
+            "status": "unavailable",
+            "reason": "not_requested",
+            "projectionInfluence": "explanation_only",
+        }
+        try:
+            from understat_client import fetch_understat_pressure_context
+            _understat_pressure = await aio.wait_for(
+                fetch_understat_pressure_context(
+                    league_id=prediction.get("leagueId") or req.leagueId,
+                    season=getattr(req, "season", None) or CURRENT_SEASON,
+                    team_name=player_team_display or req.teamName,
+                    opponent_name=req.opponentName,
+                    venue=player_venue,
+                    as_of=(match_odds or {}).get("matchDate"),
+                ),
+                timeout=4.5,
+            )
+            if not isinstance(_understat_pressure, dict):
+                _understat_pressure = {
+                    "status": "unavailable",
+                    "reason": "invalid_provider_packet",
+                    "projectionInfluence": "explanation_only",
+                }
+        except Exception as _understat_err:
+            print(f"[UNDERSTAT CONTEXT] read skipped: {type(_understat_err).__name__}")
+            _understat_pressure = {
+                "status": "unavailable",
+                "reason": "bounded_fetch_failed",
+                "projectionInfluence": "explanation_only",
+            }
         prediction["tacticalContext"] = {
             "available": bool(
                 _tc_position
                 or _tc_role
                 or _tc_poss_player is not None
                 or _fbref_available
+                or _understat_pressure.get("status") in {"available", "verified_team_level"}
             ),
             "position": _tc_position or None,
             "role": _tc_role or None,
@@ -11829,6 +11861,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 or 0
             ),
             "pressureResponse": _pressure_response,
+            "understatPressure": _understat_pressure,
             "opponentProfileTier": _tc_opp_profile.get("tier"),
             "opponentProfileDiffPct": _tc_opp_profile.get("diffPct"),
             "venueAverage": venue_avg,
@@ -11902,6 +11935,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
+                understat_pressure=_understat_pressure,
             )
         except Exception as _tactical_intel_err:
             print(f"[TACTICAL INTELLIGENCE] failed: {_tactical_intel_err}")
@@ -12181,6 +12215,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
+                understat_pressure=_understat_pressure,
             )
             prediction["matchScript"] = prediction["tacticalIntelligence"].get("matchScript")
             prediction["positionalReality"] = prediction["tacticalIntelligence"].get("positionalReality")
@@ -12248,6 +12283,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "possessionSource": match_dominance.get("possessionSource"),
                 "teamPassAverage": _team_pass_average,
                 "pressureResponse": _pressure_response,
+                "understatPressure": _understat_pressure,
                 "gameScript": prediction.get("gameScript"),
                 "positionCohort": position_comp_data,
                 "h2h": _tactical_h2h,

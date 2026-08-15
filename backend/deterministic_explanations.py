@@ -436,8 +436,8 @@ def build_deterministic_explanation(
             tactical_lines.append(str(ti_compare["comparison"]))
         if ti_compare and not ti_compare.get("directMarkingVerified", False):
             tactical_lines.append(
-                "Direct marking, exact operating zones, and average positions are not verified; "
-                "the tactical comparison remains nominal."
+                "A one-to-one pressure route, exact operating zones, and average positions are not verified; "
+                "the tactical comparison remains team-level and nominal."
             )
 
     # Player-specific pressure response is a descriptive historical signal.

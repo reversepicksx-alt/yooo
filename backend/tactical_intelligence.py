@@ -142,7 +142,7 @@ def _opponent_role_matchup(
         comparison = "Goalkeeper workload is compared with the opponent's attacking personnel, not a direct marker."
     elif prop_type in PASS_PROPS:
         relevant = "opponent pressure and available passing outlets"
-        comparison = "Passing opportunity is compared with the opponent's nominal pressure structure; no direct press assignment is assumed."
+        comparison = "Passing opportunity is compared with the opponent's team-level pressure structure; no player-level press route or trigger is assumed."
     elif prop_type in ATTACK_PROPS or prop_type in BALL_CARRY_PROPS:
         relevant = "opponent defensive density"
         comparison = "Attacking opportunity is compared with nominal defensive density; no one-to-one marking assignment is assumed."
@@ -306,6 +306,45 @@ def build_tactical_explanation(context: dict[str, Any]) -> str:
             f"The team opportunity baseline is {fmt(team_pass_average)} total passes per match."
         )
 
+    understat_pressure = context.get("understatPressure") or {}
+    if isinstance(understat_pressure, dict) and understat_pressure.get("status") in {"available", "verified_team_level"}:
+        understat_press = understat_pressure.get("opponentPress") or {}
+        opponent_press_ppda = _num(understat_press.get("ppda"))
+        press_label = _clean(understat_press.get("label")) or "classified"
+        press_percentile = _num(understat_press.get("leaguePercentile"))
+        press_sample = understat_press.get("sampleSize") or 0
+        target_opp_ppda = _num(understat_pressure.get("targetTeamOppPpda"))
+        opponent_packet = understat_pressure.get("opponent") or {}
+        opponent_name = _clean(opponent_packet.get("name")) or opponent
+        press_percentile_text = (
+            f", {fmt(press_percentile, 0)}th league percentile"
+            if press_percentile is not None else ""
+        )
+        target_opp_text = (
+            f" {team}'s venue-specific OPPDA context is {fmt(target_opp_ppda)}."
+            if target_opp_ppda is not None else ""
+        )
+        if prop_type in PASS_PROPS and press_label in {"high", "above average"}:
+            press_effect = (
+                "That team-level pressure environment supports the UNDER risk direction "
+                "for a pressure-sensitive passing profile."
+                if recommendation == "UNDER"
+                else "That team-level pressure environment raises pressure-related risk against the OVER."
+            )
+        elif prop_type in PASS_PROPS:
+            press_effect = (
+                "That team-level pressure environment does not independently support a strong "
+                "UNDER pressure case."
+            )
+        else:
+            press_effect = "This is matchup context, not a direct player assignment."
+        environment.append(
+            f"Understat's {opponent_name} venue record shows a {press_label} team press: "
+            f"PPDA {fmt(opponent_press_ppda)}{press_percentile_text} across {press_sample} matches."
+            f"{target_opp_text} {press_effect} This is team-level pressure evidence; "
+            "it does not identify a one-to-one marker or exact pressing trigger."
+        )
+
     pressure = context.get("pressureResponse") or {}
     if isinstance(pressure, dict) and pressure.get("status") == "classified":
         high = fmt(pressure.get("highPressurePassesPer90"))
@@ -317,7 +356,7 @@ def build_tactical_explanation(context: dict[str, Any]) -> str:
             f"{player}'s pressure profile is {label.lower()}: {high} passes/90 in "
             f"high-pressure samples (n={high_n}) versus {low} in lower-pressure samples "
             f"(n={low_n}), which supports the {recommendation} risk direction for this prop. "
-            "This is a player-response proxy, not verified PPDA."
+            "This is a player-response proxy, separate from the team-level PPDA evidence above."
         )
 
     script = context.get("gameScript") or {}
@@ -351,13 +390,13 @@ def build_tactical_explanation(context: dict[str, Any]) -> str:
         uncertainty_band = context.get("uncertaintyBand") or context.get("confidenceInterval")
         if isinstance(uncertainty_band, (list, tuple)) and len(uncertainty_band) >= 2:
             uncertainty_read = (
-                f"The 80% landing band is {fmt(uncertainty_band[0])}–{fmt(uncertainty_band[1])}; "
-                "the remaining uncertainty is driven by the pre-match script and the lack of a verified direct marking assignment."
+                f"The 80% projection interval is {fmt(uncertainty_band[0])}–{fmt(uncertainty_band[1])}; "
+                "the remaining uncertainty is driven by the pre-match script and the lack of a verified player-level pressure route."
             )
         else:
             uncertainty_read = (
                 "The read is probabilistic, not a certainty; the remaining uncertainty is driven by "
-                "the pre-match script and the lack of a verified direct marking assignment."
+                "the pre-match script and the lack of a verified player-level pressure route."
             )
         paragraphs.append(
             "**Decision synthesis** — "
@@ -478,6 +517,7 @@ def build_tactical_intelligence(
     game_script: dict[str, Any] | None = None,
     lineup: dict[str, Any] | None = None,
     history_values: list[Any] | None = None,
+    understat_pressure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a complete, provenance-tagged tactical evidence packet.
 
@@ -608,7 +648,9 @@ def build_tactical_intelligence(
         limitations.append("possession is fallback or unavailable")
     limitations.extend(match_script_packet.get("limitations") or [])
     limitations.extend(positional_reality.get("limitations") or [])
-    limitations.append("direct marking is not verified")
+    if not isinstance(understat_pressure, dict) or understat_pressure.get("status") not in {"available", "verified_team_level"}:
+        limitations.append("team-level opponent PPDA is unavailable")
+    limitations.append("player-level pressure route or pressing trigger is not verified")
 
     tactical_status = "strong" if (
         target_group != "unknown"
@@ -674,6 +716,10 @@ def build_tactical_intelligence(
                 else None
             ),
         },
+        "understatPressure": understat_pressure or {
+            "status": "unavailable",
+            "projectionInfluence": "explanation_only",
+        },
         "matchScript": match_script_packet,
         "positionalReality": positional_reality,
         "propMechanism": {
@@ -699,6 +745,12 @@ def build_tactical_intelligence(
             "matchScript": match_script_packet.get("status"),
             "matchScriptConfidence": match_script_packet.get("confidence"),
             "positionalReality": positional_reality.get("zoneSource"),
+            "understatPressure": (
+                "available"
+                if isinstance(understat_pressure, dict)
+                and understat_pressure.get("status") in {"available", "verified_team_level"}
+                else "unavailable"
+            ),
         },
         "limitations": list(dict.fromkeys(limitations)),
     }

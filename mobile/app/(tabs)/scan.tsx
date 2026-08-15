@@ -90,9 +90,11 @@ function _buildNarrationText(p: any): string {
 function TacticalNarrativeCard({
   narrative,
   recommendation,
+  tacticalContext,
 }: {
   narrative?: string | null;
   recommendation?: string | null;
+  tacticalContext?: any;
 }) {
   const text = String(narrative || '').trim();
   if (!text) return null;
@@ -103,6 +105,11 @@ function TacticalNarrativeCard({
     : rec === 'UNDER'
       ? Colors.error
       : Colors.textSecondary;
+  const understat = tacticalContext?.understatPressure;
+  const understatPress = understat?.opponentPress;
+  const hasUnderstatPressure =
+    ['available', 'verified_team_level'].includes(understat?.status)
+    && understatPress?.ppda != null;
 
   const renderLine = (raw: string, key: number) => {
     const trimmed = raw.trimEnd();
@@ -160,6 +167,37 @@ function TacticalNarrativeCard({
           MATCH CONTEXT
         </Text>
       </View>
+      {hasUnderstatPressure ? (
+        <View style={{
+          marginTop: 8,
+          paddingHorizontal: 9,
+          paddingVertical: 7,
+          borderRadius: 8,
+          backgroundColor: Colors.primary + '10',
+          borderWidth: 1,
+          borderColor: Colors.primary + '2b',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Ionicons name="flash-outline" size={12} color={Colors.primary} />
+            <Text style={{ fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 0.5 }}>
+              TEAM PRESSURE
+            </Text>
+            <Text style={{ marginLeft: 'auto', fontSize: 9, color: Colors.textTertiary, fontWeight: '700' }}>
+              UNDERSTAT · CONTEXT ONLY
+            </Text>
+          </View>
+          <Text style={{ marginTop: 4, fontSize: 12, color: Colors.text, fontWeight: '700' }}>
+            {String(understatPress.label || 'classified').toUpperCase()} · PPDA {Number(understatPress.ppda).toFixed(1)}
+          </Text>
+          <Text style={{ marginTop: 2, fontSize: 10.5, lineHeight: 15, color: Colors.textSecondary }}>
+            {understatPress.leaguePercentile != null
+              ? `${Number(understatPress.leaguePercentile).toFixed(0)}th league percentile · `
+              : ''}
+            {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} venue · ` : ''}
+            {understatPress.sampleSize ?? 0} matches. Team-level pressure does not identify a one-to-one marker.
+          </Text>
+        </View>
+      ) : null}
       <View style={{ gap: 0, marginTop: 4 }}>
         {text.split('\n').map(renderLine)}
       </View>
@@ -4385,6 +4423,7 @@ export default function ScanScreen() {
                  || (prediction as any).reasoning
                  || (prediction as any).sharpSummary}
                recommendation={prediction.recommendation}
+                tacticalContext={(prediction as any).tacticalContext}
              />
             {/* ─── MATCHUP OVERVIEW (non-soccer sports) ─── */}
             {false && (<>

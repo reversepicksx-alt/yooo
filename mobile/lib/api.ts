@@ -626,6 +626,26 @@ export interface PredictionResult {
       limitations?: string[];
       reason?: string;
     } | null;
+    understatPressure?: {
+      status?: string;
+      source?: string | null;
+      sourceUrl?: string | null;
+      league?: string | null;
+      season?: number | null;
+      asOf?: string | null;
+      venue?: string | null;
+      projectionInfluence?: string;
+      opponentPress?: {
+        ppda?: number | null;
+        label?: string | null;
+        leaguePercentile?: number | null;
+        sampleSize?: number | null;
+        venue?: string | null;
+      } | null;
+      targetTeamOppPpda?: number | null;
+      pressureRouteVerified?: boolean;
+      reason?: string | null;
+    } | null;
     fbrefEnrichment?: {
       available?: boolean;
       status?: string;
