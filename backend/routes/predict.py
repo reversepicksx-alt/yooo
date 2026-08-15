@@ -652,6 +652,11 @@ def _select_player_context_for_league(
 
 @router.post("/predict")
 async def predict(req: PredictionRequest):
+    # Keep the display name defined before any optional enrichment or
+    # fail-open branch can run. Older deployed builds referenced this local
+    # before the later canonical-name assignment, turning a recoverable
+    # provider refresh into the generic prediction error banner.
+    player_team_display = req.teamName or ""
     from routes.auth import verify_session
     sess = await verify_session(req)
     if not sess.get("valid"):
