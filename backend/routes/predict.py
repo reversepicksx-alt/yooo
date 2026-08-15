@@ -70,6 +70,107 @@ def _json_safe_prediction(value, *, _active=None, _depth=0):
         return None
     if value is None or isinstance(value, (str, bool, int)):
         return value
+
+
+def _reconcile_deterministic_confidence(
+    text: str,
+    confidence_score: float,
+    confidence_level: str,
+) -> str:
+    """Replace stale confidence phrases without touching probability claims."""
+    if not isinstance(text, str) or not text:
+        return text
+    final_label = f"{float(confidence_score):.0f}% ({confidence_level or 'Medium'})"
+    reconciled = re.sub(
+        r"Confidence:\s*\d+(?:\.\d+)?%\s*\([^)]*\)",
+        f"Confidence: {final_label}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"\b\d+(?:\.\d+)?%\s+confidence\s*\([^)]*\)",
+        f"{final_label} confidence",
+        reconciled,
+        flags=re.IGNORECASE,
+    )
+
+
+def _recompute_landing_bands(
+    bands: list,
+    final_mean: float,
+    final_line: float,
+    final_std: float,
+    source_center: float | None = None,
+) -> list:
+    """Rebuild landing probabilities from the final Gaussian snapshot.
+
+    The terminal band is the OVER region and its lower boundary is forced to
+    the exact line used by P(OVER)/P(UNDER). This prevents a stale integer
+    display label or an earlier projection's band boundary from disagreeing
+    with the displayed probabilities.
+    """
+    if not isinstance(bands, list) or not bands or final_std <= 0:
+        return bands
+
+    try:
+        shift = (
+            final_mean - float(source_center)
+            if source_center is not None
+            else 0.0
+        )
+    except (TypeError, ValueError):
+        shift = 0.0
+
+    normal_scale = final_std * math.sqrt(2.0)
+
+    def cdf(value):
+        if value is None:
+            return 0.0
+        return 0.5 * (1.0 + math.erf((value - final_mean) / normal_scale))
+
+    rebuilt: list[dict] = []
+    for index, source in enumerate(bands):
+        if not isinstance(source, dict):
+            continue
+        lower = source.get("lower")
+        upper = source.get("upper")
+        try:
+            lower = float(lower) + shift if lower is not None else None
+        except (TypeError, ValueError):
+            lower = None
+        try:
+            upper = float(upper) + shift if upper is not None else None
+        except (TypeError, ValueError):
+            upper = None
+
+        # The final band is the displayed OVER region.  Anchoring it to the
+        # request line makes its probability equal to P(OVER) by construction.
+        if index == len(bands) - 1:
+            lower = final_line
+            upper = None
+        elif index == len(bands) - 2:
+            upper = final_line
+
+        probability = (
+            (cdf(upper) if upper is not None else 1.0)
+            - (cdf(lower) if lower is not None else 0.0)
+        ) * 100.0
+        rebuilt.append({
+            **source,
+            "lower": round(lower, 1) if lower is not None else None,
+            "upper": round(upper, 1) if upper is not None else None,
+            "probability": round(max(0.0, probability), 1),
+        })
+
+    # Rounding should not make a packet fail the visible 100% invariant.
+    if rebuilt:
+        rounded_total = round(sum(float(item["probability"]) for item in rebuilt), 1)
+        if abs(rounded_total - 100.0) > 0.05:
+            rebuilt[-1]["probability"] = round(
+                max(0.0, float(rebuilt[-1]["probability"]) + (100.0 - rounded_total)),
+                1,
+            )
+    return rebuilt
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, (datetime,)):
@@ -11652,8 +11753,56 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             item for item in (_tc_lineup.get("players") or [])
             if item.get("isTarget")
         ]
+        _fbref_player_kb = None
+        _fbref_opponent_kb = None
+        try:
+            from knowledge_base import get_player_kb, get_team_kb
+            _fbref_player_kb, _fbref_opponent_kb = await aio.gather(
+                get_player_kb(req.playerId or 0, req.leagueId or 0),
+                get_team_kb(
+                    req.opponentId or prediction.get("fixtureOpponentId") or 0,
+                    req.leagueId or 0,
+                    getattr(req, "season", None) or CURRENT_SEASON,
+                ),
+                return_exceptions=True,
+            )
+            if not isinstance(_fbref_player_kb, dict):
+                _fbref_player_kb = None
+            if not isinstance(_fbref_opponent_kb, dict):
+                _fbref_opponent_kb = None
+        except Exception as _fbref_read_err:
+            print(f"[FBREF CONTEXT] read skipped: {_fbref_read_err}")
+
+        _fbref_pressure = {}
+        if _fbref_opponent_kb and _fbref_opponent_kb.get("fbrefStatus") in {"available", "partial"}:
+            _fbref_pressure = {
+                "status": _fbref_opponent_kb.get("fbrefStatus"),
+                "label": _fbref_opponent_kb.get("pressIntensityLabel"),
+                "ppda": _fbref_opponent_kb.get("ppda"),
+                "source": _fbref_opponent_kb.get("pressIntensitySource"),
+                "method": _fbref_opponent_kb.get("pressIntensityMethod"),
+                "pressures": _fbref_opponent_kb.get("fbrefPressures"),
+                "pressureSuccessPct": _fbref_opponent_kb.get("fbrefPressureSuccessPct"),
+            }
+        _fbref_zones = {}
+        if _fbref_player_kb and _fbref_player_kb.get("fbrefStatus") in {"available", "partial"}:
+            _fbref_zones = {
+                "status": _fbref_player_kb.get("fbrefStatus"),
+                "dominance": _fbref_player_kb.get("zoneDominance"),
+                "defThirdSharePct": _fbref_player_kb.get("defThirdSharePct"),
+                "midThirdSharePct": _fbref_player_kb.get("midThirdSharePct"),
+                "attThirdSharePct": _fbref_player_kb.get("attThirdSharePct"),
+                "progressivePasses": _fbref_player_kb.get("progressivePasses"),
+                "progressiveCarries": _fbref_player_kb.get("progressiveCarries"),
+            }
+        _fbref_available = bool(_fbref_pressure or _fbref_zones)
         prediction["tacticalContext"] = {
-            "available": bool(_tc_position or _tc_role or _tc_poss_player is not None),
+            "available": bool(
+                _tc_position
+                or _tc_role
+                or _tc_poss_player is not None
+                or _fbref_available
+            ),
             "position": _tc_position or None,
             "role": _tc_role or None,
             "roleSource": _observed_role.get("source") if _observed_role else (
@@ -11700,6 +11849,13 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "playerOpponentHistory": (historical_data.get("h2hPlayerStats") or {}).get("opponentHitRate"),
             "positionCohort": position_comp_data,
             "statsbombEnrichment": statsbomb_enrichment,
+            "fbrefEnrichment": {
+                "available": _fbref_available,
+                "pressure": _fbref_pressure or None,
+                "zones": _fbref_zones or None,
+                "status": "available" if _fbref_available else "warming",
+                "projectionInfluence": "explanation_only",
+            },
         }
 
         # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────
@@ -13270,6 +13426,48 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # Do not append it to the customer paragraph; that was the source
             # of the oversized Turner-style explanation.
             prediction["finalMathLedgerText"] = _final_math_footer
+
+            # The deterministic narrative is assembled before the evidence
+            # quality and safety gates finish.  Rewrite only confidence labels
+            # here so the customer-facing prose cannot disagree with the
+            # authoritative final ledger.  Probability statements such as
+            # "P(UNDER): 87%" are intentionally left alone.
+            _td_final = prediction.get("tacticalBreakdown")
+            if isinstance(_td_final, str) and _td_final:
+                prediction["tacticalBreakdown"] = _reconcile_deterministic_confidence(
+                    _td_final,
+                    float(_display_conf_final),
+                    str(prediction.get("confidenceLevel") or "Medium"),
+                )
+
+            # Recompute landing-band probabilities from the same final mean
+            # and standard deviation used for P(OVER)/P(UNDER).  Earlier
+            # packets could carry stale probabilities after a late projection
+            # shift, producing impossible output such as P(OVER)=13.6% while
+            # the 66+ landing band said 53.2%.
+            _dist_final = _final_bm.get("distribution")
+            _landing_source_center = (
+                _dist_final.get("mostLikelyValue")
+                if isinstance(_dist_final, dict)
+                else None
+            )
+            _old_bands = (
+                _dist_final.get("landingBands")
+                if isinstance(_dist_final, dict)
+                else None
+            )
+            if isinstance(_old_bands, list) and _old_bands and _final_std > 0:
+                _new_bands = _recompute_landing_bands(
+                    _old_bands,
+                    _final_pv_num,
+                    _final_line_num,
+                    _final_std,
+                    _landing_source_center,
+                )
+                if _new_bands:
+                    _dist_final["landingBands"] = _new_bands
+                    _final_bm["distribution"] = _dist_final
+                    prediction["distribution"] = _dist_final
         except Exception as _ledger_err:
             # The ledger is diagnostic/explanatory and must never take down a
             # valid math prediction. Keep the explicit math source marker.

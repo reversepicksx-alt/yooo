@@ -32,6 +32,7 @@ import CustomAlerts from '@/components/CustomAlerts';
 import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, fetchPickAnalysis, refreshPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
+import { renderTacticalContext } from '@/components/AnalysisCards';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 
@@ -1884,6 +1885,10 @@ export default function PicksScreen() {
               if (candidate && !Array.isArray(candidate) && typeof candidate === 'object') return candidate;
               return data?.roleEvidencePacket ?? pick?.roleEvidencePacket;
             })())}
+            {!analysisModal?.loading && renderTacticalContext({
+              ...(analysisModal?.pick as any),
+              ...(analysisModal?.data as any),
+            })}
             {!analysisModal?.loading && capturedModalFactors.length > 0 && renderEvidenceSummary({
               ...(analysisModal?.pick as any),
               ...(analysisModal?.data as any),

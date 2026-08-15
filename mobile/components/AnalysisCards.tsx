@@ -393,6 +393,76 @@ export function renderTacticalVerdict(
   );
 }
 
+/** Compact public-source tactical context. This card is explanatory only. */
+export function renderTacticalContext(
+  data: Record<string, unknown> | null,
+) {
+  const enrichment = ((data as any)?.tacticalContext?.fbrefEnrichment
+    ?? (data as any)?.fbrefEnrichment) as any;
+  if (!enrichment?.available) return null;
+  const pressure = enrichment.pressure ?? {};
+  const zones = enrichment.zones ?? {};
+  const hasPressure = pressure.label || pressure.ppda != null || pressure.pressures != null;
+  const hasZones =
+    zones.dominance
+    || zones.defThirdSharePct != null
+    || zones.midThirdSharePct != null
+    || zones.attThirdSharePct != null
+    || zones.progressivePasses != null
+    || zones.progressiveCarries != null;
+  if (!hasPressure && !hasZones) return null;
+
+  const pressureLabel = String(pressure.label ?? 'profile unavailable')
+    .replace(/_/g, ' ')
+    .toUpperCase();
+  const zoneLabel = zones.dominance
+    ? String(zones.dominance).replace(/_/g, ' ').toUpperCase()
+    : 'ZONE MIX';
+  const pct = (value: unknown) => value == null ? '—' : `${Number(value).toFixed(0)}%`;
+  const count = (value: unknown) => value == null ? '—' : Number(value).toFixed(1);
+
+  return (
+    <View style={aStyles.tacticalContextCard}>
+      <View style={aStyles.proCardHeader}>
+        <View style={[aStyles.proCardPill, { backgroundColor: Colors.primary + '18' }]}>
+          <Text style={[aStyles.proCardPillText, { color: Colors.primary }]}>TACTICAL CONTEXT</Text>
+        </View>
+        <Text style={aStyles.proCardTitle}>PUBLIC MATCH PROFILE</Text>
+      </View>
+      <View style={aStyles.tacticalContextGrid}>
+        {hasPressure ? (
+          <View style={aStyles.tacticalContextCell}>
+            <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE</Text>
+            <Text style={aStyles.tacticalContextValue}>{pressureLabel}</Text>
+            <Text style={aStyles.proCardNote}>
+              {pressure.ppda != null
+                ? `PPDA ${Number(pressure.ppda).toFixed(1)}`
+                : 'PPDA unavailable · pressure-volume profile'}
+            </Text>
+          </View>
+        ) : null}
+        {hasZones ? (
+          <View style={aStyles.tacticalContextCell}>
+            <Text style={aStyles.proCardMetricLabel}>PLAYER ZONES</Text>
+            <Text style={aStyles.tacticalContextValue}>{zoneLabel}</Text>
+            <Text style={aStyles.proCardNote}>
+              DEF {pct(zones.defThirdSharePct)} · MID {pct(zones.midThirdSharePct)} · ATT {pct(zones.attThirdSharePct)}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+      {hasZones && (zones.progressivePasses != null || zones.progressiveCarries != null) ? (
+        <Text style={aStyles.proCardNote}>
+          Progressive actions: {count(zones.progressivePasses)} passes · {count(zones.progressiveCarries)} carries
+        </Text>
+      ) : null}
+      <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
+        Context only; it does not add an unvalidated projection adjustment.
+      </Text>
+    </View>
+  );
+}
+
 /** H2H Intelligence card — historical head-to-head stats vs the same opponent. */
 export function renderH2HIntelligence(
   data: Record<string, unknown> | null,
@@ -973,6 +1043,20 @@ export const aStyles = StyleSheet.create({
   tacticalVerdictConclusion: {
     fontSize: 11.5, lineHeight: 17, fontWeight: '800',
     borderTopWidth: 1, borderTopColor: Colors.borderSubtle, paddingTop: 8,
+  },
+  tacticalContextCard: {
+    backgroundColor: Colors.cardSecondary, borderRadius: 9,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+    padding: 9, marginBottom: 7, gap: 7,
+  },
+  tacticalContextGrid: { flexDirection: 'row', gap: 7 },
+  tacticalContextCell: {
+    flex: 1, minWidth: 0, backgroundColor: Colors.card,
+    borderRadius: 7, paddingHorizontal: 7, paddingVertical: 6,
+  },
+  tacticalContextValue: {
+    color: Colors.text, fontSize: 12, fontWeight: '800',
+    marginTop: 2, textTransform: 'capitalize',
   },
   proCardMetrics: { flexDirection: 'row', gap: 5 },
   proCardMetric: {

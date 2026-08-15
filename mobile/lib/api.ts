@@ -626,6 +626,29 @@ export interface PredictionResult {
       limitations?: string[];
       reason?: string;
     } | null;
+    fbrefEnrichment?: {
+      available?: boolean;
+      status?: string;
+      projectionInfluence?: string;
+      pressure?: {
+        status?: string;
+        label?: string | null;
+        ppda?: number | null;
+        source?: string | null;
+        method?: string | null;
+        pressures?: number | null;
+        pressureSuccessPct?: number | null;
+      } | null;
+      zones?: {
+        status?: string;
+        dominance?: string | null;
+        defThirdSharePct?: number | null;
+        midThirdSharePct?: number | null;
+        attThirdSharePct?: number | null;
+        progressivePasses?: number | null;
+        progressiveCarries?: number | null;
+      } | null;
+    };
   };
   tacticalIntelligence?: TacticalIntelligence;
   matchScript?: MatchScript;
