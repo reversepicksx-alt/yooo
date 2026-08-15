@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 
@@ -276,10 +276,6 @@ export default React.memo(function AnalysisScenarioPanel({
   embedded = false,
   compact = false,
 }: Props) {
-  const [draftLine, setDraftLine] = useState(String(line));
-  const draftLineRef = useRef(String(line));
-  const suppressBlurCommit = useRef(false);
-  const suppressBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scenario = useMemo(() => calculateAnalysisScenario({
     baseLine,
     line,
@@ -291,15 +287,9 @@ export default React.memo(function AnalysisScenarioPanel({
     baseConfidence,
   }), [baseConfidence, baseLine, baseRecommendation, line, pOver, pUnder, posteriorStd, projection]);
 
-  useEffect(() => {
-    const next = line.toFixed(1);
-    draftLineRef.current = next;
-    setDraftLine(next);
-  }, [line]);
-
   const direction = scenario.recommendation;
   const accent = directionColor(direction);
-  const step = baseLine % 1 !== 0 ? 0.5 : 0.5;
+  const step = 0.5;
   const probability = scenario.pOver != null && scenario.pUnder != null
     ? `${Math.round(Math.max(scenario.pOver, scenario.pUnder))}%`
     : '—';
@@ -307,41 +297,14 @@ export default React.memo(function AnalysisScenarioPanel({
     ? 'Edge unavailable'
     : `${scenario.edge >= 0 ? '+' : ''}${scenario.edge.toFixed(1)} vs line`;
 
-  const commitDraft = () => {
-    const parsed = Number(draftLineRef.current.replace(',', '.'));
-    if (!Number.isFinite(parsed)) {
-      const fallback = line.toFixed(1);
-      draftLineRef.current = fallback;
-      setDraftLine(fallback);
-      return;
-    }
-    const next = Math.max(0, Math.round(parsed * 2) / 2);
-    draftLineRef.current = next.toFixed(1);
-    setDraftLine(draftLineRef.current);
-    onLineChange(next);
-  };
-
   const changeLine = (delta: number) => {
-    const current = finiteNumber(draftLineRef.current) ?? line;
+    const current = line;
     const next = Math.max(0, Math.round((current + delta) * 2) / 2);
-    draftLineRef.current = next.toFixed(1);
-    setDraftLine(draftLineRef.current);
     if (onLineStep) {
       onLineStep(delta);
     } else {
       onLineChange(next);
     }
-  };
-
-  const markStepperPress = () => {
-    suppressBlurCommit.current = true;
-    if (suppressBlurTimer.current) clearTimeout(suppressBlurTimer.current);
-  };
-  const releaseStepperPress = () => {
-    suppressBlurTimer.current = setTimeout(() => {
-      suppressBlurCommit.current = false;
-      suppressBlurTimer.current = null;
-    }, 250);
   };
 
   if (compact) {
@@ -357,34 +320,17 @@ export default React.memo(function AnalysisScenarioPanel({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Decrease line"
-            onPressIn={markStepperPress}
-            onPressOut={releaseStepperPress}
             onPress={() => changeLine(-step)}
             style={({ pressed }) => [styles.compactStepButton, pressed && styles.pressed]}
           >
             <Ionicons name="remove" size={13} color={Colors.text} />
           </Pressable>
-          <TextInput
-            value={draftLine}
-            onChangeText={(value) => {
-              draftLineRef.current = value;
-              setDraftLine(value);
-            }}
-            onBlur={() => {
-              if (!suppressBlurCommit.current) commitDraft();
-            }}
-            onSubmitEditing={commitDraft}
-            keyboardType="decimal-pad"
-            returnKeyType="done"
-            selectTextOnFocus
-            style={styles.compactLineInput}
-            accessibilityLabel="Scenario line"
-          />
+          <Text style={styles.compactLineValue} accessibilityLabel={`Scenario line ${line.toFixed(1)}`}>
+            {line.toFixed(1)}
+          </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Increase line"
-            onPressIn={markStepperPress}
-            onPressOut={releaseStepperPress}
             onPress={() => changeLine(step)}
             style={({ pressed }) => [styles.compactStepButton, pressed && styles.pressed]}
           >
@@ -421,34 +367,17 @@ export default React.memo(function AnalysisScenarioPanel({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Decrease line"
-            onPressIn={markStepperPress}
-            onPressOut={releaseStepperPress}
             onPress={() => changeLine(-step)}
             style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
           >
             <Ionicons name="remove" size={16} color={Colors.text} />
           </Pressable>
-          <TextInput
-            value={draftLine}
-            onChangeText={(value) => {
-              draftLineRef.current = value;
-              setDraftLine(value);
-            }}
-            onBlur={() => {
-              if (!suppressBlurCommit.current) commitDraft();
-            }}
-            onSubmitEditing={commitDraft}
-            keyboardType="decimal-pad"
-            returnKeyType="done"
-            selectTextOnFocus
-            style={styles.lineInput}
-            accessibilityLabel="Scenario line"
-          />
+          <Text style={styles.lineValue} accessibilityLabel={`Scenario line ${line.toFixed(1)}`}>
+            {line.toFixed(1)}
+          </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Increase line"
-            onPressIn={markStepperPress}
-            onPressOut={releaseStepperPress}
             onPress={() => changeLine(step)}
             style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
           >
@@ -625,10 +554,10 @@ const styles = {
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  compactLineInput: {
+  compactLineValue: {
     width: 39,
     height: 27,
-    paddingHorizontal: 2,
+    paddingTop: 6,
     textAlign: 'center' as const,
     color: Colors.text,
     fontSize: 11,
@@ -680,10 +609,10 @@ const styles = {
     justifyContent: 'center' as const,
   },
   pressed: { opacity: 0.55 },
-  lineInput: {
+  lineValue: {
     width: 50,
     height: 30,
-    paddingHorizontal: 4,
+    paddingTop: 6,
     textAlign: 'center' as const,
     color: Colors.text,
     fontSize: 14,

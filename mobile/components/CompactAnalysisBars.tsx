@@ -69,7 +69,7 @@ type CompactPrediction = {
 };
 
 export type CompactAnalysisSection = 'overview' | 'read' | 'form' | 'matchup' | 'model';
-export type RecentVenueFilter = 'all' | 'home' | 'away';
+export type RecentVenueFilter = 'all' | 'home' | 'away' | 'h2h';
 
 const RECENT_LOG_VALUE_FIELDS: Record<string, string> = {
   pass_attempts: 'passes_total',
@@ -199,8 +199,6 @@ function newestFirst(a: Record<string, any>, b: Record<string, any>) {
   return String(b.date || '').localeCompare(String(a.date || ''));
 }
 
-const H2H_COLUMN_WIDTH = 68;
-
 function stageLabelForRow(row: Record<string, any>) {
   const stageClass = String(row.stageClass || '').toLowerCase();
   if (stageClass.includes('knockout')) return 'KNOCKOUT STAGES';
@@ -291,6 +289,18 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   const targetField = RECENT_LOG_VALUE_FIELDS[
     String(prediction.propType || prediction.playerGameLogs?.targetProp || '')
   ];
+  const h2h = prediction.h2hPlayerStats ?? {};
+  const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
+  const h2hRows = playerMatches
+    .slice()
+    .sort(newestFirst)
+    .slice(0, 20)
+    .map((match: any) => ({
+      ...match,
+      value: match.targetStat ?? match.value,
+      possession: match.teamPossession,
+      teamPossession: match.teamPossession,
+    }));
   const normalizedLogs: Array<Record<string, any>> = rawLogs
     .map((game: Record<string, any>) => ({
       ...game,
@@ -313,9 +323,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     away: allLogs.filter((game) => rowVenue(game) === 'away').length,
   };
   const [recentVenueFilter, setRecentVenueFilter] = useState<RecentVenueFilter>('all');
-  const logs = recentVenueFilter === 'all'
+  const recentLogs = recentVenueFilter === 'all' || recentVenueFilter === 'h2h'
     ? allLogs
     : allLogs.filter((game) => rowVenue(game) === recentVenueFilter);
+  const logs = recentVenueFilter === 'h2h' ? h2hRows : recentLogs;
+  const isH2HFilter = recentVenueFilter === 'h2h';
   const historicalHitRates = prediction.modelHitRates
     ?? prediction.playerGameLogs?.modelHitRates
     ?? (prediction as any).hitRates
@@ -346,7 +358,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   const settledDirection = recommendation === 'OVER' || recommendation === 'UNDER'
     ? recommendation
     : null;
-  const h2h = prediction.h2hPlayerStats ?? {};
   const matchupVolume = prediction.matchupVolume ?? null;
   const isSotProp = prediction.propType === 'shots_on_target';
   const isGkProp = prediction.propType === 'saves' || prediction.propType === 'goalie_saves';
@@ -363,19 +374,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   // player history and deterministic projection are the relevant evidence
   // here; the team/opponent volume estimates were confusing and redundant.
   const hasMarketEvidence = Boolean(matchupVolume?.available && (isSotProp || isGkProp));
-  const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
-  // Player H2H is intentionally separate from team-vs-team meetings. The
-  // FORM tab should only show games where this exact player logged the prop.
-  const h2hRows = playerMatches
-    .slice()
-    .sort(newestFirst)
-    .slice(0, 20)
-    .map((match: any) => ({
-      ...match,
-      possession: match.teamPossession,
-      displayValue: match.targetStat,
-    }));
-
   const homeSplit = prediction.homeAvg != null
     ? { average: Number(prediction.homeAvg), count: venueCounts.home }
     : averageForVenue(normalizedLogs, 'home');
@@ -383,35 +381,20 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     ? { average: Number(prediction.awayAvg), count: venueCounts.away }
     : averageForVenue(normalizedLogs, 'away');
   const hasHistoryEvidence = Boolean(historicalHitRates || settledRate != null || deviationHitRate != null);
-  const hasH2hContext = Boolean(
-    h2hRows.length > 0
-      || Number(h2h.sampleSize) > 0
-      || h2h.venueSplits?.home
-      || h2h.venueSplits?.away,
-  );
-  const hasHistoryCard = logs.length > 0 || hasHistoryEvidence || hasH2hContext;
   const showForm = section === 'overview' || section === 'form';
   const showMatchup = section === 'overview' || section === 'matchup' || section === 'model';
   const showModel = section === 'overview' || section === 'matchup' || section === 'model';
-  const showRecent = showForm && logs.length > 0;
+  const showRecent = showForm && (allLogs.length > 0 || h2hRows.length > 0);
   const showHistory = showModel && hasHistoryEvidence;
-  const showH2H = showForm && hasH2hContext;
   const showMarket = showMatchup && hasMarketEvidence;
+  const displayLogs = logs;
   const chartMaxValue = Math.max(
-    ...logs.map((item) => Number(item.value) || 0),
+    ...displayLogs.map((item) => Number(item.value) || 0),
     prediction.line ?? 0,
     1,
   ) * 1.18;
   const chartLineOffset = prediction.line != null
     ? 34 + Math.max(0, Math.min(78, (Number(prediction.line) / chartMaxValue) * 78))
-    : null;
-  const h2hChartMaxValue = Math.max(
-    ...h2hRows.map((item: any) => Number(item.displayValue) || 0),
-    prediction.line ?? 0,
-    1,
-  ) * 1.18;
-  const h2hChartLineOffset = prediction.line != null
-    ? 34 + Math.max(0, Math.min(78, (Number(prediction.line) / h2hChartMaxValue) * 78))
     : null;
   const tacticalProfiles: Array<Record<string, any>> = Array.isArray(
     (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles,
@@ -430,7 +413,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       && String(profile?.opponent || '').toLowerCase() === String(game?.opponent || '').toLowerCase()
     )) ?? null;
   };
-  const last10Logs = logs.slice(0, 10);
+  const last10Logs = recentLogs.slice(0, 10);
   const tpHomeValues = last10Logs
     .filter((row) => rowVenue(row) === 'home' && row.teamPossession != null)
     .map((row) => Number(row.teamPossession))
@@ -455,8 +438,8 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   // history by accident.
   const initialSelection = preferredVenue
     ? {
-        group: 'h2h' as const,
-        index: h2hRows.findIndex((row: any) => rowVenue(row) === preferredVenue),
+        group: 'recent' as const,
+        index: allLogs.findIndex((row: any) => rowVenue(row) === preferredVenue),
       }
     : null;
   const safeInitialSelection = initialSelection && initialSelection.index >= 0
@@ -481,7 +464,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     // established bar/button interaction uses a Light impact instead.
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   };
-  const selectedGame = selected?.group === 'recent' ? logs[selected.index] : null;
+  const selectedGame = selected?.group === 'h2h'
+    ? h2hRows[selected.index]
+    : selected?.group === 'recent'
+      ? logs[selected.index]
+      : null;
   const detailRow = selectedGame;
   const detailPossession = detailRow?.teamPossession ?? detailRow?.possession;
   const detailOpponentPossession = detailRow?.opponentPossession;
@@ -543,19 +530,22 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
         </View>
       )}
 
-      {(showRecent || showHistory || showH2H || showMarket) && (
+      {(showRecent || showHistory || showMarket) && (
         <View style={styles.card}>
           {showRecent && <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Ionicons name="pulse" size={11} color={Colors.primary} />
               <View style={styles.headerStack}>
                 <Text style={styles.title}>
-                  {/* Contract marker: RECENT MATCHES · {logs.length} */}
-                   {logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
+                  {isH2HFilter
+                    ? `H2H · ${h2hRows.length}`
+                    : logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
                 </Text>
                 {logs.length > 0 && (
                   <Text style={styles.contextLabel} numberOfLines={1}>
-                     {recentVenueFilter === 'all'
+                     {isH2HFilter
+                       ? 'PLAYER APPS VS OPPONENT'
+                       : recentVenueFilter === 'all'
                        ? 'ALL VENUES · MATCHES SHOWN'
                        : `${recentVenueFilter.toUpperCase()} MATCHES · FILTERED`}
                   </Text>
@@ -575,8 +565,8 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
           </View>}
           {showRecent && (
             <View style={styles.venueFilterRow}>
-              <Text style={styles.venueFilterLabel}>VENUE</Text>
-              {(['all', 'home', 'away'] as RecentVenueFilter[]).map((venue) => (
+               <Text style={styles.venueFilterLabel}>VIEW</Text>
+              {(['all', 'home', 'away', 'h2h'] as RecentVenueFilter[]).map((venue) => (
                 <TouchableOpacity
                   key={venue}
                   onPress={() => {
@@ -589,19 +579,19 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                   accessibilityState={{ selected: recentVenueFilter === venue }}
                 >
                   <Text style={[styles.venueFilterText, recentVenueFilter === venue && styles.venueFilterTextActive]}>
-                    {venue === 'all' ? 'ALL' : venue.toUpperCase()}
+                     {venue === 'all' ? 'ALL' : venue.toUpperCase()}
                   </Text>
                 </TouchableOpacity>
               ))}
               <Text style={styles.venueFilterCounts}>
-                H {venueCounts.home} · A {venueCounts.away}
+                {isH2HFilter ? `N ${h2hRows.length}` : `H ${venueCounts.home} · A ${venueCounts.away}`}
               </Text>
             </View>
           )}
-          {showRecent && <>{logs.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-              <View style={{ width: logs.length * 45 + 10 }}>
+           {showRecent && <>{displayLogs.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+               <View style={{ width: displayLogs.length * 45 + 10 }}>
                <View style={styles.chart}>
-                {logs.map((game, index) => {
+                 {displayLogs.map((game, index) => {
                   const value = Number(game.value);
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
                     const height = Math.max(7, (value / chartMaxValue) * 78);
@@ -611,7 +601,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                   const blockLabel = String(tacticalProfileFor(game)?.blockProfile?.label || 'UNAVAILABLE')
                     .replace('_BLOCK', '')
                     .replace('UNAVAILABLE', 'UNAVAIL');
-                  const isSelected = selected?.group === 'recent' && selected.index === index;
+                   const isSelected = selected?.group === (isH2HFilter ? 'h2h' : 'recent') && selected.index === index;
                   return (
                     <TouchableOpacity
                       key={`${date}-${index}`}
@@ -620,7 +610,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                          preferredVenue && rowVenue(game) === preferredVenue && styles.barColumnVenueSelected,
                          isSelected && styles.barColumnSelected,
                        ]}
-                      onPress={() => selectBar('recent', index)}
+                       onPress={() => selectBar(isH2HFilter ? 'h2h' : 'recent', index)}
                       activeOpacity={0.8}
                       accessibilityLabel={`${game.opponent || 'Recent match'}, ${game.value} ${prediction.line != null ? `against line ${prediction.line}` : ''}`}
                     >
@@ -677,7 +667,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                 </Text>
               )}
             </View>
-          </ScrollView>}
+           </ScrollView> : isH2HFilter ? (
+             <Text style={styles.empty}>No verified history for this opponent</Text>
+           ) : null}
           {showPossessionContext && (tpHomeSplit || tpAwaySplit) && (
             <Text style={styles.recentInlineStats}>
               TP H {tpHomeSplit?.average?.toFixed(0) ?? '—'}% · TP A {tpAwaySplit?.average?.toFixed(0) ?? '—'}%
@@ -725,98 +717,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               </Text>
             </View>
           )}
-          {showH2H && <View style={styles.h2hSection}>
-            <View style={styles.h2hHeader}>
-              <View style={styles.headerLeft}>
-                <Ionicons name="swap-horizontal-outline" size={10} color={Colors.primary} />
-                <Text style={styles.subsectionTitle}>
-                  PLAYER H2H · {h2h.sampleSize ? `${h2h.sampleSize} APPS` : h2hRows.length ? `${h2hRows.length} APPS` : 'NO VERIFIED HISTORY'}
-                </Text>
-              </View>
-              {h2h.avgVsOpponent != null && <Text style={styles.meta}>AVG {Number(h2h.avgVsOpponent).toFixed(1)}</Text>}
-            </View>
-            {h2h.venueSplits && (h2h.venueSplits.home || h2h.venueSplits.away) && (
-              <View style={styles.h2hSplitRow}>
-                {(['home', 'away'] as const).map((venue) => {
-                  const split = h2h.venueSplits?.[venue];
-                  return (
-                    <View key={venue} style={styles.h2hSplitItem}>
-                      <Text style={[styles.h2hSplitLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
-                        {venue.toUpperCase()}
-                      </Text>
-                      <Text style={styles.h2hSplitValue}>
-                        {split ? `${Number(split.average).toFixed(1)} AVG · ${Number(split.overPct).toFixed(1)}% O` : '—'}
-                      </Text>
-                      <Text style={styles.h2hSplitMeta}>
-                        {split ? `N=${split.sampleSize} · ${Math.round(Number(split.minutesAverage))}' AVG` : 'NO VERIFIED APPS'}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-            {h2hRows.length > 0 ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
-                <View style={{ width: h2hRows.length * 45 + 10 }}>
-                  <View style={styles.h2hChart}>
-                    {h2hRows.map((row: any, index: number) => {
-                      const value = typeof row.displayValue === 'number' ? row.displayValue : null;
-                      const isOver = value != null && prediction.line != null && value > prediction.line;
-                      const color = isOver ? Colors.success : value != null ? Colors.error : '#444';
-                      const height = value != null ? Math.max(7, (value / h2hChartMaxValue) * 78) : 7;
-                      const possession = showPossessionContext && row.possession != null
-                        ? `TP ${Number(row.possession).toFixed(0)}%`
-                        : null;
-                      const date = row.date ? displayH2HDate(row.date) : '—';
-                      const minutes = Number(row.minutesPlayed ?? row.minutes);
-                      const isSelected = selected?.group === 'h2h' && selected.index === index;
-                      return (
-                        <TouchableOpacity
-                          key={`${date}-${index}`}
-                          style={[
-                            styles.barColumn,
-                            preferredVenue && rowVenue(row) === preferredVenue && styles.barColumnVenueSelected,
-                            isSelected && styles.barColumnSelected,
-                          ]}
-                          onPress={() => selectBar('h2h', index)}
-                          activeOpacity={0.8}
-                          accessibilityLabel={`${row.opponent || row.homeTeam || 'Player H2H'}, ${value ?? 'unavailable'} stat`}
-                        >
-                          <Text style={[styles.value, { color: value != null ? color : Colors.textTertiary }]}>
-                            {value != null ? value : '—'}
-                          </Text>
-                          <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]} />
-                          <Text style={styles.date} numberOfLines={1} ellipsizeMode="clip">{date}</Text>
-                          <Text
-                            style={[styles.opponent, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}
-                            numberOfLines={1}
-                            ellipsizeMode="clip"
-                          >
-                            {shortOpponent(opponentName(row))}
-                          </Text>
-                          {showPossessionContext && <Text style={styles.possessionLabel}>{possession || 'TP —'}</Text>}
-                          <Text style={styles.possessionLabel}>
-                            MIN {Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : '—'}
-                          </Text>
-                          <Text style={[styles.venueLabel, { color: rowVenue(row) === 'home' ? Colors.success : '#60A5FA' }]}>
-                            {venueMark(rowVenue(row))}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    {h2hChartLineOffset != null && (
-                      <View
-                        pointerEvents="none"
-                        style={[styles.chartReferenceLine, { bottom: h2hChartLineOffset }]}
-                      />
-                    )}
-                  </View>
-                </View>
-              </ScrollView>
-            ) : (
-              <Text style={styles.empty}>No verified history for this opponent</Text>
-            )}
-          </View>}
           {showMarket && (
             <View style={styles.marketEvidence}>
               <Text style={styles.volumeSectionTitle}>
@@ -990,13 +890,6 @@ const styles = {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
   },
-  h2hHeader: {
-    paddingHorizontal: 14,
-    paddingTop: 7,
-    paddingBottom: 4,
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-  },
   headerLeft: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
   headerStack: { flex: 1, minWidth: 0 },
   title: { fontSize: 9, color: Colors.textSecondary, fontWeight: '800' as const, letterSpacing: 1 },
@@ -1035,21 +928,6 @@ const styles = {
     textAlign: 'right' as const,
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
-  h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
-  h2hPossessionSummary: {
-    marginHorizontal: 14,
-    marginTop: 7,
-    paddingTop: 7,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.07)',
-  },
-  h2hPossessionSummaryLabel: {
-    color: Colors.textSecondary,
-    fontSize: 7,
-    fontWeight: '900' as const,
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
   chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
   chartReferenceLine: {
     position: 'absolute' as const,
@@ -1132,39 +1010,7 @@ const styles = {
     fontWeight: '800' as const,
     letterSpacing: 0.85,
   },
-  h2hSection: {
-    marginTop: 8,
-    paddingTop: 7,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.07)',
-  },
   barColumn: { width: 42, height: 118, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 4, paddingTop: 1 },
-  // H2H is intentionally a little taller than the old strip. Each column has
-  // reserved rows for value → bar → date → possession/venue, so the bar can
-  // never cover the customer-facing numbers.
-  h2hChart: { height: 78, flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: 5 },
-  h2hBarColumn: { width: H2H_COLUMN_WIDTH, height: 74, alignItems: 'center' as const, justifyContent: 'flex-start' as const, borderRadius: 5, paddingTop: 1 },
-  h2hValue: { fontSize: 11, fontWeight: '900' as const, lineHeight: 14, height: 14, marginBottom: 2 },
-  h2hBar: { width: 26, minHeight: 4, borderRadius: 2 },
-  h2hSplitRow: {
-    flexDirection: 'row' as const,
-    gap: 7,
-    marginHorizontal: 14,
-    marginBottom: 7,
-  },
-  h2hSplitItem: {
-    flex: 1,
-    backgroundColor: 'transparent',
-    borderLeftWidth: 1,
-    borderLeftColor: 'rgba(255,255,255,0.12)',
-    paddingLeft: 7,
-    paddingVertical: 2,
-  },
-  h2hSplitLabel: { fontSize: 7, fontWeight: '900' as const, letterSpacing: 0.8 },
-  h2hSplitValue: { color: '#D8DEE9', fontSize: 8, fontWeight: '800' as const, marginTop: 1 },
-  h2hSplitMeta: { color: '#687386', fontSize: 7, fontWeight: '700' as const, marginTop: 1 },
-  h2hDate: { fontSize: 8, color: '#888', lineHeight: 11, height: 11, marginTop: 3, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
-  h2hMeta: { fontSize: 8, lineHeight: 11, height: 11, fontWeight: '900' as const, marginTop: 1, width: H2H_COLUMN_WIDTH, textAlign: 'center' as const },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
   value: { fontSize: 7, lineHeight: 8, fontWeight: '800' as const, marginBottom: 1 },
