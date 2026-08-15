@@ -33,17 +33,26 @@ const PROP_LABELS: Record<string, string> = {
 function isSettled(p: Pick) {
   return getSettledOutcome(p) != null;
 }
-function isLive(p: Pick) {
+const LIVE_MATCH_STATUSES = new Set([
+  '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE',
+]);
+
+function fixtureKickoffMs(p: Pick): number | null {
+  if (!p.fixtureDate) return null;
+  const value = new Date(p.fixtureDate).getTime();
+  return Number.isFinite(value) ? value : null;
+}
+
+function isLive(p: Pick, nowMs = Date.now()) {
   if (isPendingReview(p)) return false;
   if (isSettled(p)) return false;
-  return !!(
-    // Fixture status is authoritative. Player stats can lag kickoff by one
-    // provider poll, but the card must still say LIVE instead of PENDING.
-    p.matchStatus === 'live'
-    || p.status === 'live'
-    || (p.elapsed != null && p.elapsed > 0) || p.currentValue != null
-    || (p.pace != null && p.pace > 0)
-  );
+  // A live stat or a previously promoted database status is not proof that
+  // the fixture has started. Only a provider in-progress status can promote
+  // the card, and a known future kickoff always wins over a stale status.
+  const providerStatus = String(p.matchStatus || '').trim().toUpperCase();
+  if (!LIVE_MATCH_STATUSES.has(providerStatus)) return false;
+  const kickoffMs = fixtureKickoffMs(p);
+  return kickoffMs == null || nowMs >= kickoffMs;
 }
 function isPendingReview(p: Pick) {
   const raw = String(p.result || '').toLowerCase();
@@ -119,6 +128,20 @@ function formatMatchTime(iso?: string): string {
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${timeStr}`;
 }
 
+function formatCountdown(iso: string | undefined, nowMs: number): string | null {
+  const kickoffMs = iso ? new Date(iso).getTime() : NaN;
+  if (!Number.isFinite(kickoffMs) || kickoffMs <= nowMs) return null;
+  const seconds = Math.ceil((kickoffMs - nowMs) / 1000);
+  if (seconds < 60) return 'STARTS IN <1M';
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `STARTS IN ${minutes}M`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder > 0
+    ? `STARTS IN ${hours}H ${String(remainder).padStart(2, '0')}M`
+    : `STARTS IN ${hours}H`;
+}
+
 function elapsedFromKickoff(iso?: string, nowMs = Date.now()): number | null {
   if (!iso) return null;
   const kickoffMs = new Date(iso).getTime();
@@ -135,16 +158,18 @@ function formatStatusLabel(
 ): string {
   if (settled || pick.matchStatus === 'final') return 'FT';
   const period = String(pick.period || '').toUpperCase();
-  if (period === 'HT') return 'HT';
   if (live) {
+    if (period === 'HT') return 'LIVE · HT';
     const providerElapsed = elapsed != null && Number(elapsed) > 0
       ? Math.floor(Number(elapsed))
       : null;
     const displayElapsed = providerElapsed ?? elapsedFromKickoff(pick.fixtureDate, nowMs);
-    return displayElapsed != null ? `LIVE · ${displayElapsed}'` : 'LIVE · clock pending';
+    return displayElapsed != null ? `LIVE · ${displayElapsed}'` : 'LIVE';
   }
+  const countdown = formatCountdown(pick.fixtureDate, nowMs);
+  if (countdown) return countdown;
   const kickoff = formatMatchTime(pick.fixtureDate);
-  return kickoff ? `KICKOFF · ${kickoff}` : 'SCHEDULED';
+  return kickoff ? `AWAITING START · ${kickoff}` : 'SCHEDULED';
 }
 
 // ─── Status badge ────────────────────────────────────────────────────────────
@@ -200,13 +225,14 @@ export default function OwnerPickCard({
   ownerMediaEnabled?: boolean;
   compact?: boolean;
 }) {
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const push = pickPush(pick);
   const dnp = pickDnp(pick);
   const settled = isSettled(pick);
   const pendingReview = isPendingReview(pick);
-  const live = isLive(pick);
+  const live = isLive(pick, clockNow);
   const pending = isPending(pick);
 
   const dir = getRecDir(pick);
@@ -229,7 +255,7 @@ export default function OwnerPickCard({
   const livePace = pick.pace ?? null;
   const nowValue = pendingReview
     ? (pick.actualValue ?? pick.currentValue ?? null)
-    : settled ? actualValue : (pick.currentValue ?? pick.actualValue ?? null);
+    : settled ? actualValue : live ? (pick.currentValue ?? pick.actualValue ?? null) : null;
   // The saved model projection is permanent context. Live pace is a separate
   // in-game estimate and must never replace PROJ in the compact iOS card.
   const paceValue = live ? livePace : null;
@@ -259,7 +285,6 @@ export default function OwnerPickCard({
   const venueTag = pick.venue === 'away' ? 'AWAY' : 'HOME';
   const elapsed = pick.elapsed ?? (pick as any).matchMinute ?? null;
   const matchTime = !settled ? formatMatchTime(pick.fixtureDate) : '';
-  const [clockNow, setClockNow] = useState(() => Date.now());
   const statusLabel = formatStatusLabel(pick, live, settled, elapsed, clockNow);
   const dirLabel = dir ? `${dir} ${propLabel}` : propLabel;
   const nowTrackColor = nowValue != null && lineValue != null
@@ -277,10 +302,12 @@ export default function OwnerPickCard({
   const autoCapturePickRef = useRef<string>('');
 
   useEffect(() => {
-    if (!live) return;
+    if (settled) return;
+    // This drives both the pregame countdown and the live clock. The
+    // provider status still controls LIVE; this timer only refreshes display.
     const timer = setInterval(() => setClockNow(Date.now()), 15000);
     return () => clearInterval(timer);
-  }, [live]);
+  }, [settled]);
 
   // The owner-only response fields are preferred, but older/mobile cached
   // responses may not contain them. Reconstruct the same verified

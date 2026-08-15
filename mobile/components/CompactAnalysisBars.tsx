@@ -380,6 +380,18 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   const awaySplit = prediction.awayAvg != null
     ? { average: Number(prediction.awayAvg), count: venueCounts.away }
     : averageForVenue(normalizedLogs, 'away');
+  const h2hHomeSplit = h2h.venueSplits?.home?.average != null
+    ? {
+        average: Number(h2h.venueSplits.home.average),
+        count: Number(h2h.venueSplits.home.sampleSize || 0),
+      }
+    : averageForVenue(h2hRows, 'home');
+  const h2hAwaySplit = h2h.venueSplits?.away?.average != null
+    ? {
+        average: Number(h2h.venueSplits.away.average),
+        count: Number(h2h.venueSplits.away.sampleSize || 0),
+      }
+    : averageForVenue(h2hRows, 'away');
   const hasHistoryEvidence = Boolean(historicalHitRates || settledRate != null || deviationHitRate != null);
   const showForm = section === 'overview' || section === 'form';
   const showMatchup = section === 'overview' || section === 'matchup' || section === 'model';
@@ -550,9 +562,10 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                        : `${recentVenueFilter.toUpperCase()} MATCHES · FILTERED`}
                   </Text>
                 )}
-                <Text style={styles.recentInlineStats} numberOfLines={1}>
-                  HOME {venueCounts.home} · AWAY {venueCounts.away}
-                  {homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}
+                <Text style={styles.recentInlineStats} numberOfLines={isH2HFilter ? 2 : 1}>
+                  {isH2HFilter
+                    ? `HOME AVG ${h2hHomeSplit?.average?.toFixed(1) ?? '—'}${h2hHomeSplit?.count ? ` (N=${h2hHomeSplit.count})` : ''} · AWAY AVG ${h2hAwaySplit?.average?.toFixed(1) ?? '—'}${h2hAwaySplit?.count ? ` (N=${h2hAwaySplit.count})` : ''}`
+                    : `HOME ${venueCounts.home} · AWAY ${venueCounts.away}${homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}`}
                 </Text>
                 {venueHistoryFallback && (
                   <Text style={styles.contextWarning} numberOfLines={1}>
@@ -589,7 +602,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
             </View>
           )}
            {showRecent && <>{displayLogs.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-               <View style={{ width: displayLogs.length * 45 + 10 }}>
+                <View style={{ width: displayLogs.length * 55 + 10 }}>
                <View style={styles.chart}>
                  {displayLogs.map((game, index) => {
                   const value = Number(game.value);
@@ -1018,7 +1031,7 @@ const styles = {
   possession: { position: 'absolute' as const, bottom: 4, color: '#FFF', fontSize: 6.5, fontWeight: '900' as const },
   possessionLabel: { fontSize: 5.5, color: '#7D8796', lineHeight: 7, fontWeight: '800' as const },
   venueLabel: { fontSize: 6, lineHeight: 7, fontWeight: '900' as const, letterSpacing: 0.4 },
-  date: { fontSize: 5.5, color: '#777', lineHeight: 7, marginTop: 1 },
+  date: { fontSize: 7, color: '#A1AAB8', fontWeight: '800' as const, lineHeight: 8, marginTop: 2 },
   opponent: { fontSize: 6, fontWeight: '700' as const, lineHeight: 8 },
   detail: { paddingHorizontal: 2, paddingTop: 4, paddingBottom: 2, color: '#9CA3AF', fontSize: 8, lineHeight: 12 },
   splitRow: {

@@ -4609,7 +4609,20 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
 
     live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
     finished_statuses = {"FT", "AET", "PEN"}
-    is_live = status_short in live_statuses
+    # Never trust an in-progress label for a fixture whose verified kickoff is
+    # still in the future. Provider status can briefly be stale around the
+    # scheduled start, and the client must not show LIVE before the match.
+    _kickoff_started = True
+    try:
+        _kickoff_raw = _fixture_meta.get("date")
+        if _kickoff_raw:
+            _kickoff_dt = datetime.fromisoformat(str(_kickoff_raw).replace("Z", "+00:00"))
+            if _kickoff_dt.tzinfo is None:
+                _kickoff_dt = _kickoff_dt.replace(tzinfo=timezone.utc)
+            _kickoff_started = datetime.now(timezone.utc) >= _kickoff_dt.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        _kickoff_started = True
+    is_live = status_short in live_statuses and _kickoff_started
     is_finished = status_short in finished_statuses
 
     # The provider sometimes returns the live status before it has populated
