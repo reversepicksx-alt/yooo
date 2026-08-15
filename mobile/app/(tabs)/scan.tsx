@@ -4955,6 +4955,86 @@ export default function ScanScreen() {
                           <Text style={{ fontSize: 7, color: '#333', textAlign: 'right', marginTop: 3, fontStyle: 'italic' }}>
                             tap bar to toggle
                           </Text>
+
+                          {/* Every-match tactical annotations. Keep this
+                              separate from the tiny chart labels so the
+                              requested formation / PPDA / block data cannot
+                              disappear into a clipped bar caption. */}
+                          {isSoc && (
+                            <View style={{ marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#182218' }}>
+                              <Text style={{ fontSize: 8, color: '#8EDB8A', fontWeight: '900', letterSpacing: 0.8, marginBottom: 6 }}>
+                                TACTICAL MATCH DATA · EVERY MATCH
+                              </Text>
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                {filteredWithIdx.map(({ log: g }, i) => {
+                                  const tactical = profileForLog(g) || {};
+                                  const formation = tactical?.formation?.opponentFormation || '—';
+                                  const rawBlock = String(tactical?.blockProfile?.label || '');
+                                  const block = rawBlock
+                                    .replace('_BLOCK', '')
+                                    .replace('UNAVAILABLE', 'UNAVAILABLE');
+                                  const ppdaValue = tactical?.ppda;
+                                  const ppda = ppdaValue != null
+                                    ? Number(ppdaValue).toFixed(1)
+                                    : '—';
+                                  const status = tactical?.status
+                                    ? String(tactical.status)
+                                        .replace('verified_event_and_formation', 'VERIFIED')
+                                        .replace('verified_event_only', 'EVENT VERIFIED')
+                                        .replace('verified_formation_only', 'FORMATION VERIFIED')
+                                        .replace('not_yet_warmed', 'PENDING')
+                                        .toUpperCase()
+                                    : 'PENDING';
+                                  const tacticalDate = String(g.date || '').slice(0, 10);
+                                  const tacticalOpp = String(g.opponent || '?')
+                                    .replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |sp |ca |cp |ue |ce |cm |se |sk )/i, '')
+                                    .slice(0, 12)
+                                    .toUpperCase();
+                                  return (
+                                    <View
+                                      key={`${String(g.fixtureId || tacticalDate)}-${i}`}
+                                      style={{
+                                        width: 104,
+                                        paddingHorizontal: 7,
+                                        paddingVertical: 7,
+                                        borderRadius: 6,
+                                        backgroundColor: '#071007',
+                                        borderWidth: 1,
+                                        borderColor: status.includes('VERIFIED') ? 'rgba(57,255,20,0.28)' : '#182218',
+                                      }}
+                                    >
+                                      <Text numberOfLines={1} style={{ fontSize: 7, color: '#8EDB8A', fontWeight: '900' }}>
+                                        {tacticalDate || 'DATE —'} · {tacticalOpp}
+                                      </Text>
+                                      <Text style={{ marginTop: 5, fontSize: 6.5, color: '#666', fontWeight: '800', letterSpacing: 0.4 }}>
+                                        OPP FORMATION
+                                      </Text>
+                                      <Text numberOfLines={1} style={{ fontSize: 11, color: formation !== '—' ? '#F2F2F2' : '#555', fontWeight: '900' }}>
+                                        {formation}
+                                      </Text>
+                                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 }}>
+                                        <View>
+                                          <Text style={{ fontSize: 6.5, color: '#666', fontWeight: '800' }}>PPDA</Text>
+                                          <Text style={{ fontSize: 10, color: ppda !== '—' ? '#79A7FF' : '#555', fontWeight: '900' }}>
+                                            {ppda}
+                                          </Text>
+                                        </View>
+                                        <View style={{ alignItems: 'flex-end' }}>
+                                          <Text style={{ fontSize: 6.5, color: '#666', fontWeight: '800' }}>BLOCK</Text>
+                                          <Text numberOfLines={1} style={{ maxWidth: 58, fontSize: 8, color: block && block !== '—' ? '#8EDB8A' : '#555', fontWeight: '900' }}>
+                                            {block || '—'}
+                                          </Text>
+                                        </View>
+                                      </View>
+                                      <Text numberOfLines={1} style={{ marginTop: 5, fontSize: 6.5, color: status.includes('VERIFIED') ? '#8EDB8A' : '#666', fontWeight: '800' }}>
+                                        {status}
+                                      </Text>
+                                    </View>
+                                  );
+                                })}
+                              </View>
+                            </View>
+                          )}
                         </View>
                       </ScrollView>
                     );
@@ -4963,8 +5043,9 @@ export default function ScanScreen() {
                   {/* ── Per-match pressure/block provenance ── */}
                   {prediction.sport === 'soccer' && !allSynthetic && !isH2H && (() => {
                     const tactical = (prediction.tacticalContext as any)?.recentOpponentBlockProfiles;
-                    if (!tactical || !tactical.sampleSize) return null;
-                    const status = String(tactical.status || 'warming').toUpperCase();
+                    const sampleSize = tactical?.sampleSize || displayLogs.length;
+                    if (!sampleSize) return null;
+                    const status = String(tactical?.status || 'warming').toUpperCase();
                     return (
                       <View style={{
                         marginHorizontal: 16,
@@ -4987,9 +5068,9 @@ export default function ScanScreen() {
                           </Text>
                         </View>
                         <Text style={{ marginTop: 4, fontSize: 8, color: '#888', lineHeight: 12 }}>
-                          {tactical.verifiedMatches ?? 0}/{tactical.sampleSize} matches verified ·
-                          {' '}{tactical.ppdaMatches ?? 0} event PPDA ·
-                          {' '}{tactical.formationMatches ?? 0} confirmed formations
+                          {tactical?.verifiedMatches ?? 0}/{sampleSize} matches verified ·
+                          {' '}{tactical?.ppdaMatches ?? 0} event PPDA ·
+                          {' '}{tactical?.formationMatches ?? 0} confirmed formations
                         </Text>
                         <Text style={{ marginTop: 2, fontSize: 7.5, color: '#555', lineHeight: 11 }}>
                           PPDA is exact-match event data where covered. HIGH/MID/LOW labels are
