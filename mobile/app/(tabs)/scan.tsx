@@ -24,7 +24,6 @@ import { callLissaSpeak } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
-import AnalysisScenarioPanel, { calculateAnalysisScenario } from '@/components/AnalysisScenarioPanel';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
@@ -589,73 +588,20 @@ export default function ScanScreen() {
   const [showLineEdit, setShowLineEdit] = useState(false);
   const [lineEditValue, setLineEditValue] = useState('');
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>('read');
-  // Live what-if line. This only changes the result view; the requested and
-  // saved prediction line remains the original posted line.
-  const [scenarioLine, setScenarioLine] = useState<number | null>(null);
-
   // League edit (scan mode)
   const [showLeagueEditScan, setShowLeagueEditScan] = useState(false);
 
-  useEffect(() => {
-    setScenarioLine(predictionState?.line != null ? Number(predictionState.line) : null);
-  }, [predictionState]);
-
-  const predictionBaseLine = Number.isFinite(Number(prediction?.line))
-    ? Number(prediction.line)
-    : null;
   const predictionProjection = Number.isFinite(Number(prediction?.projection))
     ? Number(prediction.projection)
     : Number.isFinite(Number(prediction?.bayesianProjection))
       ? Number(prediction.bayesianProjection)
       : null;
-  const asPercent = (value: unknown): number | null => {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return null;
-    return number >= 0 && number <= 1 ? number * 100 : number;
-  };
-  const predictionPOver = asPercent(prediction?.pOver);
-  const predictionPUnder = asPercent(prediction?.pUnder);
   const predictionLandingBands = (
     (prediction as any)?.distribution?.landingBands
       ?? (prediction as any)?.bayesianMetrics?.distribution?.landingBands
       ?? []
   ) as Array<{ label: string; lower?: number | null; upper?: number | null; probability: number }>;
-  const activeScenarioLine = scenarioLine ?? predictionBaseLine;
-  const changeScanScenarioLine = useCallback((delta: number) => {
-    setScenarioLine((current) => {
-      const nextBase = current ?? predictionBaseLine ?? 0;
-      return Math.max(0, Math.round((nextBase + delta) * 2) / 2);
-    });
-  }, [predictionBaseLine]);
-  const liveScenario = useMemo(() => (
-    predictionBaseLine != null && activeScenarioLine != null
-      ? calculateAnalysisScenario({
-          baseLine: predictionBaseLine,
-          line: activeScenarioLine,
-          projection: predictionProjection,
-          pOver: predictionPOver,
-          pUnder: predictionPUnder,
-          posteriorStd: Number((prediction as any)?.bayesianMetrics?.posteriorStd),
-          baseLandingBands: predictionLandingBands,
-          baseRecommendation: prediction?.recommendation,
-          baseConfidence: Number(prediction?.confidence),
-        })
-      : null
-  ), [
-    activeScenarioLine,
-    prediction,
-    predictionBaseLine,
-    predictionLandingBands,
-    predictionPOver,
-    predictionPUnder,
-    predictionProjection,
-  ]);
-  const scenarioChanged = Boolean(
-    liveScenario
-      && predictionBaseLine != null
-      && Math.abs(liveScenario.line - predictionBaseLine) > 0.001,
-  );
-  const visibleRecommendation = liveScenario?.recommendation ?? prediction?.recommendation;
+  const visibleRecommendation = prediction?.recommendation;
   const visibleIsOver = visibleRecommendation === 'OVER';
   const visibleIsUnder = visibleRecommendation === 'UNDER';
   const visibleRecColor = visibleIsOver
@@ -663,50 +609,6 @@ export default function ScanScreen() {
     : visibleIsUnder
       ? Colors.error
       : Colors.textSecondary;
-  const scenarioPrediction = useMemo(() => (
-    activeScenarioLine != null
-      ? {
-          ...(prediction as any),
-          line: activeScenarioLine,
-          recommendation: liveScenario?.recommendation ?? prediction.recommendation,
-        }
-      : prediction
-  ), [activeScenarioLine, liveScenario?.recommendation, prediction]);
-  const resetScenarioLine = useCallback(() => {
-    if (predictionBaseLine != null) setScenarioLine(predictionBaseLine);
-  }, [predictionBaseLine]);
-  const scenarioLineEditor = useMemo(() => {
-    if (predictionBaseLine == null || activeScenarioLine == null) return undefined;
-    return (
-      <AnalysisScenarioPanel
-        baseLine={predictionBaseLine}
-        line={activeScenarioLine}
-        projection={predictionProjection}
-        pOver={predictionPOver}
-        pUnder={predictionPUnder}
-        posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
-        baseLandingBands={predictionLandingBands}
-        baseRecommendation={prediction?.recommendation}
-        baseConfidence={Number(prediction?.confidence)}
-        propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
-        onLineChange={setScenarioLine}
-        onLineStep={changeScanScenarioLine}
-        onReset={resetScenarioLine}
-        compact
-      />
-    );
-  }, [
-    activeScenarioLine,
-    changeScanScenarioLine,
-    prediction,
-    predictionBaseLine,
-    predictionLandingBands,
-    predictionPOver,
-    predictionPUnder,
-    predictionProjection,
-    resetScenarioLine,
-  ]);
-
   useEffect(() => {
     if (prediction?.fixtureId || prediction?.playerId) {
       setAnalysisTab('read');
@@ -2117,14 +2019,7 @@ export default function ScanScreen() {
   const baseModelProbPct = recommendationProbability != null
     ? Number(recommendationProbability)
     : null;
-  const scenarioProbability = liveScenario
-    ? visibleIsOver
-      ? liveScenario.pOver
-      : visibleIsUnder
-        ? liveScenario.pUnder
-        : Math.max(liveScenario.pOver ?? 0, liveScenario.pUnder ?? 0)
-    : baseModelProbPct;
-  const modelProbPct = scenarioProbability != null ? Number(scenarioProbability) : null;
+  const modelProbPct = baseModelProbPct != null ? Number(baseModelProbPct) : null;
 
   return (
     <KeyboardAvoidingView
@@ -3500,7 +3395,7 @@ export default function ScanScreen() {
               )}
 
               {/* Edge & Safety Rating Banner */}
-              {prediction.edgeRating && !scenarioChanged && prediction.recommendation !== 'PASS' && (() => {
+              {prediction.edgeRating && prediction.recommendation !== 'PASS' && (() => {
                 const EDGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
                   'SHARP EDGE': { color: '#39FF14', icon: 'flash',                 bg: 'rgba(57,255,20,0.10)' },
                   'EDGE':       { color: '#7CFF50', icon: 'trending-up',           bg: 'rgba(124,255,80,0.08)' },
@@ -3603,8 +3498,8 @@ export default function ScanScreen() {
               <View style={styles.analysisStats}>
                 <View style={styles.analysisStat}>
                   <Text style={styles.analysisStatLabel}>Line</Text>
-                  <Text style={styles.analysisStatVal}>{activeScenarioLine ?? '—'}</Text>
-                  <Text style={styles.analysisStatSub}>{scenarioChanged ? 'WHAT-IF' : 'SET'}</Text>
+                  <Text style={styles.analysisStatVal}>{prediction.line ?? '—'}</Text>
+                  <Text style={styles.analysisStatSub}>SET</Text>
                 </View>
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
@@ -3617,9 +3512,7 @@ export default function ScanScreen() {
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
                   <Text style={styles.analysisStatLabel}>
-                    {modelProbPct != null
-                      ? scenarioChanged ? 'What-if probability' : 'Calibrated probability'
-                      : 'Evidence confidence'}
+                     {modelProbPct != null ? 'Calibrated probability' : 'Evidence confidence'}
                   </Text>
                   <Text style={[styles.analysisStatVal, { color: visibleRecColor }]}>
                     {modelProbPct != null
@@ -3627,31 +3520,23 @@ export default function ScanScreen() {
                       : confPct != null ? `${confPct}%` : '—'}
                   </Text>
                   <Text style={styles.analysisStatSub}>
-                    {modelProbPct != null
-                      ? scenarioChanged ? 'SCENARIO ONLY' : 'FINAL MATH'
-                      : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
+                     {modelProbPct != null ? 'FINAL MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
                   </Text>
                 </View>
               </View>
               {modelProbPct != null && (
                 <Text style={styles.probabilityExplainer}>
-                  {scenarioChanged
-                    ? 'WHAT-IF PROBABILITY = a client-side scenario using the saved projection and spread at the edited line. The posted prediction and saved pick remain unchanged.'
-                    : 'CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.'}
+                   CALIBRATED PROBABILITY = the final chance of clearing the line after player history, matchup context, projection spread, and settled calibration. EVIDENCE confidence measures data quality, not the chance itself.
                 </Text>
               )}
               {analysisTab === 'matchup' && (() => {
-                const landingBands = scenarioChanged && liveScenario?.landingBands?.length
-                  ? liveScenario.landingBands
-                  : predictionLandingBands.length > 0
-                    ? predictionLandingBands
-                    : liveScenario?.landingBands;
+                const landingBands = predictionLandingBands;
                 return landingBands && landingBands.length > 0 ? (
                 <View style={styles.landingBandsWrap}>
                   <View style={styles.landingBandsHeader}>
                     <Text style={styles.ciLabel}>LANDING PROBABILITY</Text>
                     <Text style={styles.landingBandsMeta}>
-                      {scenarioChanged ? 'SCENARIO DISTRIBUTION · 100%' : 'SAME FINAL DISTRIBUTION · 100%'}
+                       SAME FINAL DISTRIBUTION · 100%
                     </Text>
                   </View>
                   <View style={styles.landingBandsGrid}>
@@ -3665,9 +3550,7 @@ export default function ScanScreen() {
                     ))}
                   </View>
                   <Text style={styles.landingBandsNote}>
-                    {scenarioChanged
-                      ? 'Bands recalculate around the edited line using the saved projection spread. The posted prediction remains unchanged.'
-                      : 'Bands split the simulated outcomes into non-overlapping ranges. OVER/UNDER uses the posted line.'}
+                     Bands split the simulated outcomes into non-overlapping ranges. OVER/UNDER uses the posted line.
                   </Text>
                 </View>
                 ) : null;
@@ -4622,9 +4505,8 @@ export default function ScanScreen() {
                })}
              </View>
              <CompactAnalysisBars
-                prediction={scenarioPrediction}
+                 prediction={prediction}
                section={analysisTab}
-                lineEditor={scenarioLineEditor}
              />
                  {analysisTab === 'matchup' && (
                <>
@@ -4634,8 +4516,8 @@ export default function ScanScreen() {
                  <SameRoleEvidenceCard
                    data={(prediction as any).positionComparison
                      || (prediction as any).tacticalIntelligence?.positionCohort}
-                   recommendation={liveScenario?.recommendation ?? prediction.recommendation}
-                   line={activeScenarioLine ?? prediction.line}
+                    recommendation={prediction.recommendation}
+                    line={prediction.line}
                  />
                  <TacticalNarrativeCard
                    narrative={(prediction as any).tacticalBreakdown
