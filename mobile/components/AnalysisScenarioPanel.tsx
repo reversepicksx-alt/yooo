@@ -117,10 +117,16 @@ export function calculateAnalysisScenario(input: AnalysisScenarioInput): Analysi
   const line = input.line;
 
   let posteriorStd = finiteNumber(input.posteriorStd);
-  if (!posteriorStd && projection != null && basePOver != null && basePOver > 0 && basePOver < 100) {
+  if (projection != null && basePOver != null && basePOver > 0 && basePOver < 100) {
     const z = inverseNormalCdf(1 - basePOver / 100);
     const inferred = Math.abs(baseLine - projection) / Math.abs(z);
-    if (Number.isFinite(inferred) && inferred > 0.5) posteriorStd = inferred;
+    // Some legacy responses expose covariate sigma (for example 0.28) in
+    // posteriorStd even though it is not in the prop's stat units. When the
+    // saved probability is available, infer the usable spread from that
+    // exact base probability instead of turning every what-if into 99/1.
+    if (Number.isFinite(inferred) && inferred > 0.5 && (!posteriorStd || posteriorStd < 1)) {
+      posteriorStd = inferred;
+    }
   }
   posteriorStd = posteriorStd && posteriorStd > 0 ? posteriorStd : 10;
 
@@ -128,8 +134,14 @@ export function calculateAnalysisScenario(input: AnalysisScenarioInput): Analysi
   let pUnder: number | null = null;
   let hasDynamicProbability = false;
   if (projection != null) {
-    pUnder = clamp(normalCdf((line - projection) / posteriorStd) * 100, 1, 99);
-    pOver = clamp(100 - pUnder, 1, 99);
+    if (Math.abs(line - baseLine) < 0.001 && basePOver != null) {
+      // Keep the backend's exact posted-line probability at the initial state.
+      pOver = clamp(basePOver, 1, 99);
+      pUnder = clamp(basePUnder ?? 100 - pOver, 1, 99);
+    } else {
+      pUnder = clamp(normalCdf((line - projection) / posteriorStd) * 100, 1, 99);
+      pOver = clamp(100 - pUnder, 1, 99);
+    }
     hasDynamicProbability = true;
   } else if (line === baseLine && basePOver != null) {
     pOver = clamp(basePOver, 1, 99);
