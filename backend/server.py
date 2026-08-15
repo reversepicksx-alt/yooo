@@ -2015,16 +2015,20 @@ async def repair_soccer_settlements(payload: dict):
 
 @app.get("/api/admin/sessions")
 async def list_active_sessions(email: str = Query(...)):
-    """Owner-only: return all active sessions with last-active info."""
+    """Owner-only: return sessions active in the recent presence window."""
     from config import OWNER_EMAILS
     email_lower = email.lower().strip()
     if email_lower not in OWNER_EMAILS:
         raise HTTPException(status_code=403, detail="Owner access only")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    # last_active is intentionally stored as an ISO string. Querying with a
+    # datetime silently returns zero rows because Mongo does not compare those
+    # BSON types. Five minutes matches the user-facing "online" label while
+    # still tolerating normal mobile polling/background suspension.
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     sessions = (
         await db.sessions.find(
-            {"last_active": {"$gte": cutoff.isoformat()}},
+            {"last_active": {"$gte": cutoff}},
             {"_id": 0, "email": 1, "access_type": 1, "last_active": 1}
         )
         .sort("last_active", -1)

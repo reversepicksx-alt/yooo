@@ -957,6 +957,13 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
         return {"valid": False}
 
     access_type = session.get("access_type", "")
+    # Presence is based on authenticated app activity, not message history.
+    # Sessions are stored with ISO strings, so keep this write in the same
+    # representation used by create_session and the presence queries.
+    await db.sessions.update_one(
+        {"email": email_lower, "session_token": token},
+        {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}},
+    )
 
     # Owner always valid
     if access_type == "Owner":
@@ -1019,6 +1026,23 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
 @router.post("/verify-session")
 async def verify_session_endpoint(req: VerifySessionRequest):
     return await verify_session(req)
+
+
+@router.post("/heartbeat")
+async def heartbeat(req: VerifySessionRequest):
+    """Refresh authenticated presence without re-checking subscription state."""
+    email_lower = req.email.lower().strip()
+    session = await db.sessions.find_one(
+        {"email": email_lower, "session_token": req.session_token},
+        {"_id": 1},
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    await db.sessions.update_one(
+        {"email": email_lower, "session_token": req.session_token},
+        {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True}
 
 
 @router.post("/logout")

@@ -1526,6 +1526,21 @@ export default function PicksScreen() {
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
+      ) : error && picks.length === 0 ? (
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline-outline" size={44} color={Colors.textTertiary} />
+          <Text style={[styles.emptyTitle, { marginTop: 12 }]}>Saved picks unavailable</Text>
+          <Text style={[styles.emptySub, { textAlign: 'center', marginTop: 6 }]}>
+            We could not load your saved picks. Your history has not been cleared.
+          </Text>
+          <TouchableOpacity
+            onPress={() => refetch()}
+            style={[styles.emptyAction, { marginTop: 18 }]}
+          >
+            <Ionicons name="refresh-outline" size={14} color="#000" />
+            <Text style={styles.emptyActionText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
       ) : activeTab === 'live' && live.length === 0 ? (
         <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(400).springify() : undefined} style={styles.empty}>
           <View style={styles.emptyIconWrap}>

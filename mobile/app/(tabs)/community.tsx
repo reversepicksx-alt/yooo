@@ -19,6 +19,7 @@ import {
   reactToCommunityMessage,
   deleteCommunityMessage,
   fetchCommunityParticipants,
+  fetchCommunityOnlineCount,
   searchUsers,
   apiCall,
 } from '@/lib/api';
@@ -339,6 +340,18 @@ function CommunityScreen() {
     }
   }, [myEmail, isOwner]);
 
+  const loadOnlineCount = useCallback(async () => {
+    if (!myEmail || !session?.token) return;
+    try {
+      const data = await fetchCommunityOnlineCount(myEmail, session.token);
+      if (Number.isFinite(Number(data?.count))) {
+        setOnlineCount(Number(data.count));
+      }
+    } catch {
+      // silently fail; the next presence tick will retry
+    }
+  }, [myEmail, session?.token]);
+
   const loadInitial = useCallback(async () => {
     setLoadError(null);
     try {
@@ -387,14 +400,17 @@ function CommunityScreen() {
     useCallback(() => {
       loadInitial();
       loadParticipants();
+      loadOnlineCount();
       if (isOwner) loadActiveUsers();
       pollRef.current = setInterval(pollNew, POLL_MS);
+      const t1 = setInterval(loadOnlineCount, 15000);
       const t2 = isOwner ? setInterval(loadActiveUsers, 15000) : null;
       return () => {
         if (pollRef.current) clearInterval(pollRef.current);
+        clearInterval(t1);
         if (t2) clearInterval(t2);
       };
-    }, [loadInitial, pollNew, loadParticipants, loadActiveUsers, isOwner]),
+    }, [loadInitial, pollNew, loadParticipants, loadOnlineCount, loadActiveUsers, isOwner]),
   );
 
   useEffect(() => {

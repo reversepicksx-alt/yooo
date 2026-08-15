@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { authLogin, authLogout, verifySession, AuthResponse } from '@/lib/api';
+import { authLogin, authLogout, heartbeatSession, verifySession, AuthResponse } from '@/lib/api';
 
 interface Session {
   email: string;
@@ -86,6 +86,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })();
   }, []);
+
+  // Keep authenticated presence current for the community online indicator.
+  // The endpoint is deliberately cheap and does not re-run entitlement checks.
+  useEffect(() => {
+    if (!session) return;
+    const beat = () => {
+      heartbeatSession(session.email, session.token).catch(() => {});
+    };
+    beat();
+    const timer = setInterval(beat, 60_000);
+    return () => clearInterval(timer);
+  }, [session]);
 
   const saveSession = async (resp: AuthResponse) => {
     await storage.set('rp_email', resp.email);

@@ -283,6 +283,13 @@ export async function verifySession(
   });
 }
 
+export async function heartbeatSession(email: string, session_token: string): Promise<{ ok: boolean }> {
+  return apiCall('/api/auth/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({ email, session_token }),
+  });
+}
+
 export async function syncAppleAccess(
   email: string,
   session_token: string,
@@ -3773,6 +3780,16 @@ export async function fetchCommunityParticipants(): Promise<
   Array<{ id: string; name: string }>
 > {
   return apiCall('/api/community/participants');
+}
+
+export async function fetchCommunityOnlineCount(
+  email: string,
+  token: string,
+): Promise<{ count: number }> {
+  return apiCall('/api/community/online', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
 }
 
 // ─── In-App Notifications ──────────────────────────────────────────────────────

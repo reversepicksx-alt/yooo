@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 import re
 from config import db
@@ -237,6 +237,32 @@ async def get_messages(
         msgs.reverse()
 
     return [_serialize(m, include_image=include_images) for m in msgs]
+
+
+class PresenceRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/api/community/online")
+async def get_online_count(req: PresenceRequest):
+    """Return the current authenticated presence count without exposing users."""
+    email_lower = req.email.lower().strip()
+    session = await db.sessions.find_one(
+        {"email": email_lower, "session_token": req.token},
+        {"_id": 1},
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    now = datetime.now(timezone.utc)
+    await db.sessions.update_one(
+        {"email": email_lower, "session_token": req.token},
+        {"$set": {"last_active": now.isoformat()}},
+    )
+    cutoff = (now - timedelta(minutes=5)).isoformat()
+    count = await db.sessions.count_documents({"last_active": {"$gte": cutoff}})
+    return {"count": count}
 
 
 @router.post("/api/community/messages")
