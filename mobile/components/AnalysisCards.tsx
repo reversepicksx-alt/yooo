@@ -499,6 +499,25 @@ export function renderH2HIntelligence(
   const prop =
     PROP_LABELS[h2h.targetProp ?? ''] ?? (h2h.targetProp ?? '').replace(/_/g, ' ');
   const venueSplits = h2h.venueSplits ?? {};
+  const venuePossessionAverages = (['home', 'away'] as const).reduce((result, venue) => {
+    const rows = Array.isArray(meetingsByVenue[venue]) ? meetingsByVenue[venue] : [];
+    const values = rows
+      .map((meeting: any) => ({
+        team: Number(venue === 'home' ? meeting.homePossession : meeting.awayPossession),
+        opponent: Number(venue === 'home' ? meeting.awayPossession : meeting.homePossession),
+      }))
+      .filter((value: { team: number; opponent: number }) => (
+        Number.isFinite(value.team) && Number.isFinite(value.opponent)
+      ));
+    if (values.length > 0) {
+      result[venue] = {
+        team: values.reduce((sum, value) => sum + value.team, 0) / values.length,
+        opponent: values.reduce((sum, value) => sum + value.opponent, 0) / values.length,
+        sampleSize: values.length,
+      };
+    }
+    return result;
+  }, {} as Record<'home' | 'away', { team: number; opponent: number; sampleSize: number } | undefined>);
   return (
     <View style={aStyles.proCard}>
       <View style={aStyles.proCardHeader}>
@@ -544,6 +563,38 @@ export function renderH2HIntelligence(
               </View>
             );
           })}
+        </View>
+      )}
+      {(venuePossessionAverages.home || venuePossessionAverages.away) && (
+        <View style={{
+          marginBottom: 9,
+          padding: 7,
+          borderRadius: 6,
+          backgroundColor: Colors.cardSecondary,
+          borderWidth: 1,
+          borderColor: Colors.borderSubtle,
+        }}>
+          <Text style={[aStyles.proCardMetricLabel, { marginBottom: 4 }]}>
+            VENUE AVG POSSESSION · VS OPPONENT
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(['home', 'away'] as const).map((venue) => {
+              const average = venuePossessionAverages[venue];
+              return (
+                <View key={`h2h-pos-${venue}`} style={{ flex: 1 }}>
+                  <Text style={[aStyles.proCardMetricLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
+                    TEAM {venue.toUpperCase()}
+                  </Text>
+                  <Text style={{ color: Colors.text, fontSize: 10, fontWeight: '800', marginTop: 2 }}>
+                    {average ? `${average.team.toFixed(1)}% · OPP ${average.opponent.toFixed(1)}%` : '—'}
+                  </Text>
+                  <Text style={{ color: Colors.textTertiary, fontSize: 8, marginTop: 1 }}>
+                    {average ? `N=${average.sampleSize} team meetings` : 'No verified meetings'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
         </View>
       )}
       <View style={aStyles.proCardMetrics}>

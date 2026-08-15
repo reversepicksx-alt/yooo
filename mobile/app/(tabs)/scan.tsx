@@ -607,7 +607,18 @@ export default function ScanScreen() {
   };
   const predictionPOver = asPercent(prediction?.pOver);
   const predictionPUnder = asPercent(prediction?.pUnder);
+  const predictionLandingBands = (
+    (prediction as any)?.distribution?.landingBands
+      ?? (prediction as any)?.bayesianMetrics?.distribution?.landingBands
+      ?? []
+  ) as Array<{ label: string; lower?: number | null; upper?: number | null; probability: number }>;
   const activeScenarioLine = scenarioLine ?? predictionBaseLine;
+  const changeScanScenarioLine = (delta: number) => {
+    setScenarioLine((current) => {
+      const nextBase = current ?? predictionBaseLine ?? 0;
+      return Math.max(0, Math.round((nextBase + delta) * 2) / 2);
+    });
+  };
   const liveScenario = predictionBaseLine != null && activeScenarioLine != null
     ? calculateAnalysisScenario({
         baseLine: predictionBaseLine,
@@ -616,6 +627,7 @@ export default function ScanScreen() {
         pOver: predictionPOver,
         pUnder: predictionPUnder,
         posteriorStd: Number((prediction as any)?.bayesianMetrics?.posteriorStd),
+        baseLandingBands: predictionLandingBands,
         baseRecommendation: prediction?.recommendation,
         baseConfidence: Number(prediction?.confidence),
       })
@@ -3515,7 +3527,28 @@ export default function ScanScreen() {
                 );
               })()}
 
-              {/* Stats Row */}
+               {predictionBaseLine != null && activeScenarioLine != null && (
+                 <View style={{ paddingHorizontal: 14, paddingTop: 2, paddingBottom: 4 }}>
+                   <AnalysisScenarioPanel
+                     baseLine={predictionBaseLine}
+                     line={activeScenarioLine}
+                     projection={predictionProjection}
+                     pOver={predictionPOver}
+                     pUnder={predictionPUnder}
+                     posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
+                     baseLandingBands={predictionLandingBands}
+                     baseRecommendation={prediction?.recommendation}
+                     baseConfidence={Number(prediction?.confidence)}
+                     propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
+                     onLineChange={setScenarioLine}
+                     onLineStep={changeScanScenarioLine}
+                     onReset={() => setScenarioLine(predictionBaseLine)}
+                     embedded
+                   />
+                 </View>
+               )}
+
+               {/* Stats Row */}
               <View style={styles.analysisStats}>
                 <View style={styles.analysisStat}>
                   <Text style={styles.analysisStatLabel}>Line</Text>
@@ -3557,13 +3590,18 @@ export default function ScanScreen() {
                 </Text>
               )}
               {(() => {
-                const landingBands = prediction.distribution?.landingBands
-                  ?? (prediction as any).bayesianMetrics?.distribution?.landingBands;
+                const landingBands = scenarioChanged && liveScenario?.landingBands?.length
+                  ? liveScenario.landingBands
+                  : predictionLandingBands.length > 0
+                    ? predictionLandingBands
+                    : liveScenario?.landingBands;
                 return landingBands && landingBands.length > 0 ? (
                 <View style={styles.landingBandsWrap}>
                   <View style={styles.landingBandsHeader}>
                     <Text style={styles.ciLabel}>LANDING PROBABILITY</Text>
-                    <Text style={styles.landingBandsMeta}>SAME FINAL DISTRIBUTION · 100%</Text>
+                    <Text style={styles.landingBandsMeta}>
+                      {scenarioChanged ? 'SCENARIO DISTRIBUTION · 100%' : 'SAME FINAL DISTRIBUTION · 100%'}
+                    </Text>
                   </View>
                   <View style={styles.landingBandsGrid}>
                     {landingBands.map((band: { label: string; probability: number }) => (
@@ -3576,7 +3614,9 @@ export default function ScanScreen() {
                     ))}
                   </View>
                   <Text style={styles.landingBandsNote}>
-                    Bands split the simulated outcomes into non-overlapping ranges. OVER/UNDER still uses the posted line.
+                    {scenarioChanged
+                      ? 'Bands recalculate around the edited line using the saved projection spread. The posted prediction remains unchanged.'
+                      : 'Bands split the simulated outcomes into non-overlapping ranges. OVER/UNDER uses the posted line.'}
                   </Text>
                 </View>
                 ) : null;
@@ -4506,21 +4546,6 @@ export default function ScanScreen() {
               })()}
                </>)}
             </View>
-             {predictionBaseLine != null && activeScenarioLine != null && (
-               <AnalysisScenarioPanel
-                 baseLine={predictionBaseLine}
-                 line={activeScenarioLine}
-                 projection={predictionProjection}
-                 pOver={predictionPOver}
-                 pUnder={predictionPUnder}
-                 posteriorStd={Number((prediction as any)?.bayesianMetrics?.posteriorStd)}
-                 baseRecommendation={prediction?.recommendation}
-                 baseConfidence={Number(prediction?.confidence)}
-                 propLabel={PROP_LABELS[prediction?.propType || ''] || prediction?.propType || 'Prop'}
-                 onLineChange={setScenarioLine}
-                 onReset={() => setScenarioLine(predictionBaseLine)}
-               />
-             )}
              <CompactAnalysisBars
                prediction={{
                  ...(prediction as any),

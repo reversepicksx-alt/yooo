@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
@@ -8,11 +8,19 @@ export type AnalysisScenario = {
   projection: number | null;
   pOver: number | null;
   pUnder: number | null;
+  landingBands: AnalysisScenarioLandingBand[];
   recommendation: 'OVER' | 'UNDER' | 'PASS';
   edge: number | null;
   confidence: number | null;
   hasDynamicProbability: boolean;
   isBaseLine: boolean;
+};
+
+export type AnalysisScenarioLandingBand = {
+  label: string;
+  lower?: number | null;
+  upper?: number | null;
+  probability: number;
 };
 
 type AnalysisScenarioInput = {
@@ -22,6 +30,7 @@ type AnalysisScenarioInput = {
   pOver: number | null;
   pUnder: number | null;
   posteriorStd: number | null;
+  baseLandingBands?: AnalysisScenarioLandingBand[] | null;
   baseRecommendation?: string | null;
   baseConfidence?: number | null;
 };
@@ -29,7 +38,9 @@ type AnalysisScenarioInput = {
 type Props = AnalysisScenarioInput & {
   propLabel: string;
   onLineChange: (line: number) => void;
+  onLineStep?: (delta: number) => void;
   onReset: () => void;
+  embedded?: boolean;
 };
 
 function finiteNumber(value: unknown): number | null {
@@ -109,6 +120,21 @@ function inverseNormalCdf(probability: number) {
   return numerator / denominator;
 }
 
+function scenarioBandLabel(
+  lower: number | null,
+  upper: number | null,
+  displayAsInteger: boolean,
+) {
+  if (displayAsInteger) {
+    if (lower == null) return `≤${Math.ceil(upper ?? 0) - 1}`;
+    if (upper == null) return `${Math.ceil(lower)}+`;
+    return `${Math.ceil(lower)}–${Math.ceil(upper) - 1}`;
+  }
+  if (lower == null) return `<${Number(upper ?? 0).toFixed(1)}`;
+  if (upper == null) return `≥${lower.toFixed(1)}`;
+  return `${lower.toFixed(1)}–${upper.toFixed(1)}`;
+}
+
 export function calculateAnalysisScenario(input: AnalysisScenarioInput): AnalysisScenario {
   const projection = finiteNumber(input.projection);
   const basePOver = finiteNumber(input.pOver);
@@ -148,6 +174,63 @@ export function calculateAnalysisScenario(input: AnalysisScenarioInput): Analysi
     pUnder = clamp(basePUnder ?? 100 - pOver, 1, 99);
   }
 
+  const baseLandingBands = Array.isArray(input.baseLandingBands)
+    ? input.baseLandingBands
+        .map((band) => ({
+          label: String(band?.label || ''),
+          lower: finiteNumber(band?.lower),
+          upper: finiteNumber(band?.upper),
+          probability: finiteNumber(band?.probability) ?? 0,
+        }))
+        .filter((band) => band.label || band.lower != null || band.upper != null)
+    : [];
+  const isBaseLine = Math.abs(line - baseLine) < 0.001;
+  let landingBands: AnalysisScenarioLandingBand[] = baseLandingBands;
+  if (projection != null && (!isBaseLine || landingBands.length === 0)) {
+    const stableBoundaries = landingBands
+      .map((band) => band.upper)
+      .filter((value): value is number => value != null)
+      .sort((a, b) => a - b)
+      .slice(0, -1);
+    const quantileBoundaries = stableBoundaries.length > 0
+      ? stableBoundaries
+      : [
+          projection - 1.2815515655446004 * posteriorStd,
+          projection - 0.8416212335729143 * posteriorStd,
+        ];
+    const breaks = Array.from(new Set(
+      quantileBoundaries
+        .filter((boundary) => Number.isFinite(boundary) && boundary < line)
+        .map((boundary) => Number(boundary.toFixed(8))),
+    )).sort((a, b) => a - b);
+    const boundaries = [...breaks, line];
+    const displayAsInteger = baseLandingBands.some((band) => /[≤≥+]/.test(band.label));
+    const probabilityFor = (lower: number | null, upper: number | null) => {
+      const upperProbability = upper == null ? 1 : normalCdf((upper - projection) / posteriorStd);
+      const lowerProbability = lower == null ? 0 : normalCdf((lower - projection) / posteriorStd);
+      return clamp((upperProbability - lowerProbability) * 100, 0, 100);
+    };
+    const generated: AnalysisScenarioLandingBand[] = [];
+    let previous: number | null = null;
+    for (const boundary of boundaries) {
+      if (previous != null && boundary <= previous) continue;
+      generated.push({
+        label: scenarioBandLabel(previous, boundary, displayAsInteger),
+        lower: previous,
+        upper: boundary,
+        probability: Number(probabilityFor(previous, boundary).toFixed(1)),
+      });
+      previous = boundary;
+    }
+    generated.push({
+      label: scenarioBandLabel(previous, null, displayAsInteger),
+      lower: previous,
+      upper: null,
+      probability: Number(probabilityFor(previous, null).toFixed(1)),
+    });
+    landingBands = generated;
+  }
+
   const recommendation = pOver == null || pUnder == null || Math.max(pOver, pUnder) < 55
     ? 'PASS'
     : pOver >= pUnder ? 'OVER' : 'UNDER';
@@ -159,11 +242,12 @@ export function calculateAnalysisScenario(input: AnalysisScenarioInput): Analysi
     projection,
     pOver,
     pUnder,
+    landingBands,
     recommendation,
     edge,
     confidence,
     hasDynamicProbability,
-    isBaseLine: Math.abs(line - baseLine) < 0.001,
+    isBaseLine,
   };
 }
 
@@ -186,9 +270,14 @@ export default function AnalysisScenarioPanel({
   baseConfidence,
   propLabel,
   onLineChange,
+  onLineStep,
   onReset,
+  embedded = false,
 }: Props) {
   const [draftLine, setDraftLine] = useState(String(line));
+  const draftLineRef = useRef(String(line));
+  const suppressBlurCommit = useRef(false);
+  const suppressBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scenario = useMemo(() => calculateAnalysisScenario({
     baseLine,
     line,
@@ -201,7 +290,9 @@ export default function AnalysisScenarioPanel({
   }), [baseConfidence, baseLine, baseRecommendation, line, pOver, pUnder, posteriorStd, projection]);
 
   useEffect(() => {
-    setDraftLine(line.toFixed(1));
+    const next = line.toFixed(1);
+    draftLineRef.current = next;
+    setDraftLine(next);
   }, [line]);
 
   const direction = scenario.recommendation;
@@ -215,24 +306,44 @@ export default function AnalysisScenarioPanel({
     : `${scenario.edge >= 0 ? '+' : ''}${scenario.edge.toFixed(1)} vs line`;
 
   const commitDraft = () => {
-    const parsed = Number(draftLine.replace(',', '.'));
+    const parsed = Number(draftLineRef.current.replace(',', '.'));
     if (!Number.isFinite(parsed)) {
-      setDraftLine(line.toFixed(1));
+      const fallback = line.toFixed(1);
+      draftLineRef.current = fallback;
+      setDraftLine(fallback);
       return;
     }
     const next = Math.max(0, Math.round(parsed * 2) / 2);
-    setDraftLine(next.toFixed(1));
+    draftLineRef.current = next.toFixed(1);
+    setDraftLine(draftLineRef.current);
     onLineChange(next);
   };
 
   const changeLine = (delta: number) => {
-    const next = Math.max(0, Math.round((line + delta) * 2) / 2);
-    setDraftLine(next.toFixed(1));
-    onLineChange(next);
+    const current = finiteNumber(draftLineRef.current) ?? line;
+    const next = Math.max(0, Math.round((current + delta) * 2) / 2);
+    draftLineRef.current = next.toFixed(1);
+    setDraftLine(draftLineRef.current);
+    if (onLineStep) {
+      onLineStep(delta);
+    } else {
+      onLineChange(next);
+    }
+  };
+
+  const markStepperPress = () => {
+    suppressBlurCommit.current = true;
+    if (suppressBlurTimer.current) clearTimeout(suppressBlurTimer.current);
+  };
+  const releaseStepperPress = () => {
+    suppressBlurTimer.current = setTimeout(() => {
+      suppressBlurCommit.current = false;
+      suppressBlurTimer.current = null;
+    }, 250);
   };
 
   return (
-    <View style={[styles.card, { borderColor: accent + '55' }]}>
+    <View style={[embedded ? styles.embeddedCard : styles.card, !embedded && { borderColor: accent + '55' }]}>
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
           <View style={[styles.icon, { backgroundColor: accent + '18' }]}>
@@ -257,6 +368,8 @@ export default function AnalysisScenarioPanel({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Decrease line"
+            onPressIn={markStepperPress}
+            onPressOut={releaseStepperPress}
             onPress={() => changeLine(-step)}
             style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
           >
@@ -264,8 +377,13 @@ export default function AnalysisScenarioPanel({
           </Pressable>
           <TextInput
             value={draftLine}
-            onChangeText={setDraftLine}
-            onBlur={commitDraft}
+            onChangeText={(value) => {
+              draftLineRef.current = value;
+              setDraftLine(value);
+            }}
+            onBlur={() => {
+              if (!suppressBlurCommit.current) commitDraft();
+            }}
             onSubmitEditing={commitDraft}
             keyboardType="decimal-pad"
             returnKeyType="done"
@@ -276,6 +394,8 @@ export default function AnalysisScenarioPanel({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Increase line"
+            onPressIn={markStepperPress}
+            onPressOut={releaseStepperPress}
             onPress={() => changeLine(step)}
             style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
           >
@@ -284,7 +404,20 @@ export default function AnalysisScenarioPanel({
         </View>
       </View>
 
-      <View style={styles.hero}>
+      {embedded && (
+        <View style={styles.embeddedSummary}>
+          <View>
+            <Text style={[styles.embeddedDirection, { color: accent }]}>{direction}</Text>
+            <Text style={styles.embeddedSummaryText}>{probability} scenario probability</Text>
+          </View>
+          <View style={styles.embeddedSummaryRight}>
+            <Text style={styles.metricLabel}>PROJECTION {scenario.projection != null ? scenario.projection.toFixed(1) : '—'}</Text>
+            <Text style={[styles.embeddedEdge, { color: accent }]}>{edgeText}</Text>
+          </View>
+        </View>
+      )}
+
+      {!embedded && <View style={styles.hero}>
         <View style={styles.heroMain}>
           <Text style={[styles.recommendation, { color: accent }]}>{direction}</Text>
           <Text style={styles.heroSub}>{probability} scenario probability</Text>
@@ -296,9 +429,9 @@ export default function AnalysisScenarioPanel({
           </Text>
           <Text style={[styles.edge, { color: accent }]}>{edgeText}</Text>
         </View>
-      </View>
+      </View>}
 
-      <View style={styles.probabilityRow}>
+      {!embedded && <View style={styles.probabilityRow}>
         <View style={styles.probabilityCard}>
           <Text style={styles.metricLabel}>OVER PROBABILITY</Text>
           <Text style={[styles.probabilityValue, { color: Colors.success }]}>
@@ -311,20 +444,20 @@ export default function AnalysisScenarioPanel({
             {scenario.pUnder != null ? `${scenario.pUnder.toFixed(1)}%` : '—'}
           </Text>
         </View>
-      </View>
+      </View>}
 
-      {scenario.pOver != null && scenario.pUnder != null && (
+      {!embedded && scenario.pOver != null && scenario.pUnder != null && (
         <View style={styles.distribution}>
           <View style={[styles.distributionOver, { flex: Math.max(scenario.pOver, 1) }]} />
           <View style={[styles.distributionUnder, { flex: Math.max(scenario.pUnder, 1) }]} />
         </View>
       )}
-      <View style={styles.distributionLabels}>
+      {!embedded && <View style={styles.distributionLabels}>
         <Text style={styles.distributionLabel}>OVER</Text>
         <Text style={styles.distributionLabel}>UNDER</Text>
-      </View>
+      </View>}
 
-      <View style={styles.footer}>
+      {!embedded && <View style={styles.footer}>
         <Text style={styles.footerText}>
           {scenario.isBaseLine
             ? 'Base model line · projection comes from the saved prediction'
@@ -335,12 +468,20 @@ export default function AnalysisScenarioPanel({
             <Text style={styles.resetText}>Reset</Text>
           </Pressable>
         )}
-      </View>
+      </View>}
     </View>
   );
 }
 
 const styles = {
+  embeddedCard: {
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    padding: 0,
+    marginBottom: 0,
+    gap: 12,
+  },
   card: {
     backgroundColor: Colors.card,
     borderRadius: 14,
@@ -401,6 +542,26 @@ const styles = {
     letterSpacing: 0.7,
   },
   lineHint: { marginTop: 3, fontSize: 10, color: Colors.textTertiary },
+  embeddedSummary: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    paddingTop: 2,
+  },
+  embeddedDirection: {
+    fontSize: 22,
+    lineHeight: 25,
+    fontWeight: '900' as const,
+    letterSpacing: 1,
+  },
+  embeddedSummaryText: {
+    marginTop: 2,
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '700' as const,
+  },
+  embeddedSummaryRight: { alignItems: 'flex-end' as const, gap: 2 },
+  embeddedEdge: { fontSize: 10, fontWeight: '800' as const },
   stepper: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,

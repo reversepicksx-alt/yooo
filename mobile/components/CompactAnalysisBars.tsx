@@ -356,6 +356,7 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           ...meeting,
           venue: 'home',
           possession: meeting.homePossession,
+          opponentPossession: meeting.awayPossession,
         }))
       : []),
     ...(Array.isArray(meetingsByVenue.away)
@@ -363,9 +364,31 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
           ...meeting,
           venue: 'away',
           possession: meeting.awayPossession,
+          opponentPossession: meeting.homePossession,
         }))
       : []),
   ];
+  const venueMeetingPossession = (venue: 'home' | 'away') => {
+    const rows = Array.isArray(meetingsByVenue[venue]) ? meetingsByVenue[venue] : [];
+    const values = rows
+      .map((meeting: any) => ({
+        team: Number(venue === 'home' ? meeting.homePossession : meeting.awayPossession),
+        opponent: Number(venue === 'home' ? meeting.awayPossession : meeting.homePossession),
+      }))
+      .filter((value: { team: number; opponent: number }) => (
+        Number.isFinite(value.team) && Number.isFinite(value.opponent)
+      ));
+    if (values.length === 0) return null;
+    return {
+      team: values.reduce((sum, value) => sum + value.team, 0) / values.length,
+      opponent: values.reduce((sum, value) => sum + value.opponent, 0) / values.length,
+      sampleSize: values.length,
+    };
+  };
+  const venueMeetingPossessionAverages = {
+    home: venueMeetingPossession('home'),
+    away: venueMeetingPossession('away'),
+  };
   const h2hRows = playerMatches.length
     ? playerMatches.slice().sort(newestFirst).slice(0, 20).map((match: any) => ({
         ...match,
@@ -694,6 +717,33 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                 })}
               </View>
             )}
+            {(venueMeetingPossessionAverages.home || venueMeetingPossessionAverages.away) && (
+              <View style={styles.h2hPossessionSummary}>
+                <Text style={styles.h2hPossessionSummaryLabel}>
+                  VENUE AVG POSSESSION · VS OPPONENT
+                </Text>
+                <View style={styles.h2hSplitRow}>
+                  {(['home', 'away'] as const).map((venue) => {
+                    const average = venueMeetingPossessionAverages[venue];
+                    return (
+                      <View key={`poss-${venue}`} style={styles.h2hSplitItem}>
+                        <Text style={[styles.h2hSplitLabel, { color: venue === 'home' ? Colors.success : '#60A5FA' }]}>
+                          TEAM {venue.toUpperCase()}
+                        </Text>
+                        <Text style={styles.h2hSplitValue}>
+                          {average
+                            ? `${average.team.toFixed(1)}% · OPP ${average.opponent.toFixed(1)}%`
+                            : '—'}
+                        </Text>
+                        <Text style={styles.h2hSplitMeta}>
+                          {average ? `N=${average.sampleSize} team meetings` : 'NO VERIFIED MEETINGS'}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
             {h2hRows.length > 0 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.h2hScrollContent}>
                 <View style={{ width: h2hRows.length * (H2H_COLUMN_WIDTH + 5) + 10 }}>
@@ -705,7 +755,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       const color = row.teamOnly ? '#4A6CFF' : isOver ? Colors.success : value != null ? Colors.error : '#444';
                       const height = value != null ? Math.max(4, (value / maxValue) * 22) : 4;
                       const possession = showPossessionContext
-                        ? row.possession != null ? `TP ${Number(row.possession).toFixed(0)}%` : 'TP —'
+                        ? row.possession != null
+                          ? `TP ${Number(row.possession).toFixed(0)}%${row.teamOnly && row.opponentPossession != null ? ` · OPP ${Number(row.opponentPossession).toFixed(0)}%` : ''}`
+                          : 'TP —'
                         : null;
                       const date = row.date ? displayH2HDate(row.date) : '—';
                       const minutes = Number(row.minutesPlayed ?? row.minutes);
@@ -1048,6 +1100,20 @@ const styles = {
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
+  h2hPossessionSummary: {
+    marginHorizontal: 14,
+    marginTop: 7,
+    paddingTop: 7,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
+  },
+  h2hPossessionSummaryLabel: {
+    color: Colors.textSecondary,
+    fontSize: 7,
+    fontWeight: '900' as const,
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
   chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
   blockVenueLabel: {
     fontSize: 5.5,

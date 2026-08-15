@@ -1342,6 +1342,11 @@ export default function PicksScreen() {
     const pOver = percentValue(source.pOver ?? bayesianMetrics.pOver);
     const pUnder = percentValue(source.pUnder ?? bayesianMetrics.pUnder);
     const confidence = percentValue(source.confidence ?? source.confidenceScore);
+    const landingBands = (
+      source.distribution?.landingBands
+        ?? bayesianMetrics.distribution?.landingBands
+        ?? []
+    ) as Array<{ label: string; lower?: number | null; upper?: number | null; probability: number }>;
     const posteriorStd = finiteNumber(
       bayesianMetrics.posteriorStd
         ?? bayesianMetrics.effectiveStd
@@ -1354,6 +1359,7 @@ export default function PicksScreen() {
       pOver,
       pUnder,
       confidence,
+      landingBands,
       posteriorStd,
       propLabel: PROP_LABELS[source.propType ?? ''] ?? String(source.propType ?? 'Prop'),
       baseRecommendation: String(source.recommendation ?? '').toUpperCase() || null,
@@ -1373,6 +1379,7 @@ export default function PicksScreen() {
         pOver: modalAnalysisValues.pOver,
         pUnder: modalAnalysisValues.pUnder,
         posteriorStd: modalAnalysisValues.posteriorStd,
+        baseLandingBands: modalAnalysisValues.landingBands,
         baseRecommendation: modalAnalysisValues.baseRecommendation,
         baseConfidence: modalAnalysisValues.confidence,
       })
@@ -1940,10 +1947,15 @@ export default function PicksScreen() {
                 pOver={modalAnalysisValues.pOver}
                 pUnder={modalAnalysisValues.pUnder}
                 posteriorStd={modalAnalysisValues.posteriorStd}
+                baseLandingBands={modalAnalysisValues.landingBands}
                 baseRecommendation={modalAnalysisValues.baseRecommendation}
                 baseConfidence={modalAnalysisValues.confidence}
                 propLabel={modalAnalysisValues.propLabel}
                 onLineChange={setScenarioLine}
+                onLineStep={(delta) => setScenarioLine((current) => {
+                  const base = current ?? modalAnalysisValues.baseLine ?? 0;
+                  return Math.max(0, Math.round((base + delta) * 2) / 2);
+                })}
                 onReset={() => setScenarioLine(modalAnalysisValues.baseLine)}
               />
             )}
