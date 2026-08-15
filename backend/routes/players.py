@@ -1295,6 +1295,153 @@ async def search_players(req: PlayerSearchRequest):
             except Exception as exc:
                 print(f"[PLAYER SEARCH] surname fallback failed for {req.query!r}: {exc}")
 
+    # NWSL squad fallback: API-Football doesn't allow name-search + league together,
+    # and the global profiles endpoint often omits NWSL players. When profiles +
+    # surname fallbacks produce no quality match, fetch squads for all 16 NWSL
+    # teams in parallel, match by name (including abbreviated forms like "Y. Ryan"),
+    # and write all fetched players to cache so every future search hits cache.
+    if not quota_gone and not _apply_sort_and_quality(list(live_players)):
+        import time as _sq_time
+        import unicodedata as _sq_uc
+        def _nc(s):
+            return ''.join(
+                c for c in _sq_uc.normalize('NFD', (s or '').lower())
+                if _sq_uc.category(c) != 'Mn'
+            )
+
+        _NWSL_TEAMS = {
+            2997: "Chicago Red Stars W",   2998: "Houston Dash W",
+            2999: "North Carolina Courage W", 3000: "Orlando Pride W",
+            3001: "Portland Thorns W",     3002: "Seattle Reign FC W",
+            3003: "NJ/NY Gotham FC W",     3004: "Utah Royals W",
+            3005: "Washington Spirit W",   16487: "Kansas City W",
+            16488: "Racing Louisville W",  18450: "Angel City W",
+            18451: "San Diego Wave W",     22943: "Bay FC W",
+            27377: "Boston Legacy W",      27378: "Denver Summit W",
+        }
+
+        async def _fetch_nwsl_squad(team_id):
+            # Primary: squad endpoint
+            try:
+                data = await search_api_request("players/squads", {"team": team_id})
+                players = data[0].get("players", []) if data else []
+                if players:
+                    return (team_id, players)
+            except Exception:
+                pass
+            # Fallback for expansion teams with no squad data yet: extract
+            # players from the most recent finished fixture.
+            try:
+                fixtures_data = await search_api_request(
+                    "fixtures", {"team": team_id, "season": 2026, "last": 3}
+                )
+                for fix in (fixtures_data or []):
+                    if fix.get("fixture", {}).get("status", {}).get("short") != "FT":
+                        continue
+                    fid = fix.get("fixture", {}).get("id")
+                    if not fid:
+                        continue
+                    fp_data = await search_api_request("fixtures/players", {"fixture": fid})
+                    if not fp_data:
+                        continue
+                    for td in fp_data:
+                        if td.get("team", {}).get("id") != team_id:
+                            continue
+                        squad_players = [
+                            {
+                                "id": p["player"]["id"],
+                                "name": p["player"]["name"],
+                                "position": p["player"].get("position") or "",
+                                "photo": p["player"].get("photo") or "",
+                            }
+                            for p in td.get("players", [])
+                            if p.get("player", {}).get("id") and p.get("player", {}).get("name")
+                        ]
+                        if squad_players:
+                            print(f"[NWSL SQUAD] team={team_id} used fixture {fid} fallback ({len(squad_players)} players)")
+                            return (team_id, squad_players)
+            except Exception as _fe:
+                print(f"[NWSL SQUAD] fixture fallback for team={team_id}: {_fe}")
+            return (team_id, [])
+
+        try:
+            from cache import COL_PLAYERS
+            squads_raw = await aio.wait_for(
+                aio.gather(*[_fetch_nwsl_squad(tid) for tid in _NWSL_TEAMS]),
+                timeout=3.5,
+            )
+
+            qn = _nc(req.query)
+            qw = qn.split()
+            # Abbreviated match: "Y. Ryan" should match query "Yazmeen Ryan"
+            def _squad_name_matches(name_clean):
+                if all(w in name_clean for w in qw):
+                    return True
+                if len(qw) >= 2:
+                    init = qw[0][0] if qw[0] else ''
+                    last = qw[-1]
+                    return (
+                        name_clean.startswith(f"{init}.") and last in name_clean
+                    )
+                return False
+
+            cache_writes = []
+            for team_id, squad_players in squads_raw:
+                team_name = _NWSL_TEAMS.get(team_id, "")
+                for sp in squad_players:
+                    pid = sp.get("id")
+                    name = sp.get("name") or ""
+                    if not pid or not name:
+                        continue
+                    name_clean = _nc(name)
+                    doc = {
+                        "playerId": pid,
+                        "name": name,
+                        "nameClean": name_clean,
+                        "teamId": team_id,
+                        "teamName": team_name,
+                        "leagueId": NWSL_LEAGUE_ID,
+                        "position": sp.get("position") or "",
+                        "photo": sp.get("photo") or "",
+                        "_cachedAt": _sq_time.time(),
+                    }
+                    cache_writes.append(doc)
+                    if _squad_name_matches(name_clean) and pid not in seen_live_ids:
+                        live_players.append({
+                            "id": pid,
+                            "name": name,
+                            "firstname": sp.get("firstname") or "",
+                            "lastname": sp.get("lastname") or "",
+                            "age": sp.get("age") or 0,
+                            "nationality": "",
+                            "photo": sp.get("photo") or "",
+                            "teamId": team_id,
+                            "teamName": team_name,
+                            "leagueId": NWSL_LEAGUE_ID,
+                            "position": sp.get("position") or "",
+                        })
+                        seen_live_ids.add(pid)
+
+            # Write entire squad cache in background — all NWSL players now searchable
+            async def _bulk_cache(docs):
+                try:
+                    for doc in docs:
+                        await db[COL_PLAYERS].update_one(
+                            {"playerId": doc["playerId"], "leagueId": NWSL_LEAGUE_ID},
+                            {"$setOnInsert": doc},
+                            upsert=True,
+                        )
+                except Exception as _ce:
+                    print(f"[NWSL CACHE] write error: {_ce}")
+            if cache_writes:
+                aio.ensure_future(_bulk_cache(cache_writes))
+                print(f"[NWSL SQUAD] cached {len(cache_writes)} players from {len(squads_raw)} teams")
+
+        except (aio.TimeoutError, TimeoutError):
+            print(f"[PLAYER SEARCH] NWSL squad fallback exceeded 3500ms for {req.query!r}")
+        except Exception as exc:
+            print(f"[PLAYER SEARCH] NWSL squad fallback failed: {exc}")
+
     # The profiles endpoint intentionally returns identity data without
     # statistics. Recover the current/best cached club context with one
     # indexed playerId query, rather than making several provider calls or

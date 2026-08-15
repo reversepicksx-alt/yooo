@@ -262,7 +262,17 @@ export default function FuzzySearchInput({
             position: p.position || '',
             raw: p,
           })),
-        ].filter(p => p.playerName);
+        ].filter(p => p.playerName).filter(p => {
+          // For multi-word queries, suppress MLB/NFL results that match only
+          // one query word (e.g. "Ryan Borucki" appearing when user types
+          // "Yazmeen Ryan"). Soccer results are quality-filtered by the
+          // backend; MLB/NFL must match all query words in the player name.
+          if (p.sport === 'soccer') return true;
+          const qWords = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+          if (qWords.length < 2) return true;
+          const name = (p.playerName || '').toLowerCase();
+          return qWords.every(w => name.includes(w));
+        });
       } else if (searchType === 'cs2_players') {
         r = (await searchCs2Players(q)).filter((p: Cs2Player) => p.isActive !== false);
       } else if (searchType === 'cs2_teams') {
