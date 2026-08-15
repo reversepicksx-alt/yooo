@@ -87,6 +87,86 @@ function _buildNarrationText(p: any): string {
   return (intro + excerpt).trim();
 }
 
+function TacticalNarrativeCard({
+  narrative,
+  recommendation,
+}: {
+  narrative?: string | null;
+  recommendation?: string | null;
+}) {
+  const text = String(narrative || '').trim();
+  if (!text) return null;
+
+  const rec = String(recommendation || '').toUpperCase();
+  const recColor = rec === 'OVER'
+    ? Colors.success
+    : rec === 'UNDER'
+      ? Colors.error
+      : Colors.textSecondary;
+
+  const renderLine = (raw: string, key: number) => {
+    const trimmed = raw.trimEnd();
+    if (!trimmed) return null;
+    const isHeader = /^\*{2}[^*]/.test(trimmed)
+      && trimmed.endsWith('**')
+      && !trimmed.slice(2, -2).includes('**');
+    const isBullet = /^\s{0,3}[*-]\s{1,3}/.test(trimmed) && !isHeader;
+    const isSubBullet = /^\s{4,}[*-]\s/.test(trimmed);
+    const clean = trimmed
+      .replace(/^\s{0,6}[*-]\s+/, '')
+      .replace(/^\*{2}(.*)\*{2}$/, '$1')
+      .trim();
+    const parts = clean.split(/(\*\*[^*]+\*\*)/g);
+    const nodes = parts.map((part, index) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? <Text key={index} style={{ fontWeight: '800', color: Colors.text }}>{part.slice(2, -2)}</Text>
+        : <Text key={index}>{part}</Text>
+    );
+
+    if (isHeader) {
+      return (
+        <Text key={key} style={{ fontSize: 11.5, fontWeight: '800', color: recColor, letterSpacing: 0.6, marginTop: 10, marginBottom: 3 }}>
+          {clean.toUpperCase()}
+        </Text>
+      );
+    }
+    if (isSubBullet) {
+      return (
+        <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginLeft: 16, marginBottom: 1 }}>
+          {'◦ '}{nodes}
+        </Text>
+      );
+    }
+    if (isBullet) {
+      return (
+        <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginLeft: 8, marginBottom: 1 }}>
+          {'• '}{nodes}
+        </Text>
+      );
+    }
+    return (
+      <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginBottom: 2 }}>
+        {nodes}
+      </Text>
+    );
+  };
+
+  return (
+    <View style={[styles.scoutCard, { borderColor: recColor + '33', marginTop: 10 }]}>
+      <View style={styles.scoutHeader}>
+        <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.primary} />
+        <Text style={styles.scoutTitle}>TACTICAL READ</Text>
+        <Text style={{ fontSize: 9, color: Colors.textTertiary, marginLeft: 'auto', fontWeight: '600' }}>
+          MATCH CONTEXT
+        </Text>
+      </View>
+      <View style={{ gap: 0, marginTop: 4 }}>
+        {text.split('\n').map(renderLine)}
+      </View>
+    </View>
+  );
+}
+
 async function autoNarrate(text: string, email: string, token: string): Promise<void> {
   if (!text) return;
   // Native iOS: expo-speech has no autoplay restriction
@@ -4298,6 +4378,13 @@ export default function ScanScreen() {
                  || (prediction as any).tacticalIntelligence?.positionCohort}
                recommendation={prediction.recommendation}
                line={prediction.line}
+             />
+             <TacticalNarrativeCard
+               narrative={(prediction as any).tacticalBreakdown
+                 || tacticalAnalysis
+                 || (prediction as any).reasoning
+                 || (prediction as any).sharpSummary}
+               recommendation={prediction.recommendation}
              />
             {/* ─── MATCHUP OVERVIEW (non-soccer sports) ─── */}
             {false && (<>

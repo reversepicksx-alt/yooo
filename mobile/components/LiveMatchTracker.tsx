@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Animated, Dimensions, ActivityIndicator } from 'react-native';
-import Svg, { Rect, Circle, Line, Path, Defs, RadialGradient, Stop } from 'react-native-svg';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Animated, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Pick, fetchFixtureEvents, LiveEvent } from '@/lib/api';
 import Colors from '@/constants/colors';
@@ -10,8 +9,6 @@ interface LiveMatchTrackerProps {
   visible: boolean;
   onClose: () => void;
 }
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTrackerProps) {
   const [events, setEvents] = useState<LiveEvent[]>([]);
@@ -63,9 +60,11 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
     }
   }, [visible, loadEvents]);
 
-  const currentValue = pick.currentValue ?? pick.actualValue ?? 0;
-  const progressPercent = Math.min((currentValue / (pick.line || 1)) * 100, 100);
-  const isCovering = currentValue >= pick.line;
+  const currentValue = pick.currentValue ?? pick.actualValue ?? null;
+  const progressPercent = currentValue == null
+    ? 0
+    : Math.min((currentValue / (pick.line || 1)) * 100, 100);
+  const isCovering = currentValue != null && currentValue >= pick.line;
 
   const homeTeam = pick.homeTeam || pick.teamName || 'Home';
   const awayTeam = pick.awayTeam || pick.opponentName || 'Away';
@@ -147,45 +146,6 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
             </View>
           </View>
 
-          <View style={styles.pitchContainer}>
-            <Text style={styles.sectionTitle}>Field Activity</Text>
-            <View style={styles.pitchWrapper}>
-              <Svg width="100%" height={200} viewBox="0 0 100 65">
-                <Defs>
-                  <RadialGradient id="heatHome" cx="50%" cy="50%" rx="50%" ry="50%">
-                    <Stop offset="0%" stopColor={Colors.primary} stopOpacity="0.25" />
-                    <Stop offset="100%" stopColor={Colors.primary} stopOpacity="0" />
-                  </RadialGradient>
-                  <RadialGradient id="heatAway" cx="50%" cy="50%" rx="50%" ry="50%">
-                    <Stop offset="0%" stopColor={Colors.error} stopOpacity="0.25" />
-                    <Stop offset="100%" stopColor={Colors.error} stopOpacity="0" />
-                  </RadialGradient>
-                </Defs>
-
-                <Rect x="0" y="0" width="100" height="65" fill="#0A150A" />
-                <Rect x="0" y="0" width="100" height="65" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Line x1="50" y1="0" x2="50" y2="65" stroke={Colors.border} strokeWidth="0.5" />
-                <Circle cx="50" cy="32.5" r="9.15" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Circle cx="50" cy="32.5" r="0.5" fill={Colors.border} />
-                <Rect x="0" y="13.84" width="16.5" height="37.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Rect x="0" y="24.84" width="5.5" height="15.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Circle cx="11" cy="32.5" r="0.5" fill={Colors.border} />
-                <Path d="M 16.5 25.5 A 9.15 9.15 0 0 1 16.5 39.5" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Rect x="83.5" y="13.84" width="16.5" height="37.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Rect x="94.5" y="24.84" width="5.5" height="15.32" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-                <Circle cx="89" cy="32.5" r="0.5" fill={Colors.border} />
-                <Path d="M 83.5 25.5 A 9.15 9.15 0 0 0 83.5 39.5" stroke={Colors.border} strokeWidth="0.5" fill="none" />
-
-                {/* Possession heat zones — left/right biased by actual possession split */}
-                <Circle cx={35 - normalizedHomePoss * 0.15} cy="32.5" r={10 + normalizedHomePoss * 0.12} fill="url(#heatHome)" />
-                <Circle cx={65 + normalizedAwayPoss * 0.15} cy="32.5" r={10 + normalizedAwayPoss * 0.12} fill="url(#heatAway)" />
-
-                {/* Player dot — always in the attacking half on the team with more possession */}
-                <Circle cx={homePoss >= awayPoss ? 65 : 35} cy="32.5" r="2" fill={Colors.primary} />
-              </Svg>
-            </View>
-          </View>
-
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Possession</Text>
             <View style={styles.possessionRow}>
@@ -206,8 +166,8 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>{pick.playerName} - {pick.propType}</Text>
             <View style={styles.progressHeader}>
-              <Text style={styles.progressValues}>
-                <Text style={styles.currentValue}>{currentValue}</Text> / {pick.line}
+                <Text style={styles.progressValues}>
+                <Text style={styles.currentValue}>{currentValue == null ? '—' : currentValue}</Text> / {pick.line}
               </Text>
               {isCovering ? (
                 <View style={styles.coveringBadge}>
@@ -220,6 +180,9 @@ export default function LiveMatchTracker({ pick, visible, onClose }: LiveMatchTr
                 </View>
               ) : null}
             </View>
+            {isLive && currentValue == null && (
+              <Text style={styles.eventsEmpty}>NOW — · awaiting live stat</Text>
+            )}
             <View style={styles.progressBarBg}>
               <View 
                 style={[
@@ -462,22 +425,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: Colors.primary,
-  },
-  pitchContainer: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    padding: 20,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-  },
-  pitchWrapper: {
-    marginTop: 12,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#0A150A',
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
   },
   sectionTitle: {
     fontSize: 16,

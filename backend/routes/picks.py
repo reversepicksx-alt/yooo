@@ -1837,13 +1837,24 @@ async def list_picks(req: GetPicksRequest):
                         await _discard_dnp_pick(p, req.email, "soccer settlement")
                         p["_discardedDnp"] = True
                         continue
-                    p["currentValue"] = upd.get("currentValue")
-                    p["pace"] = upd.get("pace")
-                    p["hitPct"] = upd.get("hitPct")
-                    p["elapsed"] = upd.get("elapsed")
-                    p["period"] = upd.get("period")
-                    p["matchStatus"] = upd.get("matchStatus")
-                    p["matchScore"] = upd.get("matchScore")
+                    # Never erase the last confirmed live stat because a
+                    # provider poll temporarily omitted the player row.  A
+                    # numeric zero is still written: None means unavailable,
+                    # while 0 can be a real provider-confirmed value.
+                    if upd.get("currentValue") is not None or p.get("currentValue") is None:
+                        p["currentValue"] = upd.get("currentValue")
+                    if upd.get("pace") is not None or p.get("pace") is None:
+                        p["pace"] = upd.get("pace")
+                    if upd.get("hitPct") is not None or p.get("hitPct") is None:
+                        p["hitPct"] = upd.get("hitPct")
+                    if upd.get("elapsed") is not None:
+                        p["elapsed"] = upd.get("elapsed")
+                    if upd.get("period"):
+                        p["period"] = upd.get("period")
+                    if upd.get("matchStatus"):
+                        p["matchStatus"] = upd.get("matchStatus")
+                    if upd.get("matchScore") is not None:
+                        p["matchScore"] = upd.get("matchScore")
                     _old_fid = p.get("fixtureId")
                     new_fid = upd.get("fixtureId")
                     p["fixtureId"] = new_fid
@@ -1903,6 +1914,43 @@ async def list_picks(req: GetPicksRequest):
                             )
                         except Exception:
                             pass
+                    # The list response is intentionally durable: the next
+                    # poll must still have the last confirmed NOW value if the
+                    # provider briefly returns no player stats.  Persist only
+                    # fields that are present/confirmed so a transient null
+                    # cannot clobber a good live snapshot.
+                    live_set = {
+                        "matchStatus": p.get("matchStatus"),
+                        "period": p.get("period"),
+                    }
+                    for _field in (
+                        "currentValue", "pace", "hitPct", "elapsed", "matchScore",
+                        "minutesPlayed", "paceMismatch", "paceWarning",
+                        "liveConfidenceScore", "liveConfidenceLevel",
+                        "preMatchProjection", "preMatchConfidenceScore",
+                        "liveGaussian", "homeTeam", "awayTeam",
+                        "finalHomeGoals", "finalAwayGoals", "homePoss",
+                        "awayPoss", "oppAvgPoss",
+                    ):
+                        if _field in upd and upd.get(_field) is not None:
+                            live_set[_field] = upd.get(_field)
+                    if p.get("status") == "live":
+                        live_set["status"] = "live"
+                    if upd.get("result") and upd["result"] != "pending":
+                        live_set.update({
+                            "status": "settled",
+                            "result": upd.get("result"),
+                            "actualValue": upd.get("actualValue"),
+                        })
+                    try:
+                        await db.picks.update_one(
+                            {"pickId": p["pickId"], "email": req.email.lower()},
+                            {"$set": live_set},
+                        )
+                    except Exception as _live_write_err:
+                        # The in-memory response remains useful even when
+                        # Atlas is temporarily quota-blocked.
+                        print(f"[LIVE SNAPSHOT WRITE FAIL] {p.get('playerName','?')}: {_live_write_err}")
         except Exception:
             traceback.print_exc()
 
@@ -3045,29 +3093,42 @@ async def correct_pick(req: CorrectPickRequest):
 # LIVE TRACKING — Real-time in-game stats
 # =============================================
 
-# Soccer stat extraction map
+def _soccer_stat_section(stats: dict, name: str) -> dict:
+    """Return a provider stat section without treating JSON null as a dict.
+
+    API-Football legitimately returns sections such as ``passes: null`` during
+    the first live polls for a player.  The old lambdas called ``.get`` on that
+    null value, aborting the entire live update before the card could receive
+    its clock or an awaiting-stat state.
+    """
+    value = (stats or {}).get(name)
+    return value if isinstance(value, dict) else {}
+
+
+# Soccer stat extraction map.  Keep None distinct from 0: None means that the
+# provider has not published this stat yet; 0 is a confirmed real zero.
 SOCCER_STAT_MAP = {
-    "goals": lambda s: s.get("goals", {}).get("total"),
-    "assists": lambda s: s.get("goals", {}).get("assists"),
-    "shots_assisted": lambda s: s.get("passes", {}).get("key"),
-    "pass_attempts": lambda s: s.get("passes", {}).get("total"),
-    "passes": lambda s: s.get("passes", {}).get("total"),
-    "shots": lambda s: s.get("shots", {}).get("total"),
-    "shots_on_target": lambda s: s.get("shots", {}).get("on"),
-    "tackles": lambda s: s.get("tackles", {}).get("total"),
-    "key_passes": lambda s: s.get("passes", {}).get("key"),
-    "saves": lambda s: (s.get("goals", {}).get("saves") or 0),
-    "goalie_saves": lambda s: (s.get("goals", {}).get("saves") or 0),
-    "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
-    "blocks": lambda s: s.get("tackles", {}).get("blocks"),
-    "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
-    "dribbles_success": lambda s: s.get("dribbles", {}).get("success"),
-    "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
-    "fouls_committed": lambda s: s.get("fouls", {}).get("committed"),
-    "crosses": lambda s: s.get("passes", {}).get("crosses"),
-    "clearances": lambda s: s.get("tackles", {}).get("clearances"),
-    "duels_won": lambda s: s.get("duels", {}).get("won"),
-    "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
+    "goals": lambda s: _soccer_stat_section(s, "goals").get("total"),
+    "assists": lambda s: _soccer_stat_section(s, "goals").get("assists"),
+    "shots_assisted": lambda s: _soccer_stat_section(s, "passes").get("key"),
+    "pass_attempts": lambda s: _soccer_stat_section(s, "passes").get("total"),
+    "passes": lambda s: _soccer_stat_section(s, "passes").get("total"),
+    "shots": lambda s: _soccer_stat_section(s, "shots").get("total"),
+    "shots_on_target": lambda s: _soccer_stat_section(s, "shots").get("on"),
+    "tackles": lambda s: _soccer_stat_section(s, "tackles").get("total"),
+    "key_passes": lambda s: _soccer_stat_section(s, "passes").get("key"),
+    "saves": lambda s: _soccer_stat_section(s, "goals").get("saves"),
+    "goalie_saves": lambda s: _soccer_stat_section(s, "goals").get("saves"),
+    "interceptions": lambda s: _soccer_stat_section(s, "tackles").get("interceptions"),
+    "blocks": lambda s: _soccer_stat_section(s, "tackles").get("blocks"),
+    "dribbles": lambda s: _soccer_stat_section(s, "dribbles").get("attempts"),
+    "dribbles_success": lambda s: _soccer_stat_section(s, "dribbles").get("success"),
+    "fouls_drawn": lambda s: _soccer_stat_section(s, "fouls").get("drawn"),
+    "fouls_committed": lambda s: _soccer_stat_section(s, "fouls").get("committed"),
+    "crosses": lambda s: _soccer_stat_section(s, "passes").get("crosses"),
+    "clearances": lambda s: _soccer_stat_section(s, "tackles").get("clearances"),
+    "duels_won": lambda s: _soccer_stat_section(s, "duels").get("won"),
+    "yellow_cards": lambda s: _soccer_stat_section(s, "cards").get("yellow"),
 }
 
 # API-Football paths are persisted with each verified settlement so an
@@ -4528,8 +4589,11 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             Pass this when multiple picks share the same fixture to avoid redundant calls.
     """
     fixture_id = fixture.get("fixture", {}).get("id")
-    status_short = fixture.get("fixture", {}).get("status", {}).get("short", "")
-    elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed") or 0
+    _fixture_meta = fixture.get("fixture", {}) or {}
+    _status_meta = _fixture_meta.get("status", {}) or {}
+    status_short = _status_meta.get("short", "")
+    _provider_elapsed = _status_meta.get("elapsed")
+    elapsed = _provider_elapsed if _provider_elapsed is not None else 0
     home_goals = fixture.get("goals", {}).get("home", 0) or 0
     away_goals = fixture.get("goals", {}).get("away", 0) or 0
     home_team_name = fixture.get("teams", {}).get("home", {}).get("name", "") or ""
@@ -4548,6 +4612,24 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
     is_live = status_short in live_statuses
     is_finished = status_short in finished_statuses
 
+    # The provider sometimes returns the live status before it has populated
+    # status.elapsed.  Keep the provider value authoritative when present, but
+    # derive a bounded clock from the verified fixture kickoff while it is
+    # temporarily absent so cards do not remain stuck at a generic LIVE label.
+    if is_live and _provider_elapsed is None and status_short != "HT":
+        try:
+            kickoff_raw = _fixture_meta.get("date")
+            kickoff = datetime.fromisoformat(
+                str(kickoff_raw).replace("Z", "+00:00")
+            )
+            if kickoff.tzinfo is None:
+                kickoff = kickoff.replace(tzinfo=timezone.utc)
+            elapsed = max(0, min(120, int(
+                (datetime.now(timezone.utc) - kickoff.astimezone(timezone.utc)).total_seconds() / 60
+            )))
+        except (TypeError, ValueError, OverflowError):
+            elapsed = 0
+
     if not is_live and not is_finished:
         return {"pickId": pick["pickId"], "matchStatus": "scheduled", "fixtureId": fixture_id}
 
@@ -4562,6 +4644,17 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             priority_api_football_request("fixtures/players", {"fixture": fixture_id}),
             _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
         )
+    # Normalize both the current response shape (a list) and older test/cache
+    # doubles that wrap it in {response: [...]}.  A malformed provider payload
+    # should become "stat unavailable", not abort the whole live update.
+    if isinstance(player_stats_data, dict):
+        player_stats_data = (
+            player_stats_data.get("response")
+            or player_stats_data.get("data")
+            or []
+        )
+    if not isinstance(player_stats_data, list):
+        player_stats_data = []
     # Opponent season-average possession for richer post-match context
     _pick_venue = (pick.get("venue") or "home").lower()
     _opp_team_id = away_team_id if _pick_venue == "home" else home_team_id
@@ -4600,11 +4693,20 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 # Match by ID first, fallback to flexible name match
                 if p_id == player_id or (player_name and _player_name_matches(p_name)):
                     _player_found_in_api = True
-                    pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
-                    minutes_played = pstats.get("games", {}).get("minutes") or 0
+                    raw_statistics = p.get("statistics")
+                    if isinstance(raw_statistics, list):
+                        pstats = raw_statistics[0] if raw_statistics and isinstance(raw_statistics[0], dict) else {}
+                    elif isinstance(raw_statistics, dict):
+                        pstats = raw_statistics
+                    else:
+                        pstats = {}
+                    minutes_played = _soccer_stat_section(pstats, "games").get("minutes") or 0
                     getter = SOCCER_STAT_MAP.get(pick.get("propType", ""))
                     if getter:
-                        current_value = getter(pstats)
+                        try:
+                            current_value = getter(pstats)
+                        except (AttributeError, TypeError, ValueError):
+                            current_value = None
                     break
             if _player_found_in_api:  # stop once we've located the player (even if stat is None)
                 break

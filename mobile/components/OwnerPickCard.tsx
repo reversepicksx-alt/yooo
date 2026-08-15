@@ -119,6 +119,34 @@ function formatMatchTime(iso?: string): string {
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${timeStr}`;
 }
 
+function elapsedFromKickoff(iso?: string, nowMs = Date.now()): number | null {
+  if (!iso) return null;
+  const kickoffMs = new Date(iso).getTime();
+  if (!Number.isFinite(kickoffMs) || nowMs < kickoffMs) return null;
+  return Math.max(0, Math.min(120, Math.floor((nowMs - kickoffMs) / 60000)));
+}
+
+function formatStatusLabel(
+  pick: Pick,
+  live: boolean,
+  settled: boolean,
+  elapsed: number | null,
+  nowMs: number,
+): string {
+  if (settled || pick.matchStatus === 'final') return 'FT';
+  const period = String(pick.period || '').toUpperCase();
+  if (period === 'HT') return 'HT';
+  if (live) {
+    const providerElapsed = elapsed != null && Number(elapsed) > 0
+      ? Math.floor(Number(elapsed))
+      : null;
+    const displayElapsed = providerElapsed ?? elapsedFromKickoff(pick.fixtureDate, nowMs);
+    return displayElapsed != null ? `LIVE · ${displayElapsed}'` : 'LIVE · clock pending';
+  }
+  const kickoff = formatMatchTime(pick.fixtureDate);
+  return kickoff ? `KICKOFF · ${kickoff}` : 'SCHEDULED';
+}
+
 // ─── Status badge ────────────────────────────────────────────────────────────
 function StatusPill({
   won, lost, push, dnp,
@@ -161,10 +189,10 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onTrack, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress,
+  pick, onDelete, onShareCommunity, onAutoPostImage, onManagerBadgePress,
   ownerMediaEnabled = false, compact = false,
 }: {
-  pick: Pick; onTrack?: () => void;
+  pick: Pick;
   onDelete?: () => void;
   onShareCommunity?: (imageData: string) => void | Promise<void>;
   onAutoPostImage?: (imageData: string) => void | Promise<void>;
@@ -231,6 +259,8 @@ export default function OwnerPickCard({
   const venueTag = pick.venue === 'away' ? 'AWAY' : 'HOME';
   const elapsed = pick.elapsed ?? (pick as any).matchMinute ?? null;
   const matchTime = !settled ? formatMatchTime(pick.fixtureDate) : '';
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  const statusLabel = formatStatusLabel(pick, live, settled, elapsed, clockNow);
   const dirLabel = dir ? `${dir} ${propLabel}` : propLabel;
   const nowTrackColor = nowValue != null && lineValue != null
     ? ((isOver && nowValue > lineValue) || (!isUnder && !isOver)) ? Colors.primary
@@ -245,6 +275,12 @@ export default function OwnerPickCard({
   const pendingBlobRef = useRef<Blob | null>(null);
   const cardRef = useRef<View>(null);
   const autoCapturePickRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => setClockNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, [live]);
 
   // The owner-only response fields are preferred, but older/mobile cached
   // responses may not contain them. Reconstruct the same verified
@@ -392,7 +428,7 @@ export default function OwnerPickCard({
       nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
       hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
       hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed,
-      venueTag, matchTime, dirLabel, logoDataUri, photoDataUri, teamLogoDataUri,
+      venueTag, matchTime, cardStatusLabel: statusLabel, dirLabel, logoDataUri, photoDataUri, teamLogoDataUri,
     });
     // Only wait for data-URI images (they load instantly; no CORS risk)
     await new Promise(r => setTimeout(r, 120));
@@ -545,7 +581,7 @@ export default function OwnerPickCard({
                 </View>
               ) : <View style={styles.compactDirPlaceholder} />}
               <View style={styles.compactStatsRow}>
-                {!pending && nowValue != null && (
+                {!pending && (live || nowValue != null) && (
                   <View style={styles.compactStat}>
                     <Text style={styles.compactStatLabel}>{settled && hasVerifiedFinal ? 'FINAL' : live ? 'NOW' : 'PEND'}</Text>
                     <Text style={[styles.compactStatValue, {
@@ -569,13 +605,12 @@ export default function OwnerPickCard({
                     <Text style={[styles.compactStatValue, { color: Colors.primary }]}>{fmt(paceValue)}</Text>
                   </View>
                 )}
-                {live && onTrack && (
-                  <TouchableOpacity onPress={onTrack} style={styles.compactTrackBtn} activeOpacity={0.7}>
-                    <Ionicons name="pulse" size={11} color={Colors.primary} />
-                  </TouchableOpacity>
-                )}
               </View>
             </View>
+            {live && nowValue == null && (
+              <Text style={styles.liveStatNote}>NOW — · awaiting live stat</Text>
+            )}
+            <Text style={[styles.compactStatus, live && styles.liveStatus]}>{statusLabel}</Text>
           </View>
         </View>
         {shareSheet}
@@ -675,7 +710,7 @@ export default function OwnerPickCard({
 
         {/* ── Stats row ────────────────────────────────────── */}
         <View style={styles.statsRow}>
-          {!pending && nowValue != null && (
+          {!pending && (live || nowValue != null) && (
             <View style={styles.statBlock}>
               <Text style={styles.statLbl}>{settled && hasVerifiedFinal ? 'FINAL' : live ? 'NOW' : 'PENDING'}</Text>
               <Text style={[styles.statVal, {
@@ -700,6 +735,9 @@ export default function OwnerPickCard({
             </View>
           )}
         </View>
+        {live && nowValue == null && (
+          <Text style={styles.liveStatNote}>NOW — · awaiting live stat</Text>
+        )}
 
         {/* ── Progress track ─────────────────────────────── */}
         {progress != null && (
@@ -712,7 +750,7 @@ export default function OwnerPickCard({
         {/* ── Bottom row ─────────────────────────────────── */}
         <View style={styles.footRow}>
           <Text style={styles.footTime} numberOfLines={1}>
-            {matchTime || (elapsed != null ? `${elapsed}'` : live ? '● LIVE' : '')}
+            {statusLabel}
           </Text>
           {live && pick.fixtureId != null && (
             <Text style={styles.matchId} numberOfLines={1}>MATCH ID {pick.fixtureId}</Text>
@@ -726,13 +764,6 @@ export default function OwnerPickCard({
             </Text>
           )}
         </View>
-        {/* ── Track live btn ─────────────────────────────── */}
-        {live && !won && !lost && pick.sport === 'soccer' && onTrack && (
-          <TouchableOpacity onPress={onTrack} style={styles.liveBtn} activeOpacity={0.7}>
-            <Ionicons name="pulse" size={11} color={Colors.primary} />
-            <Text style={styles.liveBtnText}>Track Live</Text>
-          </TouchableOpacity>
-        )}
         {onShareCommunity && !captureMode && (
           <TouchableOpacity onPress={handleShareCommunity} style={styles.communityBtn} activeOpacity={0.7}>
             <Ionicons name="people-outline" size={12} color={Colors.primary} />
@@ -753,7 +784,7 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
     hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
     hasActualPoss, showScoreLine, propLabel, elapsed,
-    venueTag, matchTime, dirLabel, logoDataUri, photoDataUri, teamLogoDataUri,
+    venueTag, matchTime, cardStatusLabel, dirLabel, logoDataUri, photoDataUri, teamLogoDataUri,
   } = s;
 
   // Use pre-fetched base64 data URIs — avoids CORS taint on html2canvas
@@ -781,7 +812,7 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
         ${hasActualPoss ? ` · ${Math.round(pick.homePoss!)}%/${Math.round(pick.awayPoss!)}%` : ''}
        </div>` : '';
 
-  const timeStr = matchTime || (elapsed != null ? `${elapsed}'` : live ? '● LIVE' : '');
+  const timeStr = cardStatusLabel || matchTime || (elapsed != null ? `${elapsed}'` : live ? '● LIVE' : '');
 
   // Stat blocks
   const statBlockHTML = (label: string, value: string, color = '#fff') =>
@@ -917,11 +948,9 @@ const styles = StyleSheet.create({
   compactStat: { alignItems: 'center', minWidth: 25 },
   compactStatLabel: { color: 'rgba(255,255,255,0.32)', fontSize: 6.5, fontWeight: '800', letterSpacing: 0.35 },
   compactStatValue: { color: '#fff', fontSize: 12.5, fontWeight: '900', lineHeight: 14 },
-  compactTrackBtn: {
-    width: 21, height: 21, borderRadius: 10.5,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(57,255,20,0.08)',
-  },
+  compactStatus: { color: 'rgba(255,255,255,0.38)', fontSize: 8.5, fontWeight: '700', marginTop: 3 },
+  liveStatus: { color: '#FF3B30', letterSpacing: 0.3 },
+  liveStatNote: { color: 'rgba(255,255,255,0.42)', fontSize: 8.5, fontWeight: '600', marginTop: 2 },
   stripe: {
     width: 3,
     alignSelf: 'stretch',
@@ -985,13 +1014,6 @@ const styles = StyleSheet.create({
   footTime: { color: 'rgba(255,255,255,0.3)', fontSize: 9, fontWeight: '600' },
   matchId: { color: Colors.primary, fontSize: 9, fontWeight: '800', letterSpacing: 0.25, marginLeft: 8 },
   footScore: { color: 'rgba(255,255,255,0.25)', fontSize: 8.5, fontWeight: '500' },
-  liveBtn: {
-    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
-    marginTop: 5, paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 5, gap: 4,
-    backgroundColor: 'rgba(57,255,20,0.08)',
-    borderWidth: 1, borderColor: 'rgba(57,255,20,0.2)',
-  },
   liveBtnText: { color: Colors.primary, fontSize: 9, fontWeight: '800' },
   communityBtn: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',

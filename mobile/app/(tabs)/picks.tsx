@@ -24,7 +24,6 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
-import LiveMatchTracker from '@/components/LiveMatchTracker';
 import StreaksAchievements from '@/components/StreaksAchievements';
 import PicksCalendar from '@/components/PicksCalendar';
 import SocialFeed from '@/components/SocialFeed';
@@ -1046,7 +1045,6 @@ export default function PicksScreen() {
   // Tick every minute while the modal is open so the "X min ago" hint updates
   const [, setRefreshTick] = useState(0);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
-  const [liveTrackerPick, setLiveTrackerPick] = useState<Pick | null>(null);
   const [streaksOpen, setStreaksOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [socialOpen, setSocialOpen] = useState(false);
@@ -1149,14 +1147,6 @@ export default function PicksScreen() {
       // on every 15s boundary → list flicker and navigation glitches.
     }, [refetch])
   );
-
-  const liveTrackerLatestPick = useMemo(() => {
-    if (!liveTrackerPick) return null;
-    const id = liveTrackerPick.pickId || liveTrackerPick._id || liveTrackerPick.id;
-    return picks.find((p) => (
-      (p.pickId || p._id || p.id) === id
-    )) || liveTrackerPick;
-  }, [liveTrackerPick, picks]);
 
   const deleteMutation = useMutation({
     mutationFn: (pickId: string) => {
@@ -1490,7 +1480,6 @@ export default function PicksScreen() {
                 pick={item}
                 ownerMediaEnabled={isOwner}
                 compact
-                onTrack={() => setLiveTrackerPick(item)}
                 onDelete={onDeleteForItem}
                 onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
                 onAutoPostImage={highestConfidenceActivePick?.pickId === item.pickId
@@ -1520,7 +1509,6 @@ export default function PicksScreen() {
                   pick={item}
                   ownerMediaEnabled={isOwner}
                   compact
-                  onTrack={() => setLiveTrackerPick(item)}
                   onDelete={onDeleteForItem}
                   onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
                   onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
@@ -1970,11 +1958,6 @@ export default function PicksScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* ── Live Match Tracker ── */}
-      {liveTrackerLatestPick && (
-        <LiveMatchTracker pick={liveTrackerLatestPick} visible={!!liveTrackerLatestPick} onClose={() => setLiveTrackerPick(null)} />
-      )}
 
       {/* ── Streaks & Achievements ── */}
       <StreaksAchievements
