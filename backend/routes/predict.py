@@ -4163,7 +4163,7 @@ async def predict(req: PredictionRequest):
                 _recent_profile_rows,
                 league_id=req.leagueId,
                 league_name=_sit_match_league or "",
-                team_name=player_team_display or req.teamName,
+                team_name=corrected_team_name or req.teamName,
                 player_name=req.playerName,
                 limit=_RECENT_ARCHIVE_TARGET,
                 max_network_matches=12,
