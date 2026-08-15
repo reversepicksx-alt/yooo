@@ -187,7 +187,7 @@ function TacticalNarrativeCard({
             </Text>
           </View>
           <Text style={{ marginTop: 4, fontSize: 12, color: Colors.text, fontWeight: '700' }}>
-            {String(understatPress.label || 'classified').toUpperCase()} · PPDA {Number(understatPress.ppda).toFixed(1)}
+            {String(understatPress.label || 'classified').toUpperCase()}
           </Text>
           <Text style={{ marginTop: 2, fontSize: 10.5, lineHeight: 15, color: Colors.textSecondary }}>
             {understatPress.leaguePercentile != null
@@ -1251,6 +1251,34 @@ export default function ScanScreen() {
             return `M${i + 1}:${val != null ? Number(val).toFixed(1) : '?'}`;
           }).join(' ')
         : 'no logs';
+      const recentLogs = (pred.gameLogs ?? []).slice(0, 40);
+      const recentTacticalProfiles = (
+        (pred as any).tacticalContext?.recentOpponentBlockProfiles?.profiles
+        || []
+      ) as Array<Record<string, any>>;
+      const recentProfileForLog = (game: Record<string, any>) => {
+        const byFixture = recentTacticalProfiles.find((profile) => (
+          profile?.fixtureId != null
+          && game?.fixtureId != null
+          && String(profile.fixtureId) === String(game.fixtureId)
+        ));
+        if (byFixture) return byFixture;
+        return recentTacticalProfiles.find((profile) => (
+          String(profile?.date || '').slice(0, 10) === String(game?.date || '').slice(0, 10)
+          && String(profile?.opponent || '').toLowerCase() === String(game?.opponent || '').toLowerCase()
+        )) ?? null;
+      };
+      const recentBlockSummary = recentLogs.length
+        ? recentLogs.map((game, index) => {
+            const rawBlock = String(recentProfileForLog(game)?.blockProfile?.label || 'UNAVAILABLE')
+              .replace('_BLOCK', '')
+              .replace('UNAVAILABLE', 'UNAVAILABLE');
+            const venue = game.venue === 'home' ? 'H' : game.venue === 'away' ? 'A' : '—';
+            const date = String(game.date || '').slice(0, 10) || 'date unavailable';
+            const opponent = String(game.opponent || 'opponent unavailable');
+            return `${index + 1}) ${date} ${opponent}: ${rawBlock} ${venue}`;
+          }).join(' | ')
+        : 'no recent block evidence';
 
       // Bayesian mechanics summary
       const bm = pred.bayesianMetrics as Record<string, unknown> | undefined;
@@ -1301,6 +1329,7 @@ export default function ScanScreen() {
         `• P(OVER)=${pO ?? '?'}% / P(UNDER)=${pU ?? '?'}% | Confidence: ${conf ?? '?'}% ${confLvl}\n` +
         `• Bayesian mechanics: ${bayesianSummary || 'n/a'}\n` +
         `• Last ${logs.length} game logs: ${logSummary}\n` +
+        `• RECENT BLOCK TYPE EVIDENCE (newest-first; use only these rows): ${recentBlockSummary}\n` +
         (hrSummary ? `• ${hrSummary}\n` : '') +
         (venueSummary ? `• ${venueSummary}\n` : '') +
         (h2hSummary ? `• ${h2hSummary}\n` : '') +
@@ -1326,8 +1355,10 @@ export default function ScanScreen() {
         `YOUR TASK — apply the CORE REASONING FRAMEWORK to explain and validate these numbers:\n` +
         `1) ROLE ANALYSIS: What is this player's exact tactical role and how does it mechanically produce this stat? ` +
         `Quote their per-90 average across competitions and explain whether the projection aligns with it.\n` +
-        `2) MATCHUP INTELLIGENCE: How does ${pred.opponentName ?? pred.opponent ?? 'the opponent'}'s pressing intensity (PPDA), ` +
-        `defensive shape, and formation affect this specific stat for this role?\n` +
+        `2) RECENT BLOCK TYPE: Use only the newest verified block evidence listed above for each recent match row. ` +
+        `Confirm HIGH, MID, LOW, or MIXED when the row is covered; otherwise say UNAVAILABLE. ` +
+        `Do not create separate opponent-formation or PPDA sections — those extra blocks are unnecessary customer-facing output. ` +
+        `Explain only how the confirmed block type affects this prop and role.\n` +
         `3) SUBSTITUTION RISK: What is this player's typical minutes pattern? In which game states are they subbed early?\n` +
         `4) GAME FLOW: Walk through the base/trailing/leading/cagey scenarios and how each shifts this stat ` +
         `relative to the projection of ${proj != null ? Number(proj).toFixed(1) : '?'}.\n` +
@@ -4902,8 +4933,6 @@ export default function ScanScreen() {
                               const blockLabel = String(tactical?.blockProfile?.label || '')
                                 .replace('_BLOCK', '')
                                 .replace('UNAVAILABLE', '—');
-                              const opponentFormation = tactical?.formation?.opponentFormation;
-                              const ppda = tactical?.ppda;
                               const dateStr = g.date ? (() => {
                                 const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
                                 return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
@@ -4918,33 +4947,17 @@ export default function ScanScreen() {
                                   <Text style={{ fontSize: 7, color: '#555', fontWeight: '600', lineHeight: 10 }}>{dateStr}</Text>
                                   <Text style={{ fontSize: 7, color: venueC, fontWeight: '700', lineHeight: 10 }}>{oppShort}</Text>
                                   {isSoc ? (
-                                    <>
-                                      <Text
-                                        numberOfLines={1}
-                                        style={{ fontSize: 5.5, color: opponentFormation ? '#999' : '#333', fontWeight: '700', lineHeight: 8 }}
-                                      >
-                                        {opponentFormation || '—'}
-                                      </Text>
-                                      <Text
-                                        numberOfLines={1}
-                                        style={{
-                                          fontSize: 5.5,
-                                          color: blockLabel && blockLabel !== '—' ? '#8EDB8A' : '#333',
-                                          fontWeight: '800',
-                                          lineHeight: 8,
-                                        }}
-                                      >
-                                        {blockLabel || 'TACT —'}
-                                      </Text>
-                                      {ppda != null ? (
-                                        <Text
-                                          numberOfLines={1}
-                                          style={{ fontSize: 5.5, color: '#79A7FF', fontWeight: '800', lineHeight: 8 }}
-                                        >
-                                          {`PPDA ${Number(ppda).toFixed(1)}`}
-                                        </Text>
-                                      ) : null}
-                                    </>
+                                    <Text
+                                      numberOfLines={1}
+                                      style={{
+                                        fontSize: 5.5,
+                                        color: blockLabel && blockLabel !== '—' ? '#8EDB8A' : '#333',
+                                        fontWeight: '800',
+                                        lineHeight: 8,
+                                      }}
+                                    >
+                                      {`${blockLabel || '—'} · ${g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}`}
+                                    </Text>
                                   ) : null}
                                 </View>
                               );
@@ -4955,129 +4968,8 @@ export default function ScanScreen() {
                           <Text style={{ fontSize: 7, color: '#333', textAlign: 'right', marginTop: 3, fontStyle: 'italic' }}>
                             tap bar to toggle
                           </Text>
-
-                          {/* Every-match tactical annotations. Keep this
-                              separate from the tiny chart labels so the
-                              requested formation / PPDA / block data cannot
-                              disappear into a clipped bar caption. */}
-                          {isSoc && (
-                            <View style={{ marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#182218' }}>
-                              <Text style={{ fontSize: 8, color: '#8EDB8A', fontWeight: '900', letterSpacing: 0.8, marginBottom: 6 }}>
-                                TACTICAL MATCH DATA · EVERY MATCH
-                              </Text>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {filteredWithIdx.map(({ log: g }, i) => {
-                                  const tactical = profileForLog(g) || {};
-                                  const formation = tactical?.formation?.opponentFormation || '—';
-                                  const rawBlock = String(tactical?.blockProfile?.label || '');
-                                  const block = rawBlock
-                                    .replace('_BLOCK', '')
-                                    .replace('UNAVAILABLE', 'UNAVAILABLE');
-                                  const ppdaValue = tactical?.ppda;
-                                  const ppda = ppdaValue != null
-                                    ? Number(ppdaValue).toFixed(1)
-                                    : '—';
-                                  const status = tactical?.status
-                                    ? String(tactical.status)
-                                        .replace('verified_event_and_formation', 'VERIFIED')
-                                        .replace('verified_event_only', 'EVENT VERIFIED')
-                                        .replace('verified_formation_only', 'FORMATION VERIFIED')
-                                        .replace('not_yet_warmed', 'PENDING')
-                                        .toUpperCase()
-                                    : 'PENDING';
-                                  const tacticalDate = String(g.date || '').slice(0, 10);
-                                  const tacticalOpp = String(g.opponent || '?')
-                                    .replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |sp |ca |cp |ue |ce |cm |se |sk )/i, '')
-                                    .slice(0, 12)
-                                    .toUpperCase();
-                                  return (
-                                    <View
-                                      key={`${String(g.fixtureId || tacticalDate)}-${i}`}
-                                      style={{
-                                        width: 104,
-                                        paddingHorizontal: 7,
-                                        paddingVertical: 7,
-                                        borderRadius: 6,
-                                        backgroundColor: '#071007',
-                                        borderWidth: 1,
-                                        borderColor: status.includes('VERIFIED') ? 'rgba(57,255,20,0.28)' : '#182218',
-                                      }}
-                                    >
-                                      <Text numberOfLines={1} style={{ fontSize: 7, color: '#8EDB8A', fontWeight: '900' }}>
-                                        {tacticalDate || 'DATE —'} · {tacticalOpp}
-                                      </Text>
-                                      <Text style={{ marginTop: 5, fontSize: 6.5, color: '#666', fontWeight: '800', letterSpacing: 0.4 }}>
-                                        OPP FORMATION
-                                      </Text>
-                                      <Text numberOfLines={1} style={{ fontSize: 11, color: formation !== '—' ? '#F2F2F2' : '#555', fontWeight: '900' }}>
-                                        {formation}
-                                      </Text>
-                                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 }}>
-                                        <View>
-                                          <Text style={{ fontSize: 6.5, color: '#666', fontWeight: '800' }}>PPDA</Text>
-                                          <Text style={{ fontSize: 10, color: ppda !== '—' ? '#79A7FF' : '#555', fontWeight: '900' }}>
-                                            {ppda}
-                                          </Text>
-                                        </View>
-                                        <View style={{ alignItems: 'flex-end' }}>
-                                          <Text style={{ fontSize: 6.5, color: '#666', fontWeight: '800' }}>BLOCK</Text>
-                                          <Text numberOfLines={1} style={{ maxWidth: 58, fontSize: 8, color: block && block !== '—' ? '#8EDB8A' : '#555', fontWeight: '900' }}>
-                                            {block || '—'}
-                                          </Text>
-                                        </View>
-                                      </View>
-                                      <Text numberOfLines={1} style={{ marginTop: 5, fontSize: 6.5, color: status.includes('VERIFIED') ? '#8EDB8A' : '#666', fontWeight: '800' }}>
-                                        {status}
-                                      </Text>
-                                    </View>
-                                  );
-                                })}
-                              </View>
-                            </View>
-                          )}
                         </View>
                       </ScrollView>
-                    );
-                  })()}
-
-                  {/* ── Per-match pressure/block provenance ── */}
-                  {prediction.sport === 'soccer' && !allSynthetic && !isH2H && (() => {
-                    const tactical = (prediction.tacticalContext as any)?.recentOpponentBlockProfiles;
-                    const sampleSize = tactical?.sampleSize || displayLogs.length;
-                    if (!sampleSize) return null;
-                    const status = String(tactical?.status || 'warming').toUpperCase();
-                    return (
-                      <View style={{
-                        marginHorizontal: 16,
-                        marginTop: 3,
-                        marginBottom: 7,
-                        paddingHorizontal: 9,
-                        paddingVertical: 7,
-                        borderRadius: 7,
-                        backgroundColor: 'rgba(57,255,20,0.035)',
-                        borderWidth: 1,
-                        borderColor: 'rgba(57,255,20,0.12)',
-                      }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Ionicons name="shield-checkmark-outline" size={12} color="#8EDB8A" />
-                          <Text style={{ fontSize: 8, color: '#8EDB8A', fontWeight: '900', letterSpacing: 0.7 }}>
-                            OPPONENT TACTICAL PROFILE
-                          </Text>
-                          <Text style={{ marginLeft: 'auto', fontSize: 7, color: '#666', fontWeight: '800' }}>
-                            {status}
-                          </Text>
-                        </View>
-                        <Text style={{ marginTop: 4, fontSize: 8, color: '#888', lineHeight: 12 }}>
-                          {tactical?.verifiedMatches ?? 0}/{sampleSize} matches verified ·
-                          {' '}{tactical?.ppdaMatches ?? 0} event PPDA ·
-                          {' '}{tactical?.formationMatches ?? 0} confirmed formations
-                        </Text>
-                        <Text style={{ marginTop: 2, fontSize: 7.5, color: '#555', lineHeight: 11 }}>
-                          PPDA is exact-match event data where covered. HIGH/MID/LOW labels are
-                          pressure-location classifications corroborated by formation, not tracking-derived line height.
-                          Explanatory only; no projection adjustment.
-                        </Text>
-                      </View>
                     );
                   })()}
 

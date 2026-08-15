@@ -333,13 +333,6 @@ export function renderTacticalVerdict(
     possessionRead = `The team is ${possessionStatus === 'verified' ? 'projected' : 'estimated'} at ${playerPoss.toFixed(0)}% possession against ${opponentPoss.toFixed(0)}% for the opponent; the effect on ${prop.toLowerCase()} depends on whether the relevant actions are attacking or defensive.`;
   }
 
-  const shape = lineup.formation && lineup.opponentFormation
-    ? `${lineup.formation} vs ${lineup.opponentFormation}`
-    : null;
-  const shapeRead = shape
-    ? `The projected shape is ${shape}. It supports the role context, but it does not prove a player-level pressure route or exact in-possession zone.`
-    : '';
-
   const h2h = ti.playerOpponentHistory ?? (data as any)?.h2hPlayerStats?.opponentHitRate;
   const cohort = ti.positionCohort ?? (data as any)?.positionComparison;
   const h2hN = Number(h2h?.sampleSize ?? 0);
@@ -367,7 +360,7 @@ export function renderTacticalVerdict(
     ? `Bottom line: the model lands at ${projection.toFixed(1)} against ${line.toFixed(1)}. The ${recommendation || 'model'} is based on the role mechanism plus the evidence above—not on a generic recent-form sentence.`
     : '';
 
-  if (!roleMechanism && !possessionRead && !shapeRead && !opponentRead) return null;
+  if (!roleMechanism && !possessionRead && !opponentRead) return null;
   const accent = recommendation === 'OVER' ? Colors.success : recommendation === 'UNDER' ? Colors.error : '#F59E0B';
 
   return (
@@ -380,7 +373,6 @@ export function renderTacticalVerdict(
       </View>
       {roleMechanism ? <Text style={aStyles.tacticalVerdictLead}>{roleMechanism}</Text> : null}
       {possessionRead ? <Text style={aStyles.proCardNote}>{possessionRead}</Text> : null}
-      {shapeRead ? <Text style={aStyles.proCardNote}>{shapeRead}</Text> : null}
       {scriptRead ? <Text style={aStyles.proCardNote}>{scriptRead}</Text> : null}
       {opponentRead ? <Text style={aStyles.proCardNote}>{opponentRead}</Text> : null}
       {conclusion ? <Text style={[aStyles.tacticalVerdictConclusion, { color: accent }]}>{conclusion}</Text> : null}
@@ -443,13 +435,6 @@ export function renderTacticalContext(
               {hasUnderstat
                 ? String(understatPress.label ?? 'classified').replace(/_/g, ' ').toUpperCase()
                 : pressureLabel}
-            </Text>
-            <Text style={aStyles.proCardNote}>
-              {hasUnderstat
-                ? `PPDA ${Number(understatPress.ppda).toFixed(1)}`
-                : pressure.ppda != null
-                ? `PPDA ${Number(pressure.ppda).toFixed(1)}`
-                : 'PPDA unavailable · pressure-volume profile'}
             </Text>
             {hasUnderstat ? (
               <Text style={aStyles.proCardNote}>
@@ -836,7 +821,6 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
     ...(positional.limitations ?? []),
   ].filter(Boolean);
   const accent = ti?.status === 'strong' ? Colors.success : '#F59E0B';
-  const shapeLabel = lineup.shapeStatus === 'confirmed' ? 'CONFIRMED SHAPE' : lineup.shapeStatus === 'projected' ? 'PROJECTED SHAPE' : 'SHAPE LIMITED';
   const signal = positional.propSignal ?? {};
   const robust = positional.robustEvidence ?? {};
   const signalColor = signal.shadowDirection === 'higher_volume'
@@ -877,14 +861,6 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
         <View style={aStyles.tacticalCell}>
           <Text style={aStyles.tacticalValue}>{roleLabel || 'Role unavailable'}</Text>
           <Text style={aStyles.proCardMetricLabel}>PLAYER ROLE</Text>
-        </View>
-        <View style={aStyles.tacticalCell}>
-          <Text style={aStyles.tacticalValue}>
-            {lineup.formation && lineup.opponentFormation
-              ? `${lineup.formation} vs ${lineup.opponentFormation}`
-              : 'Formation unavailable'}
-          </Text>
-          <Text style={aStyles.proCardMetricLabel}>{shapeLabel}</Text>
         </View>
       </View>
       <Text style={aStyles.proCardNote}>

@@ -393,9 +393,10 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       || h2h.venueSplits?.away,
   );
   const hasHistoryCard = logs.length > 0 || hasHistoryEvidence || hasH2hContext;
-  const tacticalPacket = (prediction.tacticalContext as any)?.recentOpponentBlockProfiles ?? null;
-  const tacticalProfiles: Array<Record<string, any>> = Array.isArray(tacticalPacket?.profiles)
-    ? tacticalPacket.profiles
+  const tacticalProfiles: Array<Record<string, any>> = Array.isArray(
+    (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles,
+  )
+    ? (prediction.tacticalContext as any).recentOpponentBlockProfiles.profiles
     : [];
   const tacticalProfileFor = (game: Record<string, any>): Record<string, any> | null => {
     const byFixture = tacticalProfiles.find((profile) => (
@@ -408,15 +409,6 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
       String(profile?.date || '').slice(0, 10) === String(game?.date || '').slice(0, 10)
       && String(profile?.opponent || '').toLowerCase() === String(game?.opponent || '').toLowerCase()
     )) ?? null;
-  };
-  const tacticalStatusLabel = (profile: Record<string, any> | null): string => {
-    const raw = String(profile?.status || '').trim();
-    if (raw === 'verified_event_and_formation') return 'VERIFIED';
-    if (raw === 'verified_event_only') return 'EVENT VERIFIED';
-    if (raw === 'verified_formation_only') return 'FORMATION VERIFIED';
-    if (raw === 'unavailable') return 'UNAVAILABLE';
-    if (raw === 'not_yet_warmed') return 'PENDING';
-    return profile ? raw.replace(/_/g, ' ').toUpperCase() : 'PENDING';
   };
   const last10Logs = logs.slice(0, 10);
   const tpHomeValues = last10Logs
@@ -562,6 +554,9 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                   const date = game.date ? displayH2HDate(game.date) : '—';
                    const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
                   const minutes = game.minutesPlayed ?? game.minutes;
+                  const blockLabel = String(tacticalProfileFor(game)?.blockProfile?.label || 'UNAVAILABLE')
+                    .replace('_BLOCK', '')
+                    .replace('UNAVAILABLE', 'UNAVAIL');
                   const isSelected = selected?.group === 'recent' && selected.index === index;
                   return (
                     <TouchableOpacity
@@ -584,6 +579,15 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
                       {showPossessionContext && <Text style={styles.possessionLabel}>{possession}</Text>}
                       <Text style={styles.possessionLabel}>
                         MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.blockVenueLabel,
+                          { color: blockLabel === 'UNAVAIL' ? '#444' : '#8EDB8A' },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {blockLabel} · {venueMark(rowVenue(game))}
                       </Text>
                     {showSotEvidence && (
                       <Text style={styles.possessionLabel}>
@@ -614,81 +618,6 @@ export function CompactAnalysisBars({ prediction }: { prediction: CompactPredict
               )}
             </View>
           </ScrollView>}
-          {logs.length > 0 && (
-            <View style={styles.tacticalSection}>
-              <View style={styles.tacticalHeader}>
-                <View style={styles.headerLeft}>
-                  <Ionicons name="shield-checkmark-outline" size={10} color={Colors.primary} />
-                  <Text style={styles.subsectionTitle}>TACTICAL MATCH DATA · EVERY MATCH</Text>
-                </View>
-                <Text style={styles.meta}>
-                  {tacticalPacket?.verifiedMatches ?? 0}/{tacticalPacket?.sampleSize ?? logs.length} VERIFIED
-                </Text>
-              </View>
-              <Text style={styles.tacticalMethod}>
-                OPP FORMATION · PPDA · BLOCK PROFILE
-                {' · '}
-                {tacticalPacket?.ppdaMatches ?? 0} EVENT PPDA
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.tacticalScrollContent}
-              >
-                {logs.map((game, index) => {
-                  const profile = tacticalProfileFor(game);
-                  const formation = profile?.formation?.opponentFormation || 'UNAVAILABLE';
-                  const ppda = profile?.ppda != null
-                    ? Number(profile.ppda).toFixed(1)
-                    : 'UNAVAILABLE';
-                  const block = String(profile?.blockProfile?.label || 'UNAVAILABLE')
-                    .replace('_BLOCK', '');
-                  const status = tacticalStatusLabel(profile);
-                  const statusColor = status.includes('VERIFIED') ? '#8EDB8A' : '#777';
-                  const pressureThird = profile?.blockProfile?.dominantPressureThird
-                    ? String(profile.blockProfile.dominantPressureThird).toUpperCase()
-                    : '—';
-                  const date = game.date ? displayH2HDate(game.date) : 'DATE —';
-                  return (
-                    <View
-                      key={`${String(game.fixtureId || date)}-${index}`}
-                      style={[
-                        styles.tacticalMatchCard,
-                        { borderColor: status.includes('VERIFIED') ? 'rgba(57,255,20,0.28)' : '#182218' },
-                      ]}
-                    >
-                      <Text style={styles.tacticalMatchTitle} numberOfLines={1}>
-                        {date} · {shortOpponent(opponentName(game))}
-                      </Text>
-                      <Text style={styles.tacticalFieldLabel}>OPP FORMATION</Text>
-                      <Text style={[styles.tacticalFormation, formation === 'UNAVAILABLE' && styles.tacticalUnavailable]} numberOfLines={1}>
-                        {formation}
-                      </Text>
-                      <View style={styles.tacticalMetricRow}>
-                        <View>
-                          <Text style={styles.tacticalFieldLabel}>PPDA</Text>
-                          <Text style={[styles.tacticalMetricValue, ppda === 'UNAVAILABLE' && styles.tacticalUnavailable]}>
-                            {ppda}
-                          </Text>
-                        </View>
-                        <View style={styles.tacticalMetricRight}>
-                          <Text style={styles.tacticalFieldLabel}>BLOCK</Text>
-                          <Text style={[styles.tacticalBlock, block === 'UNAVAILABLE' && styles.tacticalUnavailable]} numberOfLines={1}>
-                            {block}
-                          </Text>
-                        </View>
-                      </View>
-                      <Text style={styles.tacticalPressure}>PRESSURE ZONE · {pressureThird}</Text>
-                      <Text style={[styles.tacticalStatus, { color: statusColor }]}>{status}</Text>
-                    </View>
-                  );
-                })}
-              </ScrollView>
-              <Text style={styles.tacticalFootnote}>
-                PPDA uses exact-match event coverage where available. Block labels are event-derived pressure-location profiles, not tracking claims. Missing coverage stays unavailable.
-              </Text>
-            </View>
-          )}
           {showPossessionContext && (tpHomeSplit || tpAwaySplit) && (
             <Text style={styles.recentInlineStats}>
               TP H {tpHomeSplit?.average?.toFixed(0) ?? '—'}% · TP A {tpAwaySplit?.average?.toFixed(0) ?? '—'}%
@@ -1120,94 +1049,11 @@ const styles = {
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   h2hScrollContent: { paddingHorizontal: 14, paddingBottom: 8 },
   chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
-  tacticalSection: {
-    marginHorizontal: 14,
-    marginTop: 2,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(57,255,20,0.12)',
-  },
-  tacticalHeader: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const,
-  },
-  tacticalMethod: {
-    marginTop: 4,
-    color: '#697586',
-    fontSize: 6.5,
-    fontWeight: '800' as const,
-    letterSpacing: 0.4,
-  },
-  tacticalScrollContent: {
-    paddingTop: 7,
-    paddingBottom: 3,
-    gap: 6,
-  },
-  tacticalMatchCard: {
-    width: 112,
-    minHeight: 112,
-    paddingHorizontal: 7,
-    paddingVertical: 7,
-    borderRadius: 6,
-    backgroundColor: '#071007',
-    borderWidth: 1,
-  },
-  tacticalMatchTitle: {
-    color: '#8EDB8A',
-    fontSize: 7,
+  blockVenueLabel: {
+    fontSize: 5.5,
+    lineHeight: 7,
     fontWeight: '900' as const,
-  },
-  tacticalFieldLabel: {
-    marginTop: 5,
-    color: '#697586',
-    fontSize: 6,
-    fontWeight: '900' as const,
-    letterSpacing: 0.35,
-  },
-  tacticalFormation: {
-    marginTop: 1,
-    color: '#F2F2F2',
-    fontSize: 11,
-    fontWeight: '900' as const,
-  },
-  tacticalMetricRow: {
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    marginTop: 2,
-  },
-  tacticalMetricRight: { alignItems: 'flex-end' as const },
-  tacticalMetricValue: {
-    marginTop: 1,
-    color: '#79A7FF',
-    fontSize: 10,
-    fontWeight: '900' as const,
-  },
-  tacticalBlock: {
-    marginTop: 1,
-    maxWidth: 62,
-    color: '#8EDB8A',
-    fontSize: 8,
-    fontWeight: '900' as const,
-  },
-  tacticalPressure: {
-    marginTop: 5,
-    color: '#697586',
-    fontSize: 6,
-    fontWeight: '800' as const,
-  },
-  tacticalStatus: {
-    marginTop: 4,
-    fontSize: 6.5,
-    fontWeight: '900' as const,
-  },
-  tacticalUnavailable: { color: '#555' },
-  tacticalFootnote: {
-    marginTop: 3,
-    marginBottom: 8,
-    color: '#555',
-    fontSize: 6.5,
-    lineHeight: 9,
+    letterSpacing: 0.25,
   },
   recentInlineStats: {
     color: '#697586',
