@@ -70,6 +70,39 @@ def _json_safe_prediction(value, *, _active=None, _depth=0):
         return None
     if value is None or isinstance(value, (str, bool, int)):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        active = _active if _active is not None else set()
+        marker = id(value)
+        if marker in active:
+            return None
+        active.add(marker)
+        try:
+            return {
+                str(key): _json_safe_prediction(item, _active=active, _depth=_depth + 1)
+                for key, item in value.items()
+            }
+        finally:
+            active.remove(marker)
+    if isinstance(value, (list, tuple, set)):
+        active = _active if _active is not None else set()
+        marker = id(value)
+        if marker in active:
+            return None
+        active.add(marker)
+        try:
+            return [
+                _json_safe_prediction(item, _active=active, _depth=_depth + 1)
+                for item in value
+            ]
+        finally:
+            active.remove(marker)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def _reconcile_deterministic_confidence(
@@ -171,41 +204,6 @@ def _recompute_landing_bands(
                 1,
             )
     return rebuilt
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, (datetime,)):
-        return value.isoformat()
-    if isinstance(value, dict):
-        active = _active if _active is not None else set()
-        marker = id(value)
-        if marker in active:
-            return None
-        active.add(marker)
-        try:
-            return {
-                str(key): _json_safe_prediction(item, _active=active, _depth=_depth + 1)
-                for key, item in value.items()
-            }
-        finally:
-            active.remove(marker)
-    if isinstance(value, (list, tuple, set)):
-        active = _active if _active is not None else set()
-        marker = id(value)
-        if marker in active:
-            return None
-        active.add(marker)
-        try:
-            return [
-                _json_safe_prediction(item, _active=active, _depth=_depth + 1)
-                for item in value
-            ]
-        finally:
-            active.remove(marker)
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
-
-
 def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> dict:
     """Keep the public prediction identity contract complete.
 
