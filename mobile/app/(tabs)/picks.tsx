@@ -32,6 +32,7 @@ import { listPicks, deletePick, sharePickToCommunity, autoPostPickToCommunity, f
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import { renderTacticalContext } from '@/components/AnalysisCards';
+import AnalysisScenarioPanel, { calculateAnalysisScenario } from '@/components/AnalysisScenarioPanel';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 
@@ -58,6 +59,17 @@ const LEAGUE_LABELS: Record<number, string> = {
 function getLeagueLabel(id?: number | null) {
   if (!id) return null;
   return LEAGUE_LABELS[id] || `League ${id}`;
+}
+
+function finiteNumber(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function percentValue(value: unknown): number | null {
+  const number = finiteNumber(value);
+  if (number == null) return null;
+  return number >= 0 && number <= 1 ? number * 100 : number;
 }
 
 function normalizedResult(p: Pick) {
@@ -1040,6 +1052,7 @@ export default function PicksScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
+  const [scenarioLine, setScenarioLine] = useState<number | null>(null);
   const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Record<string, string>>({});
   // Tick every minute while the modal is open so the "X min ago" hint updates
@@ -1315,10 +1328,69 @@ export default function PicksScreen() {
   // matching the same deduplication the backend uses for accuracy metrics.
   const uniqueHistory = useMemo(() => uniquePickEvents(history), [history]);
 
+  const modalAnalysisValues = useMemo(() => {
+    const source: any = analysisModal
+      ? { ...(analysisModal.pick as any), ...(analysisModal.data as any) }
+      : {};
+    const bayesianMetrics = source.bayesianMetrics ?? {};
+    const baseLine = finiteNumber(source.line);
+    const projection = finiteNumber(
+      source.projectedValue
+        ?? source.projection
+        ?? source.bayesianProjection,
+    );
+    const pOver = percentValue(source.pOver ?? bayesianMetrics.pOver);
+    const pUnder = percentValue(source.pUnder ?? bayesianMetrics.pUnder);
+    const confidence = percentValue(source.confidence ?? source.confidenceScore);
+    const posteriorStd = finiteNumber(
+      bayesianMetrics.posteriorStd
+        ?? bayesianMetrics.effectiveStd
+        ?? source.posteriorStd
+        ?? source.projectionStd,
+    );
+    return {
+      baseLine,
+      projection,
+      pOver,
+      pUnder,
+      confidence,
+      posteriorStd,
+      propLabel: PROP_LABELS[source.propType ?? ''] ?? String(source.propType ?? 'Prop'),
+      baseRecommendation: String(source.recommendation ?? '').toUpperCase() || null,
+    };
+  }, [analysisModal]);
+
+  React.useEffect(() => {
+    setScenarioLine(modalAnalysisValues.baseLine);
+  }, [analysisModal?.pick?.pickId, modalAnalysisValues.baseLine]);
+
+  const activeScenarioLine = scenarioLine ?? modalAnalysisValues.baseLine;
+  const scenario = activeScenarioLine != null && modalAnalysisValues.baseLine != null
+    ? calculateAnalysisScenario({
+        baseLine: modalAnalysisValues.baseLine,
+        line: activeScenarioLine,
+        projection: modalAnalysisValues.projection,
+        pOver: modalAnalysisValues.pOver,
+        pUnder: modalAnalysisValues.pUnder,
+        posteriorStd: modalAnalysisValues.posteriorStd,
+        baseRecommendation: modalAnalysisValues.baseRecommendation,
+        baseConfidence: modalAnalysisValues.confidence,
+      })
+    : null;
+  const scenarioChanged = Boolean(
+    scenario
+      && modalAnalysisValues.baseLine != null
+      && Math.abs(scenario.line - modalAnalysisValues.baseLine) > 0.001,
+  );
+
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
+  const displayRec = scenario?.recommendation ?? modalRec;
+  const displayIsOver = displayRec === 'OVER';
+  const displayIsUnder = displayRec === 'UNDER';
+  const displayRecColor = displayIsOver ? Colors.success : displayIsUnder ? Colors.error : Colors.textSecondary;
   const modalText = (
     String(
       (analysisModal?.data as any)?.tacticalBreakdown
@@ -1553,9 +1625,9 @@ export default function PicksScreen() {
               </Text>
             </View>
             <View style={mStyles.modalRight}>
-              {modalRec ? (
-                <View style={[mStyles.modalRecBadge, { backgroundColor: modalIsOver ? Colors.successDim : modalIsUnder ? Colors.errorDim : Colors.cardSecondary }]}>
-                  <Text style={[mStyles.modalRecText, { color: modalRecColor }]}>{modalRec}</Text>
+              {displayRec ? (
+                <View style={[mStyles.modalRecBadge, { backgroundColor: displayIsOver ? Colors.successDim : displayIsUnder ? Colors.errorDim : Colors.cardSecondary }]}>
+                  <Text style={[mStyles.modalRecText, { color: displayRecColor }]}>{displayRec}</Text>
                 </View>
               ) : null}
               {/* Refresh analysis button — hidden once settled with a long-form explanation */}
@@ -1611,10 +1683,10 @@ export default function PicksScreen() {
           {/* Prop row */}
           <View style={mStyles.modalPropRow}>
             <Text style={mStyles.modalPropText}>
-              {PROP_LABELS[analysisModal?.pick.propType ?? ''] ?? analysisModal?.pick.propType} · Line {analysisModal?.pick.line}
+              {PROP_LABELS[analysisModal?.pick.propType ?? ''] ?? analysisModal?.pick.propType} · Line {activeScenarioLine ?? analysisModal?.pick.line}
             </Text>
             {analysisModal?.data?.projectedValue != null && (
-              <Text style={[mStyles.modalProjText, { color: modalRecColor }]}>
+              <Text style={[mStyles.modalProjText, { color: displayRecColor }]}>
                 Proj {(analysisModal.data.projectedValue as number).toFixed(1)}
               </Text>
             )}
@@ -1628,6 +1700,17 @@ export default function PicksScreen() {
             const gapBand = bm.edgeGapBand;
             const lcal = bm.leagueCalibration;
             const gs = bm.gameScript;
+             if (scenarioChanged) {
+               return (
+                 <View style={mStyles.modalEdgeRow}>
+                   <View style={[mStyles.edgePill, { borderColor: Colors.primary }]}>
+                     <Text style={[mStyles.edgePillText, { color: Colors.primary }]}>
+                       WHAT-IF MODE · LIVE SCENARIO
+                     </Text>
+                   </View>
+                 </View>
+               );
+             }
             if (gapPct == null && !lcal?.applied && !gs?.applied) return null;
             const bandColor = gapBand === 'DEEP' ? Colors.success
               : gapBand === 'STRONG' ? Colors.success
@@ -1849,6 +1932,22 @@ export default function PicksScreen() {
               return null;
             })()}
 
+            {!analysisModal?.loading && modalAnalysisValues.baseLine != null && activeScenarioLine != null && (
+              <AnalysisScenarioPanel
+                baseLine={modalAnalysisValues.baseLine}
+                line={activeScenarioLine}
+                projection={modalAnalysisValues.projection}
+                pOver={modalAnalysisValues.pOver}
+                pUnder={modalAnalysisValues.pUnder}
+                posteriorStd={modalAnalysisValues.posteriorStd}
+                baseRecommendation={modalAnalysisValues.baseRecommendation}
+                baseConfidence={modalAnalysisValues.confidence}
+                propLabel={modalAnalysisValues.propLabel}
+                onLineChange={setScenarioLine}
+                onReset={() => setScenarioLine(modalAnalysisValues.baseLine)}
+              />
+            )}
+
             {/* ── TACTICAL READ — primary explanation destination ── */}
             {!analysisModal?.loading && modalText && (
               <View style={mStyles.tacticalSection}>
@@ -1890,6 +1989,10 @@ export default function PicksScreen() {
                 prediction={{
                   ...(analysisModal.pick as any),
                   ...(analysisModal.data as any),
+                   ...(activeScenarioLine != null ? {
+                     line: activeScenarioLine,
+                     recommendation: scenario?.recommendation ?? (analysisModal.data as any)?.recommendation,
+                   } : {}),
                 }}
               />
             )}
@@ -1904,8 +2007,8 @@ export default function PicksScreen() {
                  data={(analysisModal?.data as any)?.positionComparison
                    ?? (analysisModal?.data as any)?.tacticalIntelligence?.positionCohort
                    ?? (analysisModal?.pick as any)?.positionComparison}
-                 recommendation={modalRec}
-                 line={(analysisModal?.data as any)?.line ?? (analysisModal?.pick as any)?.line}
+                 recommendation={displayRec}
+                 line={activeScenarioLine ?? (analysisModal?.data as any)?.line ?? (analysisModal?.pick as any)?.line}
                />
              )}
 
