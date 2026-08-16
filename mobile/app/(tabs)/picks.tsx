@@ -28,7 +28,16 @@ import StreaksAchievements from '@/components/StreaksAchievements';
 import PicksCalendar from '@/components/PicksCalendar';
 import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
-import { listPicks, deletePick, sharePickToCommunity, fetchPickAnalysis, refreshPickAnalysis, Pick, AnalysisFactor } from '@/lib/api';
+import {
+  listPicks,
+  deletePick,
+  sharePickToCommunity,
+  fetchPickAnalysis,
+  refreshPickAnalysis,
+  refreshLivePickStats,
+  Pick,
+  AnalysisFactor,
+} from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import { renderTacticalContext } from '@/components/AnalysisCards';
@@ -1155,6 +1164,65 @@ export default function PicksScreen() {
       // A duplicate setInterval here caused near-simultaneous requests
       // on every 15s boundary → list flicker and navigation glitches.
     }, [refetch])
+  );
+
+  // The normal picks query refreshes the list snapshot, but the list endpoint
+  // intentionally serves a durable snapshot before its provider-heavy
+  // settlement work. Pull the live player-stat delta directly once a minute so
+  // NOW/pace/currentValue updates are applied without waiting for a full list
+  // refresh or reopening the tracker.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const refreshLiveStats = async () => {
+        if (!session || !active) return;
+        try {
+          const updates = await refreshLivePickStats(session.email, session.token);
+          if (!active || updates.length === 0) return;
+          const byId = new Map(
+            updates
+              .filter((update) => update.pickId)
+              .map((update) => [String(update.pickId), update]),
+          );
+          qc.setQueryData<Pick[]>(['picks', session.email], (current = []) =>
+            current.map((pick) => {
+              const update = byId.get(String(pick.pickId));
+              if (!update) return pick;
+              return {
+                ...pick,
+                currentValue: update.currentValue ?? pick.currentValue,
+                actualValue: update.actualValue ?? pick.actualValue,
+                minutesPlayed: update.minutesPlayed ?? pick.minutesPlayed,
+                pace: update.pace ?? pick.pace,
+                hitPct: update.hitPct ?? pick.hitPct,
+                elapsed: update.elapsed ?? pick.elapsed,
+                period: update.period ?? pick.period,
+                matchStatus: update.matchStatus ?? pick.matchStatus,
+                matchScore: update.matchScore ?? pick.matchScore,
+                fixtureId: update.fixtureId ?? pick.fixtureId,
+                result: update.result ?? pick.result,
+                status: update.status ?? pick.status,
+                liveGaussian: update.liveGaussian ?? pick.liveGaussian,
+                paceMismatch: update.paceMismatch ?? pick.paceMismatch,
+                paceWarning: update.paceWarning ?? pick.paceWarning,
+                liveConfidenceScore: update.liveConfidenceScore ?? pick.liveConfidenceScore,
+                liveConfidenceLevel: update.liveConfidenceLevel ?? pick.liveConfidenceLevel,
+              };
+            }),
+          );
+        } catch {
+          // The list query remains the durable fallback; a transient live
+          // provider failure must not clear or replace saved picks.
+        }
+      };
+
+      void refreshLiveStats();
+      const timer = setInterval(refreshLiveStats, 60_000);
+      return () => {
+        active = false;
+        clearInterval(timer);
+      };
+    }, [qc, session])
   );
 
   const deleteMutation = useMutation({

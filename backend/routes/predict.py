@@ -57,8 +57,8 @@ _VENUE_HISTORY_TARGET = 30
 # venue-scoped prior. Keep enough rows to make the archive useful on mobile;
 # provider gaps may make 35 the honest floor, but never intentionally stop at
 # the old 10/15/25-row samples.
-_RECENT_ARCHIVE_TARGET = 40
-_RECENT_ARCHIVE_MIN = 35
+_RECENT_ARCHIVE_TARGET = 50
+_RECENT_ARCHIVE_MIN = 45
 # A verified cache sample at this size is sufficient for the deterministic
 # projection. Larger archive/venue targets remain useful context, but must not
 # force a provider fan-out before the core prediction can return.
@@ -379,9 +379,12 @@ async def _attach_owner_prediction_media(prediction: dict, requester_email: str)
 # meetings cannot dominate the model, but it must inspect enough real fixtures
 # to find 4-5+ appearances when they exist.
 H2H_HISTORY_SEASONS = 6
-H2H_FIXTURE_LIMIT = 12
-H2H_PLAYER_SCAN_LIMIT = 12
-H2H_PLAYER_RESULT_LIMIT = 12
+# API-Football's `last` parameter is applied per season. Keep enough merged
+# meetings to find actual player appearances rather than stopping at the first
+# dozen team fixtures from whichever season responded first.
+H2H_FIXTURE_LIMIT = 48
+H2H_PLAYER_SCAN_LIMIT = 24
+H2H_PLAYER_RESULT_LIMIT = 20
 _H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
@@ -882,7 +885,7 @@ async def predict(req: PredictionRequest):
                         {
                             "h2h": f"{team_id}-{opponent_id}",
                             "season": season,
-                            "last": H2H_FIXTURE_LIMIT,
+                            "last": min(H2H_FIXTURE_LIMIT, 20),
                         },
                         [],
                     )
@@ -2198,6 +2201,11 @@ async def predict(req: PredictionRequest):
                             # provider-wide burst. Prefer the newest bounded
                             # sample and let Stage 1/direct history fill any
                             # remaining gaps.
+                            for _unused_tp_task in _tp_tasks[16:]:
+                                try:
+                                    _unused_tp_task.close()
+                                except AttributeError:
+                                    pass
                             _tp_tasks = _tp_tasks[:16]
                             _tp_fids = _tp_fids[:16]
                             try:
@@ -2249,6 +2257,16 @@ async def predict(req: PredictionRequest):
                                     )
                                 )
                         if _context_tasks:
+                            # Keep the optional enrichment bounded without
+                            # creating coroutine objects that are then discarded
+                            # by the 16-fixture cap. Discarded coroutine objects
+                            # emit "was never awaited" warnings and make it
+                            # impossible to tell whether the useful rows survived.
+                            for _unused_context_task in _context_tasks[16:]:
+                                try:
+                                    _unused_context_task.close()
+                                except AttributeError:
+                                    pass
                             _context_tasks = _context_tasks[:16]
                             _context_fids = _context_fids[:16]
                             try:
@@ -2979,6 +2997,16 @@ async def predict(req: PredictionRequest):
                     f"[API-DIRECT] {req.playerName}/{req.propType}: "
                     f"{len(collected)} real game logs from "
                     f"{current_fixture_count + len(_older_fixture_pool)} fixtures"
+                )
+            except aio.CancelledError:
+                # The required-wave wrapper has a hard latency budget. Stage
+                # 0 may already contain a large, real player archive when the
+                # provider fallback is slow or quota-blocked; cancellation
+                # must return that snapshot instead of replacing it with the
+                # later 10-row direct fallback.
+                print(
+                    f"[API-DIRECT] {req.playerName}: provider history cancelled "
+                    f"after preserving {len(collected)} cached rows"
                 )
             except Exception as _e:
                 print(f"[API-DIRECT] Error: {_e}")
@@ -4145,11 +4173,19 @@ async def predict(req: PredictionRequest):
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(statsbomb_task, return_exceptions=True)
+        # Each required source already has its own timeout above. Do not wrap
+        # the gather in a second outer timeout: cancelling the gather here
+        # discards completed player-history rows when one sibling provider
+        # request is slow. The projection can use the partial result set and
+        # represent any missing source as unavailable.
         try:
-            required_results = await aio.wait_for(required_wave2, timeout=15)
-        except aio.TimeoutError:
+            required_results = await required_wave2
+        except Exception as _required_wave_err:
             required_results = [None] * 6
-            print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 15s for {req.playerName}")
+            print(
+                f"[WAVE2 TIMEOUT] required API-Football sources failed for "
+                f"{req.playerName}: {type(_required_wave_err).__name__}"
+            )
 
         try:
             matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=6)
@@ -7554,7 +7590,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # projection. Wave 2 can already consume most of the response budget
         # when provider history is slow, so do not start another fan-out once
         # the core prediction is late.
-        if h2h_data and _prediction_elapsed() < 17.0:
+        if h2h_data:
             h2h_fixture_ids = []
             for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
                 fid = h.get("fixture", {}).get("id")
@@ -7592,7 +7628,12 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     # Find our player in the fixture stats
                     for team_data in pstats:
                         for p in team_data.get("players", []):
-                            if p.get("player", {}).get("id") == req.playerId:
+                            if (
+                                _normalize_provider_player_id(
+                                    p.get("player", {}).get("id")
+                                )
+                                == _normalize_provider_player_id(req.playerId)
+                            ):
                                 stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                                 minutes_played = stats.get("games", {}).get("minutes") or 0
                                 # A team meeting is not a player H2H appearance.
@@ -7675,31 +7716,34 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     return None
 
             if h2h_fixture_ids:
-                try:
-                    h2h_results = await aio.wait_for(
-                        aio.gather(*[
-                            fetch_h2h_player_stat(fid, fi)
-                            for fid, fi in h2h_fixture_ids[:H2H_PLAYER_SCAN_LIMIT]
-                        ]),
-                        timeout=12
-                    )
-                    h2h_player_stats = [
-                        r for r in h2h_results if r
-                    ][:H2H_PLAYER_RESULT_LIMIT]
-                except aio.TimeoutError:
-                    h2h_player_stats = []
-        elif h2h_data:
-            print(
-                f"[H2H] player history skipped after {_prediction_elapsed():.1f}s "
-                "to protect the core prediction response window"
-            )
+                # Do not put one slow lineup/stat request in charge of the
+                # entire H2H result. The old outer gather timeout cancelled all
+                # siblings and returned zero rows, even when several fixtures
+                # had already produced verified player appearances.
+                async def _bounded_h2h_player_stat(fid, fixture_info):
+                    try:
+                        return await aio.wait_for(
+                            fetch_h2h_player_stat(fid, fixture_info),
+                            timeout=5.0,
+                        )
+                    except Exception:
+                        return None
+
+                h2h_results = await aio.gather(*[
+                    _bounded_h2h_player_stat(fid, fi)
+                    for fid, fi in h2h_fixture_ids
+                ], return_exceptions=True)
+                h2h_player_stats = [
+                    r for r in h2h_results
+                    if isinstance(r, dict) and r
+                ][:H2H_PLAYER_RESULT_LIMIT]
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
         # Team meetings are useful even when the player did not appear in any
         # of them. Keep them separate from player H2H and group them by the
         # player's venue. Possession is only shown when a verified fixture
         # stat cache contains it; missing possession is not converted to 50/50.
-        if h2h_data and _prediction_elapsed() < 17.0:
+        if h2h_data:
             async def _read_h2h_possession(fid: int, player_home: bool) -> tuple[int | None, int | None]:
                 home_poss = away_poss = None
                 try:
@@ -8273,10 +8317,38 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             ),
             None,
         )
+        _current_fixture_has_exact_position = (
+            _observed_target is not None
+            and infer_grid_position(
+                _observed_target.get("grid"),
+                (_pitch_lineup or {}).get("formation"),
+                _observed_target.get("pos"),
+            ) in _historical_exact_positions
+        )
+        _historical_exact_position_is_compatible = (
+            _historical_exact_position
+            and _historical_exact_position in GENERIC_TO_SPECIFIC.get(
+                player_position,
+                set(),
+            )
+        )
+        # Provider lineup history is stronger than a durable profile cache:
+        # caches can retain a former fullback role after a player has settled
+        # into a centre-back role. Current exact grid evidence still wins, but
+        # when today's lineup is generic/missing, the verified player-ID H2H
+        # rows must be allowed to replace stale cached LB/RB/Fullback data.
         if (
-            not specific_position
-            and _historical_exact_position
-            and _historical_exact_position in GENERIC_TO_SPECIFIC.get(player_position, set())
+            _historical_exact_position_is_compatible
+            and not _current_fixture_has_exact_position
+            and (
+                not specific_position
+                or _position_resolution_source in {
+                    "cache",
+                    "gemini_web_grounded",
+                    "grounded_profile",
+                    "category_fallback",
+                }
+            )
         ):
             specific_position = _historical_exact_position
             player_role = resolve_observed_role(

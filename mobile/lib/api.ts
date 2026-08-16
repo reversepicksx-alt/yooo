@@ -2213,6 +2213,38 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
   return normalizeRows(await startPickRefresh(email, token));
 }
 
+export interface LivePickUpdate {
+  pickId: string;
+  currentValue?: number | null;
+  actualValue?: number | null;
+  minutesPlayed?: number | null;
+  pace?: number | null;
+  hitPct?: number | null;
+  elapsed?: number | null;
+  period?: string | null;
+  matchStatus?: string | null;
+  matchScore?: string | null;
+  fixtureId?: number | null;
+  result?: string | null;
+  status?: string | null;
+  liveGaussian?: Pick['liveGaussian'];
+  paceMismatch?: boolean | null;
+  paceWarning?: string | null;
+  liveConfidenceScore?: number | null;
+  liveConfidenceLevel?: string | null;
+}
+
+export async function refreshLivePickStats(
+  email: string,
+  token: string,
+): Promise<LivePickUpdate[]> {
+  const response = await apiCall<{ updates?: LivePickUpdate[] }>('/api/picks/live-update', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+  return Array.isArray(response?.updates) ? response.updates : [];
+}
+
 export async function getMatchups(email: string, token: string): Promise<{
   picks: Pick[];
   options: {

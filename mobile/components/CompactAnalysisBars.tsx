@@ -317,7 +317,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       && game.value != null
     ))
     .sort(newestFirst)
-    .slice(0, 40);
+    .slice(0, 50);
   const venueCounts = {
     home: allLogs.filter((game) => rowVenue(game) === 'home').length,
     away: allLogs.filter((game) => rowVenue(game) === 'away').length,

@@ -288,7 +288,7 @@ function H2HBarCard({ prediction }: { prediction: PredictionResult }) {
 }
 
 function RecentBarCard({ prediction }: { prediction: PredictionResult }) {
-  const logs = (prediction.gameLogs ?? []).filter((game: any) => !game.synthetic && game.value != null).slice(0, 10);
+  const logs = (prediction.gameLogs ?? []).filter((game: any) => !game.synthetic && game.value != null).slice(0, 50);
   if (logs.length === 0) return null;
   const line = prediction.line;
   const maxValue = Math.max(...logs.map((game: any) => Number(game.value) || 0), line ?? 0, 1) * 1.18;
@@ -543,7 +543,7 @@ function buildSectionExplanationSnapshot(prediction: Record<string, any>): Recor
       venueSplits: h2h.venueSplits,
       matches: Array.isArray(h2h.matches) ? h2h.matches.slice(0, 8) : undefined,
     },
-    gameLogs: logs.slice(0, 20),
+    gameLogs: logs.slice(0, 50),
     positionComparison: prediction.positionComparison,
     tacticalContext: {
       player: tactical.player,
@@ -1459,7 +1459,7 @@ export default function ScanScreen() {
             return `M${i + 1}:${val != null ? Number(val).toFixed(1) : '?'}`;
           }).join(' ')
         : 'no logs';
-      const recentLogs = (pred.gameLogs ?? []).slice(0, 40);
+       const recentLogs = (pred.gameLogs ?? []).slice(0, 50);
       const recentTacticalProfiles = (
         (pred as any).tacticalContext?.recentOpponentBlockProfiles?.profiles
         || []
