@@ -59,6 +59,10 @@ _VENUE_HISTORY_TARGET = 30
 # the old 10/15/25-row samples.
 _RECENT_ARCHIVE_TARGET = 40
 _RECENT_ARCHIVE_MIN = 35
+# A verified cache sample at this size is sufficient for the deterministic
+# projection. Larger archive/venue targets remain useful context, but must not
+# force a provider fan-out before the core prediction can return.
+_PREDICTION_CACHE_MIN = 15
 
 
 def _json_safe_prediction(value, *, _active=None, _depth=0):
@@ -2348,21 +2352,25 @@ async def predict(req: PredictionRequest):
                         or _selected_venue_count >= _VENUE_HISTORY_TARGET
                     )
                     if (
-                        len(collected) >= _RECENT_ARCHIVE_MIN
+                        len(collected) >= _PREDICTION_CACHE_MIN
                         and len(good) >= len(collected) // 2
                         and _saves_ok
                         and _tp_complete
                         and _competition_meta_complete
-                        and _venue_history_complete
                         and not extra_fixture_list
                     ):
                         _poss_note = (
                             f"; historical possession={_pressure_possession_count}"
                             if req.sport == "soccer" else ""
                         )
+                        _coverage_note = (
+                            " with explicit full-history fallback"
+                            if not _venue_history_complete or len(collected) < _RECENT_ARCHIVE_MIN
+                            else ""
+                        )
                         print(
                             f"[CACHE-STAGE0] Returning {len(collected)} real (cached) "
-                            f"game logs — skipping API{_poss_note}"
+                            f"game logs — skipping API{_poss_note}{_coverage_note}"
                         )
                         return collected
                     elif collected:
@@ -3806,7 +3814,36 @@ async def predict(req: PredictionRequest):
             else venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
         )
         async def _fetch_player_logs_with_history():
-            historical_knockout_fixtures = await historical_knockout_fixtures_task
+            # Start the optional multi-season knockout search in parallel, but
+            # let the cache-first player loader finish without waiting for it.
+            # If the cache already contains a usable core sample, cancel the
+            # optional search and return the verified rows immediately.
+            _history_task = aio.create_task(historical_knockout_fixtures_task)
+            _initial_logs = await fetch_player_game_logs(
+                venue_first_fixtures,
+                req.playerId,
+                100,
+                extra_fixture_list=None,
+            )
+            if len(_initial_logs or []) >= _PREDICTION_CACHE_MIN:
+                if not _history_task.done():
+                    _history_task.cancel()
+                try:
+                    await _history_task
+                except aio.CancelledError:
+                    pass
+                return _initial_logs
+
+            try:
+                historical_knockout_fixtures = await _history_task
+            except Exception as _history_err:
+                print(
+                    f"[HISTORY FIXTURES] optional enrichment unavailable: "
+                    f"{type(_history_err).__name__}"
+                )
+                historical_knockout_fixtures = []
+            if not historical_knockout_fixtures:
+                return _initial_logs
             return await fetch_player_game_logs(
                 venue_first_fixtures,
                 req.playerId,
@@ -7394,7 +7431,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # For each H2H fixture, fetch the player's individual stats in THAT match
         h2h_player_stats = []
         h2h_summary = {}
-        if h2h_data:
+        # H2H is explanatory evidence, not required for the deterministic
+        # projection. Wave 2 can already consume most of the response budget
+        # when provider history is slow, so do not start another fan-out once
+        # the core prediction is late.
+        if h2h_data and _prediction_elapsed() < 17.0:
             h2h_fixture_ids = []
             for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
                 fid = h.get("fixture", {}).get("id")
@@ -7528,13 +7569,18 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     ][:H2H_PLAYER_RESULT_LIMIT]
                 except aio.TimeoutError:
                     h2h_player_stats = []
+        elif h2h_data:
+            print(
+                f"[H2H] player history skipped after {_prediction_elapsed():.1f}s "
+                "to protect the core prediction response window"
+            )
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
         # Team meetings are useful even when the player did not appear in any
         # of them. Keep them separate from player H2H and group them by the
         # player's venue. Possession is only shown when a verified fixture
         # stat cache contains it; missing possession is not converted to 50/50.
-        if h2h_data:
+        if h2h_data and _prediction_elapsed() < 17.0:
             async def _read_h2h_possession(fid: int, player_home: bool) -> tuple[int | None, int | None]:
                 home_poss = away_poss = None
                 try:
@@ -10535,11 +10581,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             from calibration import get_line_deviation_intel
             _dev_proj = prediction.get("projectedValue", req.line)
             if _dev_proj and req.line > 0 and rec in ("over", "under"):
-                _dev_intel = await get_line_deviation_intel(
-                    line=req.line,
-                    projected_value=_dev_proj,
-                    recommendation=rec,
-                    prop_type=req.propType,
+                _dev_intel = await aio.wait_for(
+                    get_line_deviation_intel(
+                        line=req.line,
+                        projected_value=_dev_proj,
+                        recommendation=rec,
+                        prop_type=req.propType,
+                    ),
+                    timeout=1.0,
                 )
                 _dev_band       = _dev_intel.get("band", "aligned")
                 _dev_pct        = _dev_intel.get("deviationPct", 0)
@@ -13797,7 +13846,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         prediction["_ts"] = datetime.now(timezone.utc).isoformat()
         safe_prediction = _json_safe_prediction(prediction)
         try:
-            await db.predictions.insert_one(safe_prediction)
+            # Persistence is analytics-only. Atlas quota/network stalls must
+            # never consume the user-facing prediction response budget.
+            await aio.wait_for(
+                db.predictions.insert_one(safe_prediction),
+                timeout=1.5,
+            )
         except Exception as _persist_err:
             # Atlas can hard-block writes when the free-tier cluster reaches
             # its storage limit. Persistence is useful for analytics, but it
@@ -13810,7 +13864,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             )
         safe_prediction.pop("_id", None)
         if access == "Owner":
-            await _attach_owner_prediction_media(safe_prediction, req.email)
+            try:
+                await aio.wait_for(
+                    _attach_owner_prediction_media(safe_prediction, req.email),
+                    timeout=1.0,
+                )
+            except Exception as _media_err:
+                print(
+                    f"[PREDICTION] owner media skipped within response budget: "
+                    f"{type(_media_err).__name__}"
+                )
 
         # ── Knowledge Base: fire-and-forget compilation ───────────────────────
         # Compile team style + player profile from this prediction's data so the
