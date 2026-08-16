@@ -242,7 +242,7 @@ def resolve_observed_role(
                 f"{key_passes:.1f} key passes/game",
                 f"{dribbles:.1f} dribbles/game",
             ]
-        elif key_passes >= 2.0 and dribbles >= 2.0:
+        elif key_passes >= 3.0 and dribbles >= 3.0:
             role = "Creative Forward"
             evidence = [
                 "generic forward category",

@@ -47,7 +47,8 @@ def test_provider_category_fallback_never_returns_exact_midfield_position():
 
 
 def test_exact_midfield_comparisons_reject_generic_rows_and_role_padding():
-    assert "if target_specific_pos not in {" in PREDICT_SOURCE
+    assert "_exact_positions = {" in PREDICT_SOURCE
+    assert "target_specific_pos not in _exact_positions" in PREDICT_SOURCE
     assert "observed_exact_target or cached_exact_target" in PREDICT_SOURCE
     assert "_apply_role_match = False" in PREDICT_SOURCE
     assert "exact_opponent_same_position_same_venue" in PREDICT_SOURCE

@@ -37,6 +37,15 @@ def test_position_cohort_attempt_is_not_dropped_by_elapsed_time_gates():
     assert '"comparisonUnavailableReason": position_comparison_meta["unavailableReason"]' in PREDICT_SOURCE
 
 
+def test_broad_provider_category_can_show_similar_players_without_projection_influence():
+    assert "allow_broad_category=False" in PREDICT_SOURCE
+    assert "allow_broad_category=not _exact_target_for_comparison" in PREDICT_SOURCE
+    assert '"positionEvidenceType": (' in PREDICT_SOURCE
+    assert '"broad_category" if player_position else "unavailable"' in PREDICT_SOURCE
+    assert '"projectionEligible": _exact_target_for_comparison' in PREDICT_SOURCE
+    assert 'if position_comp_data and position_comp_data.get("projectionEligible")' in PREDICT_SOURCE
+
+
 def test_position_cohort_is_labeled_exact_opponent_same_position_evidence():
     assert '"sourceScope": position_comparison_scope' in PREDICT_SOURCE
     assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE

@@ -52,7 +52,7 @@ export type SameRoleEvidence = {
   players?: CohortPlayer[];
   sourceScope?: string;
   comparisonMode?: 'same-position' | 'same-role' | string;
-  positionEvidenceType?: 'exact_position' | 'unavailable' | string;
+  positionEvidenceType?: 'exact_position' | 'broad_category' | 'unavailable' | string;
   positionEvidenceNote?: string;
   verdict?: {
     verdict?: 'verifies' | 'contradicts' | 'neutral' | 'unavailable' | string;
@@ -193,33 +193,39 @@ export default function SameRoleEvidenceCard({
   const numericLine = Number(line);
   const numericAverage = Number(average);
   const hasVerdict = Number.isFinite(numericLine) && Number.isFinite(numericAverage);
-  const verdict = String(data.verdict?.verdict || (
-    hasVerdict
-      ? rec === 'OVER' && numericAverage > numericLine || rec === 'UNDER' && numericAverage < numericLine
-        ? 'verifies'
-        : rec === 'OVER' || rec === 'UNDER' ? 'contradicts' : 'neutral'
-      : 'unavailable'
-  )).toUpperCase();
+  const broadPositionOnly = data.positionEvidenceType === 'broad_category';
+  const verdict = broadPositionOnly
+    ? 'CONTEXT'
+    : String(data.verdict?.verdict || (
+        hasVerdict
+          ? rec === 'OVER' && numericAverage > numericLine || rec === 'UNDER' && numericAverage < numericLine
+            ? 'verifies'
+            : rec === 'OVER' || rec === 'UNDER' ? 'contradicts' : 'neutral'
+          : 'unavailable'
+      )).toUpperCase();
   const verdictColor = verdict === 'VERIFIES'
     ? Colors.success
     : verdict === 'CONTRADICTS' ? Colors.error : '#F59E0B';
   const prop = label(data.propType);
   const isSamePosition = data.comparisonMode === 'same-position'
     || scopeIncludesPosition(data.sourceScope);
-  const exactPositionUnavailable = data.positionEvidenceType === 'unavailable'
-    || data.comparisonMode === 'unavailable';
-  const broadPositionOnly = data.positionEvidenceType === 'broad_category';
+  const exactPositionUnavailable = !broadPositionOnly && (
+    data.positionEvidenceType === 'unavailable'
+      || data.comparisonMode === 'unavailable'
+  );
   const role = isSamePosition ? '' : (data.targetRole || 'same role');
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
   const sourcePlayers = (data.players || []).slice(0, 15);
   const hasSourcePlayers = sourcePlayers.length > 0;
   const scope = String(data.sourceScope || '');
-  const scopeLabel = scope.includes('mixed_venue')
-    ? 'same-opponent mixed-venue fixtures'
-    : scope.includes('prior_seasons')
-      ? `same-opponent ${data.venue || 'venue'} fixtures, including prior seasons`
-      : `matching ${data.venue || 'venue'} fixtures`;
+  const scopeLabel = scope.includes('broad_category')
+    ? `broad ${position.toLowerCase()} rows from ${data.venue || 'venue'} fixtures`
+    : scope.includes('mixed_venue')
+      ? 'same-opponent mixed-venue fixtures'
+      : scope.includes('prior_seasons')
+        ? `same-opponent ${data.venue || 'venue'} fixtures, including prior seasons`
+        : `matching ${data.venue || 'venue'} fixtures`;
   const cohortAverageText = average != null ? Number(average).toFixed(1) : '—';
   const cohortSentence = average != null && sample > 0
     ? `Against ${data.opponent || 'this opponent'}, comparable ${cohortSubject(
@@ -289,10 +295,10 @@ export default function SameRoleEvidenceCard({
     }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <Text style={{ fontSize: 9, color: verdictColor, fontWeight: '900', letterSpacing: 1 }}>
-           {exactPositionUnavailable
+           {broadPositionOnly
+             ? `BROAD ${position.toUpperCase()} EVIDENCE`
+             : exactPositionUnavailable
              ? 'EXACT-POSITION EVIDENCE UNAVAILABLE'
-             : broadPositionOnly
-             ? `POSITION EVIDENCE · ${position.toUpperCase()}`
              : isSamePosition
              ? `EXACT ${positionLabel(data.targetPosition || data.positionShort || 'POSITION').toUpperCase()} EVIDENCE`
              : 'SAME-ROLE OPPONENT EVIDENCE'}
@@ -305,9 +311,15 @@ export default function SameRoleEvidenceCard({
         {cohortSentence}
       </Text>
        <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
-         {sample > 0
-            ? `${sample} distinct ${isSamePosition ? 'exact-position player' : 'same-role player'}${sample === 1 ? '' : 's'} in ${scopeLabel}`
-           : `No exact ${positionLabel(data.targetPosition || data.positionShort || 'position')} source-player rows were returned`}
+           {sample > 0
+             ? `${sample} distinct ${
+                 broadPositionOnly
+                   ? 'broad-category player'
+                   : isSamePosition ? 'exact-position player' : 'same-role player'
+               }${sample === 1 ? '' : 's'} in ${scopeLabel}`
+            : broadPositionOnly
+              ? `No verified broad ${position.toLowerCase()} source-player rows were returned`
+              : `No exact ${positionLabel(data.targetPosition || data.positionShort || 'position')} source-player rows were returned`}
         {hasVerdict ? ` · line ${numericLine.toFixed(1)} · pick ${rec}` : ''}
         {limited ? ` · limited sample (target n≥${minimum})` : ' · target sample reached'}
       </Text>

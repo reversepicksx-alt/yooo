@@ -3044,6 +3044,7 @@ async def predict(req: PredictionRequest):
             limit=20,
             target_specific_pos=None,
             target_role=None,
+            allow_broad_category=False,
         ):
             """Fetch exact-position comparison players who played against the opponent.
             Filters by venue: if target player is AWAY, only show comparison players' AWAY performances.
@@ -3052,17 +3053,23 @@ async def predict(req: PredictionRequest):
             specific position. Tactical role matching is intentionally limited to
             forwards and midfielders; defender roles such as Stopper and
             Ball-Playing CB are not reliable enough to filter out an otherwise
-            exact CB/LB/RB appearance."""
+            exact CB/LB/RB appearance.
+
+            When the selected player only has a provider-level D/M/F label,
+            ``allow_broad_category`` admits verified category rows for display
+            only. Those rows remain explicitly broad-category evidence and are
+            never eligible to change the deterministic projection."""
             fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
             if not fixture_pos or not opp_fixtures:
                 return []
-            # A comparison cohort is only meaningful when the target itself
-            # has a verified exact position. Never build a padded generic
-            # midfield cohort when the target is only M/MID.
-            if target_specific_pos not in {
+            _exact_positions = {
                 "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM",
                 "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
-            }:
+            }
+            # Exact cohorts require an exact target. A broad-category fallback
+            # is separately opt-in so generic D/M/F observations can be shown
+            # as context without being mislabeled as CB/CM/ST evidence.
+            if target_specific_pos not in _exact_positions and not allow_broad_category:
                 return []
             stat_cat, stat_sub = PROP_STAT_KEYS.get(prop_type, ("passes", "total"))
             # The comparison players' venue should match the TARGET player's venue
@@ -8848,9 +8855,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "status": "pending" if req.sport == "soccer" else "not_applicable",
             "unavailableReason": None,
         }
+        _exact_comparison_positions = {
+            "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+            "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+        }
+        _exact_target_for_comparison = specific_position in _exact_comparison_positions
         _defender_positions = {"CB", "LB", "RB", "LWB", "RWB"}
         _defender_position_cohort = specific_position in _defender_positions
-        position_comparison_scope = "exact_opponent_same_position_same_venue"
+        position_comparison_scope = (
+            "exact_opponent_same_position_same_venue"
+            if _exact_target_for_comparison
+            else "opponent_broad_category_same_venue"
+        )
         if req.sport == "soccer":
             if not player_position:
                 position_comparison_meta["status"] = "unavailable"
@@ -8869,6 +8885,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         min(_cohort_fixture_lookback, 20),
                         target_specific_pos=specific_position,
                         target_role=display_role or player_role,
+                        allow_broad_category=not _exact_target_for_comparison,
                     ) if player_position else _empty_list(),
                     # This is required evidence, not optional late enrichment.
                     # Keep it independently bounded, but do not drop the attempt
@@ -8881,8 +8898,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 else:
                     position_comparison_meta["status"] = "unavailable"
                     position_comparison_meta["unavailableReason"] = (
-                        "exact_position_unavailable"
-                        if not specific_position
+                        "broad_category_unavailable"
+                        if not _exact_target_for_comparison
                         else (
                             "opponent_fixture_history_unavailable"
                             if not opponent_fixture_list
@@ -8973,6 +8990,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             len(_prior_season_rows),
                             target_specific_pos=specific_position,
                             target_role=display_role or player_role,
+                            allow_broad_category=not _exact_target_for_comparison,
                         ) if player_position else _empty_list(),
                         timeout=10,
                     )
@@ -8994,7 +9012,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         position_comparison = position_comparison[:15]
                     if len(position_comparison) > 3:
                         position_comparison_scope = (
-                            "exact_opponent_same_position_same_venue_plus_prior_seasons"
+                            (
+                                "exact_opponent_same_position_same_venue_plus_prior_seasons"
+                                if _exact_target_for_comparison
+                                else "opponent_broad_category_same_venue_plus_prior_seasons"
+                            )
                         )
                     if position_comparison:
                         position_comparison_meta["status"] = "available"
@@ -9011,7 +9033,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 
         print(
             f"[POS COMP] target={req.playerName} position={specific_position or display_position} "
-            f"mode=exact-position "
+            f"mode={'exact-position' if _exact_target_for_comparison else 'broad-category'} "
             f"rows={len(position_comparison)}"
         )
 
@@ -9221,22 +9243,17 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "targetPosition": specific_position or display_position,
                 "targetRole": display_role or player_role,
                 # Every admitted row has already passed exact-position
-                # compatibility. Tactical role is context only and does not
-                # broaden the cohort.
+                # compatibility when projectionEligible is true. Broad
+                # category rows are context only and do not broaden the
+                # deterministic cohort adjustment.
                 "comparisonMode": (
                     "same-position"
-                    if specific_position in {
-                        "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
-                        "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
-                    }
-                    else "unavailable"
+                    if _exact_target_for_comparison
+                    else "broad-category"
                 ),
                 "positionEvidenceType": (
                     "exact_position"
-                    if specific_position in {
-                        "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
-                        "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST", "SS",
-                    }
+                    if _exact_target_for_comparison
                     else "broad_category" if player_position else "unavailable"
                 ),
                 "positionEvidenceNote": (
@@ -9251,11 +9268,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     }
                     else (
                         f"Provider verifies the broad {player_position} category; "
-                        "no exact flank/central position was available, so it is not relabeled."
+                        "similar-player rows are broad-category context only; "
+                        "no exact flank/central position was available, so it is not relabeled "
+                        "or used to change the projection."
                         if player_position
                         else "No provider or lineup position evidence was available."
                     )
                 ),
+                "projectionEligible": _exact_target_for_comparison,
                 "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
                 "comparisonAttempted": position_comparison_meta["attempted"],
@@ -9309,6 +9329,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "targetRole": display_role or player_role,
                 "comparisonMode": "same-position" if _fallback_exact else "unavailable",
                 "positionEvidenceType": "exact_position" if _fallback_exact else "unavailable",
+                "projectionEligible": _fallback_exact,
                 "positionEvidenceNote": (
                     f"No verified comparable rows were returned: "
                     f"{position_comparison_meta['unavailableReason'] or 'unavailable'}."
@@ -9863,7 +9884,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # Requires at least 3 sampled players to fire (noise guard).
             # Applied AFTER personal H2H blend, BEFORE situational multiplier.
             # ──────────────────────────────────────────────────────────────────────
-            if position_comp_data:
+            if position_comp_data and position_comp_data.get("projectionEligible"):
                 _opp_allowed_avg = position_comp_data.get("avgStatValue", 0)
                 _opp_allowed_n   = position_comp_data.get("sampleSize", 0)
                 _opp_pos_label   = position_comp_data.get("positionShort", "?")
@@ -12186,7 +12207,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # "allowed" total. Prefer it for every prop when available so the
         # analysis describes exactly what comparable players recorded against
         # this opponent at the matching venue.
-        if position_comp_data and position_comp_data.get("avgStatValue") is not None:
+        if (
+            position_comp_data
+            and position_comp_data.get("projectionEligible")
+            and position_comp_data.get("avgStatValue") is not None
+        ):
             opp_allowed_avg = round(float(position_comp_data["avgStatValue"]), 1)
 
         prediction["analysisSummary"] = {
@@ -12197,7 +12222,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "opponentAllowedAverage": opp_allowed_avg,
             "opponentEvidenceSource": (
                 "same_position_player_cohort"
-                if position_comp_data and position_comp_data.get("avgStatValue") is not None
+                if (
+                    position_comp_data
+                    and position_comp_data.get("projectionEligible")
+                    and position_comp_data.get("avgStatValue") is not None
+                )
                 else "team_match_stats"
                 if opp_allowed_avg is not None
                 else None
@@ -12405,7 +12434,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     or (real_bayes or {}).get("opponentAllowedSamples")
                     or 0
                 ),
-                position_comparable_samples=int((position_comp_data or {}).get("sampleSize") or 0),
+                position_comparable_samples=int(
+                    (position_comp_data or {}).get("sampleSize") or 0
+                )
+                if (position_comp_data or {}).get("projectionEligible")
+                else 0,
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
@@ -12685,7 +12718,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     or (real_bayes or {}).get("opponentAllowedSamples")
                     or 0
                 ),
-                position_comparable_samples=int((position_comp_data or {}).get("sampleSize") or 0),
+                position_comparable_samples=int(
+                    (position_comp_data or {}).get("sampleSize") or 0
+                )
+                if (position_comp_data or {}).get("projectionEligible")
+                else 0,
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
@@ -13298,7 +13335,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     _af_missing.append(_k)
 
             _af_opponent_n = len(_af_h2h_values)
-            _af_comparable_n = int((position_comp_data or {}).get("sampleSize") or 0)
+            _af_comparable_n = (
+                int((position_comp_data or {}).get("sampleSize") or 0)
+                if (position_comp_data or {}).get("projectionEligible")
+                else 0
+            )
             _af_history_status = "applied" if len(_af_values) >= 3 else ("warning" if _af_values else "unavailable")
             _af_opp_status = "applied" if (_af_opponent_n >= 3 or _af_comparable_n >= 3) else (
                 "warning" if (_af_opponent_n or _af_comparable_n) else "unavailable"
@@ -13558,7 +13599,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     prop_type=req.propType,
                     player_logs=player_game_logs,
                     h2h_logs=h2h_player_stats,
-                    comparable_sample=int((position_comp_data or {}).get("sampleSize") or 0),
+                    comparable_sample=(
+                        int((position_comp_data or {}).get("sampleSize") or 0)
+                        if (position_comp_data or {}).get("projectionEligible")
+                        else 0
+                    ),
                     team_fixture_stats=team_fixture_stats,
                     opponent_fixture_stats=opponent_fixture_stats,
                     match_dominance=match_dominance,

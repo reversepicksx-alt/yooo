@@ -16,7 +16,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, requestPredictionSectionExplanation, syncAppleAccess, verifySession } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, syncAppleAccess, verifySession } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -744,66 +744,23 @@ export default function ScanScreen() {
   const sectionNarrativeRef = useRef<Partial<Record<AnalysisTab, string>>>({});
   const sectionNarrativeLoadingRef = useRef<Partial<Record<AnalysisTab, boolean>>>({});
 
-  const requestSectionExplanation = useCallback(async (
+  const requestSectionExplanation = useCallback((
     tab: AnalysisTab,
     pred: PredictionResult | null,
   ) => {
-    if (!pred) return;
-    // Put a grounded read on screen synchronously so a slow/auth-limited AI
-    // request can never leave the result tab blank. A successful Gemini
-    // response replaces this text; otherwise the clearly labeled MODEL READ
-    // remains visible.
-    if (!sectionNarrativeRef.current[tab]) {
-      const immediate = buildImmediateSectionExplanation(tab, pred as any);
-      setSectionNarratives((current) => (
-        current[tab] ? current : { ...current, [tab]: immediate }
-      ));
-      setSectionNarrativeSources((current) => (
-        current[tab] ? current : { ...current, [tab]: 'deterministic' }
-      ));
-    }
-    if (!session?.email || !session?.token) return;
-    if (sectionNarrativeRef.current[tab] || sectionNarrativeLoadingRef.current[tab]) return;
-
-    sectionExplanationAbortRef.current[tab]?.abort();
-    const controller = new AbortController();
-    sectionExplanationAbortRef.current[tab] = controller;
-    sectionNarrativeLoadingRef.current[tab] = true;
-    setSectionNarrativeLoading((current) => ({ ...current, [tab]: true }));
-    setSectionNarrativeErrors((current) => ({ ...current, [tab]: '' }));
-
-    try {
-      const response = await requestPredictionSectionExplanation(
-        session.email,
-        session.token,
-        tab,
-        buildSectionExplanationSnapshot(pred as any),
-      );
-      if (controller.signal.aborted) return;
-      const generatedText = String(response?.text ?? '').trim();
-      if (!generatedText) {
-        throw new Error('The analyst read returned no text.');
-      }
-      sectionNarrativeRef.current[tab] = generatedText;
-      setSectionNarratives((current) => ({ ...current, [tab]: generatedText }));
-      setSectionNarrativeSources((current) => ({
-        ...current,
-        [tab]: response?.source === 'gemini' ? 'gemini' : 'deterministic',
-      }));
-    } catch (error: unknown) {
-      if (controller.signal.aborted) return;
-      const message = error instanceof Error && error.message
-        ? error.message
-        : 'This explanation could not load right now.';
-      setSectionNarrativeErrors((current) => ({ ...current, [tab]: message }));
-    } finally {
-      if (sectionExplanationAbortRef.current[tab] === controller) {
-        delete sectionExplanationAbortRef.current[tab];
-        sectionNarrativeLoadingRef.current[tab] = false;
-        setSectionNarrativeLoading((current) => ({ ...current, [tab]: false }));
-      }
-    }
-  }, [session?.email, session?.token]);
+    if (!pred || sectionNarrativeRef.current[tab]) return;
+    // The first grounded read is the final read for this prediction. Do not
+    // swap it out after the card is visible: asynchronous analyst generation
+    // made the explanation appear to reset and change underneath the user.
+    const immediate = buildImmediateSectionExplanation(tab, pred as any);
+    sectionNarrativeRef.current[tab] = immediate;
+    setSectionNarratives((current) => (
+      current[tab] ? current : { ...current, [tab]: immediate }
+    ));
+    setSectionNarrativeSources((current) => (
+      current[tab] ? current : { ...current, [tab]: 'deterministic' }
+    ));
+  }, []);
 
   // League edit (scan mode)
   const [showLeagueEditScan, setShowLeagueEditScan] = useState(false);
@@ -826,6 +783,15 @@ export default function ScanScreen() {
     : visibleIsUnder
       ? Colors.error
       : Colors.textSecondary;
+  const predictionExplanationIdentity = prediction
+    ? [
+        prediction.fixtureId ?? '',
+        prediction.playerId ?? '',
+        prediction.playerName ?? '',
+        prediction.line ?? '',
+      ].join('|')
+    : '';
+
   useEffect(() => {
     if (predictionState) {
       setAnalysisTab('read');
@@ -839,7 +805,7 @@ export default function ScanScreen() {
       setSectionNarrativeLoading({});
       void requestSectionExplanation('read', predictionState);
     }
-  }, [prediction?.fixtureId, prediction?.playerId, prediction?.line, prediction?.playerName, predictionState, requestSectionExplanation]);
+  }, [predictionExplanationIdentity, requestSectionExplanation]);
 
   const selectAnalysisTab = (tab: AnalysisTab) => {
     setAnalysisTab(tab);
