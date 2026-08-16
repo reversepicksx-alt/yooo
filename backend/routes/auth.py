@@ -448,6 +448,16 @@ async def create_session(email: str, access_type: str) -> str:
     )
     return session_token
 
+async def _best_effort_session_update(query: dict, update: dict) -> None:
+    """Keep authenticated reads working when Atlas blocks noncritical writes."""
+    try:
+        await db.sessions.update_one(query, update)
+    except Exception as exc:
+        print(
+            f"[AUTH SESSION WRITE] skipped; keeping session usable: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
 # ── Web access check (Stripe / manual grants) ────────────────────────
 async def _check_access_local(email_lower: str):
     # A new active website subscription must take precedence over the
@@ -960,7 +970,7 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
     # Presence is based on authenticated app activity, not message history.
     # Sessions are stored with ISO strings, so keep this write in the same
     # representation used by create_session and the presence queries.
-    await db.sessions.update_one(
+    await _best_effort_session_update(
         {"email": email_lower, "session_token": token},
         {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}},
     )
@@ -978,7 +988,7 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
         # _RC_NETWORK_ERROR means verification was unavailable, not that the
         # customer is unsubscribed. Keep the session conservative in that case.
         if current and current != _RC_NETWORK_ERROR:
-            await db.sessions.update_one(
+            await _best_effort_session_update(
                 {"email": email_lower, "session_token": token},
                 {"$set": {"access_type": current, "last_active": datetime.now(timezone.utc).isoformat()}},
             )
@@ -1003,13 +1013,13 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
             # Don't outright delete — downgrade to NoSubscription so the paywall
             # can re-check on the device side (RC SDK) and recover automatically.
             print(f"[VERIFY SESSION] Apple user {email_lower} — no RC entitlement found, downgrading to NoSubscription")
-            await db.sessions.update_one(
+            await _best_effort_session_update(
                 {"email": email_lower, "session_token": token},
                 {"$set": {"access_type": "NoSubscription", "last_active": datetime.now(timezone.utc).isoformat()}},
             )
             return {"valid": True, "access_type": "NoSubscription"}
         if current != access_type:
-            await db.sessions.update_one(
+            await _best_effort_session_update(
                 {"email": email_lower, "session_token": token},
                 {"$set": {"access_type": current, "last_active": datetime.now(timezone.utc).isoformat()}},
             )
@@ -1038,7 +1048,7 @@ async def heartbeat(req: VerifySessionRequest):
     )
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
-    await db.sessions.update_one(
+    await _best_effort_session_update(
         {"email": email_lower, "session_token": req.session_token},
         {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}},
     )

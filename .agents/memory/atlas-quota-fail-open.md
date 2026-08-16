@@ -3,11 +3,11 @@ name: Atlas quota fail-open
 description: Temporary resilience rule for prediction responses when MongoDB Atlas blocks writes at the storage limit.
 ---
 
-The final prediction persistence write and every optional cache write inside prediction computation are non-critical to serving a computed prediction. If Atlas rejects any of them because the cluster is over its storage quota, log the persistence failure and continue returning the computed result; normal persistence should resume automatically once storage is available.
+The final prediction persistence write and every optional cache write inside prediction computation are non-critical to serving a computed prediction. Session presence/access-refresh writes are also non-critical: if Atlas rejects them because the cluster is over its storage quota, log the persistence failure and continue returning the computed result; normal persistence should resume automatically once storage is available.
 
 **Why:** Atlas can hard-block all writes at the free-tier storage ceiling, turning successful prediction calculations into user-visible HTTP 500 errors.
 
-**How to apply:** Guard cache writes for fixture/player data, possession, resolved roles/positions, and final prediction analytics independently. Reads and math must continue when writes fail. Do not delete production data automatically, and separately clean up or upgrade the Atlas cluster before relying on stored analytics again.
+**How to apply:** Guard session heartbeats/access refreshes and cache writes for fixture/player data, possession, resolved roles/positions, and final prediction analytics independently. Reads and math must continue when writes fail. Do not delete production data automatically, and separately clean up or upgrade the Atlas cluster before relying on stored analytics again.
 
 Required saved-pick writes are different: a quota rejection must return an explicit storage-full response and must never report the pick as saved.
 
