@@ -90,6 +90,7 @@ from routes.scan import router as scan_router
 from routes.picks import router as picks_router
 from routes.chat import router as chat_router
 from routes.lissa import router as lissa_router
+from routes.prediction_explanations import router as prediction_explanations_router
 from routes.misc import router as misc_router
 from routes.tactical import router as tactical_router
 from routes.stripe_pay import router as stripe_router
@@ -143,6 +144,7 @@ app.include_router(scan_router)
 app.include_router(picks_router)
 app.include_router(chat_router)
 app.include_router(lissa_router)
+app.include_router(prediction_explanations_router)
 app.include_router(misc_router)
 app.include_router(tactical_router)
 app.include_router(stripe_router)

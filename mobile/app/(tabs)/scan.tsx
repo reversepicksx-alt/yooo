@@ -16,11 +16,10 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, syncAppleAccess, verifySession } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, requestPredictionSectionExplanation, syncAppleAccess, verifySession } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
-import { callLissaSpeak } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
@@ -34,58 +33,6 @@ import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenu
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
-
-// ── Auto-narration (plays the tactical breakdown aloud when a prediction loads) ──
-// Web: pre-unlock an <audio> element during the "Analyze" tap gesture so iOS
-// Safari allows non-gesture playback when the result arrives.
-let _nEl: HTMLAudioElement | null = null;
-let _nReady = false;
-const _N_SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-
-function unlockNarrationAudio(): void {
-  if (typeof document === 'undefined') return;
-  try {
-    if (!_nEl) { _nEl = document.createElement('audio'); _nEl.preload = 'auto'; }
-    _nEl.src = _N_SILENT;
-    void _nEl.play().catch(() => {});
-    _nReady = true;
-  } catch {}
-}
-
-function _buildWav(pcm: Uint8Array, rate: number): ArrayBuffer {
-  const buf = new ArrayBuffer(44 + pcm.byteLength);
-  const v = new DataView(buf);
-  const s = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
-  s(0, 'RIFF'); v.setUint32(4, 36 + pcm.byteLength, true);
-  s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  s(36, 'data'); v.setUint32(40, pcm.byteLength, true);
-  new Uint8Array(buf).set(pcm, 44);
-  return buf;
-}
-
-function _buildNarrationText(p: any): string {
-  const player = p.playerName ?? '';
-  const prop = (p.propType ?? '').replace(/_/g, ' ');
-  const rec = p.recommendation ?? '';
-  const conf = p.confidenceLevel ?? '';
-  const line = p.line != null ? ` over/under ${p.line}` : '';
-  const raw = (p.tacticalBreakdown ?? p.reasoning ?? p.sharpSummary ?? '')
-    .replace(/#{1,3}\s*/g, '').replace(/\*\*/g, '').replace(/\*/g, '')
-    .replace(/^[-•]\s*/gm, '').replace(/\[.*?\]/g, '').trim();
-  // First 2 sentences of breakdown (up to ~400 chars)
-  const sentences = raw.split(/(?<=[.!?])\s+/);
-  const excerpt = sentences.slice(0, 3).join(' ').slice(0, 450).trim();
-  let intro = '';
-  if (player && rec) {
-    intro = `${player}, ${prop}${line}. ${rec}`;
-    if (conf) intro += `, ${conf} confidence`;
-    intro += '. ';
-  }
-  return (intro + excerpt).trim();
-}
 
 function TacticalNarrativeCard({
   narrative,
@@ -205,47 +152,6 @@ function TacticalNarrativeCard({
   );
 }
 
-async function autoNarrate(text: string, email: string, token: string): Promise<void> {
-  if (!text) return;
-  // Native iOS: expo-speech has no autoplay restriction
-  if (Platform.OS !== 'web') {
-    try {
-      const { default: Speech } = await import('expo-speech');
-      void (Speech as any).speak(text, { language: 'en-US', rate: 1.0, pitch: 1.0 });
-    } catch {}
-    return;
-  }
-  // Web: use pre-unlocked <audio> element + Gemini TTS (owner) or speechSynthesis fallback
-  if (_nReady && _nEl && email && token) {
-    try {
-      const tts = await Promise.race([
-        callLissaSpeak(email, token, text, 'Kore'),
-        new Promise<null>(r => setTimeout(() => r(null), 12_000)),
-      ]);
-      if (tts?.audio) {
-        const pcm = Uint8Array.from(atob(tts.audio), c => c.charCodeAt(0));
-        const wav = _buildWav(pcm, tts.sampleRate ?? 24000);
-        const blob = new Blob([wav], { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        _nEl.onended = () => URL.revokeObjectURL(url);
-        _nEl.src = url;
-        void _nEl.play().catch(() => _fallbackSpeak(text));
-        return;
-      }
-    } catch {}
-  }
-  _fallbackSpeak(text);
-}
-
-function _fallbackSpeak(text: string): void {
-  if (typeof speechSynthesis === 'undefined') return;
-  try {
-    speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.lang = 'en-US'; utt.rate = 1.0;
-    speechSynthesis.speak(utt);
-  } catch {}
-}
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 type RenderPredictionValue<T> =
   T extends (...args: any[]) => any ? T :
@@ -521,6 +427,134 @@ const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string; icon: keyof typeof
   { key: 'matchup', label: 'MATCHUP', icon: 'swap-horizontal-outline' },
 ];
 
+function buildSectionExplanationSnapshot(prediction: Record<string, any>): Record<string, any> {
+  const bayesian = prediction.bayesianMetrics || {};
+  const playerLogs = prediction.playerGameLogs || {};
+  const logs = Array.isArray(prediction.gameLogs)
+    ? prediction.gameLogs
+    : Array.isArray(playerLogs.games) ? playerLogs.games : [];
+  const h2h = prediction.h2hPlayerStats || {};
+  const tactical = prediction.tacticalContext || {};
+  const profiles = tactical.recentOpponentBlockProfiles?.profiles;
+
+  return {
+    sport: prediction.sport,
+    playerName: prediction.playerName,
+    playerRole: prediction.playerRole || prediction.playerPosition || prediction.position,
+    teamName: prediction.teamName,
+    opponentName: prediction.opponentName || prediction.opponent,
+    venue: prediction.venue,
+    line: prediction.line,
+    projection: prediction.projection ?? prediction.projectedValue ?? prediction.bayesianProjection,
+    recommendation: prediction.recommendation,
+    confidenceScore: prediction.confidenceScore ?? prediction.confidence,
+    confidenceLevel: prediction.confidenceLevel,
+    pOver: prediction.pOver,
+    pUnder: prediction.pUnder,
+    priorMean: prediction.priorMean ?? bayesian.priorMean ?? bayesian.prior_mean,
+    priorSamples: prediction.priorSamples ?? bayesian.priorSamples ?? bayesian.sampleSize,
+    momentumEffect: prediction.momentumEffect ?? bayesian.momentumEffect,
+    momentumLabel: prediction.momentumLabel ?? bayesian.momentumLabel,
+    covariateAdjustment: prediction.covariateAdjustment ?? bayesian.covariateAdjustment,
+    expectedPossession: prediction.expectedPossession,
+    possessionStatus: prediction.possessionStatus,
+    homeAvg: prediction.homeAvg ?? playerLogs.homeAvg,
+    awayAvg: prediction.awayAvg ?? playerLogs.awayAvg,
+    hitRates: prediction.hitRates ?? playerLogs.hitRates,
+    modelHitRates: prediction.modelHitRates ?? playerLogs.modelHitRates,
+    venueHistory: prediction.venueHistory ?? playerLogs.venueHistory,
+    analysisSummary: prediction.analysisSummary,
+    opponentProfile: prediction.opponentProfile || prediction.opponentDefensiveProfile,
+    matchupOverview: prediction.matchupOverview,
+    matchupVolume: prediction.matchupVolume,
+    h2hPlayerStats: {
+      avgVsOpponent: h2h.avgVsOpponent,
+      sampleSize: h2h.sampleSize,
+      opponentHitRate: h2h.opponentHitRate,
+      venueSplits: h2h.venueSplits,
+      matches: Array.isArray(h2h.matches) ? h2h.matches.slice(0, 8) : undefined,
+    },
+    gameLogs: logs.slice(0, 20),
+    positionComparison: prediction.positionComparison,
+    tacticalContext: {
+      player: tactical.player,
+      lineup: tactical.lineup,
+      possessionGameScript: tactical.possessionGameScript,
+      positionPassesReceived: tactical.positionPassesReceived,
+      understatPressure: tactical.understatPressure,
+      recentOpponentBlockProfiles: Array.isArray(profiles)
+        ? { profiles: profiles.slice(0, 12) }
+        : undefined,
+    },
+    tacticalIntelligence: prediction.tacticalIntelligence,
+    evidenceQuality: prediction.evidenceQuality,
+    factorLedger: prediction.factorLedger,
+  };
+}
+
+function SectionNarrativeCard({
+  section,
+  text,
+  source,
+  loading,
+  error,
+  onRetry,
+}: {
+  section: AnalysisTab;
+  text?: string | null;
+  source?: 'gemini' | 'deterministic';
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+}) {
+  const label = section === 'read' ? 'READ' : section === 'form' ? 'FORM' : 'MATCHUP';
+  const icon = section === 'read'
+    ? 'flash-outline'
+    : section === 'form'
+      ? 'pulse-outline'
+      : 'swap-horizontal-outline';
+
+  return (
+    <View style={styles.sectionNarrativeCard}>
+      <View style={styles.sectionNarrativeHeader}>
+        <View style={styles.sectionNarrativeTitleRow}>
+          <Ionicons name={icon as any} size={13} color={Colors.primary} />
+          <Text style={styles.sectionNarrativeTitle}>{label} EXPLANATION</Text>
+        </View>
+        {source && (
+          <Text style={styles.sectionNarrativeSource}>
+            {source === 'gemini' ? 'ANALYST READ' : 'MODEL READ'}
+          </Text>
+        )}
+      </View>
+      {loading ? (
+        <View style={styles.sectionNarrativeLoading}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.sectionNarrativeLoadingText}>
+            Building a human read from the verified numbers…
+          </Text>
+        </View>
+      ) : text ? (
+        <Text style={styles.sectionNarrativeText}>{text}</Text>
+      ) : error ? (
+        <View style={styles.sectionNarrativeError}>
+          <Text style={styles.sectionNarrativeErrorText}>{error}</Text>
+          {onRetry && (
+            <TouchableOpacity
+              onPress={onRetry}
+              activeOpacity={0.75}
+              style={styles.sectionNarrativeRetry}
+              accessibilityRole="button"
+            >
+              <Text style={styles.sectionNarrativeRetryText}>TRY AGAIN</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function PostedLineValue({
   value,
   onChangeText,
@@ -550,7 +584,6 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType, loginWithResponse } = useAuth();
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
-  const narrationPlayedRef = useRef(false);
   const { isSubscribed: hasNativeAppleEntitlement } = useSubscription();
   // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
   const isNoSub = (!accessType || accessType === 'NoSubscription')
@@ -609,6 +642,54 @@ export default function ScanScreen() {
   const [showPropEditScan, setShowPropEditScan] = useState(false);
 
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>('read');
+  const [sectionNarratives, setSectionNarratives] = useState<Partial<Record<AnalysisTab, string>>>({});
+  const [sectionNarrativeSources, setSectionNarrativeSources] = useState<Partial<Record<AnalysisTab, 'gemini' | 'deterministic'>>>({});
+  const [sectionNarrativeLoading, setSectionNarrativeLoading] = useState<Partial<Record<AnalysisTab, boolean>>>({});
+  const [sectionNarrativeErrors, setSectionNarrativeErrors] = useState<Partial<Record<AnalysisTab, string>>>({});
+  const sectionExplanationAbortRef = useRef<Partial<Record<AnalysisTab, AbortController>>>({});
+  const sectionNarrativeRef = useRef<Partial<Record<AnalysisTab, string>>>({});
+  const sectionNarrativeLoadingRef = useRef<Partial<Record<AnalysisTab, boolean>>>({});
+
+  const requestSectionExplanation = useCallback(async (
+    tab: AnalysisTab,
+    pred: PredictionResult | null,
+  ) => {
+    if (!pred || !session?.email || !session?.token) return;
+    if (sectionNarrativeRef.current[tab] || sectionNarrativeLoadingRef.current[tab]) return;
+
+    sectionExplanationAbortRef.current[tab]?.abort();
+    const controller = new AbortController();
+    sectionExplanationAbortRef.current[tab] = controller;
+    sectionNarrativeLoadingRef.current[tab] = true;
+    setSectionNarrativeLoading((current) => ({ ...current, [tab]: true }));
+    setSectionNarrativeErrors((current) => ({ ...current, [tab]: '' }));
+
+    try {
+      const response = await requestPredictionSectionExplanation(
+        session.email,
+        session.token,
+        tab,
+        buildSectionExplanationSnapshot(pred as any),
+      );
+      if (controller.signal.aborted) return;
+      sectionNarrativeRef.current[tab] = response.text;
+      setSectionNarratives((current) => ({ ...current, [tab]: response.text }));
+      setSectionNarrativeSources((current) => ({ ...current, [tab]: response.source }));
+    } catch (error: unknown) {
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error && error.message
+        ? error.message
+        : 'This explanation could not load right now.';
+      setSectionNarrativeErrors((current) => ({ ...current, [tab]: message }));
+    } finally {
+      if (sectionExplanationAbortRef.current[tab] === controller) {
+        delete sectionExplanationAbortRef.current[tab];
+      }
+      sectionNarrativeLoadingRef.current[tab] = false;
+      setSectionNarrativeLoading((current) => ({ ...current, [tab]: false }));
+    }
+  }, [session?.email, session?.token]);
+
   // League edit (scan mode)
   const [showLeagueEditScan, setShowLeagueEditScan] = useState(false);
 
@@ -631,13 +712,23 @@ export default function ScanScreen() {
       ? Colors.error
       : Colors.textSecondary;
   useEffect(() => {
-    if (prediction?.fixtureId || prediction?.playerId) {
+    if (predictionState) {
       setAnalysisTab('read');
+      Object.values(sectionExplanationAbortRef.current).forEach((controller) => controller?.abort());
+      sectionExplanationAbortRef.current = {};
+      sectionNarrativeRef.current = {};
+      sectionNarrativeLoadingRef.current = {};
+      setSectionNarratives({});
+      setSectionNarrativeSources({});
+      setSectionNarrativeErrors({});
+      setSectionNarrativeLoading({});
+      void requestSectionExplanation('read', predictionState);
     }
-  }, [prediction?.fixtureId, prediction?.playerId]);
+  }, [prediction?.fixtureId, prediction?.playerId, prediction?.line, prediction?.playerName, predictionState, requestSectionExplanation]);
 
   const selectAnalysisTab = (tab: AnalysisTab) => {
     setAnalysisTab(tab);
+    void requestSectionExplanation(tab, predictionState);
     Haptics.selectionAsync().catch(() => undefined);
   };
 
@@ -959,25 +1050,6 @@ export default function ScanScreen() {
     // from the universal result tap.
     await confirmNflPlayer(player);
   };
-
-  // Auto-quality-filter whenever a new prediction loads:
-  // sub-60-min games are excluded automatically so the hit rate is clean by default.
-  // User can still tap any grey tile to restore it.
-  // Auto-narrate the tactical breakdown when a prediction loads.
-  // The <audio> element was pre-unlocked by the Analyze tap, so iOS Safari
-  // allows playback here even though this is an async callback.
-  useEffect(() => {
-    if (phase !== 'result' || !predictionState) {
-      narrationPlayedRef.current = false;
-      return;
-    }
-    if (narrationPlayedRef.current) return;
-    narrationPlayedRef.current = true;
-    const text = _buildNarrationText(predictionState as any);
-    if (text && session?.email && session?.token) {
-      void autoNarrate(text, session.email, session.token);
-    }
-  }, [phase, predictionState]);
 
   useEffect(() => {
     if (!prediction?.gameLogs) {
@@ -1498,7 +1570,6 @@ export default function ScanScreen() {
   };
 
   const handleManualAnalyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio(); // must be before any await
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
@@ -1544,7 +1615,6 @@ export default function ScanScreen() {
   };
 
   const handleCs2Analyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
@@ -1596,7 +1666,6 @@ export default function ScanScreen() {
 
   // ── WTA handlers ─────────────────────────────────────────────────────────
   const handleWtaAnalyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
@@ -1649,7 +1718,6 @@ export default function ScanScreen() {
 
   // ── NBA handlers ─────────────────────────────────────────────────────────
   const handleNbaAnalyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nbaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -1687,7 +1755,6 @@ export default function ScanScreen() {
 
   // ── NHL handlers ─────────────────────────────────────────────────────────
   const handleNhlAnalyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nhlPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -1725,7 +1792,6 @@ export default function ScanScreen() {
 
   // ── NFL handlers ─────────────────────────────────────────────────────────
   const handleNflAnalyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!nflPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -1785,7 +1851,6 @@ export default function ScanScreen() {
 
   // ── MLB handlers ─────────────────────────────────────────────────────────
   const handleMlbAnalyze = async () => {
-    if (Platform.OS === 'web') unlockNarrationAudio();
     if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
     if (!(await ensurePredictionAccess())) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
     if (!mlbPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -4468,6 +4533,14 @@ export default function ScanScreen() {
                  );
                })}
              </View>
+              <SectionNarrativeCard
+                section={analysisTab}
+                text={sectionNarratives[analysisTab]}
+                source={sectionNarrativeSources[analysisTab]}
+                loading={sectionNarrativeLoading[analysisTab]}
+                error={sectionNarrativeErrors[analysisTab]}
+                onRetry={() => void requestSectionExplanation(analysisTab, predictionState)}
+              />
              <CompactAnalysisBars
                  prediction={prediction}
                section={analysisTab}
@@ -4482,14 +4555,6 @@ export default function ScanScreen() {
                      || (prediction as any).tacticalIntelligence?.positionCohort}
                     recommendation={prediction.recommendation}
                     line={prediction.line}
-                 />
-                 <TacticalNarrativeCard
-                   narrative={(prediction as any).tacticalBreakdown
-                     || tacticalAnalysis
-                     || (prediction as any).reasoning
-                     || (prediction as any).sharpSummary}
-                   recommendation={prediction.recommendation}
-                   tacticalContext={(prediction as any).tacticalContext}
                  />
                </>
              )}
@@ -7156,6 +7221,75 @@ const styles = StyleSheet.create({
   reasoningHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  sectionNarrativeCard: {
+    backgroundColor: 'rgba(57,255,20,0.045)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.22)',
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    marginBottom: 9,
+  },
+  sectionNarrativeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 7,
+  },
+  sectionNarrativeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sectionNarrativeTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: Colors.primary,
+    letterSpacing: 1.2,
+  },
+  sectionNarrativeSource: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 0.7,
+  },
+  sectionNarrativeText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+  sectionNarrativeLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 30,
+  },
+  sectionNarrativeLoadingText: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.textTertiary,
+    lineHeight: 16,
+  },
+  sectionNarrativeError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionNarrativeErrorText: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.textSecondary,
+    lineHeight: 16,
+  },
+  sectionNarrativeRetry: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.primary + '66',
+  },
+  sectionNarrativeRetryText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: Colors.primary,
+    letterSpacing: 0.6,
+  },
 
   /* Scout Report card — glass panel treatment */
   scoutCard: {

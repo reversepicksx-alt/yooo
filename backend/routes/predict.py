@@ -65,6 +65,66 @@ _RECENT_ARCHIVE_MIN = 35
 _PREDICTION_CACHE_MIN = 15
 
 
+def _apply_optional_soccer_possession(
+    game_log: dict,
+    venue: str | None,
+    home_possession: float | int | None,
+    away_possession: float | int | None,
+) -> dict:
+    """Attach exact fixture possession without making it a history gate.
+
+    Player minutes and the requested stat are required for a history row.
+    Fixture possession is corroborating context and may be absent when the
+    provider omits fixture statistics or only returns one side. Never infer a
+    missing side from 100 minus the other side.
+    """
+    if (
+        home_possession is not None
+        and away_possession is not None
+        and venue in {"home", "away"}
+    ):
+        team_possession = (
+            home_possession if venue == "home" else away_possession
+        )
+        opponent_possession = (
+            away_possession if venue == "home" else home_possession
+        )
+        game_log["teamPossession"] = team_possession
+        game_log["opponentPossession"] = opponent_possession
+        game_log["tp"] = team_possession
+        game_log["possessionStatus"] = "verified"
+        game_log["possessionSource"] = "fixture_statistics"
+    else:
+        game_log["teamPossession"] = None
+        game_log["opponentPossession"] = None
+        game_log.pop("tp", None)
+        game_log["possessionStatus"] = "unavailable"
+        game_log["possessionSource"] = None
+    return game_log
+
+
+def _filter_usable_soccer_history_logs(
+    logs: list[dict] | None,
+    prop_type: str,
+) -> list[dict]:
+    """Keep real appearances with usable evidence for the requested prop.
+
+    Historical possession is intentionally not part of this admission rule.
+    This is shared by the route's final quality gate and regression tests so
+    a provider outage cannot turn an otherwise valid player history into a
+    false verified-data error.
+    """
+    target_field = STAT_FIELD_MAP.get(prop_type, "passes_total")
+    return [
+        game
+        for game in (logs or [])
+        if isinstance(game, dict)
+        and not game.get("synthetic")
+        and (game.get("minutes") or 0) > 0
+        and game.get(target_field) is not None
+    ]
+
+
 def _json_safe_prediction(value, *, _active=None, _depth=0):
     """Detach a prediction graph before MongoDB/HTTP serialization.
 
@@ -1833,9 +1893,11 @@ async def predict(req: PredictionRequest):
             async def _fetch_fixture_possession(fid, home_id, away_id):
                 """Return both exact fetched fixture possession values.
 
-                Player-history TP is mandatory. Never infer the opponent share
-                from 100 minus one side because provider possession can be
-                rounded independently or be unavailable for one team.
+                Possession is optional historical context. Never infer the
+                opponent share from 100 minus one side because provider
+                possession can be rounded independently or be unavailable for
+                one team. The caller may still keep a valid player appearance
+                when this returns a partial/unavailable pair.
                 """
                 cache_key = f"fxt_poss_{fid}"
                 try:
@@ -2088,7 +2150,8 @@ async def predict(req: PredictionRequest):
 
                     # Join verified fixture possession onto every cached soccer
                     # game log so the compact history bars can label all props,
-                    # not just pass-volume props.
+                    # not just pass-volume props. A missing optional possession
+                    # feed must not discard a valid minutes/stat appearance.
                     poss_docs: dict[str, dict] = {}
                     if fid_map and req.sport == "soccer":
                         poss_keys = [f"fxt_poss_{fid}" for fid in fid_map]
@@ -2098,9 +2161,10 @@ async def predict(req: PredictionRequest):
                         for poss_doc in poss_results:
                             fid_str = poss_doc.get("_k", "")[9:]  # strip "fxt_poss_"
                             poss_docs[fid_str] = poss_doc.get("d") or {}
-                        # A cache miss or partial possession cache must be
-                        # rehydrated from the exact fixture before a cached
-                        # player row can enter a soccer prediction.
+                        # A cache miss or partial possession cache is worth
+                        # rehydrating, but failure to hydrate remains an
+                        # unavailable optional signal rather than a reason to
+                        # discard the player appearance.
                         _tp_tasks = []
                         _tp_fids = []
                         for _fid, _meta in fxm_docs.items():
@@ -2253,10 +2317,18 @@ async def predict(req: PredictionRequest):
                                     and gl.get("opponentPossession") is not None
                                 ):
                                     gl["tp"] = gl["teamPossession"]
-                                elif req.sport == "soccer":
-                                    # Do not expose a cached row with no
-                                    # verified TP. Stage 1 can fetch it.
-                                    continue
+                                    gl["possessionStatus"] = "verified"
+                                    gl["possessionSource"] = "fixture_statistics"
+                                else:
+                                    # Preserve the stat-bearing appearance and
+                                    # make the missing optional evidence
+                                    # explicit. Never retain a stale/partial
+                                    # tp value or synthesize 100 - one side.
+                                    gl["teamPossession"] = None
+                                    gl["opponentPossession"] = None
+                                    gl.pop("tp", None)
+                                    gl["possessionStatus"] = "unavailable"
+                                    gl["possessionSource"] = None
                                 if fid_str in context_docs:
                                     _context = context_docs[fid_str]
                                     if _context.get("teamShotsOnTarget") is not None:
@@ -2308,14 +2380,6 @@ async def predict(req: PredictionRequest):
                     _pressure_possession_count = sum(
                         1 for g in collected if g.get("teamPossession") is not None
                     )
-                    _tp_complete = (
-                        req.sport != "soccer"
-                        or all(
-                            g.get("teamPossession") is not None
-                            and g.get("opponentPossession") is not None
-                            for g in collected
-                        )
-                    )
                     # Competition/stage evidence needs permanent fixture
                     # metadata. Older prefetched rows may have player stats
                     # but only IDs/venue, so let Stage 1 rejoin them to the
@@ -2355,7 +2419,6 @@ async def predict(req: PredictionRequest):
                         len(collected) >= _PREDICTION_CACHE_MIN
                         and len(good) >= len(collected) // 2
                         and _saves_ok
-                        and _tp_complete
                         and _competition_meta_complete
                         and not extra_fixture_list
                     ):
@@ -2376,7 +2439,7 @@ async def predict(req: PredictionRequest):
                     elif collected:
                         print(
                             f"[CACHE-STAGE0] Only {len(collected)} games "
-                            f"(venue ok: {len(good)}, saves_ok={_saves_ok}, tp_complete={_tp_complete}, "
+                            f"(venue ok: {len(good)}, saves_ok={_saves_ok}, "
                             f"competition_meta={_competition_meta_complete}, "
                             f"historical_poss={_pressure_possession_count}, "
                             f"home={_home_count}, away={_away_count}, "
@@ -2498,23 +2561,12 @@ async def predict(req: PredictionRequest):
                             home_poss, away_poss = await _fetch_fixture_possession(
                                 fid, home_id, away_id
                             )
-                            if (
-                                home_poss is not None
-                                and away_poss is not None
-                                and fix_venue == "home"
-                            ):
-                                gl_dict["teamPossession"] = home_poss
-                                gl_dict["opponentPossession"] = away_poss
-                                gl_dict["tp"] = home_poss
-                            elif (
-                                home_poss is not None
-                                and away_poss is not None
-                                and fix_venue == "away"
-                            ):
-                                gl_dict["teamPossession"] = away_poss
-                                gl_dict["opponentPossession"] = home_poss
-                                gl_dict["tp"] = away_poss
-                            return gl_dict
+                            return _apply_optional_soccer_possession(
+                                gl_dict,
+                                fix_venue,
+                                home_poss,
+                                away_poss,
+                            )
 
                         async def _enrich_opponent_sot(gl_dict: dict) -> dict:
                             if req.sport == "soccer":
@@ -2685,14 +2737,6 @@ async def predict(req: PredictionRequest):
                         gl["fixtureId"] = str(fid)
                         gl = await _enrich_possession(gl)
                         gl = await _enrich_opponent_sot(gl)
-                        if (
-                            req.sport == "soccer"
-                            and (
-                                gl.get("teamPossession") is None
-                                or gl.get("opponentPossession") is None
-                            )
-                        ):
-                            return None
                         return gl
                     except Exception:
                         return None
@@ -4656,16 +4700,12 @@ async def predict(req: PredictionRequest):
                                     fid, home_team_id,
                                     fix_raw.get("teams", {}).get("away", {}).get("id"),
                                 )
-                                if _home_tp is None or _away_tp is None:
-                                    return None
-                                if player_fix_venue == "home":
-                                    gl["teamPossession"] = _home_tp
-                                    gl["opponentPossession"] = _away_tp
-                                    gl["tp"] = _home_tp
-                                else:
-                                    gl["teamPossession"] = _away_tp
-                                    gl["opponentPossession"] = _home_tp
-                                    gl["tp"] = _away_tp
+                                _apply_optional_soccer_possession(
+                                    gl,
+                                    player_fix_venue,
+                                    _home_tp,
+                                    _away_tp,
+                                )
                             stat_val = gl.get(_gl_key2)
                             if stat_val is not None and minutes > 0:
                                 gl["targetStatPer90"] = round((stat_val / minutes) * 90, 2)
@@ -4701,23 +4741,21 @@ async def predict(req: PredictionRequest):
         # Stage 2: Season aggregate fallback — only if API direct also returned nothing
         if req.sport == "soccer":
             # A provider/cache response can contain a mixture of complete
-            # appearances and rows missing minutes or fixture possession,
-            # especially when a new competition season has just started.
-            # Keep the evidence-quality rule, but discard only the unusable
-            # rows instead of rejecting an otherwise valid prior-season sample.
-            _verified_player_logs = [
-                g for g in (player_game_logs or [])
-                if not g.get("synthetic")
-                and (g.get("minutes") or 0) > 0
-                and g.get("teamPossession") is not None
-                and g.get("opponentPossession") is not None
-            ]
+            # appearances and rows missing minutes, target stats, or optional
+            # fixture possession, especially when a new competition season has
+            # just started. Keep real appearances with usable target-stat
+            # evidence; possession remains explicitly unavailable when absent.
+            _verified_player_logs = _filter_usable_soccer_history_logs(
+                player_game_logs,
+                req.propType,
+            )
             _dropped_incomplete_logs = len(player_game_logs or []) - len(_verified_player_logs)
             if _dropped_incomplete_logs:
                 print(
                     f"[PLAYER HISTORY QUALITY] {req.playerName}: dropped "
                     f"{_dropped_incomplete_logs} incomplete appearance(s); "
-                    f"retained {len(_verified_player_logs)} verified rows"
+                    f"retained {len(_verified_player_logs)} stat-bearing rows "
+                    f"(historical possession is optional)"
                 )
             player_game_logs = _verified_player_logs
             if not player_game_logs:
@@ -4725,13 +4763,25 @@ async def predict(req: PredictionRequest):
                     status_code=424,
                     detail=(
                         "Verified player game data is unavailable: no soccer "
-                        "appearance currently has exact minutes and fetched team "
-                        "possession (TP). Please retry shortly."
+                        "appearance currently has positive minutes and usable "
+                        "target-stat evidence. Please retry shortly."
                     ),
                 )
 
             for _game in player_game_logs:
                 _game["tp"] = _game.get("teamPossession")
+                if (
+                    _game.get("teamPossession") is not None
+                    and _game.get("opponentPossession") is not None
+                ):
+                    _game.setdefault("possessionStatus", "verified")
+                    _game.setdefault("possessionSource", "fixture_statistics")
+                else:
+                    _game["teamPossession"] = None
+                    _game["opponentPossession"] = None
+                    _game.pop("tp", None)
+                    _game["possessionStatus"] = "unavailable"
+                    _game["possessionSource"] = None
 
         if not player_game_logs and player_stats:
             _sfm_fallback = {
@@ -5689,6 +5739,20 @@ async def predict(req: PredictionRequest):
                 float(g["teamPossession"]) for g in _last10_logs
                 if g.get("venue") == "away" and g.get("teamPossession") is not None
             ]
+            _history_possession_count = sum(
+                1
+                for _log in _history_view_logs
+                if _log.get("teamPossession") is not None
+                and _log.get("opponentPossession") is not None
+            )
+            _history_possession_status = (
+                "verified"
+                if _history_view_logs
+                and _history_possession_count == len(_history_view_logs)
+                else "partial"
+                if _history_possession_count > 0
+                else "unavailable"
+            )
             _venue_history_sample = (
                 sum(
                     1
@@ -5755,6 +5819,17 @@ async def predict(req: PredictionRequest):
                 "tpAwayAvg": round(sum(_tp_away) / len(_tp_away), 1) if _tp_away else None,
                 "tpHomeCount": len(_tp_home),
                 "tpAwayCount": len(_tp_away),
+                "possessionStatus": _history_possession_status,
+                "possessionSource": (
+                    "fixture_statistics"
+                    if _history_possession_count > 0
+                    else None
+                ),
+                "possessionAvailableGames": _history_possession_count,
+                "possessionUnavailableGames": max(
+                    0,
+                    len(_history_view_logs) - _history_possession_count,
+                ),
                 "venueHistory": {
                     "selectedVenue": player_venue,
                     "target": _VENUE_HISTORY_TARGET,
@@ -8409,12 +8484,26 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 float(g["teamPossession"]) for g in _wave2_last10
                 if g.get("venue") == "away" and g.get("teamPossession") is not None
             ]
+            _wave2_possession_count = sum(
+                1
+                for _log in player_game_logs
+                if _log.get("teamPossession") is not None
+                and _log.get("opponentPossession") is not None
+            )
             wave2_supplement["playerGameLogs"].update({
                 "last10Count": len(_wave2_last10),
                 "tpHomeAvg": round(sum(_wave2_tp_home) / len(_wave2_tp_home), 1) if _wave2_tp_home else None,
                 "tpAwayAvg": round(sum(_wave2_tp_away) / len(_wave2_tp_away), 1) if _wave2_tp_away else None,
                 "tpHomeCount": len(_wave2_tp_home),
                 "tpAwayCount": len(_wave2_tp_away),
+                "possessionStatus": (
+                    "verified"
+                    if _wave2_possession_count == len(player_game_logs)
+                    else "partial"
+                    if _wave2_possession_count > 0
+                    else "unavailable"
+                ),
+                "possessionAvailableGames": _wave2_possession_count,
             })
             # Pre-compute OVER/UNDER hit rates from actual game logs
             if values and req.line:
@@ -12615,6 +12704,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "tpAwayAvg": round(sum(_pgl_tp_away) / len(_pgl_tp_away), 1) if _pgl_tp_away else None,
                 "tpHomeCount": len(_pgl_tp_home),
                 "tpAwayCount": len(_pgl_tp_away),
+                "possessionStatus": (
+                    "verified"
+                    if player_game_logs
+                    and len(_pgl_tp_home) + len(_pgl_tp_away) == len(player_game_logs)
+                    else "partial"
+                    if _pgl_tp_home or _pgl_tp_away
+                    else "unavailable"
+                ),
+                "possessionAvailableGames": sum(
+                    1
+                    for _pgl_log in player_game_logs
+                    if _pgl_log.get("teamPossession") is not None
+                    and _pgl_log.get("opponentPossession") is not None
+                ),
             }
             if _pgl_vals:
                 _pgl_summary["rawAvg"] = round(sum(_pgl_vals) / len(_pgl_vals), 2)

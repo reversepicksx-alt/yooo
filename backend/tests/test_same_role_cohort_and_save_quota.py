@@ -1,5 +1,10 @@
 from pathlib import Path
 
+from routes.predict import (
+    _apply_optional_soccer_possession,
+    _filter_usable_soccer_history_logs,
+)
+
 
 PREDICT_SOURCE = (
     Path(__file__).resolve().parents[1] / "routes" / "predict.py"
@@ -56,8 +61,8 @@ def test_opponent_cohort_live_fill_handles_empty_fixture_cache():
 
 
 def test_exact_position_cohort_searches_four_prior_seasons_when_thin():
-    assert "range(CURRENT_SEASON - 1, CURRENT_SEASON - 8, -1)" in PREDICT_SOURCE
-    assert "same opponent, venue, minutes, and exact-position" in PREDICT_SOURCE
+    assert "list(range(CURRENT_SEASON - 1, CURRENT_SEASON - 5, -1))" in PREDICT_SOURCE
+    assert "prior seasons before showing" in PREDICT_SOURCE
 
 
 def test_wide_exact_positions_allow_broad_provider_midfielder_rows():
@@ -86,10 +91,11 @@ def test_same_role_opponent_evidence_stays_venue_filtered():
     assert '"exact_opponent_same_position_same_venue_plus_prior_seasons"' in PREDICT_SOURCE
 
 
-def test_soccer_player_history_requires_exact_tp_and_minutes():
+def test_soccer_player_history_requires_minutes_and_target_stat_but_not_tp():
     assert "async def _fetch_fixture_possession(" in PREDICT_SOURCE
     assert '"tp": gl["teamPossession"]' not in PREDICT_SOURCE
-    assert "_tp_complete" in PREDICT_SOURCE
+    assert "_filter_usable_soccer_history_logs" in PREDICT_SOURCE
+    assert 'game_log["possessionStatus"] = "unavailable"' in PREDICT_SOURCE
     assert "_verified_player_logs" in PREDICT_SOURCE
     assert "status_code=424" in PREDICT_SOURCE
     assert '"tpHomeAvg"' in PREDICT_SOURCE
@@ -101,9 +107,52 @@ def test_soccer_player_history_requires_exact_tp_and_minutes():
 def test_soccer_history_drops_incomplete_rows_without_poisoning_verified_history():
     assert "_verified_player_logs" in PREDICT_SOURCE
     assert "_dropped_incomplete_logs" in PREDICT_SOURCE
-    assert "retained {len(_verified_player_logs)} verified rows" in PREDICT_SOURCE
+    assert "retained {len(_verified_player_logs)} stat-bearing rows" in PREDICT_SOURCE
     assert "if req.sport == \"soccer\":" in PREDICT_SOURCE
     assert "no soccer " in PREDICT_SOURCE
+
+
+def test_history_filter_keeps_stat_bearing_appearances_without_possession():
+    logs = [
+        {"minutes": 90, "passes_total": 64, "teamPossession": None, "opponentPossession": None},
+        {"minutes": 78, "passes_total": 58, "teamPossession": 52, "opponentPossession": 48},
+        {"minutes": 90, "passes_total": None},
+        {"minutes": 0, "passes_total": 70},
+        {"minutes": 90, "passes_total": 60, "synthetic": True},
+    ]
+
+    retained = _filter_usable_soccer_history_logs(logs, "pass_attempts")
+
+    assert len(retained) == 2
+    assert retained[0]["passes_total"] == 64
+    assert retained[0]["teamPossession"] is None
+
+
+def test_direct_fixture_possession_fallback_preserves_appearance_and_never_fabricates_tp():
+    game = {"minutes": 90, "passes_total": 63, "tp": 71}
+
+    result = _apply_optional_soccer_possession(game, "away", 71, None)
+
+    assert result["passes_total"] == 63
+    assert result["minutes"] == 90
+    assert result["teamPossession"] is None
+    assert result["opponentPossession"] is None
+    assert result["possessionStatus"] == "unavailable"
+    assert "tp" not in result
+
+
+def test_optional_possession_helper_keeps_verified_fixture_orientation():
+    result = _apply_optional_soccer_possession(
+        {"minutes": 90, "passes_total": 63},
+        "away",
+        42,
+        58,
+    )
+
+    assert result["teamPossession"] == 58
+    assert result["opponentPossession"] == 42
+    assert result["tp"] == 58
+    assert result["possessionStatus"] == "verified"
 
 
 def test_comparison_rows_require_verified_possession_and_exact_minutes():

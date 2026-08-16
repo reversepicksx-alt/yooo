@@ -16,7 +16,7 @@ const getApiBase = (): string => {
 // Endpoints that involve structured synthesis — give them a generous timeout.
 // The core soccer prediction path is intentionally handled by its own 30s
 // contract below; specialized paths keep their longer cold-cache windows.
-const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview'];
+const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview', '/api/prediction-explanation'];
 const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
@@ -203,6 +203,27 @@ export async function sendLissaMessage(
   return apiCall<LissaResponse>('/api/lissa/message', {
     method: 'POST',
     body: JSON.stringify({ email, token, session_id: sessionId, message, context }),
+  });
+}
+
+export type PredictionExplanationSection = 'read' | 'form' | 'matchup';
+
+export interface PredictionExplanationResponse {
+  section: PredictionExplanationSection;
+  text: string;
+  source: 'gemini' | 'deterministic';
+}
+
+/** Generate one explanation section from the already-finalized prediction. */
+export async function requestPredictionSectionExplanation(
+  email: string,
+  token: string,
+  section: PredictionExplanationSection,
+  prediction: Record<string, unknown>,
+): Promise<PredictionExplanationResponse> {
+  return apiCall<PredictionExplanationResponse>('/api/prediction-explanation', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, section, prediction }),
   });
 }
 
