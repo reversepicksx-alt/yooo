@@ -356,10 +356,12 @@ export async function requestPredictionSectionExplanation(
   token: string,
   section: PredictionExplanationSection,
   prediction: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<PredictionExplanationResponse> {
   return apiCall<PredictionExplanationResponse>('/api/prediction-explanation', {
     method: 'POST',
     body: JSON.stringify({ email, token, section, prediction }),
+    signal,
   });
 }
 

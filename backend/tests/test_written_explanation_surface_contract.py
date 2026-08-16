@@ -9,17 +9,18 @@ SCAN_SOURCE = (
 def test_each_section_has_an_immediate_deterministic_fallback():
     assert "function buildImmediateSectionExplanation(" in SCAN_SOURCE
     assert "const [sectionNarratives" in SCAN_SOURCE
-    assert "current[tab] ? current : { ...current, [tab]: immediate }" in SCAN_SOURCE
+    assert "setSectionNarratives((current) => ({ ...current, [tab]: fallback }))" in SCAN_SOURCE
+    assert "setSectionNarrativeSources((current) => ({ ...current, [tab]: 'deterministic' }))" in SCAN_SOURCE
     assert "{label} EXPLANATION" in SCAN_SOURCE
-    assert "section === 'read' ? 'READ'" in SCAN_SOURCE
+    assert "section === 'read' ? 'TACTICAL READ'" in SCAN_SOURCE
     assert "section === 'form' ? 'FORM'" in SCAN_SOURCE
 
 
-def test_first_written_read_is_committed_and_not_replaced_async():
-    assert "The first grounded read is the final read for this prediction." in SCAN_SOURCE
-    assert "sectionNarrativeRef.current[tab] = immediate" in SCAN_SOURCE
-    assert "asynchronous analyst generation" in SCAN_SOURCE
-    assert "requestPredictionSectionExplanation(" not in SCAN_SOURCE
+def test_read_prefers_gemini_and_keeps_deterministic_fallback():
+    assert "Gemini is the primary author for the customer-facing tactical read." in SCAN_SOURCE
+    assert "requestPredictionSectionExplanation(" in SCAN_SOURCE
+    assert "response?.source === 'gemini'" in SCAN_SOURCE
+    assert "setSectionNarrativeSources((current) => ({ ...current, [tab]: 'deterministic' }))" in SCAN_SOURCE
     assert "generatedText" not in SCAN_SOURCE
 
 

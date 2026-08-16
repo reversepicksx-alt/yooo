@@ -16,7 +16,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, syncAppleAccess, verifySession } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, syncAppleAccess, verifySession, requestPredictionSectionExplanation } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem, UniversalPlayerResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -558,6 +558,9 @@ function buildSectionExplanationSnapshot(prediction: Record<string, any>): Recor
     tacticalIntelligence: prediction.tacticalIntelligence,
     evidenceQuality: prediction.evidenceQuality,
     factorLedger: prediction.factorLedger,
+    factorLedgerFingerprint: prediction.factorLedgerFingerprint
+      || prediction.factorLedger?.fingerprint
+      || prediction.finalLedgerFingerprint,
   };
 }
 
@@ -747,22 +750,77 @@ export default function ScanScreen() {
   const requestSectionExplanation = useCallback((
     tab: AnalysisTab,
     pred: PredictionResult | null,
+    force = false,
   ) => {
-    if (!pred || sectionNarrativeRef.current[tab]) return;
-    // The first grounded read is the final read for this prediction. Do not
-    // swap it out after the card is visible: asynchronous analyst generation
-    // made the explanation appear to reset and change underneath the user.
-    const immediate = tab === 'read'
+    if (!pred || (!force && sectionNarrativeRef.current[tab])) return;
+    if (!force && sectionNarrativeLoadingRef.current[tab]) return;
+
+    const fallback = tab === 'read'
       ? (getTacticalRead(pred as any) || buildImmediateSectionExplanation(tab, pred as any))
       : buildImmediateSectionExplanation(tab, pred as any);
-    sectionNarrativeRef.current[tab] = immediate;
-    setSectionNarratives((current) => (
-      current[tab] ? current : { ...current, [tab]: immediate }
-    ));
-    setSectionNarrativeSources((current) => (
-      current[tab] ? current : { ...current, [tab]: 'deterministic' }
-    ));
-  }, []);
+
+    // Gemini is the primary author for the customer-facing tactical read. Keep
+    // the deterministic text as a fallback only; do not show it first and
+    // replace it later, which makes the card visibly rewrite itself.
+    if (
+      tab !== 'read'
+      || !session?.email
+      || !session?.token
+    ) {
+      sectionNarrativeRef.current[tab] = fallback;
+      setSectionNarratives((current) => ({ ...current, [tab]: fallback }));
+      setSectionNarrativeSources((current) => ({ ...current, [tab]: 'deterministic' }));
+      setSectionNarrativeLoading((current) => ({ ...current, [tab]: false }));
+      return;
+    }
+
+    sectionNarrativeLoadingRef.current[tab] = true;
+    sectionNarrativeRef.current[tab] = '';
+    setSectionNarrativeErrors((current) => ({ ...current, [tab]: undefined }));
+    setSectionNarrativeLoading((current) => ({ ...current, [tab]: true }));
+
+    const controller = new AbortController();
+    sectionExplanationAbortRef.current[tab]?.abort();
+    sectionExplanationAbortRef.current[tab] = controller;
+
+    void requestPredictionSectionExplanation(
+      session.email,
+      session.token,
+      'read',
+      buildSectionExplanationSnapshot(pred as any),
+      controller.signal,
+    ).then((response) => {
+      if (controller.signal.aborted) return;
+      const text = String(response?.text || '').trim() || fallback;
+      sectionNarrativeRef.current[tab] = text;
+      setSectionNarratives((current) => ({ ...current, [tab]: text }));
+      setSectionNarrativeSources((current) => ({
+        ...current,
+        [tab]: response?.source === 'gemini' ? 'gemini' : 'deterministic',
+      }));
+      if (response?.source !== 'gemini') {
+        setSectionNarrativeErrors((current) => ({
+          ...current,
+          [tab]: 'Analyst wording was unavailable, so the verified model read is shown.',
+        }));
+      }
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      sectionNarrativeRef.current[tab] = fallback;
+      setSectionNarratives((current) => ({ ...current, [tab]: fallback }));
+      setSectionNarrativeSources((current) => ({ ...current, [tab]: 'deterministic' }));
+      setSectionNarrativeErrors((current) => ({
+        ...current,
+        [tab]: error instanceof Error && error.message === '__CANCELLED__'
+          ? undefined
+          : 'Analyst wording was unavailable, so the verified model read is shown.',
+      }));
+    }).finally(() => {
+      if (controller.signal.aborted) return;
+      sectionNarrativeLoadingRef.current[tab] = false;
+      setSectionNarrativeLoading((current) => ({ ...current, [tab]: false }));
+    });
+  }, [session?.email, session?.token]);
 
   // League edit (scan mode)
   const [showLeagueEditScan, setShowLeagueEditScan] = useState(false);
@@ -4625,7 +4683,7 @@ export default function ScanScreen() {
                    source={sectionNarrativeSources[analysisTab]}
                    loading={sectionNarrativeLoading[analysisTab]}
                    error={sectionNarrativeErrors[analysisTab]}
-                   onRetry={() => void requestSectionExplanation('read', predictionState)}
+                    onRetry={() => void requestSectionExplanation('read', predictionState, true)}
                  />
                )}
              <CompactAnalysisBars
