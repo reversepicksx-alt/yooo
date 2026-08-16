@@ -513,7 +513,22 @@ async def search_players(req: PlayerSearchRequest):
     # Sort helpers — defined early so they can be applied to cache hits too.
     def _strip(s):
         return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
-    query_parts = [_strip(w.lower()) for w in req.query.strip().split()]
+    query_parts = [
+        re.sub(r"[^a-z0-9]+", "", _strip(w.lower()))
+        for w in req.query.strip().split()
+    ]
+    # A copied/OCR name can contain stacked initials while the provider keeps
+    # only the last one (C. K. Rader → K. Rader). Drop only the redundant
+    # leading initial from a 3+ part query; the remaining first-initial and
+    # surname still form a strict abbreviated-name match.
+    while len(query_parts) >= 3 and len(query_parts[0]) == 1 and len(query_parts[1]) == 1:
+        query_parts.pop(0)
+    # API-Sports rejects punctuation in its `search` parameter. Keep the
+    # original normalized words for strict ranking, but send a provider-safe
+    # form so OCR names such as "C. K. Rader" can still reach the bounded
+    # surname recovery below.
+    provider_query = re.sub(r"[^A-Za-z0-9 ]+", " ", _strip(req.query))
+    provider_query = re.sub(r"\s+", " ", provider_query).strip()
     _TOP5_LEAGUES = {39, 140, 135, 78, 61}   # EPL, LaLiga, SerieA, Bund., Ligue1
     _NICKNAME_ALIASES = {
         "andy": {"andrew"}, "danny": {"daniel"}, "drew": {"andrew"},
@@ -1243,7 +1258,7 @@ async def search_players(req: PlayerSearchRequest):
     # leaving users staring at a spinner for 7–40 seconds. One targeted lookup
     # is enough for the dropdown; full club/context enrichment happens after
     # the user selects the player.
-    fast_params = {"search": req.query}
+    fast_params = {"search": provider_query}
     # Profile search is the provider's fastest identity lookup and works for
     # both global and league-scoped typing. The old league/season request
     # could silently query a future season and return nothing (for example
@@ -1277,6 +1292,10 @@ async def search_players(req: PlayerSearchRequest):
     # immediately and the universal search can only show unrelated MLB/NFL
     # surname matches.
     if len(query_parts) > 1 and not _apply_sort_and_quality(list(live_players)):
+        # OCR and copied pick slips can include more than one first-name
+        # initial (for example "C. K. Rader"), while API-Football may expose
+        # the same player as "K. Rader". The surname lookup below is the
+        # bounded recovery path for that provider naming mismatch.
         last_word = query_parts[-1]
         if len(last_word) >= 3:
             try:

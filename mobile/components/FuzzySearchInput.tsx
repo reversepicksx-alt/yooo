@@ -58,6 +58,8 @@ interface FuzzySearchInputProps {
   value: string;
   onChangeText: (text: string) => void;
   searchType: SearchType;
+  /** Restrict the universal player search to the currently selected sport. */
+  sportFilter?: 'soccer' | 'mlb' | 'nfl';
   leagueId?: number;
   placeholder?: string;
   style?: object;
@@ -119,6 +121,7 @@ export default function FuzzySearchInput({
   value,
   onChangeText,
   searchType,
+  sportFilter,
   leagueId,
   placeholder = 'Search...',
   style,
@@ -256,16 +259,29 @@ export default function FuzzySearchInput({
             setHasSearched(true);
           }
         };
-        const soccerPromise = searchPlayersQuick(q, leagueId, ownerSession, signal)
-          .then(data => addUniversalRows('soccer', data.players || []))
-          .catch(() => {});
-        const mlbPromise = searchMlbPlayers(q, signal)
-          .then(rows => addUniversalRows('mlb', rows))
-          .catch(() => {});
-        const nflPromise = searchNflPlayers(q, signal)
-          .then(rows => addUniversalRows('nfl', rows))
-          .catch(() => {});
-        await Promise.allSettled([soccerPromise, mlbPromise, nflPromise]);
+        const providerPromises: Promise<unknown>[] = [];
+        if (!sportFilter || sportFilter === 'soccer') {
+          providerPromises.push(
+            searchPlayersQuick(q, leagueId, ownerSession, signal)
+              .then(data => addUniversalRows('soccer', data.players || []))
+              .catch(() => {}),
+          );
+        }
+        if (!sportFilter || sportFilter === 'mlb') {
+          providerPromises.push(
+            searchMlbPlayers(q, signal)
+              .then(rows => addUniversalRows('mlb', rows))
+              .catch(() => {}),
+          );
+        }
+        if (!sportFilter || sportFilter === 'nfl') {
+          providerPromises.push(
+            searchNflPlayers(q, signal)
+              .then(rows => addUniversalRows('nfl', rows))
+              .catch(() => {}),
+          );
+        }
+        await Promise.allSettled(providerPromises);
         r = universalRows;
       } else if (searchType === 'cs2_players') {
         r = (await searchCs2Players(q, signal)).filter((p: Cs2Player) => p.isActive !== false);
@@ -307,7 +323,7 @@ export default function FuzzySearchInput({
       }
       if (searchIdRef.current === myId) setLoading(false);
     }
-  }, [searchType, leagueId, staticItems, ownerSession?.email, ownerSession?.token]);
+  }, [searchType, sportFilter, leagueId, staticItems, ownerSession?.email, ownerSession?.token]);
 
   const handleChange = (text: string) => {
     onChangeText(text);

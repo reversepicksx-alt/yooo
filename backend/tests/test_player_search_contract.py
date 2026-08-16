@@ -22,6 +22,14 @@ def test_full_name_search_retries_provider_surname_for_abbreviated_profiles():
     assert "fallback_players = [extract_player(item)" in PLAYERS_SOURCE
 
 
+def test_full_name_search_documents_multi_initial_surname_recovery():
+    """OCR names such as C. K. Rader must retry the surname form."""
+    assert 'API-Sports rejects punctuation' in PLAYERS_SOURCE
+    assert 'provider_query = re.sub' in PLAYERS_SOURCE
+    assert 'fast_params = {"search": provider_query}' in PLAYERS_SOURCE
+    assert 'last_word = query_parts[-1]' in PLAYERS_SOURCE
+
+
 def test_durable_identity_fallback_survives_disposable_cache_timeouts():
     """Saved soccer identities remain searchable after cache cleanup."""
     assert "async def _durable_identity_fallback()" in PLAYERS_SOURCE
