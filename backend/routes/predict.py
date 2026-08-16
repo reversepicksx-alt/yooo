@@ -742,6 +742,18 @@ async def predict(req: PredictionRequest):
     access = sess.get("access_type", "")
     if not access or access == "NoSubscription":
         raise HTTPException(status_code=403, detail="Active subscription required")
+    # API-Football's fixture-player payload exposes passes.total, passes.key,
+    # and passes.accuracy, but not a per-player cross count.  Keep the legacy
+    # prop name recognizable for old saved rows and OCR payloads, but do not
+    # manufacture a projection from a missing provider field.
+    if req.sport == "soccer" and req.propType == "crosses":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Crosses are not available in the verified soccer player-stat "
+                "feed yet. Choose Pass Attempts, Passes, or Key Passes instead."
+            ),
+        )
     # A prediction submitted by an older client must not bypass current-club
     # verification.  This protects against stale cache rows such as a player
     # remaining at Liverpool after moving to another club. Explicit national

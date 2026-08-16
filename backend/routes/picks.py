@@ -3166,7 +3166,10 @@ SOCCER_STAT_MAP = {
     "dribbles_success": lambda s: _soccer_stat_section(s, "dribbles").get("success"),
     "fouls_drawn": lambda s: _soccer_stat_section(s, "fouls").get("drawn"),
     "fouls_committed": lambda s: _soccer_stat_section(s, "fouls").get("committed"),
-    "crosses": lambda s: _soccer_stat_section(s, "passes").get("crosses"),
+    # Kept for legacy rows only. API-Football does not currently publish a
+    # per-player cross count in fixtures/players, so new crosses predictions
+    # are blocked before they can enter the pipeline.
+    "crosses": lambda s: _soccer_stat_section(s, "passes").get("cross"),
     "clearances": lambda s: _soccer_stat_section(s, "tackles").get("clearances"),
     "duels_won": lambda s: _soccer_stat_section(s, "duels").get("won"),
     "yellow_cards": lambda s: _soccer_stat_section(s, "cards").get("yellow"),
@@ -3193,7 +3196,7 @@ SOCCER_STAT_PATHS = {
     "dribbles_success": "statistics.dribbles.success",
     "fouls_drawn": "statistics.fouls.drawn",
     "fouls_committed": "statistics.fouls.committed",
-    "crosses": "statistics.passes.crosses",
+    "crosses": "statistics.passes.cross",
     "clearances": "statistics.tackles.clearances",
     "duels_won": "statistics.duels.won",
     "yellow_cards": "statistics.cards.yellow",

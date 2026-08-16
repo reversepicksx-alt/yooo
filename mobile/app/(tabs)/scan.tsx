@@ -399,6 +399,9 @@ const PROP_LABELS: Record<string, string> = {
   service_games_won: 'Service Games Won', total_games: 'Total Games',
 };
 
+const UNSUPPORTED_CROSSES_MESSAGE =
+  'Crosses are not available in the verified soccer player-stat feed yet. Choose Pass Attempts, Passes, or Key Passes instead.';
+
 const BAND_ACCENT: Record<string, string> = {
   aligned:  '#39FF14',
   aligned_warn: '#39FF14',
@@ -1465,11 +1468,18 @@ export default function ScanScreen() {
       if (scanned.leagueId) { setLeagueId(scanned.leagueId); setLeagueQuery(scanned.leagueName || ''); }
       const detectedVenue = (scanned.venue || 'home').toLowerCase();
       setVenueOverride(detectedVenue === 'away' ? 'away' : 'home');
-      setPropType(mapProp(scanned.propType, soccerKeys, PROP_TYPES[0].value));
+      const detectedUnsupportedProp = scanned.propType === 'crosses';
+      setPropType(
+        detectedUnsupportedProp
+          ? 'crosses'
+          : mapProp(scanned.propType, soccerKeys, PROP_TYPES[0].value),
+      );
       if (scanned.line) setLine(String(scanned.line));
 
       const filledMsg = scanned.playerName
-        ? `✓ Scanned "${scanned.playerName}" — review and adjust below`
+        ? detectedUnsupportedProp
+          ? `⚠ Crosses are unavailable — choose a supported prop below`
+          : `✓ Scanned "${scanned.playerName}" — review and adjust below`
         : `⚠ Partial scan — fill in missing fields`;
       setScanFillHint(filledMsg);
       setMode('manual');
@@ -1722,6 +1732,10 @@ export default function ScanScreen() {
       return;
     }
     if (!playerQuery.trim()) { setManualError('Enter a player name to analyze.'); return; }
+    if (propType === 'crosses') {
+      setManualError(UNSUPPORTED_CROSSES_MESSAGE);
+      return;
+    }
     const hasVerifiedClub = clubVerificationStatus === 'verified'
       && !!resolvedPlayer?.teamId
       && !!resolvedPlayer?.teamName;
@@ -2643,7 +2657,10 @@ export default function ScanScreen() {
             {resolvedPlayer && (<>
             <Text style={styles.fieldLabel}>PROP TYPE</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
+              <Text style={styles.pickerBtnText}>
+                {PROP_TYPES.find(p => p.value === propType)?.label
+                  || (propType === 'crosses' ? 'Crosses unavailable' : 'Select')}
+              </Text>
               <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
             </TouchableOpacity>
 

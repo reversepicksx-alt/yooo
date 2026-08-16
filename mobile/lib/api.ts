@@ -3166,7 +3166,6 @@ export const PROP_TYPES = [
   { value: 'tackles',                label: 'Tackles' },
   { value: 'saves',                  label: 'Saves' },
   { value: 'dribbles',               label: 'Dribbles' },
-  { value: 'crosses',                label: 'Crosses' },
 ];
 
 export const CS2_PROP_TYPES = [
