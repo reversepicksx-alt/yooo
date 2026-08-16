@@ -8843,10 +8843,21 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # after player_position resolved). Tactical role is explanatory
         # metadata only; it never admits or excludes a comparison row.
         position_comparison = []
+        position_comparison_meta = {
+            "attempted": req.sport == "soccer",
+            "status": "pending" if req.sport == "soccer" else "not_applicable",
+            "unavailableReason": None,
+        }
         _defender_positions = {"CB", "LB", "RB", "LWB", "RWB"}
         _defender_position_cohort = specific_position in _defender_positions
         position_comparison_scope = "exact_opponent_same_position_same_venue"
-        if _prediction_elapsed() < 17.0:
+        if req.sport == "soccer":
+            if not player_position:
+                position_comparison_meta["status"] = "unavailable"
+                position_comparison_meta["unavailableReason"] = "player_position_unavailable"
+            elif not opponent_fixture_list:
+                position_comparison_meta["status"] = "unavailable"
+                position_comparison_meta["unavailableReason"] = "opponent_fixture_history_unavailable"
             try:
                 position_comparison = await aio.wait_for(
                     fetch_position_comparison(
@@ -8859,15 +8870,33 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         target_specific_pos=specific_position,
                         target_role=display_role or player_role,
                     ) if player_position else _empty_list(),
-                    timeout=4,
+                    # This is required evidence, not optional late enrichment.
+                    # Keep it independently bounded, but do not drop the attempt
+                    # merely because the deterministic pass took longer than the
+                    # old 17-second response heuristic.
+                    timeout=10,
                 )
+                if position_comparison:
+                    position_comparison_meta["status"] = "available"
+                else:
+                    position_comparison_meta["status"] = "unavailable"
+                    position_comparison_meta["unavailableReason"] = (
+                        "exact_position_unavailable"
+                        if not specific_position
+                        else (
+                            "opponent_fixture_history_unavailable"
+                            if not opponent_fixture_list
+                            else "no_verified_exact_position_rows"
+                        )
+                    )
+            except aio.TimeoutError:
+                position_comparison_meta["status"] = "unavailable"
+                position_comparison_meta["unavailableReason"] = "provider_timeout"
+                print("[POS COMP] required comparison attempt timed out")
             except Exception as e:
+                position_comparison_meta["status"] = "unavailable"
+                position_comparison_meta["unavailableReason"] = "provider_unavailable"
                 print(f"[POS COMP] Error/timeout: {e}")
-        else:
-            print(
-                f"[POS COMP] skipped after {_prediction_elapsed():.1f}s "
-                "to protect the core prediction response window"
-            )
 
         # A current-season pool can be very small even when the opponent has a
         # deep, useful history. Go back through prior seasons before showing a
@@ -8878,7 +8907,6 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             len(position_comparison) < 15
             and safe_opp_id
             and not _is_bdl_league
-            and _prediction_elapsed() < 18.0
         ):
             _prior_season_rows = []
             # Fetch up to 4 prior seasons in parallel — sequential season fetches
@@ -8946,7 +8974,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             target_specific_pos=specific_position,
                             target_role=display_role or player_role,
                         ) if player_position else _empty_list(),
-                        timeout=4,
+                        timeout=10,
                     )
                 except Exception as _prior_comp_err:
                     print(f"[POS COMP] Prior-season comparison failed: {_prior_comp_err}")
@@ -8968,6 +8996,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         position_comparison_scope = (
                             "exact_opponent_same_position_same_venue_plus_prior_seasons"
                         )
+                    if position_comparison:
+                        position_comparison_meta["status"] = "available"
+                        position_comparison_meta["unavailableReason"] = None
 
         # Always show most-recent appearances first so subscribers see
         # current-form evidence before older historical data.
@@ -9227,6 +9258,66 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 ),
                 "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
+                "comparisonAttempted": position_comparison_meta["attempted"],
+                "comparisonStatus": position_comparison_meta["status"],
+                "comparisonUnavailableReason": position_comparison_meta["unavailableReason"],
+            }
+
+        # The comparison attempt is part of every soccer prediction's response
+        # contract, even when strict evidence filters produce zero rows. This
+        # keeps "unavailable" distinct from a missing/failed payload and lets
+        # the client explain exactly why no comparable players were shown.
+        if req.sport == "soccer" and position_comp_data is None:
+            _fallback_position = specific_position or display_position or player_position or None
+            _fallback_exact = specific_position in {
+                "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+                "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+            }
+            position_comp_data = {
+                "position": _fallback_position,
+                "positionShort": _fallback_position,
+                "players": [],
+                "avgStatValue": None,
+                "average": None,
+                "weightedAverage": None,
+                "avgPer90": None,
+                "avgPossession": None,
+                "avgOpponentPossession": None,
+                "expectedPlayerPossession": None,
+                "possessionSampleSize": 0,
+                "teamPossessionSampleSize": 0,
+                "opponentPossessionSampleSize": 0,
+                "possessionStatus": "unavailable",
+                "possessionSource": None,
+                "possessionComparison": "verified team-schedule possession unavailable",
+                "sampleSize": 0,
+                "minimumRecommendedSample": 15,
+                "sampleStatus": "unavailable",
+                "overHits": 0,
+                "underHits": 0,
+                "overHitRate": None,
+                "underHitRate": None,
+                "unweightedAverage": None,
+                "effectiveSampleSize": 0,
+                "weightMethod": None,
+                "crossPropAverages": {},
+                "crossPropSampleSizes": {},
+                "propType": req.propType,
+                "opponent": req.opponentName,
+                "venue": player_venue,
+                "targetPosition": _fallback_position,
+                "targetRole": display_role or player_role,
+                "comparisonMode": "same-position" if _fallback_exact else "unavailable",
+                "positionEvidenceType": "exact_position" if _fallback_exact else "unavailable",
+                "positionEvidenceNote": (
+                    f"No verified comparable rows were returned: "
+                    f"{position_comparison_meta['unavailableReason'] or 'unavailable'}."
+                ),
+                "sourceScope": position_comparison_scope,
+                "source": "api_football_fixture_player_stats",
+                "comparisonAttempted": position_comparison_meta["attempted"],
+                "comparisonStatus": position_comparison_meta["status"],
+                "comparisonUnavailableReason": position_comparison_meta["unavailableReason"],
             }
 
         # The exact-opponent comparison pool is assembled after the initial

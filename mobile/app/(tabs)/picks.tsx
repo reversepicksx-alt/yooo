@@ -34,7 +34,6 @@ import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalys
 import { renderTacticalContext } from '@/components/AnalysisCards';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
-import AnalysisSpeechButton from '@/components/AnalysisSpeechButton';
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -1811,11 +1810,6 @@ export default function PicksScreen() {
                 </View>
                 <View style={mStyles.tacticalCard}>
                   {renderAnalysisBlocks(modalText, modalRec)}
-                  <AnalysisSpeechButton
-                    text={modalText}
-                    session={session ? { email: session.email, token: session.token } : null}
-                    label="Listen"
-                  />
                 </View>
               </View>
             )}
@@ -1861,7 +1855,6 @@ export default function PicksScreen() {
                    ?? (analysisModal?.pick as any)?.positionComparison}
                  recommendation={displayRec}
                  line={(analysisModal?.data as any)?.line ?? (analysisModal?.pick as any)?.line}
-                 session={session ? { email: session.email, token: session.token } : null}
                />
              )}
 

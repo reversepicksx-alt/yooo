@@ -43,13 +43,6 @@ class LissaOverviewRequest(BaseModel):
     token: str
 
 
-class LissaSpeakRequest(BaseModel):
-    email: str
-    token: str
-    text: str = Field(min_length=1, max_length=1200)
-    voice: str = "Kore"
-
-
 _PICK_PROJECTION = {
     "_id": 0,
     "pickId": 1,
@@ -753,50 +746,6 @@ async def lissa_overview(req: LissaOverviewRequest):
         "message": _address_owner(_summary_text(summary)),
         "sessionId": f"lissa-{uuid.uuid4().hex[:12]}",
     }
-
-
-@router.post("/speak")
-async def lissa_speak(req: LissaSpeakRequest):
-    """Gemini TTS — returns raw L16 PCM audio as base64 for human-quality voice."""
-    await _authorize(req)
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "no_tts"}, status_code=503)
-
-    # Clean text — strip markdown asterisks, brackets, etc.
-    text = re.sub(r"[*_`\[\]#>|]", "", req.text).strip()
-    if not text:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "empty_text"}, status_code=400)
-
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": text}]}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {
-                "voiceConfig": {
-                    "prebuiltVoiceConfig": {"voiceName": req.voice}
-                }
-            },
-        },
-    }
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/"
-        f"models/gemini-2.5-flash-preview-tts:generateContent?key={api_key}"
-    )
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
-        return {"audio": inline["data"], "mimeType": inline.get("mimeType", "audio/L16;rate=24000")}
-    except Exception as exc:
-        print(f"[LISSA TTS] failed: {type(exc).__name__}: {exc}")
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "tts_failed"}, status_code=503)
 
 
 _THIS_RE = re.compile(

@@ -363,32 +363,6 @@ export async function requestPredictionSectionExplanation(
   });
 }
 
-export interface LissaSpeakResponse {
-  audio: string;   // base64-encoded raw PCM (L16) or MP3
-  mimeType: string; // e.g. "audio/L16;rate=24000" or "audio/mp3"
-}
-
-/** Call the Gemini TTS endpoint — returns null if TTS is unavailable or fails. */
-export async function callLissaSpeak(
-  email: string,
-  token: string,
-  text: string,
-  voice = 'Kore',
-): Promise<LissaSpeakResponse | null> {
-  try {
-    const r = await fetch(`${getApiBase()}/api/lissa/speak`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, token, text, voice }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!r.ok) return null;
-    return (await r.json()) as LissaSpeakResponse;
-  } catch {
-    return null;
-  }
-}
-
 export interface AccessCheckResponse {
   verified?: boolean;
   email?: string;

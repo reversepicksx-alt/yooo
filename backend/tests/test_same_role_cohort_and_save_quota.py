@@ -26,6 +26,17 @@ def test_position_cohort_requires_exact_position_and_has_broad_api_pool():
     assert '"evidenceWeight"' in PREDICT_SOURCE
 
 
+def test_position_cohort_attempt_is_not_dropped_by_elapsed_time_gates():
+    # Comparison evidence is required context. It remains independently
+    # bounded, but must not disappear just because the deterministic pass ran
+    # longer than the old late-enrichment cutoff.
+    assert "if _prediction_elapsed() < 17.0" not in PREDICT_SOURCE
+    assert "_prediction_elapsed() < 18.0" not in PREDICT_SOURCE
+    assert '"comparisonAttempted": position_comparison_meta["attempted"]' in PREDICT_SOURCE
+    assert '"comparisonStatus": position_comparison_meta["status"]' in PREDICT_SOURCE
+    assert '"comparisonUnavailableReason": position_comparison_meta["unavailableReason"]' in PREDICT_SOURCE
+
+
 def test_position_cohort_is_labeled_exact_opponent_same_position_evidence():
     assert '"sourceScope": position_comparison_scope' in PREDICT_SOURCE
     assert '"exact_opponent_same_position_same_venue"' in PREDICT_SOURCE

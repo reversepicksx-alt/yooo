@@ -1,7 +1,6 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 import Colors from '@/constants/colors';
-import AnalysisSpeechButton from '@/components/AnalysisSpeechButton';
 
 type CohortPlayer = {
   playerId?: number;
@@ -67,11 +66,6 @@ export type SameRoleEvidence = {
   crossPropSampleSizes?: Record<string, number>;
   weightMethod?: string;
   unweightedAverage?: number | null;
-};
-
-type SpeechSession = {
-  email: string;
-  token: string;
 };
 
 function label(value: unknown) {
@@ -185,12 +179,10 @@ export default function SameRoleEvidenceCard({
   data,
   recommendation,
   line,
-  session,
 }: {
   data?: SameRoleEvidence | null;
   recommendation?: string | null;
   line?: number | null;
-  session?: SpeechSession | null;
 }) {
   if (!data) return null;
 
@@ -251,19 +243,6 @@ export default function SameRoleEvidenceCard({
     Number.isFinite(avgPossession) &&
     Number.isFinite(avgOpponentPossession) &&
     possessionStatus !== 'unavailable';
-  const narration = [
-    cohortSentence,
-    sample > 0
-      ? `${sample} comparable player${sample === 1 ? '' : 's'} were included in this ${scopeLabel}.`
-      : 'There are no verified comparable player rows in this opponent window.',
-    hasVerdict
-      ? `The evidence ${verdict.toLowerCase()} the ${rec || 'selected'} recommendation at a line of ${numericLine.toFixed(1)}.`
-      : 'The evidence verdict is unavailable because the comparison average or line is missing.',
-    hasPossessionComparison
-      ? `As context only, the selected team averaged ${avgPossession.toFixed(0)} percent possession versus ${avgOpponentPossession.toFixed(0)} percent for the opponent.`
-      : 'Verified team-schedule possession context is unavailable and was not estimated.',
-  ].join(' ');
-
   // An unavailable exact position is a valid evidence outcome, but it should
   // not consume the same visual weight as a verified comparison cohort. Keep
   // the disclosure visible without presenting broad-category rows as a
@@ -325,13 +304,6 @@ export default function SameRoleEvidenceCard({
       <Text style={{ fontSize: 12, color: Colors.text, fontWeight: '800', lineHeight: 17 }}>
         {cohortSentence}
       </Text>
-       {session && (
-         <AnalysisSpeechButton
-           text={narration}
-           session={session}
-           label="Listen"
-         />
-       )}
        <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
          {sample > 0
             ? `${sample} distinct ${isSamePosition ? 'exact-position player' : 'same-role player'}${sample === 1 ? '' : 's'} in ${scopeLabel}`

@@ -14,7 +14,7 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import Colors from '@/constants/colors';
-import { LissaContext, sendLissaMessage, callLissaSpeak } from '@/lib/api';
+import { LissaContext, sendLissaMessage } from '@/lib/api';
 
 type Props = {
   email?: string;
@@ -54,78 +54,6 @@ function addressReverse(text: string): string {
   return /\bjossel\b/i.test(text) ? text : `Jossel, ${text}`;
 }
 
-// ---------------------------------------------------------------------------
-// Audio unlock helpers — iOS Safari only allows audio from non-gesture contexts
-// if the audio system was first unlocked inside a user-gesture (tap) handler.
-// We use an <audio> element + a locked AudioContext, both primed in primeSpeech.
-// ---------------------------------------------------------------------------
-
-// Shared HTML <audio> element — unlocked once via gesture, reused for all TTS
-let _audioEl: HTMLAudioElement | null = null;
-let _audioElReady = false;
-
-// Silent 44-byte WAV used to unlock the audio element in the gesture handler
-const _SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-
-/** Call once from a tap handler to unlock the audio element for later async use. */
-async function unlockAudioElement(): Promise<void> {
-  if (typeof document === 'undefined') return;
-  try {
-    if (!_audioEl) {
-      _audioEl = document.createElement('audio');
-      _audioEl.preload = 'auto';
-    }
-    _audioEl.src = _SILENT_WAV;
-    await _audioEl.play().catch(() => {});
-    _audioElReady = true;
-  } catch {}
-}
-
-/**
- * Convert L16 PCM base64 → WAV file → play via the pre-unlocked <audio> element.
- * Works from non-gesture async contexts on iOS Safari because the element itself
- * was already unlocked during primeSpeech.
- */
-function playL16AsWav(base64: string, mimeType: string): Promise<boolean> {
-  if (!_audioEl || !_audioElReady) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    try {
-      const rateMatch = mimeType.match(/rate=(\d+)/i);
-      const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
-      // Decode base64 PCM
-      const raw = atob(base64);
-      const dataLen = raw.length;
-      // Build a proper WAV file header (44 bytes) around the PCM data
-      const wav = new ArrayBuffer(44 + dataLen);
-      const v = new DataView(wav);
-      const s = (off: number, str: string) =>
-        Array.from(str).forEach((c, i) => v.setUint8(off + i, c.charCodeAt(0)));
-      s(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true);
-      s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true);
-      v.setUint16(20, 1, true);             // PCM
-      v.setUint16(22, 1, true);             // mono
-      v.setUint32(24, sampleRate, true);
-      v.setUint32(28, sampleRate * 2, true);// byte rate
-      v.setUint16(32, 2, true);             // block align
-      v.setUint16(34, 16, true);            // 16-bit
-      s(36, 'data'); v.setUint32(40, dataLen, true);
-      const pcm = new Uint8Array(wav, 44);
-      for (let i = 0; i < dataLen; i++) pcm[i] = raw.charCodeAt(i);
-      const blob = new Blob([wav], { type: 'audio/wav' });
-      const url = URL.createObjectURL(blob);
-      const el = _audioEl!;
-      const cleanup = () => URL.revokeObjectURL(url);
-      el.onended = () => { cleanup(); resolve(true); };
-      el.onerror = () => { cleanup(); resolve(false); };
-      el.src = url;
-      el.play().catch(() => { cleanup(); resolve(false); });
-    } catch (e) {
-      console.error('[.2 PCM→WAV]', e);
-      resolve(false);
-    }
-  });
-}
-
 function speakAndWait(text: string, onStart?: () => void, voice?: string): Promise<boolean> {
   return new Promise((resolve) => {
     let finished = false;
@@ -155,51 +83,14 @@ function speakAndWait(text: string, onStart?: () => void, voice?: string): Promi
   });
 }
 
-/**
- * Try Gemini TTS first (human voice, plays via pre-unlocked <audio> element so
- * iOS Safari never blocks it); fall back to browser TTS on failure or native.
- */
-async function speakWithAI(
+/** Written responses stay intact; this optional voice layer uses only local TTS. */
+function speakWithAI(
   text: string,
-  email: string,
-  token: string,
+  _email: string,
+  _token: string,
   onStart?: () => void,
   fallbackVoice?: string,
 ): Promise<boolean> {
-  // Only use Gemini TTS path when the audio element is already unlocked by a gesture.
-  // Never call getSharedAudioCtx() here — creating a context outside a gesture = suspended.
-  if (Platform.OS === 'web' && _audioElReady) {
-    try {
-      const tts = await Promise.race([
-        callLissaSpeak(email, token, text, 'Kore'),
-        new Promise<null>((res) => setTimeout(() => res(null), 10_000)),
-      ]);
-      if (tts?.audio) {
-        onStart?.();
-        const mimeType = tts.mimeType || 'audio/L16;rate=24000';
-        const isPcm = mimeType.toLowerCase().includes('l16') || mimeType.toLowerCase().includes('pcm');
-        const ok = isPcm
-          ? await playL16AsWav(tts.audio, mimeType)
-          : await new Promise<boolean>((res) => {
-              // For MP3 or other native formats, also use the unlocked element
-              const el = _audioEl!;
-              const url = `data:${mimeType};base64,${tts.audio}`;
-              el.onended = () => res(true);
-              el.onerror = () => res(false);
-              el.src = url;
-              el.play().catch(() => res(false));
-            });
-        if (ok) return true;
-        console.warn('[.2] Gemini TTS audio failed to play — falling back');
-      } else {
-        console.warn('[.2] Gemini TTS returned no audio');
-      }
-    } catch (e) {
-      console.error('[.2] speakWithAI error:', e);
-    }
-  }
-  // Browser TTS fallback (may be blocked on iOS Safari from non-gesture contexts,
-  // but works on desktop and native builds)
   return speakAndWait(text, onStart, fallbackVoice);
 }
 
@@ -378,16 +269,12 @@ export default function LissaVoiceAssistant({
   };
 
   const primeSpeech = async () => {
-    // iOS Safari requires speechSynthesis.speak() AND AudioContext.resume() to be
-    // called directly inside a user-gesture handler. We do both here on tap so
-    // every subsequent TTS call (browser or Gemini PCM) works without restriction.
+    // iOS Safari requires speechSynthesis.speak() to be called directly inside
+    // a user-gesture handler. Prime local TTS here so later calls fail quickly
+    // instead of waiting on a remote speech provider.
     if (!speechReady) {
-      // A single period at high speed is barely audible but guaranteed to be
-      // processed as a phoneme — unlike '\u200B' which Safari may silently ignore.
       await speakAndWait('.', () => setSpeechReady(true), voiceRef.current);
     }
-    // Unlock the <audio> element for Gemini TTS — must happen inside this tap handler.
-    if (Platform.OS === 'web') await unlockAudioElement();
     setSpeechReady(true);
   };
 
@@ -423,7 +310,6 @@ export default function LissaVoiceAssistant({
     setPendingSpeak('');
     setIsSpeaking(true);
     void Speech.stop();
-    // speakWithAI: if audio element is unlocked, tries Gemini TTS first
     void speakWithAI(text, email ?? '', token ?? '', () => setSpeechReady(true), voiceRef.current)
       .finally(() => {
         setIsSpeaking(false);
@@ -460,8 +346,7 @@ export default function LissaVoiceAssistant({
       // Queue text for gesture-triggered playback ("Tap to hear" button)
       setPendingSpeak(text);
 
-      // Also attempt background TTS — if audio element is already unlocked this will
-      // play automatically without needing the button tap.
+      // Also attempt local TTS in the background when the voice layer is active.
       void Speech.stop();
       void speakWithAI(text, email ?? '', token ?? '', () => {
         setSpeechReady(true);

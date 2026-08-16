@@ -597,7 +597,32 @@ function SectionNarrativeCard({
         )}
       </View>
       {text ? (
-        <Text style={styles.sectionNarrativeText}>{text}</Text>
+        <>
+          <Text style={styles.sectionNarrativeText}>{text}</Text>
+          {loading && (
+            <View style={styles.sectionNarrativeLoading}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+              <Text style={styles.sectionNarrativeLoadingText}>
+                Refining the written read from the verified numbers…
+              </Text>
+            </View>
+          )}
+          {error ? (
+            <View style={styles.sectionNarrativeError}>
+              <Text style={styles.sectionNarrativeErrorText}>{error}</Text>
+              {onRetry && (
+                <TouchableOpacity
+                  onPress={onRetry}
+                  activeOpacity={0.75}
+                  style={styles.sectionNarrativeRetry}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.sectionNarrativeRetryText}>TRY AGAIN</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : null}
+        </>
       ) : loading ? (
         <View style={styles.sectionNarrativeLoading}>
           <ActivityIndicator size="small" color={Colors.primary} />
@@ -755,9 +780,16 @@ export default function ScanScreen() {
         buildSectionExplanationSnapshot(pred as any),
       );
       if (controller.signal.aborted) return;
-      sectionNarrativeRef.current[tab] = response.text;
-      setSectionNarratives((current) => ({ ...current, [tab]: response.text }));
-      setSectionNarrativeSources((current) => ({ ...current, [tab]: response.source }));
+      const generatedText = String(response?.text ?? '').trim();
+      if (!generatedText) {
+        throw new Error('The analyst read returned no text.');
+      }
+      sectionNarrativeRef.current[tab] = generatedText;
+      setSectionNarratives((current) => ({ ...current, [tab]: generatedText }));
+      setSectionNarrativeSources((current) => ({
+        ...current,
+        [tab]: response?.source === 'gemini' ? 'gemini' : 'deterministic',
+      }));
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
       const message = error instanceof Error && error.message
