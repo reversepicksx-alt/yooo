@@ -305,9 +305,9 @@ async def _attach_owner_prediction_media(prediction: dict, requester_email: str)
 # meetings cannot dominate the model, but it must inspect enough real fixtures
 # to find 4-5+ appearances when they exist.
 H2H_HISTORY_SEASONS = 6
-H2H_FIXTURE_LIMIT = 20
-H2H_PLAYER_SCAN_LIMIT = 20
-H2H_PLAYER_RESULT_LIMIT = 20
+H2H_FIXTURE_LIMIT = 12
+H2H_PLAYER_SCAN_LIMIT = 12
+H2H_PLAYER_RESULT_LIMIT = 12
 _H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
@@ -709,6 +709,11 @@ async def predict(req: PredictionRequest):
         # circuit breaker in utils.py.
     _priority_token = set_api_request_priority(True)
     try:
+        _prediction_started = aio.get_running_loop().time()
+
+        def _prediction_elapsed() -> float:
+            return aio.get_running_loop().time() - _prediction_started
+
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         # Ordered numeric audit trail for the explanation layer.  This is
         # intentionally separate from analysisFactors: analysisFactors describe
@@ -2109,9 +2114,25 @@ async def predict(req: PredictionRequest):
                                     _fid, _meta["home_id"], _meta["away_id"]
                                 ))
                         if _tp_tasks:
-                            _tp_results = await aio.gather(
-                                *_tp_tasks, return_exceptions=True
-                            )
+                            # Historical possession is required before a cached
+                            # soccer row can be used, but hydrating every cached
+                            # fixture here made the critical path wait on a
+                            # provider-wide burst. Prefer the newest bounded
+                            # sample and let Stage 1/direct history fill any
+                            # remaining gaps.
+                            _tp_tasks = _tp_tasks[:16]
+                            _tp_fids = _tp_fids[:16]
+                            try:
+                                _tp_results = await aio.wait_for(
+                                    aio.gather(*_tp_tasks, return_exceptions=True),
+                                    timeout=6.0,
+                                )
+                            except Exception as _tp_err:
+                                print(
+                                    f"[CACHE-STAGE0] possession hydration bounded: "
+                                    f"{type(_tp_err).__name__}"
+                                )
+                                _tp_results = []
                             for _fid, _result in zip(_tp_fids, _tp_results):
                                 if (
                                     isinstance(_result, tuple)
@@ -2147,9 +2168,19 @@ async def predict(req: PredictionRequest):
                                     )
                                 )
                         if _context_tasks:
-                            _context_results = await aio.gather(
-                                *_context_tasks, return_exceptions=True
-                            )
+                            _context_tasks = _context_tasks[:16]
+                            _context_fids = _context_fids[:16]
+                            try:
+                                _context_results = await aio.wait_for(
+                                    aio.gather(*_context_tasks, return_exceptions=True),
+                                    timeout=4.0,
+                                )
+                            except Exception as _context_err:
+                                print(
+                                    f"[CACHE-STAGE0] opponent-context hydration bounded: "
+                                    f"{type(_context_err).__name__}"
+                                )
+                                _context_results = []
                             for _fid, _result in zip(_context_fids, _context_results):
                                 if isinstance(_result, dict):
                                     context_docs[_fid] = _result
@@ -3978,9 +4009,9 @@ async def predict(req: PredictionRequest):
         # Bound sources independently. A slow team-level enrichment must not
         # cancel the player's game logs, which are the primary Bayesian prior.
         required_wave2 = aio.gather(
-            _bounded_required(team_fixture_stats_task, "team fixture stats", 12),
-            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 12),
-            _bounded_required(player_game_logs_task, "player game logs", 18),
+            _bounded_required(team_fixture_stats_task, "team fixture stats", 10),
+            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 10),
+            _bounded_required(player_game_logs_task, "player game logs", 12),
             _bounded_required(situation_task, "match situation", 8),
             _bounded_required(
                 team_schedule_possession_task,
@@ -3995,24 +4026,24 @@ async def predict(req: PredictionRequest):
             return_exceptions=True,
         )
         matchup_volume_wave = aio.gather(
-            _bounded_required(team_home_volume_task, "team home volume", 12),
-            _bounded_required(team_away_volume_task, "team away volume", 12),
-            _bounded_required(opponent_home_volume_task, "opponent home volume", 12),
-            _bounded_required(opponent_away_volume_task, "opponent away volume", 12),
+            _bounded_required(team_home_volume_task, "team home volume", 6),
+            _bounded_required(team_away_volume_task, "team away volume", 6),
+            _bounded_required(opponent_home_volume_task, "opponent home volume", 6),
+            _bounded_required(opponent_away_volume_task, "opponent away volume", 6),
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(statsbomb_task, return_exceptions=True)
         try:
-            required_results = await aio.wait_for(required_wave2, timeout=20)
+            required_results = await aio.wait_for(required_wave2, timeout=15)
         except aio.TimeoutError:
             required_results = [None] * 6
-            print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 20s for {req.playerName}")
+            print(f"[WAVE2 TIMEOUT] required API-Football wave exceeded 15s for {req.playerName}")
 
         try:
-            matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=14)
+            matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=6)
         except aio.TimeoutError:
             matchup_volume_results = [None] * 4
-            print(f"[MATCHUP VOLUME TIMEOUT] venue evidence exceeded 14s for {req.playerName}")
+            print(f"[MATCHUP VOLUME TIMEOUT] venue evidence exceeded 6s for {req.playerName}")
 
         try:
             optional_results = await aio.wait_for(optional_wave2, timeout=3)
@@ -4190,18 +4221,44 @@ async def predict(req: PredictionRequest):
                 max_network_matches=12,
             )
         )
-        try:
-            recent_block_profiles = await aio.wait_for(
-                aio.shield(_recent_block_profile_task),
-                timeout=5.0,
-            )
-        except Exception as _recent_profile_err:
+        if _prediction_elapsed() < 20.0:
+            try:
+                recent_block_profiles = await aio.wait_for(
+                    aio.shield(_recent_block_profile_task),
+                    timeout=1.5,
+                )
+            except Exception as _recent_profile_err:
+                print(
+                    f"[RECENT BLOCK PROFILE] bounded response window: "
+                    f"{type(_recent_profile_err).__name__}"
+                )
+                recent_block_profiles = {
+                    "status": "warming",
+                    "available": False,
+                    "profiles": [],
+                    "sampleSize": len(_recent_profile_rows),
+                    "verifiedMatches": 0,
+                    "ppdaMatches": 0,
+                    "formationMatches": 0,
+                    "source": "StatsBomb Open Data + API-Football fixture lineups",
+                    "projectionInfluence": "explanation_only",
+                    "shadowWeighting": {
+                        "status": "shadow_only",
+                        "projectionAdjustment": 0.0,
+                    },
+                    "limitations": [
+                        "Recent opponent profiles are still warming from cache/provider.",
+                        "Missing coverage is unavailable, not a guessed block.",
+                    ],
+                }
+        else:
+            _recent_block_profile_task.cancel()
             print(
-                f"[RECENT BLOCK PROFILE] bounded response window: "
-                f"{type(_recent_profile_err).__name__}"
+                f"[RECENT BLOCK PROFILE] skipped after {_prediction_elapsed():.1f}s "
+                "to protect the core prediction response window"
             )
             recent_block_profiles = {
-                "status": "warming",
+                "status": "skipped",
                 "available": False,
                 "profiles": [],
                 "sampleSize": len(_recent_profile_rows),
@@ -4215,7 +4272,7 @@ async def predict(req: PredictionRequest):
                     "projectionAdjustment": 0.0,
                 },
                 "limitations": [
-                    "Recent opponent profiles are still warming from cache/provider.",
+                    "Recent opponent profiles were skipped to keep the core prediction responsive.",
                     "Missing coverage is unavailable, not a guessed block.",
                 ],
             }
@@ -8617,26 +8674,40 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         _defender_positions = {"CB", "LB", "RB", "LWB", "RWB"}
         _defender_position_cohort = specific_position in _defender_positions
         position_comparison_scope = "exact_opponent_same_position_same_venue"
-        try:
-            position_comparison = await aio.wait_for(
-                fetch_position_comparison(
-                    opponent_fixture_list, player_position, req.propType, req.opponentId,
-                    player_venue,
-                    _cohort_fixture_lookback,
-                    target_specific_pos=specific_position,
-                    target_role=display_role or player_role,
-                ) if player_position else _empty_list(),
-                timeout=10
+        if _prediction_elapsed() < 17.0:
+            try:
+                position_comparison = await aio.wait_for(
+                    fetch_position_comparison(
+                        opponent_fixture_list,
+                        player_position,
+                        req.propType,
+                        req.opponentId,
+                        player_venue,
+                        min(_cohort_fixture_lookback, 20),
+                        target_specific_pos=specific_position,
+                        target_role=display_role or player_role,
+                    ) if player_position else _empty_list(),
+                    timeout=4,
+                )
+            except Exception as e:
+                print(f"[POS COMP] Error/timeout: {e}")
+        else:
+            print(
+                f"[POS COMP] skipped after {_prediction_elapsed():.1f}s "
+                "to protect the core prediction response window"
             )
-        except Exception as e:
-            print(f"[POS COMP] Error/timeout: {e}")
 
         # A current-season pool can be very small even when the opponent has a
         # deep, useful history. Go back through prior seasons before showing a
         # three-player "opponent" sample as if it were complete. The same exact
         # opponent, role, position, and venue filters remain active; only the
         # season window broadens.
-        if len(position_comparison) < 15 and safe_opp_id and not _is_bdl_league:
+        if (
+            len(position_comparison) < 15
+            and safe_opp_id
+            and not _is_bdl_league
+            and _prediction_elapsed() < 18.0
+        ):
             _prior_season_rows = []
             # Fetch up to 4 prior seasons in parallel — sequential season fetches
             # were a major prediction latency source (7 × ~1s = 7s). Capped at 4
@@ -8648,7 +8719,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             "fixtures",
                             {"team": safe_opp_id, "season": season},
                         ),
-                        timeout=6,
+                        timeout=3,
                     )
                     rows = _normalize_opponent_fixtures(_raw)
                     if rows:
@@ -8665,10 +8736,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     return []
 
             _prior_seasons = list(range(CURRENT_SEASON - 1, CURRENT_SEASON - 5, -1))
-            _prior_results = await aio.gather(
-                *[_fetch_prior_season(s) for s in _prior_seasons],
-                return_exceptions=True,
-            )
+            try:
+                _prior_results = await aio.wait_for(
+                    aio.gather(
+                        *[_fetch_prior_season(s) for s in _prior_seasons],
+                        return_exceptions=True,
+                    ),
+                    timeout=3.5,
+                )
+            except Exception as _prior_fetch_err:
+                print(
+                    f"[POS COMP] Prior-season fixture window bounded: "
+                    f"{type(_prior_fetch_err).__name__}"
+                )
+                _prior_results = []
             for _res in _prior_results:
                 if isinstance(_res, list):
                     _prior_season_rows.extend(_res)
@@ -8693,7 +8774,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             target_specific_pos=specific_position,
                             target_role=display_role or player_role,
                         ) if player_position else _empty_list(),
-                        timeout=12,
+                        timeout=4,
                     )
                 except Exception as _prior_comp_err:
                     print(f"[POS COMP] Prior-season comparison failed: {_prior_comp_err}")

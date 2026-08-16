@@ -521,20 +521,27 @@ const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string; icon: keyof typeof
   { key: 'matchup', label: 'MATCHUP', icon: 'swap-horizontal-outline' },
 ];
 
-function PostedLineValue({ value }: { value: string }) {
+function PostedLineValue({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
   return (
     <View>
       <Text style={styles.fieldLabel}>POSTED LINE</Text>
-      <View
+      <TextInput
         style={styles.postedLineValue}
-        accessible
-        accessibilityRole="text"
-        accessibilityLabel={value ? `Posted line ${value}` : 'Posted line unavailable'}
-      >
-        <Text style={value ? styles.postedLineText : styles.postedLinePlaceholder}>
-          {value || 'Read from scanned prop slip'}
-        </Text>
-      </View>
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Enter line (e.g. 2.5)"
+        placeholderTextColor={Colors.textTertiary}
+        keyboardType="decimal-pad"
+        returnKeyType="done"
+        accessibilityLabel="Posted line"
+        accessibilityHint="Enter the sportsbook line for this prop"
+      />
     </View>
   );
 }
@@ -2432,7 +2439,7 @@ export default function ScanScreen() {
               <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
             </TouchableOpacity>
 
-            <PostedLineValue value={line} />
+            <PostedLineValue value={line} onChangeText={setLine} />
 
             {manualError && (
               <View style={styles.inlineError}>
@@ -2568,7 +2575,7 @@ export default function ScanScreen() {
                   <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                 </TouchableOpacity>
 
-                <PostedLineValue value={line} />
+                <PostedLineValue value={line} onChangeText={setLine} />
 
                 {manualError && (
                   <View style={styles.inlineError}>
@@ -2712,7 +2719,7 @@ export default function ScanScreen() {
                   <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                 </TouchableOpacity>
 
-                <PostedLineValue value={line} />
+                <PostedLineValue value={line} onChangeText={setLine} />
 
                 {manualError && (
                   <View style={styles.inlineError}>
@@ -2826,7 +2833,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{NBA_PROP_TYPES.find(p => p.value === nbaPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <PostedLineValue value={line} />
+                    <PostedLineValue value={line} onChangeText={setLine} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -2929,7 +2936,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{NHL_PROP_TYPES.find(p => p.value === nhlPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <PostedLineValue value={line} />
+                    <PostedLineValue value={line} onChangeText={setLine} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -3031,7 +3038,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{NFL_PROP_TYPES.find(p => p.value === nflPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <PostedLineValue value={line} />
+                    <PostedLineValue value={line} onChangeText={setLine} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -3131,7 +3138,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{MLB_PROP_TYPES.find(p => p.value === mlbPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <PostedLineValue value={line} />
+                    <PostedLineValue value={line} onChangeText={setLine} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -6667,7 +6674,7 @@ const styles = StyleSheet.create({
   postedLineValue: {
     backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12, borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.12)', paddingHorizontal: 14, height: 48,
-    justifyContent: 'center',
+    color: Colors.text, fontSize: 16,
   },
   postedLineText: { color: Colors.text, fontSize: 16 },
   postedLinePlaceholder: { color: Colors.textTertiary, fontSize: 14 },

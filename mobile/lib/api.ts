@@ -13,14 +13,18 @@ const getApiBase = (): string => {
   return 'http://localhost:8000';
 };
 
-// Endpoints that involve structured synthesis — give them a generous timeout
-const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview'];
+// Endpoints that involve structured synthesis — give them a generous timeout.
+// The core soccer prediction path is intentionally handled by its own 30s
+// contract below; specialized paths keep their longer cold-cache windows.
+const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview'];
 const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
+const CORE_PREDICTION_TIMEOUT_MS = 30_000;
 const isPredictionPath = (endpoint: string) =>
   endpoint === '/api/scan-prop' || (endpoint.startsWith('/api/') && endpoint.endsWith('/predict'));
+const isCorePrediction = (endpoint: string) => endpoint === '/api/predict';
 // Provider-backed player searches can take several seconds on mobile Safari,
 // especially when the MLB/NFL provider has to warm its cache. Do not turn a
 // slow provider into a false "no results" state in the universal search.
@@ -76,7 +80,19 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const isLissa = endpoint.startsWith('/api/lissa/');
   const isLong   = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const isMedium = MEDIUM_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
-  const timeoutMs = isLissa ? LISSA_TIMEOUT_MS : isPlayerSearch ? PLAYER_SEARCH_TIMEOUT_MS : isCs2Predict ? CS2_TIMEOUT_MS : isLong ? LONG_TIMEOUT_MS : isMedium ? MEDIUM_TIMEOUT_MS : SHORT_TIMEOUT_MS;
+  const timeoutMs = isLissa
+    ? LISSA_TIMEOUT_MS
+    : isPlayerSearch
+      ? PLAYER_SEARCH_TIMEOUT_MS
+      : isCorePrediction(endpoint)
+        ? CORE_PREDICTION_TIMEOUT_MS
+        : isCs2Predict
+          ? CS2_TIMEOUT_MS
+          : isLong
+            ? LONG_TIMEOUT_MS
+            : isMedium
+              ? MEDIUM_TIMEOUT_MS
+              : SHORT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // Wire caller-supplied external signal into the internal controller so a user cancel also aborts the fetch
@@ -96,7 +112,11 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
       if (externalSignal?.aborted) {
         throw new Error('__CANCELLED__');
       }
-      throw new Error('Request timed out. The server is taking too long — please try again.');
+      throw new Error(
+        isCorePrediction(endpoint)
+          ? 'Prediction timed out after 30 seconds. No result was lost — please retry.'
+          : 'Request timed out. The server is taking too long — please try again.',
+      );
     }
     throw new Error('Cannot reach server. Please try again.');
   } finally {
