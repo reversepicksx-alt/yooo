@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, setUsername, setProfileImage, getDmInbox } from '@/lib/api';
+import { getUserProfile, getCachedUserProfile, setUsername, setProfileImage, getDmInbox } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
@@ -460,7 +460,10 @@ export default function AccountScreen() {
   const [planPickerVisible, setPlanPickerVisible] = useState(false);
 
   // Profile state
-  const [profile, setProfile] = useState<{ username: string | null; profileImage?: string | null }>({ username: null });
+  const [profile, setProfile] = useState<{ username: string | null; profileImage?: string | null }>(() => {
+    const cached = session?.email ? getCachedUserProfile(session.email) : null;
+    return cached ? { username: cached.username, profileImage: cached.profileImage } : { username: null };
+  });
   const [usernameModal, setUsernameModal] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
   const [usernameLoading, setUsernameLoading] = useState(false);
@@ -520,9 +523,14 @@ export default function AccountScreen() {
   // Load user profile (username)
   useEffect(() => {
     if (!session?.email) return;
+    const cached = getCachedUserProfile(session.email);
+    if (cached) setProfile({ username: cached.username, profileImage: cached.profileImage });
     getUserProfile(session.email)
       .then((p) => setProfile(p))
-      .catch(() => setProfile({ username: null }));
+      .catch(() => {
+        // Keep the cached identity visible; a profile read must never blank the
+        // account screen during a transient Atlas/network delay.
+      });
   }, [session?.email]);
 
   const handlePickProfileImage = async () => {

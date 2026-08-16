@@ -225,6 +225,22 @@ async def _run_startup_tasks():
         )
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
+    # These are the two hot authenticated reads behind My Picks. Creating them
+    # at startup avoids a cold collection scan/sort on the first screen load.
+    try:
+        await db.sessions.create_index(
+            [("email", 1), ("session_token", 1)],
+            name="sessions_email_token",
+        )
+        await db.picks.create_index(
+            [("email", 1), ("timestamp", -1)],
+            name="picks_email_timestamp",
+        )
+    except Exception as _hot_idx_err:
+        import logging
+        logging.getLogger("server").warning(
+            f"hot read indexes skipped (Atlas transient): {_hot_idx_err}"
+        )
     # Create index for fixture stat cache (speeds up prediction pipeline)
     try:
         await db.fixture_player_cache.create_index("_k", unique=True)

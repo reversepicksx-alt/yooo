@@ -128,6 +128,23 @@ def test_history_filter_keeps_stat_bearing_appearances_without_possession():
     assert retained[0]["teamPossession"] is None
 
 
+def test_cached_appearance_without_fixture_metadata_survives_history_gate():
+    """A real Stage-0 cache row remains usable when its fxm companion is missing."""
+    logs = [
+        {
+            "minutes": 90,
+            "passes_total": None,
+            "historySource": "fixture_player_cache",
+            "fixtureContextStatus": "unavailable",
+        },
+    ]
+
+    retained = _filter_usable_soccer_history_logs(logs, "pass_attempts")
+
+    assert len(retained) == 1
+    assert retained[0]["fixtureContextStatus"] == "unavailable"
+
+
 def test_direct_fixture_possession_fallback_preserves_appearance_and_never_fabricates_tp():
     game = {"minutes": 90, "passes_total": 63, "tp": 71}
 

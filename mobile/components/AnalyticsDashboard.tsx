@@ -8,6 +8,7 @@ import Svg, { Line, Path, Rect, G, Circle, Defs, LinearGradient, Stop } from 're
 import Colors from '@/constants/colors';
 import {
   getOwnerAnalytics,
+  getCachedOwnerAnalytics,
   getStorageHealth,
   triggerStorageCleanup,
   runModelReplay,
@@ -237,11 +238,18 @@ export default function AnalyticsDashboard({
   const [cleanupRunning, setCleanupRunning] = useState(false);
   const queryClient = useQueryClient();
   const localStats = useMemo(() => computeAnalytics(picks, period), [picks, period]);
+  const cachedOwnerData = session?.email
+    ? getCachedOwnerAnalytics(session.email, period, sportFilter)
+    : null;
   const { data: ownerData } = useQuery<AnalyticsData>({
     queryKey: ['ownerAnalytics', 'pick-insights', session?.email, period, sportFilter],
     queryFn: () => getOwnerAnalytics(session!.email, session!.token, period, sportFilter),
     enabled: visible && !!session,
     staleTime: 60_000,
+    initialData: cachedOwnerData ?? undefined,
+    // Cached analytics is intentionally stale on mount so the latest report
+    // refreshes in the background without blanking the dashboard first.
+    initialDataUpdatedAt: cachedOwnerData ? 0 : undefined,
   });
   const { data: storageHealth, refetch: refetchStorage } = useQuery({
     queryKey: ['storageHealth', session?.email],

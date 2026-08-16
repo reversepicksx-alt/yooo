@@ -115,14 +115,24 @@ def _filter_usable_soccer_history_logs(
     false verified-data error.
     """
     target_field = STAT_FIELD_MAP.get(prop_type, "passes_total")
-    return [
-        game
-        for game in (logs or [])
-        if isinstance(game, dict)
-        and not game.get("synthetic")
-        and (game.get("minutes") or 0) > 0
-        and game.get(target_field) is not None
-    ]
+    usable = []
+    for game in logs or []:
+        if not isinstance(game, dict) or game.get("synthetic"):
+            continue
+        if (game.get("minutes") or 0) <= 0:
+            continue
+        has_target_stat = (
+            game.get(target_field) is not None
+            or game.get("targetStat") is not None
+        )
+        # Stage-0 fixture-player cache rows are still real appearances even
+        # when API-Football returned null for the prop (null means zero).
+        # Their fixture metadata may be unavailable during provider quota
+        # exhaustion; that optional context must not erase the appearance.
+        cache_appearance = game.get("historySource") == "fixture_player_cache"
+        if has_target_stat or cache_appearance:
+            usable.append(game)
+    return usable
 
 
 def _json_safe_prediction(value, *, _active=None, _depth=0):
@@ -2193,7 +2203,10 @@ async def predict(req: PredictionRequest):
                             try:
                                 _tp_results = await aio.wait_for(
                                     aio.gather(*_tp_tasks, return_exceptions=True),
-                                    timeout=6.0,
+                                    # Possession is optional context. Never
+                                    # consume the entire player-history
+                                    # response window trying to hydrate it.
+                                    timeout=1.5,
                                 )
                             except Exception as _tp_err:
                                 print(
@@ -2241,7 +2254,10 @@ async def predict(req: PredictionRequest):
                             try:
                                 _context_results = await aio.wait_for(
                                     aio.gather(*_context_tasks, return_exceptions=True),
-                                    timeout=4.0,
+                                    # Opponent context enriches the card but
+                                    # is not required to return real player
+                                    # appearances from Stage 0.
+                                    timeout=1.5,
                                 )
                             except Exception as _context_err:
                                 print(
@@ -2261,6 +2277,7 @@ async def predict(req: PredictionRequest):
                         if not minutes:
                             continue
                         gl = dict(d)
+                        gl["historySource"] = "fixture_player_cache"
                         gl["fixtureId"] = str(fid_str)
                         gl["_fid"] = str(fid_str)
                         gl["date"] = ""
@@ -2341,14 +2358,21 @@ async def predict(req: PredictionRequest):
                                         gl["opponentPassAttempts"] = _context["passes"]
                         else:
                             if req.sport == "soccer":
-                                # Without permanent fixture metadata we cannot
-                                # verify club identity, venue, or possession for
-                                # this cached row. Do not let a stale/partial
-                                # season-transition cache entry poison the
-                                # verified history gate below.
-                                continue
-                            gl["venue"] = ""
-                            gl["opponent"] = ""
+                                # The player-stat cache can outlive its
+                                # companion fixture metadata, especially when
+                                # the provider quota is exhausted. Keep the
+                                # real appearance, but make the missing
+                                # fixture context explicit instead of
+                                # guessing its venue/opponent or erasing the
+                                # player's usable history.
+                                gl["venue"] = ""
+                                gl["opponent"] = ""
+                                gl["fixtureContextStatus"] = "unavailable"
+                                gl["fixtureContextSource"] = None
+                                gl["historySource"] = "fixture_player_cache"
+                            else:
+                                gl["venue"] = ""
+                                gl["opponent"] = ""
 
                         raw_val = gl.get(target_field) if target_field else None
                         if raw_val is not None and minutes > 0:
@@ -4783,7 +4807,20 @@ async def predict(req: PredictionRequest):
                     _game["possessionStatus"] = "unavailable"
                     _game["possessionSource"] = None
 
-        if not player_game_logs and player_stats:
+        _history_target_field = STAT_FIELD_MAP.get(req.propType, "passes_total")
+        _has_observed_history_target = any(
+            isinstance(_game, dict)
+            and (
+                _game.get(_history_target_field) is not None
+                or _game.get("targetStat") is not None
+            )
+            for _game in (player_game_logs or [])
+        )
+        # If the cache proves the player appeared but the provider returned
+        # null for every requested stat, use the verified season aggregate as
+        # a transparent prior. Keep the real cache rows for provenance; only
+        # add synthetic rows when there is no observed target value to model.
+        if (not player_game_logs or not _has_observed_history_target) and player_stats:
             _sfm_fallback = {
                 "goals": ("goals", "total"), "assists": ("goals", "assists"),
                 "shots_assisted": ("passes", "key"), "pass_attempts": ("passes", "total"),

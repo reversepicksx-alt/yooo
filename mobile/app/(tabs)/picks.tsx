@@ -36,8 +36,6 @@ import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 import AnalysisSpeechButton from '@/components/AnalysisSpeechButton';
 
-type Tab = 'live' | 'history';
-
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
   goals: 'Goals', assists: 'Assists', key_passes: 'Key Passes',
@@ -192,9 +190,22 @@ function uniquePickEvents(picks: Pick[]): Pick[] {
       chosen.set(key, pick);
       continue;
     }
+    // A settled snapshot is more informative than an older pending/live
+    // duplicate for the same prediction event.  This lets one unified feed
+    // transition cleanly from PENDING/LIVE to HIT/MISS/PUSH.
+    const outcomeRank = (value: Pick) => {
+      if (isHistoryVisible(value)) return 3;
+      if (isPendingReview(value)) return 2;
+      if (isLive(value)) return 1;
+      return 0;
+    };
+    const previousRank = outcomeRank(previous);
+    const currentRank = outcomeRank(pick);
     const previousTime = new Date(previous.createdAt || 0).getTime();
     const currentTime = new Date(pick.createdAt || 0).getTime();
-    if (currentTime >= previousTime) chosen.set(key, pick);
+    if (currentRank > previousRank || (currentRank === previousRank && currentTime >= previousTime)) {
+      chosen.set(key, pick);
+    }
   }
   return Array.from(chosen.values());
 }
@@ -1039,7 +1050,6 @@ export default function PicksScreen() {
   const { session, logout } = useAuth();
   const qc = useQueryClient();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
   const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Record<string, string>>({});
@@ -1135,8 +1145,8 @@ export default function PicksScreen() {
     // eligible means the next browser wake/focus gets a fresh fixture status
     // instead of waiting for a manual pull-to-refresh.
     refetchIntervalInBackground: true,
-    retry: 1,
-    retryDelay: 3000,
+     retry: 2,
+     retryDelay: (attempt) => Math.min(3000 * (attempt + 1), 9000),
   });
 
   useFocusEffect(
@@ -1275,11 +1285,16 @@ export default function PicksScreen() {
     }
     return true;
   }), [picks, searchQuery]);
-  const live = filteredPicks.filter(isLive);
-  const history = filteredPicks.filter(isHistoryVisible);
-  // uniqueHistory collapses duplicate saved rows to one per prediction event,
-  // matching the same deduplication the backend uses for accuracy metrics.
-  const uniqueHistory = useMemo(() => uniquePickEvents(history), [history]);
+  // Live and settled picks intentionally share one durable feed.  A card stays
+  // in place while its fixture runs, then the next verified snapshot changes
+  // its badge to HIT, MISS, or PUSH instead of moving it to another tab.
+  const visiblePicks = useMemo(() => (
+    uniquePickEvents(filteredPicks).sort((a, b) =>
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    )
+  ), [filteredPicks]);
+  const live = visiblePicks.filter(isLive);
+  const settled = visiblePicks.filter(isHistoryVisible);
 
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';
@@ -1373,26 +1388,13 @@ export default function PicksScreen() {
           </View>
         </View>
 
-        {/* Live / History tabs */}
-        <View style={styles.tabToggle}>
-          {(['live', 'history'] as Tab[]).map(t => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.toggle, activeTab === t && styles.toggleActive]}
-              onPress={() => { setActiveTab(t); Haptics.selectionAsync(); }}
-            >
-              {t === 'live' && live.length > 0 && activeTab !== 'live' && (
-                <View style={styles.tabDot} />
-              )}
-              <Text style={[styles.toggleText, activeTab === t && styles.toggleTextActive]}>
-                {t === 'live'
-                ? `Live${live.length > 0 ? ` (${live.length})` : ''}`
-                : uniqueHistory.length > 0
-                  ? `History (${uniqueHistory.length}${uniqueHistory.length < history.length ? ` of ${history.length}` : ''})`
-                  : 'History'}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <View style={styles.feedSummary}>
+          <View style={styles.feedSummaryDot} />
+          <Text style={styles.feedSummaryText}>
+            {visiblePicks.length > 0
+              ? `${visiblePicks.length} SAVED ${visiblePicks.length === 1 ? 'PICK' : 'PICKS'} · ${live.length} LIVE · ${settled.length} VERIFIED`
+              : 'SAVED PICKS · LIVE TO VERIFIED'}
+          </Text>
         </View>
       </View>
 
@@ -1417,44 +1419,36 @@ export default function PicksScreen() {
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
-      ) : error && picks.length === 0 ? (
+       ) : error && picks.length === 0 ? (
         <View style={styles.center}>
-          <Ionicons name="cloud-offline-outline" size={44} color={Colors.textTertiary} />
-          <Text style={[styles.emptyTitle, { marginTop: 12 }]}>Saved picks unavailable</Text>
+           <ActivityIndicator color={Colors.primary} size="large" />
+           <Text style={[styles.emptyTitle, { marginTop: 16 }]}>Syncing your saved picks…</Text>
           <Text style={[styles.emptySub, { textAlign: 'center', marginTop: 6 }]}>
-            We could not load your saved picks. Your history has not been cleared.
+             Your history is safe. We’ll keep retrying automatically while the connection refreshes.
           </Text>
           <TouchableOpacity
             onPress={() => refetch()}
             style={[styles.emptyAction, { marginTop: 18 }]}
           >
             <Ionicons name="refresh-outline" size={14} color="#000" />
-            <Text style={styles.emptyActionText}>Try Again</Text>
+             <Text style={styles.emptyActionText}>Refresh now</Text>
           </TouchableOpacity>
         </View>
-      ) : activeTab === 'live' && live.length === 0 ? (
+      ) : visiblePicks.length === 0 ? (
         <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(400).springify() : undefined} style={styles.empty}>
           <View style={styles.emptyIconWrap}>
-            <Ionicons name="radio-outline" size={36} color={Colors.primary} />
+            <Ionicons name="bookmark-outline" size={36} color={Colors.primary} />
           </View>
-          <Text style={styles.emptyTitle}>No live picks</Text>
-          <Text style={styles.emptySub}>Run a prediction on the Predict tab and save it — it'll appear here and update live as your game plays.</Text>
+          <Text style={styles.emptyTitle}>No saved picks yet</Text>
+          <Text style={styles.emptySub}>Saved picks stay in this list before kickoff, during the game, and after final verification.</Text>
           <TouchableOpacity style={styles.emptyAction} onPress={() => router.replace('/(tabs)/scan')}>
             <Ionicons name="scan-outline" size={14} color="#000" />
             <Text style={styles.emptyActionText}>Make a Prediction</Text>
           </TouchableOpacity>
         </Reanimated.View>
-      ) : activeTab === 'history' && history.length === 0 ? (
-        <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(400).springify() : undefined} style={styles.empty}>
-          <View style={styles.emptyIconWrap}>
-            <Ionicons name="checkmark-circle-outline" size={36} color={Colors.textTertiary} />
-          </View>
-          <Text style={styles.emptyTitle}>No settled picks yet</Text>
-          <Text style={styles.emptySub}>Your record will appear here once your saved picks have games that finish. Check back after kickoff.</Text>
-        </Reanimated.View>
-      ) : activeTab === 'live' ? (
+      ) : (
         <FlatList
-          data={live}
+          data={visiblePicks}
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
           initialNumToRender={8}
           maxToRenderPerBatch={8}
@@ -1473,32 +1467,6 @@ export default function PicksScreen() {
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
           }}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
-          showsVerticalScrollIndicator={false}
-        />
-      ) : (
-        /* ── HISTORY: flat list of settled picks ── */
-        <FlatList
-          data={history}
-          initialNumToRender={12}
-          maxToRenderPerBatch={15}
-          keyExtractor={(item, i) => `pick-${item.pickId || item._id || item.id || i}`}
-          renderItem={({ item }) => {
-            const onDeleteForItem = () => handleDelete(item);
-            return (
-              <SwipeablePickRow onDelete={onDeleteForItem}>
-                <OwnerPickCard
-                  pick={item}
-                  ownerMediaEnabled={isOwner}
-                  compact
-                  onDelete={onDeleteForItem}
-                  onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
-                  onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
-                />
-              </SwipeablePickRow>
-            );
-          }}
-          contentContainerStyle={[styles.list, { paddingTop: 4 }]}
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
           showsVerticalScrollIndicator={false}
         />
@@ -2514,6 +2482,24 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderSubtle,
   },
   searchInput: { flex: 1, color: Colors.text, fontSize: 15, padding: 0, height: 20 },
+  feedSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 2,
+  },
+  feedSummaryDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: Colors.primary,
+  },
+  feedSummaryText: {
+    color: Colors.textTertiary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+  },
   chipRow: { gap: 8, paddingVertical: 2 },
   clearChip: { backgroundColor: Colors.primaryDim, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   clearChipText: { color: Colors.primary, fontWeight: '700', fontSize: 12 },

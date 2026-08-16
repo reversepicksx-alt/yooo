@@ -928,6 +928,13 @@ async def save_pick(req: SavePickRequest):
         else:
             raise
 
+    # A successful save must invalidate the processed list snapshot. Without
+    # this, My Picks could serve a pre-save cache and make a pick appear to
+    # vanish immediately after the save completed.
+    _saved_email = req.email.lower()
+    _picks_cache_generation[_saved_email] = _picks_cache_generation.get(_saved_email, 0) + 1
+    _picks_list_cache.pop(_saved_email, None)
+
     # Community posting is explicit only. Saving a pick never publishes it to
     # Reverse Chat; users must use the card's Share action.
 
@@ -1024,6 +1031,7 @@ async def save_pick(req: SavePickRequest):
 # entire pipeline on every poll cycle.
 _picks_list_cache: dict[str, dict] = {}   # email → {ts, picks}
 PICKS_LIST_CACHE_TTL = 20                 # seconds
+_picks_cache_generation: dict[str, int] = {}
 # Settlement/live refresh is deliberately decoupled from the first list
 # response.  These sets prevent the 15-second client poll from starting
 # duplicate full refresh pipelines for the same subscriber.
@@ -1221,12 +1229,47 @@ async def list_picks(req: GetPicksRequest):
     session = await db.sessions.find_one({"email": requester_email, "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
+    request_generation = _picks_cache_generation.get(requester_email, 0)
 
     # ── Settlement write-fail counter (owner-only, reset per request) ────
     # Tracks how many DB correction writes were swallowed during this request.
     # A non-zero count means the subscriber sees a corrected result in-memory
     # but the DB was not updated — the pick will revert on the next request.
     _settlement_write_fails: int = 0
+
+    def _schedule_background_refresh() -> None:
+        """Refresh live/settled state without blocking the list response."""
+        if _picks_list_background.get() or requester_email in _picks_refresh_inflight:
+            return
+        _picks_refresh_inflight.add(requester_email)
+
+        async def _run_pick_refresh() -> None:
+            background_token = _picks_list_background.set(True)
+            try:
+                await list_picks(req)
+            except Exception as _refresh_exc:
+                print(
+                    f"[PICKS-LIST BACKGROUND] refresh failed for "
+                    f"{requester_email}: {_refresh_exc}"
+                )
+                traceback.print_exc()
+            finally:
+                _picks_list_background.reset(background_token)
+                _picks_refresh_inflight.discard(requester_email)
+
+        aio.create_task(_run_pick_refresh())
+
+    def _cache_immediate_snapshot(rows: list[dict]) -> None:
+        # The first durable read is already safe to render. Cache it before
+        # the provider-heavy refresh starts so overlapping requests do not
+        # repeat the Atlas scan while the background worker is in flight.
+        if _picks_cache_generation.get(requester_email, 0) != request_generation:
+            return
+        _picks_list_cache[requester_email] = {
+            "ts": _time_mod.monotonic(),
+            "picks": rows,
+            "ownerMediaEnriched": False,
+        }
 
     # ── Short-circuit: serve from cache if fresh enough ───────────────────
     _now_mono = _time_mod.monotonic()
@@ -1245,7 +1288,6 @@ async def list_picks(req: GetPicksRequest):
     if (
         _cached
         and not _picks_list_background.get()
-        and not _cached_has_active
         and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL
     ):
         cached_visible = [
@@ -1256,10 +1298,17 @@ async def list_picks(req: GetPicksRequest):
         # attached. Enrich that snapshot once before returning it; otherwise
         # the short-circuit permanently hides media until the TTL expires.
         if requester_email in OWNER_EMAILS and not _cached.get("ownerMediaEnriched"):
-            await _enrich_owner_media(cached_visible, requester_email)
+            # Media is owner-only enrichment and must never delay the My Picks
+            # snapshot. The background refresh will populate it for the next
+            # poll without holding the user-facing request open.
+            aio.create_task(_enrich_owner_media(cached_visible, requester_email))
             _cached["ownerMediaEnriched"] = True
+        if _cached_has_active:
+            _schedule_background_refresh()
         return {
-            "picks": cached_visible
+            "picks": cached_visible,
+            "settlementRefreshing": _cached_has_active,
+            "snapshotComplete": True,
         }
 
     # Always fetch only the requester's own picks for the My Picks / Live / History UI.
@@ -1272,12 +1321,14 @@ async def list_picks(req: GetPicksRequest):
     # Calibration and analytics independently read the full collection.
     _atlas_read_blocked = False
     try:
-        # Existing DNP rows are legacy clutter. Remove them before returning
-        # the first durable snapshot so they cannot reappear from history.
-        await db.picks.delete_many({
-            "email": requester_email,
-            "result": {"$regex": r"^dnp$", "$options": "i"},
-        })
+        # Existing DNP rows are legacy clutter. Clean them only in the
+        # background refresh; deleting before the compact read made the first
+        # My Picks request wait on a write that is unrelated to rendering.
+        if _picks_list_background.get():
+            await db.picks.delete_many({
+                "email": requester_email,
+                "result": {"$regex": r"^dnp$", "$options": "i"},
+            })
         picks = await db.picks.find(
             {"email": requester_email},
             _PICKS_LIST_PROJECTION,
@@ -1297,8 +1348,12 @@ async def list_picks(req: GetPicksRequest):
                 for p in _cached["picks"]
                 if str(p.get("result") or "").lower() != "dnp"
             ]
-            return {"picks": stale_picks, "settlementDelayed": True}
-        return {"picks": [], "settlementDelayed": True}
+            return {
+                "picks": stale_picks,
+                "settlementDelayed": True,
+                "snapshotComplete": False,
+            }
+        return {"picks": [], "settlementDelayed": True, "snapshotComplete": False}
 
     # The history screen should never wait for provider settlement work.  A
     # first request can otherwise block on several sequential fixture/player
@@ -1312,42 +1367,26 @@ async def list_picks(req: GetPicksRequest):
             if p.get("hiddenFromUser") is not True
             and str(p.get("result") or "").lower() != "dnp"
         ]
-        # The first request intentionally returns before settlement refresh
-        # finishes. Do not let that fast path also bypass owner media.
-        if requester_email in OWNER_EMAILS:
-            await _enrich_owner_media(immediate_picks, requester_email)
+        _cache_immediate_snapshot(immediate_picks)
+        # The first request intentionally returns before settlement and
+        # owner-media refresh finishes.
         return {
             "picks": immediate_picks,
             "settlementRefreshing": True,
+            "snapshotComplete": True,
         }
     if requester_email not in _picks_refresh_inflight:
-        _picks_refresh_inflight.add(requester_email)
-
-        async def _run_pick_refresh() -> None:
-            background_token = _picks_list_background.set(True)
-            try:
-                await list_picks(req)
-            except Exception as _refresh_exc:
-                print(
-                    f"[PICKS-LIST BACKGROUND] refresh failed for "
-                    f"{requester_email}: {_refresh_exc}"
-                )
-                traceback.print_exc()
-            finally:
-                _picks_list_background.reset(background_token)
-                _picks_refresh_inflight.discard(requester_email)
-
-        aio.create_task(_run_pick_refresh())
+        _schedule_background_refresh()
         immediate_picks = [
             p for p in picks
             if p.get("hiddenFromUser") is not True
             and str(p.get("result") or "").lower() != "dnp"
         ]
-        if requester_email in OWNER_EMAILS:
-            await _enrich_owner_media(immediate_picks, requester_email)
+        _cache_immediate_snapshot(immediate_picks)
         return {
             "picks": immediate_picks,
             "settlementRefreshing": True,
+            "snapshotComplete": True,
         }
 
     def _pick_email(p: dict) -> str:
@@ -2135,11 +2174,15 @@ async def list_picks(req: GetPicksRequest):
 
     # Cache only the user-visible result. Hidden records remain persisted and
     # have already gone through the settlement pipeline above.
-    _picks_list_cache[requester_email] = {
-        "ts": _time_mod.monotonic(),
-        "picks": visible_picks,
-        "ownerMediaEnriched": requester_email in OWNER_EMAILS,
-    }
+    # A save can happen while this provider-heavy background refresh is
+    # running. Never let the older refresh overwrite the newly invalidated
+    # snapshot with pre-save rows.
+    if _picks_cache_generation.get(requester_email, 0) == request_generation:
+        _picks_list_cache[requester_email] = {
+            "ts": _time_mod.monotonic(),
+            "picks": visible_picks,
+            "ownerMediaEnriched": requester_email in OWNER_EMAILS,
+        }
     _is_owner = requester_email in OWNER_EMAILS or requester_email == OWNER_EMAIL
     response: dict = {"picks": visible_picks}
     if _settlement_write_fails > 0 and _is_owner:

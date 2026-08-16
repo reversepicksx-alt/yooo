@@ -34,6 +34,138 @@ const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
 const MEDIUM_TIMEOUT_MS    = 15_000;
 const CS2_TIMEOUT_MS       = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
 const SHORT_TIMEOUT_MS     = 15_000;   // 15 s — all other API calls
+// Atlas can briefly take longer than a normal UI request on a cold connection.
+// The endpoint returns the durable snapshot before settlement work, so this is
+// a bounded database-read window rather than permission to wait on providers.
+const PICKS_LIST_TIMEOUT_MS = 20_000;
+const PICKS_SNAPSHOT_PREFIX = 'reversepicks:picks-snapshot:v2:';
+const inMemoryPickSnapshots: Record<string, Record<string, unknown>[]> = {};
+const inFlightPickRefreshes: Record<string, Promise<Record<string, unknown>[]>> = {};
+
+function picksSnapshotKey(email: string) {
+  return `${PICKS_SNAPSHOT_PREFIX}${email.trim().toLowerCase()}`;
+}
+
+function readPickSnapshot(email: string): Record<string, unknown>[] {
+  const key = picksSnapshotKey(email);
+  const memory = inMemoryPickSnapshots[key];
+  if (Array.isArray(memory) && memory.length > 0) return memory;
+  if (typeof window === 'undefined' || !window.localStorage) return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePickSnapshot(email: string, rows: Record<string, unknown>[]) {
+  if (!rows.length) return;
+  const key = picksSnapshotKey(email);
+  inMemoryPickSnapshots[key] = rows;
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(rows));
+  } catch {
+    // The in-memory snapshot still protects the current session if storage is
+    // unavailable or the browser quota is full.
+  }
+}
+
+export function cacheSavedPick(email: string, pick: Record<string, unknown>, pickId?: string) {
+  if (!email || !pick) return;
+  const existing = readPickSnapshot(email);
+  const optimistic = {
+    ...pick,
+    pickId: pickId || pick.pickId || pick.id,
+    status: pick.status || 'live',
+    result: pick.result || 'pending',
+    timestamp: pick.timestamp || new Date().toISOString(),
+  };
+  const optimisticId = String(optimistic.pickId || '');
+  const rows = [
+    optimistic,
+    ...existing.filter((row) => String(row.pickId || row.id || '') !== optimisticId),
+  ].slice(0, 300);
+  writePickSnapshot(email, rows);
+}
+
+function clearPickSnapshot(email: string) {
+  const key = picksSnapshotKey(email);
+  delete inMemoryPickSnapshots[key];
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Storage cleanup is best-effort.
+  }
+}
+
+function isPickSessionError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Your session expired') || message.includes('Invalid session');
+}
+
+function startPickRefresh(
+  email: string,
+  token: string,
+): Promise<Record<string, unknown>[]> {
+  const key = picksSnapshotKey(email);
+  const existing = inFlightPickRefreshes[key];
+  if (existing) return existing;
+
+  const request = (async () => {
+    try {
+      const resp = await apiCall<{
+        picks: Record<string, unknown>[];
+        settlementDelayed?: boolean;
+        snapshotComplete?: boolean;
+      }>('/api/picks/list', {
+        method: 'POST',
+        body: JSON.stringify({ email, token }),
+      });
+      if (!resp || !Array.isArray(resp.picks)) {
+        const snapshot = readPickSnapshot(email);
+        if (snapshot.length > 0) {
+          console.warn('[picks] malformed refresh; showing last verified snapshot');
+          return snapshot;
+        }
+        throw new Error('Saved picks response was malformed.');
+      }
+      const rows = resp.picks;
+      // Never replace a known-good snapshot with an empty response while the
+      // backend is explicitly reporting a delayed storage read.
+      if (rows.length > 0) {
+        // Keep the offline fallback bounded; the server response remains the
+        // complete list, while a browser snapshot only needs recent picks.
+        writePickSnapshot(email, rows.slice(0, 300));
+      } else if (resp.snapshotComplete === true && resp.settlementDelayed !== true) {
+        clearPickSnapshot(email);
+      }
+      return rows;
+    } catch (error) {
+      // Do not let an expired session silently render a stale private snapshot.
+      if (isPickSessionError(error)) throw error;
+      const snapshot = readPickSnapshot(email);
+      if (snapshot.length > 0) {
+        console.warn('[picks] refresh delayed; showing last verified snapshot');
+        return snapshot;
+      }
+      throw error;
+    }
+  })();
+  inFlightPickRefreshes[key] = request;
+  void request.then(
+    () => {
+      if (inFlightPickRefreshes[key] === request) delete inFlightPickRefreshes[key];
+    },
+    () => {
+      if (inFlightPickRefreshes[key] === request) delete inFlightPickRefreshes[key];
+    },
+  );
+  return request;
+}
 
 // Keep recent MLB/NFL identities in the current session. Once a provider
 // returns a result, extending the query filters it locally instead of making
@@ -79,10 +211,13 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const isCs2Predict = endpoint.startsWith(CS2_PREDICT_PATH);
   const isPlayerSearch = endpoint.startsWith(PLAYER_SEARCH_PATH);
   const isLissa = endpoint.startsWith('/api/lissa/');
+  const isPicksList = endpoint === '/api/picks/list';
   const isLong   = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const isMedium = MEDIUM_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const timeoutMs = isLissa
     ? LISSA_TIMEOUT_MS
+    : isPicksList
+      ? PICKS_LIST_TIMEOUT_MS
     : isPlayerSearch
       ? PLAYER_SEARCH_TIMEOUT_MS
       : isCorePrediction(endpoint)
@@ -1989,11 +2124,7 @@ export interface Pick {
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
-  const resp = await apiCall<{ picks: Record<string, unknown>[] }>('/api/picks/list', {
-    method: 'POST',
-    body: JSON.stringify({ email, token }),
-  });
-  return (resp.picks || []).map(p => ({
+  const normalizeRows = (rows: Record<string, unknown>[]) => rows.map(p => ({
     pickId: p.pickId as string,
     _id: (p.pickId as string) || (p._id as string),
     id: (p.pickId as string) || (p.id as string),
@@ -2097,6 +2228,15 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     qualityConfidenceCapped: (p.qualityConfidenceCapped as boolean) || undefined,
     passReason: (p.passReason as string) || undefined,
   }));
+
+  const snapshot = readPickSnapshot(email);
+  if (snapshot.length > 0) {
+    // Paint the last successful list immediately. The server refresh is
+    // deduplicated and the next poll picks up any new settlement.
+    void startPickRefresh(email, token);
+    return normalizeRows(snapshot);
+  }
+  return normalizeRows(await startPickRefresh(email, token));
 }
 
 export async function getMatchups(email: string, token: string): Promise<{
@@ -2168,10 +2308,14 @@ export async function getMatchups(email: string, token: string): Promise<{
 }
 
 export async function savePick(email: string, token: string, pick: Record<string, unknown>) {
-  return apiCall('/api/picks/save', {
+  const result = await apiCall<{ success?: boolean; pickId?: string; trackingId?: string }>('/api/picks/save', {
     method: 'POST',
     body: JSON.stringify({ email, token, pick }),
   });
+  // Make a newly saved pick visible immediately, even when the user navigates
+  // to My Picks before the next durable list refresh completes.
+  cacheSavedPick(email, pick, result.pickId);
+  return result;
 }
 
 export async function autoPostPickToCommunity(
@@ -2763,16 +2907,58 @@ export interface SystemInsights {
   worstLeagues: SystemInsightDimension[];
 }
 
+function ownerAnalyticsCacheKey(
+  email: string,
+  period: 'all' | 'today' | '30d' | '7d',
+  sport?: string | null,
+) {
+  return `reversepicks:owner-analytics:v2:${email.toLowerCase()}:${period}:${sport || 'all'}`;
+}
+
+export function getCachedOwnerAnalytics(
+  email: string,
+  period: 'all' | 'today' | '30d' | '7d' = 'all',
+  sport?: string | null,
+): AnalyticsData | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const cached = JSON.parse(
+      window.localStorage.getItem(ownerAnalyticsCacheKey(email, period, sport)) || 'null',
+    );
+    return cached && typeof cached === 'object' ? cached as AnalyticsData : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getOwnerAnalytics(
   email: string,
   token: string,
   period: 'all' | 'today' | '30d' | '7d' = 'all',
   sport?: string | null,
 ): Promise<AnalyticsData> {
-  return apiCall('/api/admin/analytics', {
-    method: 'POST',
-    body: JSON.stringify({ email, token, period, sport: sport ?? null }),
-  });
+  const key = ownerAnalyticsCacheKey(email, period, sport);
+  try {
+    const result = await apiCall<AnalyticsData>('/api/admin/analytics', {
+      method: 'POST',
+      body: JSON.stringify({ email, token, period, sport: sport ?? null }),
+    });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try { window.localStorage.setItem(key, JSON.stringify(result)); } catch {}
+    }
+    return result;
+  } catch (error) {
+    // Analytics is an owner dashboard, not the source of truth for picks. Keep
+    // the last verified report visible through a slow Atlas/replay refresh.
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('session expired') || message.includes('Invalid session')) throw error;
+    const cached = getCachedOwnerAnalytics(email, period, sport);
+    if (cached) {
+      console.warn('[analytics] refresh delayed; showing last verified report');
+      return cached;
+    }
+    throw error;
+  }
 }
 
 export interface StorageCollectionStat {
@@ -2799,9 +2985,27 @@ export async function getStorageHealth(
   email: string,
   token: string,
 ): Promise<StorageHealth> {
-  return apiCall(`/api/admin/storage-health?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, {
-    method: 'GET',
-  });
+  try {
+    return await apiCall(`/api/admin/storage-health?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, {
+      method: 'GET',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('session expired') || message.includes('Invalid session')) throw error;
+    return {
+      dataMb: null,
+      storageMb: null,
+      indexMb: null,
+      totalMb: null,
+      limitMb: 512,
+      usedPct: null,
+      degraded: null,
+      warning: null,
+      status: 'UNKNOWN',
+      collections: {},
+      error: 'Storage status is still refreshing. Your saved data is not affected.',
+    };
+  }
 }
 
 export async function triggerStorageCleanup(
@@ -2829,9 +3033,24 @@ export async function getKnowledgeStats(
   email: string,
   token: string,
 ): Promise<KnowledgeStats> {
-  return apiCall(`/api/admin/knowledge/stats?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, {
-    method: 'GET',
-  });
+  try {
+    return await apiCall(`/api/admin/knowledge/stats?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, {
+      method: 'GET',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('session expired') || message.includes('Invalid session')) throw error;
+    return {
+      teamsTotal: 0,
+      teamsFresh: 0,
+      playersTotal: 0,
+      playersFresh: 0,
+      heuristicsTotal: 0,
+      kbMisses: 0,
+      ttlHours: 0,
+      error: 'Knowledge status is still refreshing.',
+    };
+  }
 }
 
 export async function refreshKnowledge(
@@ -3894,13 +4113,44 @@ export async function unregisterPushToken(payload: {
 
 // ── User Profile ────────────────────────────────────────────────────────────────────────────
 
-export async function getUserProfile(email: string): Promise<{
+export type UserProfile = {
   email: string;
   username: string | null;
   displayName: string | null;
   profileImage?: string | null;
-}> {
-  return apiCall(`/api/users/me?email=${encodeURIComponent(email)}`);
+};
+
+function userProfileCacheKey(email: string) {
+  return `reversepicks:user-profile:v1:${email.toLowerCase()}`;
+}
+
+export function getCachedUserProfile(email: string): UserProfile | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(userProfileCacheKey(email)) || 'null');
+    return cached && typeof cached === 'object' ? cached as UserProfile : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getUserProfile(email: string): Promise<UserProfile> {
+  try {
+    const result = await apiCall<UserProfile>(`/api/users/me?email=${encodeURIComponent(email)}`);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try { window.localStorage.setItem(userProfileCacheKey(email), JSON.stringify(result)); } catch {}
+    }
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('session expired') || message.includes('Invalid session')) throw error;
+    const cached = getCachedUserProfile(email);
+    if (cached) {
+      console.warn('[profile] refresh delayed; showing last verified profile');
+      return cached;
+    }
+    throw error;
+  }
 }
 
 export async function setUsername(email: string, username: string): Promise<{
