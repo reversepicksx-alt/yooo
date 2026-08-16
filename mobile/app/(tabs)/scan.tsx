@@ -427,6 +427,75 @@ const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string; icon: keyof typeof
   { key: 'matchup', label: 'MATCHUP', icon: 'swap-horizontal-outline' },
 ];
 
+function buildImmediateSectionExplanation(
+  section: AnalysisTab,
+  prediction: Record<string, any>,
+): string {
+  const text = (value: unknown, fallback: string) => {
+    const result = String(value ?? '').trim();
+    return result || fallback;
+  };
+  const number = (value: unknown, fallback = 'unavailable') => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(1);
+  };
+  const player = text(prediction.playerName, 'The player');
+  const prop = text(prediction.propType, 'prop').replace(/_/g, ' ');
+  const line = number(prediction.line);
+  const projection = number(
+    prediction.projection ?? prediction.projectedValue ?? prediction.bayesianProjection,
+  );
+  const recommendation = text(prediction.recommendation, 'PASS').toUpperCase();
+  const opponent = text(prediction.opponentName ?? prediction.opponent, 'the opponent');
+  const venue = text(prediction.venue, 'home').toLowerCase() === 'away' ? 'away' : 'home';
+  const confidenceValue = prediction.confidenceScore ?? prediction.confidence;
+  const confidence = Number.isFinite(Number(confidenceValue))
+    ? ` Confidence is ${number(confidenceValue)}%.`
+    : '';
+
+  if (section === 'read') {
+    return (
+      `${player} is projected for ${projection} ${prop} against a ${line} line, ` +
+      `so the model leans ${recommendation}.${confidence} ` +
+      `The read is anchored to the verified player history and the ${venue} fixture context; ` +
+      `it describes the edge without promising an outcome.`
+    );
+  }
+
+  if (section === 'form') {
+    const logs = Array.isArray(prediction.gameLogs) ? prediction.gameLogs : [];
+    const recent = logs
+      .slice(0, 6)
+      .map((row: any) => number(row?.value ?? row?.targetStat, ''))
+      .filter(Boolean);
+    const recentText = recent.length
+      ? `The latest verified values are ${recent.join(', ')}`
+      : 'The available recent sample is limited';
+    const splitText = prediction.homeAvg != null || prediction.awayAvg != null
+      ? `, with home and away averages of ${number(prediction.homeAvg)} and ${number(prediction.awayAvg)}`
+      : '';
+    return (
+      `Form is being read from verified match logs, not a generic streak label. ` +
+      `${recentText}${splitText}. That context is compared with the ${line} ${prop} line ` +
+      `for this ${venue} appearance; missing splits and thin samples remain limitations ` +
+      `instead of being treated as zero.`
+    );
+  }
+
+  const expectedPossession = prediction.expectedPossession?.[venue];
+  const possessionText = Number.isFinite(Number(expectedPossession))
+    ? ` Expected possession is ${number(expectedPossession)}% on the ${venue} side.`
+    : '';
+  return (
+    `${player} is on the ${venue} side against ${opponent}. The matchup read compares ` +
+    `the player's role with the opponent's shape and the supplied game context, then ` +
+    `checks that against the ${line} ${prop} line and ${projection} projection.` +
+    `${possessionText} The recommendation remains ${recommendation}; the main risk is ` +
+    `a match script that changes the player's expected involvement.`
+  );
+}
+
 function buildSectionExplanationSnapshot(prediction: Record<string, any>): Record<string, any> {
   const bayesian = prediction.bayesianMetrics || {};
   const playerLogs = prediction.playerGameLogs || {};
@@ -527,15 +596,15 @@ function SectionNarrativeCard({
           </Text>
         )}
       </View>
-      {loading ? (
+      {text ? (
+        <Text style={styles.sectionNarrativeText}>{text}</Text>
+      ) : loading ? (
         <View style={styles.sectionNarrativeLoading}>
           <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={styles.sectionNarrativeLoadingText}>
             Building a human read from the verified numbers…
           </Text>
         </View>
-      ) : text ? (
-        <Text style={styles.sectionNarrativeText}>{text}</Text>
       ) : error ? (
         <View style={styles.sectionNarrativeError}>
           <Text style={styles.sectionNarrativeErrorText}>{error}</Text>
@@ -654,7 +723,21 @@ export default function ScanScreen() {
     tab: AnalysisTab,
     pred: PredictionResult | null,
   ) => {
-    if (!pred || !session?.email || !session?.token) return;
+    if (!pred) return;
+    // Put a grounded read on screen synchronously so a slow/auth-limited AI
+    // request can never leave the result tab blank. A successful Gemini
+    // response replaces this text; otherwise the clearly labeled MODEL READ
+    // remains visible.
+    if (!sectionNarrativeRef.current[tab]) {
+      const immediate = buildImmediateSectionExplanation(tab, pred as any);
+      setSectionNarratives((current) => (
+        current[tab] ? current : { ...current, [tab]: immediate }
+      ));
+      setSectionNarrativeSources((current) => (
+        current[tab] ? current : { ...current, [tab]: 'deterministic' }
+      ));
+    }
+    if (!session?.email || !session?.token) return;
     if (sectionNarrativeRef.current[tab] || sectionNarrativeLoadingRef.current[tab]) return;
 
     sectionExplanationAbortRef.current[tab]?.abort();
@@ -684,9 +767,9 @@ export default function ScanScreen() {
     } finally {
       if (sectionExplanationAbortRef.current[tab] === controller) {
         delete sectionExplanationAbortRef.current[tab];
+        sectionNarrativeLoadingRef.current[tab] = false;
+        setSectionNarrativeLoading((current) => ({ ...current, [tab]: false }));
       }
-      sectionNarrativeLoadingRef.current[tab] = false;
-      setSectionNarrativeLoading((current) => ({ ...current, [tab]: false }));
     }
   }, [session?.email, session?.token]);
 

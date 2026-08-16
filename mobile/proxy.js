@@ -92,7 +92,10 @@ function proxyToBackend(req, res) {
     backRes.pipe(res);
     backRes.on('error', (e) => console.error('[Proxy] backRes error:', e.message));
   });
-  pr.setTimeout(120000, () => {
+  // Keep the proxy alive longer than the client prediction window. Cold
+  // provider/history caches can make the first prediction legitimately slower
+  // than the normal warm-cache request.
+  pr.setTimeout(180000, () => {
     pr.destroy();
     if (!res.headersSent) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ detail: 'Backend timeout' })); }
   });

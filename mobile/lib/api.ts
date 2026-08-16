@@ -14,14 +14,15 @@ const getApiBase = (): string => {
 };
 
 // Endpoints that involve structured synthesis — give them a generous timeout.
-// The core soccer prediction path is intentionally handled by its own 30s
-// contract below; specialized paths keep their longer cold-cache windows.
+// The core prediction path gets its own generous cold-cache window. A first
+// request can populate verified fixture/history caches, so a short client
+// timer creates the false "retry" pattern where the second attempt succeeds.
 const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview', '/api/prediction-explanation'];
 const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
-const CORE_PREDICTION_TIMEOUT_MS = 30_000;
+const CORE_PREDICTION_TIMEOUT_MS = 120_000;
 const isPredictionPath = (endpoint: string) =>
   endpoint === '/api/scan-prop' || (endpoint.startsWith('/api/') && endpoint.endsWith('/predict'));
 const isCorePrediction = (endpoint: string) => endpoint === '/api/predict';
@@ -114,7 +115,7 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
       }
       throw new Error(
         isCorePrediction(endpoint)
-          ? 'Prediction timed out after 30 seconds. No result was lost — please retry.'
+          ? 'Prediction timed out after 120 seconds. No result was lost — please try again.'
           : 'Request timed out. The server is taking too long — please try again.',
       );
     }

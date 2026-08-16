@@ -405,9 +405,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     prediction.line ?? 0,
     1,
   ) * 1.18;
-  const chartLineOffset = prediction.line != null
-    ? 34 + Math.max(0, Math.min(78, (Number(prediction.line) / chartMaxValue) * 78))
-    : null;
   const tacticalProfiles: Array<Record<string, any>> = Array.isArray(
     (prediction.tacticalContext as any)?.recentOpponentBlockProfiles?.profiles,
   )
@@ -657,12 +654,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                     </TouchableOpacity>
                   );
                 })}
-               {chartLineOffset != null && (
-                 <View
-                   pointerEvents="none"
-                   style={[styles.chartReferenceLine, { bottom: chartLineOffset }]}
-                 />
-               )}
               </View>
               {selectedGame && (
                 <Text style={styles.detail}>
@@ -942,14 +933,6 @@ const styles = {
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
-  chartReferenceLine: {
-    position: 'absolute' as const,
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.72)',
-    zIndex: 2,
-  },
   blockVenueLabel: {
     fontSize: 5.5,
     lineHeight: 7,
