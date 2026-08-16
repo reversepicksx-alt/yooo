@@ -17,7 +17,8 @@ from config import (
 from models import PredictionRequest
 from utils import (
     api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds,
-    decimal_to_american, set_api_request_priority, reset_api_request_priority,
+    decimal_to_american, priority_api_football_request,
+    set_api_request_priority, reset_api_request_priority,
     resolve_verified_fixture,
 )
 from sportsgameodds_client import lookup_soccer_market_context
@@ -1067,20 +1068,35 @@ async def predict(req: PredictionRequest):
             """Get bookmaker odds for the specific upcoming fixture between team and opponent.
             Uses team's next fixtures (across ALL competitions) to find the correct match."""
             try:
-                canonical = await resolve_verified_fixture(
-                    actual_team_id,
-                    opponent_id=req.opponentId,
-                    opponent_name=req.opponentName,
-                    league_id=(
-                        league_id
-                        if league_id and league_id not in {39, 667, 666}
-                        else None
-                    ),
-                )
-                if canonical:
-                    fixture_match = canonical["fixture"]
-                else:
-                    fixture_match = None
+                fixture_match = None
+                # The scan screen already resolved the active fixture for
+                # soccer. Reuse that identity when available; the fallback
+                # remains for older/manual clients that do not send it.
+                if req.fixtureId:
+                    direct_rows = await priority_api_football_request(
+                        "fixtures", {"id": req.fixtureId}
+                    )
+                    if isinstance(direct_rows, list):
+                        fixture_match = next(
+                            (
+                                row for row in direct_rows
+                                if isinstance(row, dict)
+                                and _fixture_matchup(row, actual_team_id)
+                            ),
+                            None,
+                        )
+                if not fixture_match:
+                    canonical = await resolve_verified_fixture(
+                        actual_team_id,
+                        opponent_id=req.opponentId,
+                        opponent_name=req.opponentName,
+                        league_id=(
+                            league_id
+                            if league_id and league_id not in {39, 667, 666}
+                            else None
+                        ),
+                    )
+                    fixture_match = canonical["fixture"] if canonical else None
 
                 if not fixture_match:
                     return None
@@ -4354,12 +4370,12 @@ async def predict(req: PredictionRequest):
                         _player_fixtures_raw = await aio.wait_for(
                             api_football_request(
                                 "fixtures",
-                                {"team": actual_team_id, "last": 40, "status": "FT"},
+                        {"team": actual_team_id, "last": 40, "status": "FT"},
                             ),
-                            timeout=8,
+                            timeout=5,
                         )
                     except aio.TimeoutError:
-                        print(f"[PLAYER-DIRECT] {req.playerName}: club fixtures timed out after 8s")
+                        print(f"[PLAYER-DIRECT] {req.playerName}: club fixtures timed out after 5s")
                         _player_fixtures_raw = []
                 if _player_fixtures_raw and actual_team_id:
                     # Keep the explicit team-ID guard even though the provider
@@ -4563,8 +4579,22 @@ async def predict(req: PredictionRequest):
                         except Exception:
                             return None
 
-                    _pf_tasks = [_fetch_player_fix_stats(fx) for fx in _player_fixtures_raw]
-                    _pf_results = await aio.gather(*_pf_tasks, return_exceptions=True)
+                    # This is a recovery path after the primary history loader
+                    # missed. Keep it bounded so provider throttling cannot
+                    # turn one prediction into 40 player/stat/possession calls.
+                    _pf_rows = list(_player_fixtures_raw)[:16]
+                    _pf_tasks = [_fetch_player_fix_stats(fx) for fx in _pf_rows]
+                    try:
+                        _pf_results = await aio.wait_for(
+                            aio.gather(*_pf_tasks, return_exceptions=True),
+                            timeout=8,
+                        )
+                    except aio.TimeoutError:
+                        print(
+                            f"[PLAYER-DIRECT] {req.playerName}: "
+                            "fixture-stat recovery timed out after 8s"
+                        )
+                        _pf_results = []
                     for r in _pf_results:
                         if r and not isinstance(r, Exception):
                             player_game_logs.append(r)
@@ -7475,45 +7505,53 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                 away_poss = team_poss
                                 home_poss = 100 - team_poss
 
-                    # If this historical fixture was never used in a recent
-                    # game-log request, retrieve the verified team stats once
-                    # and persist the pair for future H2H views.
+                    # Historical team meetings are optional context. Keep this
+                    # fallback independently bounded so a missing cache entry
+                    # cannot hold the prediction open indefinitely.
                     if home_poss is None or away_poss is None:
-                        fixture_stats = await api_football_request(
-                            "fixtures/statistics", {"fixture": fid}
-                        )
-                        for team_stats in fixture_stats or []:
-                            team_id = (team_stats.get("team") or {}).get("id")
-                            for stat in team_stats.get("statistics") or []:
-                                if stat.get("type") != "Ball Possession":
-                                    continue
-                                raw_value = str(stat.get("value") or "").replace("%", "").strip()
+                        try:
+                            fixture_stats = await aio.wait_for(
+                                api_football_request(
+                                    "fixtures/statistics", {"fixture": fid}
+                                ),
+                                timeout=2.5,
+                            )
+                            for team_stats in fixture_stats or []:
+                                team_id = (team_stats.get("team") or {}).get("id")
+                                for stat in team_stats.get("statistics") or []:
+                                    if stat.get("type") != "Ball Possession":
+                                        continue
+                                    raw_value = str(stat.get("value") or "").replace("%", "").strip()
+                                    try:
+                                        value = int(float(raw_value))
+                                    except (TypeError, ValueError):
+                                        continue
+                                    if team_id == actual_team_id:
+                                        if player_home:
+                                            home_poss = value
+                                        else:
+                                            away_poss = value
+                                    else:
+                                        if player_home:
+                                            away_poss = value
+                                        else:
+                                            home_poss = value
+                            if home_poss is not None and away_poss is not None:
                                 try:
-                                    value = int(float(raw_value))
-                                except (TypeError, ValueError):
-                                    continue
-                                if team_id == actual_team_id:
-                                    if player_home:
-                                        home_poss = value
-                                    else:
-                                        away_poss = value
-                                else:
-                                    if player_home:
-                                        away_poss = value
-                                    else:
-                                        home_poss = value
-                        if home_poss is not None or away_poss is not None:
-                            try:
-                                await db.fixture_player_cache.update_one(
-                                    {"_k": f"fxt_poss_{fid}"},
-                                    {"$set": {"_k": f"fxt_poss_{fid}", "d": {
-                                        "home_poss": home_poss,
-                                        "away_poss": away_poss,
-                                    }}},
-                                    upsert=True,
-                                )
-                            except Exception as _poss_cache_err:
-                                print(f"[POSSESSION CACHE WRITE] skipped: {_poss_cache_err}")
+                                    await db.fixture_player_cache.update_one(
+                                        {"_k": f"fxt_poss_{fid}"},
+                                        {"$set": {"_k": f"fxt_poss_{fid}", "d": {
+                                            "home_poss": home_poss,
+                                            "away_poss": away_poss,
+                                        }}},
+                                        upsert=True,
+                                    )
+                                except Exception as _poss_cache_err:
+                                    print(f"[POSSESSION CACHE WRITE] skipped: {_poss_cache_err}")
+                        except Exception:
+                            # Missing optional historical possession is honest
+                            # unavailable context, not a fabricated 50/50 value.
+                            pass
                 except (TypeError, ValueError):
                     pass
                 except Exception:

@@ -350,6 +350,7 @@ export interface ScanResult {
   leagueId?: number;
   leagueName?: string;
   venue?: string;
+  fixtureId?: number | string | null;
   error?: string;
 }
 
@@ -2227,10 +2228,10 @@ export interface TeamSearchResult {
   leagueId: number;
 }
 
-export async function searchTeams(query: string, leagueId?: number): Promise<{ results: TeamSearchResult[] }> {
+export async function searchTeams(query: string, leagueId?: number, signal?: AbortSignal): Promise<{ results: TeamSearchResult[] }> {
   const params = new URLSearchParams({ q: query });
   if (leagueId) params.set('league_id', String(leagueId));
-  return apiCall(`/api/search/teams?${params.toString()}`);
+  return apiCall(`/api/search/teams?${params.toString()}`, { signal });
 }
 
 export interface LeagueSearchResult {
@@ -2240,9 +2241,9 @@ export interface LeagueSearchResult {
   logo?: string;
 }
 
-export async function searchLeagues(query: string): Promise<{ leagues: LeagueSearchResult[] }> {
+export async function searchLeagues(query: string, signal?: AbortSignal): Promise<{ leagues: LeagueSearchResult[] }> {
   const params = new URLSearchParams({ search: query });
-  return apiCall(`/api/leagues/search?${params.toString()}`);
+  return apiCall(`/api/leagues/search?${params.toString()}`, { signal });
 }
 
 export interface PlayerSearchResult {
@@ -2260,6 +2261,7 @@ export async function searchPlayersQuick(
   query: string,
   leagueId?: number,
   session?: { email: string; token: string },
+  signal?: AbortSignal,
 ): Promise<{ players: PlayerSearchResult[] }> {
   return apiCall('/api/players/search', {
     method: 'POST',
@@ -2268,6 +2270,7 @@ export async function searchPlayersQuick(
       league_id: leagueId,
       ...(session ? { email: session.email, token: session.token } : {}),
     }),
+    signal,
   });
 }
 
@@ -2924,9 +2927,9 @@ export interface Cs2Player {
   age?: number | null;
 }
 
-export async function searchCs2Players(query: string): Promise<Cs2Player[]> {
+export async function searchCs2Players(query: string, signal?: AbortSignal): Promise<Cs2Player[]> {
   if (!query || query.length < 2) return [];
-  return apiCall<Cs2Player[]>(`/api/cs2/players/search?q=${encodeURIComponent(query)}`);
+  return apiCall<Cs2Player[]>(`/api/cs2/players/search?q=${encodeURIComponent(query)}`, { signal });
 }
 
 export interface Cs2Team {
@@ -2935,9 +2938,9 @@ export interface Cs2Team {
   shortName?: string | null;
 }
 
-export async function searchCs2Teams(query: string): Promise<Cs2Team[]> {
+export async function searchCs2Teams(query: string, signal?: AbortSignal): Promise<Cs2Team[]> {
   if (!query || query.length < 2) return [];
-  return apiCall<Cs2Team[]>(`/api/cs2/teams/search?q=${encodeURIComponent(query)}`);
+  return apiCall<Cs2Team[]>(`/api/cs2/teams/search?q=${encodeURIComponent(query)}`, { signal });
 }
 
 export interface Cs2NextMatch {
@@ -2987,9 +2990,9 @@ export interface WtaPlayer {
   isActive?:    boolean;
 }
 
-export async function searchWtaPlayers(query: string): Promise<WtaPlayer[]> {
+export async function searchWtaPlayers(query: string, signal?: AbortSignal): Promise<WtaPlayer[]> {
   if (!query || query.length < 2) return [];
-  return apiCall<WtaPlayer[]>(`/api/wta/players/search?q=${encodeURIComponent(query)}`);
+  return apiCall<WtaPlayer[]>(`/api/wta/players/search?q=${encodeURIComponent(query)}`, { signal });
 }
 
 export interface WtaNextMatch {
@@ -3182,9 +3185,9 @@ export interface NbaPlayer {
   team?:      { id: number; full_name: string; abbreviation: string } | null;
 }
 
-export async function searchNbaPlayers(query: string): Promise<NbaPlayer[]> {
+export async function searchNbaPlayers(query: string, signal?: AbortSignal): Promise<NbaPlayer[]> {
   if (!query || query.length < 2) return [];
-  const raw = await apiCall<any>(`/api/nba/players/search?q=${encodeURIComponent(query)}`);
+  const raw = await apiCall<any>(`/api/nba/players/search?q=${encodeURIComponent(query)}`, { signal });
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
   return rows.map((p: any) => ({
     id:        p.id ?? p.player_id ?? 0,
@@ -3295,9 +3298,9 @@ export interface NhlPlayer {
   team?:      { id: number; full_name: string; abbreviation: string } | null;
 }
 
-export async function searchNhlPlayers(query: string): Promise<NhlPlayer[]> {
+export async function searchNhlPlayers(query: string, signal?: AbortSignal): Promise<NhlPlayer[]> {
   if (!query || query.length < 2) return [];
-  const raw = await apiCall<any>(`/api/nhl/players/search?q=${encodeURIComponent(query)}`);
+  const raw = await apiCall<any>(`/api/nhl/players/search?q=${encodeURIComponent(query)}`, { signal });
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
   return rows.map((p: any) => ({
     id:        p.id         ?? p.player_id ?? 0,
@@ -3417,11 +3420,11 @@ export interface NflPlayer {
   college?:  string | null;
 }
 
-export async function searchNflPlayers(query: string): Promise<NflPlayer[]> {
+export async function searchNflPlayers(query: string, signal?: AbortSignal): Promise<NflPlayer[]> {
   if (!query || query.length < 2) return [];
   const cached = cachedPlayerSearch('nfl', query);
   if (cached.length) return cached as NflPlayer[];
-  const raw = await apiCall<any>(`/api/nfl/players/search?q=${encodeURIComponent(query)}`);
+  const raw = await apiCall<any>(`/api/nfl/players/search?q=${encodeURIComponent(query)}`, { signal });
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
   const mapped = rows.map((p: any) => ({
     id:        p.id        ?? 0,
@@ -3553,11 +3556,11 @@ export interface MlbPlayer {
   team?:      { id: number; full_name: string; abbreviation: string } | null;
 }
 
-export async function searchMlbPlayers(query: string): Promise<MlbPlayer[]> {
+export async function searchMlbPlayers(query: string, signal?: AbortSignal): Promise<MlbPlayer[]> {
   if (!query || query.length < 2) return [];
   const cached = cachedPlayerSearch('mlb', query);
   if (cached.length) return cached as MlbPlayer[];
-  const raw = await apiCall<any>(`/api/mlb/players/search?q=${encodeURIComponent(query)}`);
+  const raw = await apiCall<any>(`/api/mlb/players/search?q=${encodeURIComponent(query)}`, { signal });
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
   const mapped = rows.map((p: any) => ({
     id:        p.id          ?? p.player_id  ?? 0,

@@ -150,6 +150,7 @@ export default function FuzzySearchInput({
   const [searchError, setSearchError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestAbortRef = useRef<AbortController | null>(null);
   const lastQueryRef = useRef('');
   const searchIdRef = useRef(0);
 
@@ -159,6 +160,8 @@ export default function FuzzySearchInput({
       clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = null;
     }
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
@@ -179,18 +182,25 @@ export default function FuzzySearchInput({
     }
 
     const myId = ++searchIdRef.current;
+    const requestController = new AbortController();
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = requestController;
+    const signal = requestController.signal;
     setLoading(true);
     setSearchError(false);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     // A rate-limited upstream search must not leave the control looking
     // permanently busy.  The request itself is ignored if it completes after
     // this timeout; the user gets an explicit retry affordance instead.
-    const searchTimeoutMs = searchType === 'all_players' ? 12_000 : 2_900;
+    const searchTimeoutMs = searchType === 'all_players' ? 5_000 : 2_900;
     searchTimeoutRef.current = setTimeout(() => {
       if (searchIdRef.current !== myId) return;
+      requestController.abort();
+      requestAbortRef.current = null;
       searchIdRef.current += 1;
       setLoading(false);
-      setResults([]);
+      // Universal search is progressive: keep any fast soccer/MLB result
+      // visible when a slower provider times out.
       setShowDropdown(true);
       setHasSearched(true);
       setSearchError(true);
@@ -198,13 +208,13 @@ export default function FuzzySearchInput({
     try {
       let r: any[] = [];
       if (searchType === 'teams') {
-        const data = await searchTeams(q, leagueId);
+        const data = await searchTeams(q, leagueId, signal);
         r = data.results || [];
       } else if (searchType === 'leagues') {
-        const data = await searchLeagues(q);
+        const data = await searchLeagues(q, signal);
         r = data.leagues || [];
       } else if (searchType === 'players') {
-        const data = await searchPlayersQuick(q, leagueId, ownerSession);
+        const data = await searchPlayersQuick(q, leagueId, ownerSession, signal);
         r = (data.players || []).map((p: any) => ({
           playerId: (p.id as number) || 0,
           playerName: (p.name as string) || '',
@@ -216,77 +226,61 @@ export default function FuzzySearchInput({
           ownerTeamLogo: (p.ownerTeamLogo as string) || '',
         }));
       } else if (searchType === 'all_players') {
-        // Search the three supported player providers in parallel. A single
-        // provider being unavailable must not hide valid results from the
-        // other sports.
-        const [soccerResult, mlbResult, nflResult] = await Promise.allSettled([
-          searchPlayersQuick(q, leagueId, ownerSession),
-          searchMlbPlayers(q),
-          searchNflPlayers(q),
-        ]);
-        const soccerRows = soccerResult.status === 'fulfilled'
-          ? soccerResult.value.players || []
-          : [];
-        const mlbRows = mlbResult.status === 'fulfilled' ? mlbResult.value : [];
-        const nflRows = nflResult.status === 'fulfilled' ? nflResult.value : [];
-        r = [
-          ...soccerRows.map((p: any) => ({
-            sport: 'soccer',
-            playerId: p.id || p.playerId || 0,
-            playerName: p.name || p.playerName || '',
-            teamId: p.teamId || 0,
-            teamName: p.teamName || p.team || '',
-            leagueId: p.leagueId || 0,
+        // Publish each sport as soon as it returns. Previously the UI waited
+        // for the slowest MLB/NFL provider before showing a fast soccer hit.
+        // The abort signal also stops stale requests when the user types again.
+        const universalRows: any[] = [];
+        const addUniversalRows = (sport: 'soccer' | 'mlb' | 'nfl', rows: any[]) => {
+          const mapped = rows.map((p: any) => ({
+            sport,
+            playerId: sport === 'soccer' ? (p.id || p.playerId || 0) : (p.id || 0),
+            playerName: sport === 'soccer'
+              ? (p.name || p.playerName || '')
+              : (p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()),
+            teamId: sport === 'soccer' ? (p.teamId || 0) : (p.team?.id || 0),
+            teamName: sport === 'soccer' ? (p.teamName || p.team || '') : (p.team?.full_name || ''),
+            leagueId: sport === 'soccer' ? (p.leagueId || 0) : 0,
             position: p.position || '',
             ownerPlayerPhoto: p.ownerPlayerPhoto || '',
             ownerTeamLogo: p.ownerTeamLogo || '',
             raw: p,
-          })),
-          ...mlbRows.map((p: MlbPlayer) => ({
-            sport: 'mlb',
-            playerId: p.id || 0,
-            playerName: p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim(),
-            teamId: p.team?.id || 0,
-            teamName: p.team?.full_name || '',
-            leagueId: 0,
-            position: p.position || '',
-            raw: p,
-          })),
-          ...nflRows.map((p: NflPlayer) => ({
-            sport: 'nfl',
-            playerId: p.id || 0,
-            playerName: p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim(),
-            teamId: p.team?.id || 0,
-            teamName: p.team?.full_name || '',
-            leagueId: 0,
-            position: p.position || '',
-            raw: p,
-          })),
-        ].filter(p => p.playerName).filter(p => {
-          // For multi-word queries, suppress MLB/NFL results that match only
-          // one query word (e.g. "Ryan Borucki" appearing when user types
-          // "Yazmeen Ryan"). Soccer results are quality-filtered by the
-          // backend; MLB/NFL must match all query words in the player name.
-          if (p.sport === 'soccer') return true;
+          }));
           const qWords = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
-          if (qWords.length < 2) return true;
-          const name = (p.playerName || '').toLowerCase();
-          return qWords.every(w => name.includes(w));
-        });
+          universalRows.push(...mapped.filter(p => p.playerName).filter(p => {
+            if (sport === 'soccer' || qWords.length < 2) return true;
+            return qWords.every(w => p.playerName.toLowerCase().includes(w));
+          }));
+          if (searchIdRef.current === myId && lastQueryRef.current === q) {
+            setResults([...universalRows]);
+            setShowDropdown(universalRows.length > 0);
+            setHasSearched(true);
+          }
+        };
+        const soccerPromise = searchPlayersQuick(q, leagueId, ownerSession, signal)
+          .then(data => addUniversalRows('soccer', data.players || []))
+          .catch(() => {});
+        const mlbPromise = searchMlbPlayers(q, signal)
+          .then(rows => addUniversalRows('mlb', rows))
+          .catch(() => {});
+        const nflPromise = searchNflPlayers(q, signal)
+          .then(rows => addUniversalRows('nfl', rows))
+          .catch(() => {});
+        await Promise.allSettled([soccerPromise, mlbPromise, nflPromise]);
+        r = universalRows;
       } else if (searchType === 'cs2_players') {
-        r = (await searchCs2Players(q)).filter((p: Cs2Player) => p.isActive !== false);
+        r = (await searchCs2Players(q, signal)).filter((p: Cs2Player) => p.isActive !== false);
       } else if (searchType === 'cs2_teams') {
-        r = await searchCs2Teams(q);
+        r = await searchCs2Teams(q, signal);
       } else if (searchType === 'wta_players') {
-        r = await searchWtaPlayers(q);
+        r = await searchWtaPlayers(q, signal);
       } else if (searchType === 'nba_players') {
-        r = await searchNbaPlayers(q);
+        r = await searchNbaPlayers(q, signal);
       } else if (searchType === 'nhl_players') {
-        r = await searchNhlPlayers(q);
+        r = await searchNhlPlayers(q, signal);
       } else if (searchType === 'mlb_players') {
-        r = await searchMlbPlayers(q);
+        r = await searchMlbPlayers(q, signal);
       } else if (searchType === 'nfl_players') {
-        r = await searchNflPlayers(q);
+        r = await searchNflPlayers(q, signal);
       }
       // A response must still belong to the exact text currently in the
       // control. Selection and clear actions can update the parent value
@@ -308,6 +302,9 @@ export default function FuzzySearchInput({
         clearTimeout(searchTimeoutRef.current);
         searchTimeoutRef.current = null;
       }
+      if (requestAbortRef.current === requestController) {
+        requestAbortRef.current = null;
+      }
       if (searchIdRef.current === myId) setLoading(false);
     }
   }, [searchType, leagueId, staticItems, ownerSession?.email, ownerSession?.token]);
@@ -324,6 +321,8 @@ export default function FuzzySearchInput({
       searchTimeoutRef.current = null;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
     if (confirmed) { setResults([]); setShowDropdown(false); return; }
     // Do not keep displaying results for the previous query while the new
     // query is waiting for its debounce/request.
@@ -347,6 +346,7 @@ export default function FuzzySearchInput({
   useEffect(() => () => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    requestAbortRef.current?.abort();
   }, []);
 
   const dismiss = () => { setShowDropdown(false); };

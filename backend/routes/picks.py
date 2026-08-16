@@ -928,10 +928,8 @@ async def save_pick(req: SavePickRequest):
         else:
             raise
 
-    # Automatic Community posting happens from the Picks screen after the
-    # highest-confidence card has been rendered and captured. Do not create a
-    # text-only post here: that could publish a lower pick before the UI has
-    # selected and captured the actual top card image.
+    # Community posting is explicit only. Saving a pick never publishes it to
+    # Reverse Chat; users must use the card's Share action.
 
     # =============================================
     # SLIP CORRELATION ANALYSIS — Same-game risk detection

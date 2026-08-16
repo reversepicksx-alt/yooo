@@ -62,6 +62,10 @@ class PredictionRequest(BaseModel):
     roleOverride: str = ""
     sport: str = "soccer"
     odds: Optional[dict] = None
+    # Optional client-verified fixture identity. When present, prediction
+    # preflight can validate one fixture directly instead of scanning the
+    # team's next/today fixture batches again.
+    fixtureId: Optional[int] = None
 
 
 class Cs2PredictRequest(BaseModel):

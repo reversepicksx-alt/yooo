@@ -1461,6 +1461,7 @@ export default function ScanScreen() {
         propType: data.propType || propType,
         line: data.line || 0,
         sport: sport,
+        fixtureId: data.fixtureId || (sport === 'soccer' ? autoMatch?.fixtureId : undefined) || undefined,
       };
 
       // Return the mathematical prediction as soon as it is ready. Tactical
