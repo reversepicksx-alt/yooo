@@ -171,6 +171,19 @@ function scopeIncludesPosition(value: unknown) {
   return String(value || '').includes('same_position');
 }
 
+function newestFirst(a: CohortPlayer, b: CohortPlayer) {
+  const aTime = Date.parse(String(a.date || ''));
+  const bTime = Date.parse(String(b.date || ''));
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return bTime - aTime;
+  }
+  return String(b.date || '').localeCompare(String(a.date || ''));
+}
+
+function displayDate(value: unknown) {
+  return String(value || '').slice(0, 10) || 'DATE UNAVAILABLE';
+}
+
 /**
  * Exact-opponent, same-position or same-role evidence. This is deliberately separate from
  * Same-role evidence is kept focused on the comparison cohort shown above.
@@ -216,7 +229,7 @@ export default function SameRoleEvidenceCard({
   const role = isSamePosition ? '' : (data.targetRole || 'same role');
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
-  const sourcePlayers = (data.players || []).slice(0, 15);
+  const sourcePlayers = (data.players || []).slice().sort(newestFirst).slice(0, 15);
   const hasSourcePlayers = sourcePlayers.length > 0;
   const scope = String(data.sourceScope || '');
   const scopeLabel = scope.includes('broad_category')
@@ -397,6 +410,7 @@ export default function SameRoleEvidenceCard({
                     style={{ fontSize: 10.5, color: Colors.textSecondary, lineHeight: 15, marginTop: 1 }}
                   >
                      {player.team || 'Team unavailable'} · {position}{roleText ? ` · ${roleText}${player.roleInferred ? ' (inferred)' : ''}` : ''}
+                     {' · '}{displayDate(player.date)}
                   </Text>
                 </View>
                 <View style={{ width: 142, alignItems: 'flex-end' }}>

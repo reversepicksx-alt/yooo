@@ -576,7 +576,7 @@ function SectionNarrativeCard({
   error?: string | null;
   onRetry?: () => void;
 }) {
-  const label = section === 'read' ? 'READ' : section === 'form' ? 'FORM' : 'MATCHUP';
+  const label = section === 'read' ? 'TACTICAL READ' : section === 'form' ? 'FORM' : 'MATCHUP';
   const icon = section === 'read'
     ? 'flash-outline'
     : section === 'form'
@@ -752,7 +752,9 @@ export default function ScanScreen() {
     // The first grounded read is the final read for this prediction. Do not
     // swap it out after the card is visible: asynchronous analyst generation
     // made the explanation appear to reset and change underneath the user.
-    const immediate = buildImmediateSectionExplanation(tab, pred as any);
+    const immediate = tab === 'read'
+      ? (getTacticalRead(pred as any) || buildImmediateSectionExplanation(tab, pred as any))
+      : buildImmediateSectionExplanation(tab, pred as any);
     sectionNarrativeRef.current[tab] = immediate;
     setSectionNarratives((current) => (
       current[tab] ? current : { ...current, [tab]: immediate }
@@ -809,7 +811,9 @@ export default function ScanScreen() {
 
   const selectAnalysisTab = (tab: AnalysisTab) => {
     setAnalysisTab(tab);
-    void requestSectionExplanation(tab, predictionState);
+    if (tab === 'read') {
+      void requestSectionExplanation(tab, predictionState);
+    }
     Haptics.selectionAsync().catch(() => undefined);
   };
 
@@ -4614,14 +4618,16 @@ export default function ScanScreen() {
                  );
                })}
              </View>
-              <SectionNarrativeCard
-                section={analysisTab}
-                text={sectionNarratives[analysisTab]}
-                source={sectionNarrativeSources[analysisTab]}
-                loading={sectionNarrativeLoading[analysisTab]}
-                error={sectionNarrativeErrors[analysisTab]}
-                onRetry={() => void requestSectionExplanation(analysisTab, predictionState)}
-              />
+               {analysisTab === 'read' && (
+                 <SectionNarrativeCard
+                   section={analysisTab}
+                   text={sectionNarratives[analysisTab]}
+                   source={sectionNarrativeSources[analysisTab]}
+                   loading={sectionNarrativeLoading[analysisTab]}
+                   error={sectionNarrativeErrors[analysisTab]}
+                   onRetry={() => void requestSectionExplanation('read', predictionState)}
+                 />
+               )}
              <CompactAnalysisBars
                  prediction={prediction}
                section={analysisTab}

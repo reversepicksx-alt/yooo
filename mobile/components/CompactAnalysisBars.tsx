@@ -46,6 +46,12 @@ type CompactPrediction = {
     fallback?: string | null;
     modelScope?: string | null;
     modelSampleSize?: number | null;
+    metadataCoverage?: {
+      total?: number | null;
+      dated?: number | null;
+      withVenue?: number | null;
+      withOpponent?: number | null;
+    } | null;
   } | null;
   modelHitRates?: {
     overPct?: number | null;
@@ -262,6 +268,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   lineEditor?: React.ReactNode;
 }) {
   const historyContext = prediction.historyContext ?? null;
+  const metadataCoverage = historyContext?.metadataCoverage ?? null;
   const preferredVenue = normalizeVenue(
     prediction.venue
       ?? (typeof prediction.isHome === 'boolean' ? prediction.isHome : null)
@@ -399,6 +406,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   const showRecent = showForm && (allLogs.length > 0 || h2hRows.length > 0);
   const showHistory = showModel && hasHistoryEvidence;
   const showMarket = showMatchup && hasMarketEvidence;
+  const metadataLabel = metadataCoverage?.total
+    ? ` · DATE ${Number(metadataCoverage.dated || 0)}/${Number(metadataCoverage.total)} · VENUE ${Number(metadataCoverage.withVenue || 0)}/${Number(metadataCoverage.total)}`
+    : '';
   const displayLogs = logs;
   const chartMaxValue = Math.max(
     ...displayLogs.map((item) => Number(item.value) || 0),
@@ -562,7 +572,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                 <Text style={styles.recentInlineStats} numberOfLines={isH2HFilter ? 2 : 1}>
                   {isH2HFilter
                     ? `HOME AVG ${h2hHomeSplit?.average?.toFixed(1) ?? '—'}${h2hHomeSplit?.count ? ` (N=${h2hHomeSplit.count})` : ''} · AWAY AVG ${h2hAwaySplit?.average?.toFixed(1) ?? '—'}${h2hAwaySplit?.count ? ` (N=${h2hAwaySplit.count})` : ''}`
-                    : `HOME ${venueCounts.home} · AWAY ${venueCounts.away}${homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}`}
+                     : `HOME ${venueCounts.home} · AWAY ${venueCounts.away}${homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}${metadataLabel}`}
                 </Text>
                 {venueHistoryFallback && (
                   <Text style={styles.contextWarning} numberOfLines={1}>

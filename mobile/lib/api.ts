@@ -654,6 +654,12 @@ export interface PredictionResult {
       includedCount?: number;
       excludedCount?: number;
       metadataRequired?: boolean;
+      metadataCoverage?: {
+        total?: number;
+        dated?: number;
+        withVenue?: number;
+        withOpponent?: number;
+      };
     };
     homeAvg?: number;
     awayAvg?: number;
@@ -694,6 +700,12 @@ export interface PredictionResult {
     includedCount?: number;
     excludedCount?: number;
     metadataRequired?: boolean;
+    metadataCoverage?: {
+      total?: number;
+      dated?: number;
+      withVenue?: number;
+      withOpponent?: number;
+    };
   };
   matchupVolume?: {
     available?: boolean;

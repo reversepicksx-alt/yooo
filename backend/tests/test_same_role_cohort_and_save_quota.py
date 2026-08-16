@@ -165,6 +165,25 @@ def test_cached_appearance_without_fixture_metadata_survives_history_gate():
     assert retained[0]["fixtureContextStatus"] == "unavailable"
 
 
+def test_stage0_history_recovers_fixture_metadata_before_sorting():
+    assert "team_fixture_history" in PREDICT_SOURCE
+    assert "fixture metadata recovery skipped" in PREDICT_SOURCE
+    assert '"metadataSource": "team_fixture_history"' in PREDICT_SOURCE
+    assert "_cached_row_meta_complete" in PREDICT_SOURCE
+    assert '"fixtureContextSource": "fixture_player_cache_row"' in PREDICT_SOURCE
+    assert '"fixtureContextStatus": "verified"' in PREDICT_SOURCE
+    assert "exact fixture metadata recovery" in PREDICT_SOURCE
+    assert 'gl["date"] = str(' in PREDICT_SOURCE
+    assert 'gl["fixtureContextStatus"] = "verified"' in PREDICT_SOURCE
+    assert '"metadataCoverage"' in PREDICT_SOURCE
+    assert '"dated": sum(1 for _log in player_game_logs if _log.get("date"))' in PREDICT_SOURCE
+
+
+def test_history_and_comparable_rows_are_newest_first():
+    assert 'key=lambda g: g.get("date", ""),\n                reverse=True' in PREDICT_SOURCE
+    assert 'key=lambda x: str(x.get("date") or ""),\n                reverse=True' in PREDICT_SOURCE
+
+
 def test_direct_fixture_possession_fallback_preserves_appearance_and_never_fabricates_tp():
     game = {"minutes": 90, "passes_total": 63, "tp": 71}
 

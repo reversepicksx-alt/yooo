@@ -2161,6 +2161,192 @@ async def predict(req: PredictionRequest):
                             fid_str = meta.get("_k", "")[4:]  # strip "fxm_"
                             fxm_docs[fid_str] = meta.get("d", {})
 
+                    # Player-stat cache rows can outlive their fxm companion.
+                    # Rejoin the durable team fixture schedule before exposing
+                    # the history so cached appearances retain the verified
+                    # date, opponent, venue, score, and competition context.
+                    # This is a read-only recovery path; it never invents
+                    # metadata when the fixture cannot be found.
+                    if fid_map:
+                        try:
+                            _history_meta_doc = await db.team_fixture_history.find_one(
+                                {"teamId": actual_team_id},
+                                {"_id": 0, "fixtures": 1},
+                            )
+                            for _history_fixture in (
+                                (_history_meta_doc or {}).get("fixtures") or []
+                            ):
+                                _fixture_info = _history_fixture.get("fixture") or {}
+                                _fixture_teams = _history_fixture.get("teams") or {}
+                                _fixture_home = _fixture_teams.get("home") or {}
+                                _fixture_away = _fixture_teams.get("away") or {}
+                                _history_fid = (
+                                    _fixture_info.get("id")
+                                    or _history_fixture.get("fixtureId")
+                                )
+                                if not _history_fid:
+                                    continue
+                                _history_fid = str(_history_fid)
+                                if _history_fid not in fid_map:
+                                    continue
+                                if not _fixture_home.get("id") or not _fixture_away.get("id"):
+                                    continue
+                                _fixture_date = (
+                                    _fixture_info.get("date")
+                                    or _history_fixture.get("date")
+                                    or ""
+                                )
+                                _fixture_league = _history_fixture.get("league") or {}
+                                _fixture_goals = _history_fixture.get("goals") or {}
+                                _history_meta = {
+                                    "home_id": _fixture_home.get("id"),
+                                    "away_id": _fixture_away.get("id"),
+                                    "home_name": _fixture_home.get("name") or "",
+                                    "away_name": _fixture_away.get("name") or "",
+                                    "date": str(_fixture_date)[:10],
+                                    "score": (
+                                        f"{_fixture_goals.get('home')}-"
+                                        f"{_fixture_goals.get('away')}"
+                                        if _fixture_goals.get("home") is not None
+                                        and _fixture_goals.get("away") is not None
+                                        else ""
+                                    ),
+                                    "league_id": _fixture_league.get("id"),
+                                    "league_name": _fixture_league.get("name") or "",
+                                    "round": _fixture_league.get("round") or "",
+                                    "metadataSource": "team_fixture_history",
+                                }
+                                _merged_meta = dict(fxm_docs.get(_history_fid) or {})
+                                for _meta_key, _meta_value in _history_meta.items():
+                                    if (
+                                        _meta_value not in (None, "")
+                                        and not _merged_meta.get(_meta_key)
+                                    ):
+                                        _merged_meta[_meta_key] = _meta_value
+                                fxm_docs[_history_fid] = _merged_meta
+                        except Exception as _history_meta_err:
+                            print(
+                                f"[CACHE-STAGE0] fixture metadata recovery skipped: "
+                                f"{type(_history_meta_err).__name__}"
+                            )
+
+                    # Older stat rows can refer to fixtures outside the current
+                    # team schedule window. Recover only the missing fixture
+                    # metadata by exact fixture ID, with a hard bounded fan-out.
+                    # Successful responses are persisted as permanent fxm_ rows
+                    # so quota exhaustion on a later request cannot erase the
+                    # verified date/venue/opponent context again.
+                    def _fixture_meta_complete(_meta: dict) -> bool:
+                        return bool(
+                            _meta.get("home_id") is not None
+                            and _meta.get("away_id") is not None
+                            and _meta.get("date")
+                        )
+
+                    def _cached_row_meta_complete(_entry: dict) -> bool:
+                        _cached_data = _entry.get("d") or {}
+                        return bool(
+                            _cached_data.get("date")
+                            and _cached_data.get("venue") in {"home", "away"}
+                            and _cached_data.get("opponent")
+                        )
+
+                    _missing_fixture_meta_ids = [
+                        _fid
+                        for _fid in fid_map
+                        if not _fixture_meta_complete(fxm_docs.get(_fid) or {})
+                        and not _cached_row_meta_complete(fid_map[_fid])
+                    ][:30]
+                    if _missing_fixture_meta_ids:
+                        async def _recover_fixture_meta(_fid: str):
+                            try:
+                                _payload = await aio.wait_for(
+                                    api_football_request(
+                                        "fixtures",
+                                        {"id": int(_fid)},
+                                    ),
+                                    timeout=2.5,
+                                )
+                                for _fixture_row in _api_response_list(_payload):
+                                    _fixture_info = _fixture_row.get("fixture") or {}
+                                    if str(_fixture_info.get("id")) != str(_fid):
+                                        continue
+                                    _fixture_teams = _fixture_row.get("teams") or {}
+                                    _fixture_home = _fixture_teams.get("home") or {}
+                                    _fixture_away = _fixture_teams.get("away") or {}
+                                    if not _fixture_home.get("id") or not _fixture_away.get("id"):
+                                        continue
+                                    _fixture_league = _fixture_row.get("league") or {}
+                                    _fixture_goals = _fixture_row.get("goals") or {}
+                                    return str(_fid), {
+                                        "home_id": _fixture_home.get("id"),
+                                        "away_id": _fixture_away.get("id"),
+                                        "home_name": _fixture_home.get("name") or "",
+                                        "away_name": _fixture_away.get("name") or "",
+                                        "date": str(_fixture_info.get("date") or "")[:10],
+                                        "score": (
+                                            f"{_fixture_goals.get('home')}-"
+                                            f"{_fixture_goals.get('away')}"
+                                            if _fixture_goals.get("home") is not None
+                                            and _fixture_goals.get("away") is not None
+                                            else ""
+                                        ),
+                                        "league_id": _fixture_league.get("id"),
+                                        "league_name": _fixture_league.get("name") or "",
+                                        "round": _fixture_league.get("round") or "",
+                                        "metadataSource": "provider_fixture_metadata",
+                                    }
+                            except Exception:
+                                return None
+                            return None
+
+                        try:
+                            _recovered_meta = await aio.wait_for(
+                                aio.gather(*[
+                                    _recover_fixture_meta(_fid)
+                                    for _fid in _missing_fixture_meta_ids
+                                ], return_exceptions=True),
+                                timeout=6.0,
+                            )
+                        except Exception as _provider_meta_err:
+                            print(
+                                f"[CACHE-STAGE0] exact fixture metadata recovery "
+                                f"bounded: {type(_provider_meta_err).__name__}"
+                            )
+                            _recovered_meta = []
+
+                        _metadata_write_tasks = []
+                        for _recovered in _recovered_meta:
+                            if (
+                                not isinstance(_recovered, tuple)
+                                or len(_recovered) != 2
+                                or not isinstance(_recovered[1], dict)
+                            ):
+                                continue
+                            _recovered_fid, _recovered_doc = _recovered
+                            _merged_meta = dict(fxm_docs.get(_recovered_fid) or {})
+                            for _meta_key, _meta_value in _recovered_doc.items():
+                                if _meta_value not in (None, ""):
+                                    _merged_meta[_meta_key] = _meta_value
+                            fxm_docs[_recovered_fid] = _merged_meta
+                            _metadata_write_tasks.append(
+                                db.fixture_player_cache.update_one(
+                                    {"_k": f"fxm_{_recovered_fid}"},
+                                    {
+                                        "$set": {
+                                            "_k": f"fxm_{_recovered_fid}",
+                                            "d": _merged_meta,
+                                        }
+                                    },
+                                    upsert=True,
+                                )
+                            )
+                        if _metadata_write_tasks:
+                            await aio.gather(
+                                *_metadata_write_tasks,
+                                return_exceptions=True,
+                            )
+
                     # Join verified fixture possession onto every cached soccer
                     # game log so the compact history bars can label all props,
                     # not just pass-volume props. A missing optional possession
@@ -2298,13 +2484,25 @@ async def predict(req: PredictionRequest):
                         gl["historySource"] = "fixture_player_cache"
                         gl["fixtureId"] = str(fid_str)
                         gl["_fid"] = str(fid_str)
-                        gl["date"] = ""
-                        gl["score"] = ""
-                        gl["league"] = ""
-                        gl["leagueId"] = None
-                        gl["competitionId"] = None
-                        gl["competitionName"] = None
-                        gl["round"] = ""
+                        # Older exact-fixture fetches persisted their verified
+                        # context directly on the player row. Preserve that
+                        # context even when the companion fxm document was
+                        # missing; this is the durable last cache tier before
+                        # an exact provider lookup.
+                        gl["date"] = str(d.get("date") or "")[:10]
+                        gl["score"] = d.get("score") or ""
+                        gl["league"] = d.get("league") or ""
+                        gl["leagueId"] = d.get("leagueId")
+                        gl["competitionId"] = d.get("competitionId") or gl["leagueId"]
+                        gl["competitionName"] = d.get("competitionName") or gl["league"]
+                        gl["round"] = d.get("round") or ""
+                        if (
+                            gl.get("date")
+                            and gl.get("venue") in {"home", "away"}
+                            and gl.get("opponent")
+                        ):
+                            gl["fixtureContextStatus"] = "verified"
+                            gl["fixtureContextSource"] = "fixture_player_cache_row"
 
                         # Populate venue and opponent from fixture metadata if available
                         meta = fxm_docs.get(fid_str, {})
@@ -2321,16 +2519,56 @@ async def predict(req: PredictionRequest):
                                       f"home={home_id_meta} away={away_id_meta} "
                                       f"≠ current team {actual_team_id} — dropped (old-club fixture)")
                                 continue
-                            is_home = (home_id_meta == actual_team_id)
-                            gl["venue"] = "home" if is_home else "away"
-                            gl["opponent"] = meta.get("away_name", "") if is_home else meta.get("home_name", "")
-                            gl["leagueId"] = meta.get("league_id") or meta.get("competition_id")
+                            if home_id_meta == actual_team_id:
+                                is_home = True
+                            elif away_id_meta == actual_team_id:
+                                is_home = False
+                            else:
+                                is_home = gl.get("venue") == "home"
+                            gl["venue"] = (
+                                "home"
+                                if is_home
+                                else "away"
+                                if away_id_meta == actual_team_id
+                                else gl.get("venue", "")
+                            )
+                            gl["opponent"] = (
+                                (
+                                    meta.get("away_name", "")
+                                    if is_home
+                                    else meta.get("home_name", "")
+                                )
+                                or gl.get("opponent", "")
+                            )
+                            gl["date"] = str(
+                                meta.get("date")
+                                or meta.get("fixture_date")
+                                or gl.get("date")
+                                or "",
+                            )[:10]
+                            gl["score"] = meta.get("score") or gl.get("score") or ""
+                            gl["leagueId"] = (
+                                meta.get("league_id")
+                                or meta.get("competition_id")
+                                or gl.get("leagueId")
+                            )
                             gl["competitionId"] = gl["leagueId"]
                             gl["competitionName"] = (
                                 meta.get("league_name")
                                 or meta.get("competition_name")
+                                or gl.get("competitionName")
                             )
-                            gl["round"] = meta.get("round") or meta.get("stage") or ""
+                            gl["round"] = (
+                                meta.get("round")
+                                or meta.get("stage")
+                                or gl.get("round")
+                                or ""
+                            )
+                            gl["fixtureContextStatus"] = "verified"
+                            gl["fixtureContextSource"] = (
+                                meta.get("metadataSource")
+                                or "fixture_metadata_cache"
+                            )
                             if req.sport == "soccer":
                                 poss = poss_docs.get(fid_str, {})
                                 try:
@@ -2383,10 +2621,17 @@ async def predict(req: PredictionRequest):
                                 # fixture context explicit instead of
                                 # guessing its venue/opponent or erasing the
                                 # player's usable history.
-                                gl["venue"] = ""
-                                gl["opponent"] = ""
-                                gl["fixtureContextStatus"] = "unavailable"
-                                gl["fixtureContextSource"] = None
+                                if gl.get("venue") not in {"home", "away"}:
+                                    gl["venue"] = ""
+                                if not gl.get("opponent"):
+                                    gl["opponent"] = ""
+                                if not (
+                                    gl.get("date")
+                                    and gl.get("venue") in {"home", "away"}
+                                    and gl.get("opponent")
+                                ):
+                                    gl["fixtureContextStatus"] = "unavailable"
+                                    gl["fixtureContextSource"] = None
                                 gl["historySource"] = "fixture_player_cache"
                             else:
                                 gl["venue"] = ""
@@ -2731,13 +2976,36 @@ async def predict(req: PredictionRequest):
                             fln=fix_league,
                             fr=fix_round,
                         ):
-                            ops = [
-                                db.fixture_player_cache.update_one(
-                                    {"_k": f"fxp_{fid_c}_{pk}"},
-                                    {"$set": {"_k": f"fxp_{fid_c}_{pk}", "_ts": datetime.now(timezone.utc), "d": lv}},
-                                    upsert=True
-                                ) for pk, lv in logs_c.items()
-                            ]
+                            ops = []
+                            for pk, lv in logs_c.items():
+                                _cached_player_log = dict(lv or {})
+                                _cached_player_log.update({
+                                    "date": fix_date,
+                                    "opponent": fix_opponent,
+                                    "venue": fix_venue,
+                                    "score": f"{home_goals}-{away_goals}",
+                                    "league": fix_league,
+                                    "leagueId": fix_league_id,
+                                    "competitionId": fix_league_id,
+                                    "competitionName": fix_league,
+                                    "round": fix_round,
+                                    "fixtureId": str(fid_c),
+                                    "fixtureContextStatus": "verified",
+                                    "fixtureContextSource": "fixture_player_cache_row",
+                                })
+                                ops.append(
+                                    db.fixture_player_cache.update_one(
+                                        {"_k": f"fxp_{fid_c}_{pk}"},
+                                        {
+                                            "$set": {
+                                                "_k": f"fxp_{fid_c}_{pk}",
+                                                "_ts": datetime.now(timezone.utc),
+                                                "d": _cached_player_log,
+                                            }
+                                        },
+                                        upsert=True,
+                                    )
+                                )
                             # Refresh fxm_ without _ts so venue metadata is permanent (not TTL-expired)
                             if fhid and faid:
                                 fxm_k = f"fxm_{fid_c}"
@@ -5865,6 +6133,14 @@ async def predict(req: PredictionRequest):
             _model_history_values = [
                 _log.get(target_field) for _log in _model_history_logs
             ]
+            _history_view_context["metadataCoverage"] = {
+                "total": len(player_game_logs),
+                "dated": sum(1 for _log in player_game_logs if _log.get("date")),
+                "withVenue": sum(
+                    1 for _log in player_game_logs if _log.get("venue") in {"home", "away"}
+                ),
+                "withOpponent": sum(1 for _log in player_game_logs if _log.get("opponent")),
+            }
 
             def _hit_rate_packet(_values):
                 if not _values or not req.line:
