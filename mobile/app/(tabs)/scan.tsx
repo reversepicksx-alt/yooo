@@ -521,6 +521,24 @@ const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string; icon: keyof typeof
   { key: 'matchup', label: 'MATCHUP', icon: 'swap-horizontal-outline' },
 ];
 
+function PostedLineValue({ value }: { value: string }) {
+  return (
+    <View>
+      <Text style={styles.fieldLabel}>POSTED LINE</Text>
+      <View
+        style={styles.postedLineValue}
+        accessible
+        accessibilityRole="text"
+        accessibilityLabel={value ? `Posted line ${value}` : 'Posted line unavailable'}
+      >
+        <Text style={value ? styles.postedLineText : styles.postedLinePlaceholder}>
+          {value || 'Read from scanned prop slip'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType, loginWithResponse } = useAuth();
@@ -565,7 +583,6 @@ export default function ScanScreen() {
   // home side (bigger crowd support) and the other like the away side.
   const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp' | 'h2h'>('all');
-  const [adjustedLine, setAdjustedLine] = useState<number | null>(null);
   const [deselectedLogIndices, setDeselectedLogIndices] = useState<Set<number>>(new Set());
 
   // Manual team override — user can tap the team badge to change it
@@ -584,9 +601,6 @@ export default function ScanScreen() {
   // Prop type edit (scan mode)
   const [showPropEditScan, setShowPropEditScan] = useState(false);
 
-  // Line edit (scan mode)
-  const [showLineEdit, setShowLineEdit] = useState(false);
-  const [lineEditValue, setLineEditValue] = useState('');
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>('read');
   // League edit (scan mode)
   const [showLeagueEditScan, setShowLeagueEditScan] = useState(false);
@@ -1052,12 +1066,10 @@ export default function ScanScreen() {
     setSelectedContext(null);
     setAutoMatch(null);
     setGameLogFilter('all');
-    setAdjustedLine(null);
     setShowPlayerEdit(false);
     setShowTeamEdit(false);
     setShowOppEdit(false);
     setShowPropEditScan(false);
-    setShowLineEdit(false);
     setShowLeagueEditScan(false);
     setResolvedScanPlayer(null);
     setCs2PlayerQuery('');
@@ -2419,15 +2431,7 @@ export default function ScanScreen() {
               <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
             </TouchableOpacity>
 
-            <Text style={styles.fieldLabel}>LINE VALUE</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 50.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
+            <PostedLineValue value={line} />
 
             {manualError && (
               <View style={styles.inlineError}>
@@ -2563,15 +2567,7 @@ export default function ScanScreen() {
                   <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                 </TouchableOpacity>
 
-                <Text style={styles.fieldLabel}>Line Value</Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. 21.5"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={line}
-                  onChangeText={setLine}
-                  keyboardType="decimal-pad"
-                />
+                <PostedLineValue value={line} />
 
                 {manualError && (
                   <View style={styles.inlineError}>
@@ -2715,15 +2711,7 @@ export default function ScanScreen() {
                   <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                 </TouchableOpacity>
 
-                <Text style={styles.fieldLabel}>Line Value</Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. 22.5"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={line}
-                  onChangeText={setLine}
-                  keyboardType="decimal-pad"
-                />
+                <PostedLineValue value={line} />
 
                 {manualError && (
                   <View style={styles.inlineError}>
@@ -2837,15 +2825,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{NBA_PROP_TYPES.find(p => p.value === nbaPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <Text style={styles.fieldLabel}>Line Value</Text>
-                    <TextInput
-                      style={[styles.textInput, INPUT_STYLE]}
-                      placeholder="e.g. 24.5"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={line}
-                      onChangeText={setLine}
-                      keyboardType="decimal-pad"
-                    />
+                    <PostedLineValue value={line} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -2948,15 +2928,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{NHL_PROP_TYPES.find(p => p.value === nhlPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <Text style={styles.fieldLabel}>Line Value</Text>
-                    <TextInput
-                      style={[styles.textInput, INPUT_STYLE]}
-                      placeholder="e.g. 0.5"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={line}
-                      onChangeText={setLine}
-                      keyboardType="decimal-pad"
-                    />
+                    <PostedLineValue value={line} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -3058,15 +3030,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{NFL_PROP_TYPES.find(p => p.value === nflPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <Text style={styles.fieldLabel}>Line Value</Text>
-                    <TextInput
-                      style={[styles.textInput, INPUT_STYLE]}
-                      placeholder="e.g. 249.5"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={line}
-                      onChangeText={setLine}
-                      keyboardType="decimal-pad"
-                    />
+                    <PostedLineValue value={line} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -3166,15 +3130,7 @@ export default function ScanScreen() {
                       <Text style={styles.pickerBtnText}>{MLB_PROP_TYPES.find(p => p.value === mlbPropType)?.label || 'Select'}</Text>
                       <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                    <Text style={styles.fieldLabel}>Line Value</Text>
-                    <TextInput
-                      style={[styles.textInput, INPUT_STYLE]}
-                      placeholder="e.g. 1.5"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={line}
-                      onChangeText={setLine}
-                      keyboardType="decimal-pad"
-                    />
+                    <PostedLineValue value={line} />
                     {manualError && (
                       <View style={styles.inlineError}>
                         <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -4586,7 +4542,7 @@ export default function ScanScreen() {
               const realLogs = prediction.gameLogs!.filter(g => !g.synthetic);
               const allSynthetic = realLogs.length === 0;
               const displayLogs = allSynthetic ? [] : realLogs;
-              const effectiveLine = adjustedLine ?? prediction.line;
+              const effectiveLine = prediction.line;
               const COLS = 6;
               const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
               const oppPoss = prediction.possessionOppAvg;
@@ -4719,36 +4675,6 @@ export default function ScanScreen() {
                         <Text style={styles.glSelectedMean}>
                           {selectedMean.toFixed(1)}<Text style={{ color: Colors.textTertiary }}> vs {allMean.toFixed(1)}</Text>
                         </Text>
-                      )}
-                    </View>
-                  )}
-
-                  {/* ── Line Adjuster ── */}
-                  {!allSynthetic && effectiveLine != null && !isH2H && (
-                    <View style={styles.glLineAdjuster}>
-                      <TouchableOpacity
-                        onPress={() => { setAdjustedLine(+Math.max(0, effectiveLine - 0.5).toFixed(1)); Haptics.selectionAsync(); }}
-                        style={styles.glLineBtn}
-                      >
-                        <Text style={styles.glLineBtnText}>−</Text>
-                      </TouchableOpacity>
-                      <View style={{ alignItems: 'center', minWidth: 40 }}>
-                        <Text style={styles.glLineValue}>{Number.isInteger(effectiveLine) ? effectiveLine.toFixed(1) : effectiveLine}</Text>
-                        <Text style={styles.glLineLabel}>LINE</Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => { setAdjustedLine(+(effectiveLine + 0.5).toFixed(1)); Haptics.selectionAsync(); }}
-                        style={styles.glLineBtn}
-                      >
-                        <Text style={styles.glLineBtnText}>+</Text>
-                      </TouchableOpacity>
-                      {adjustedLine !== null && adjustedLine !== prediction.line && (
-                        <TouchableOpacity
-                          onPress={() => { setAdjustedLine(null); Haptics.selectionAsync(); }}
-                          style={styles.glLineResetBtn}
-                        >
-                          <Text style={styles.glLineResetText}>RESET LINE</Text>
-                        </TouchableOpacity>
                       )}
                     </View>
                   )}
@@ -6737,6 +6663,13 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3, shadowRadius: 6,
   },
+  postedLineValue: {
+    backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12, borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.12)', paddingHorizontal: 14, height: 48,
+    justifyContent: 'center',
+  },
+  postedLineText: { color: Colors.text, fontSize: 16 },
+  postedLinePlaceholder: { color: Colors.textTertiary, fontSize: 14 },
   pickerBtn: {
     backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12, borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.12)', paddingHorizontal: 14, height: 48,
@@ -7449,21 +7382,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
   },
   glResetBtnText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
-  glLineAdjuster: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,
-    paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 2,
-  },
-  glLineBtn: {
-    width: 26, height: 26, borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center',
-  },
-  glLineBtnText: { color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 },
-  glLineValue: { color: Colors.text, fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
-  glLineLabel: { color: Colors.textTertiary, fontSize: 8, letterSpacing: 0.8, marginTop: 1 },
-  glLineResetBtn: {
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  glLineResetText: { color: Colors.textSecondary, fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
   glTabQuality: {
     paddingHorizontal: 10, paddingVertical: 7, borderRadius: 7,
     backgroundColor: 'rgba(255,140,0,0.10)', borderWidth: 1, borderColor: 'rgba(255,140,0,0.28)',
