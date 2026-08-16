@@ -1282,9 +1282,9 @@ async def list_picks(req: GetPicksRequest):
             for p in (_cached.get("picks") or [])
         )
     )
-    # Active picks must always pass through the live resolver. Returning a
-    # 20-second cached snapshot while the client polls every 15 seconds made
-    # the Live tab show stale PENDING cards and hide minute-by-minute values.
+    # Return the durable snapshot immediately, including for active picks.
+    # Active snapshots schedule the live resolver below so provider work cannot
+    # block the list response or make overlapping client polls stampede Atlas.
     if (
         _cached
         and not _picks_list_background.get()
@@ -3898,19 +3898,15 @@ async def _process_bdl_live(picks: list, email: str) -> list:
 
 
 async def _process_soccer_live(picks: list, email: str) -> list:
-    """Route soccer live-update picks: BDL for supported leagues, API-Football otherwise."""
-    import soccer_bdl_client as _sbc
-    bdl_picks   = [p for p in picks if _sbc.is_bdl_league(p.get("leagueId", 0))]
-    other_picks = [p for p in picks if not _sbc.is_bdl_league(p.get("leagueId", 0))]
+    """Track every soccer pick through API-Football.
 
-    results = []
-    if bdl_picks:
-        bdl_results = await _process_soccer_bdl_live(bdl_picks, email)
-        results.extend(bdl_results)
-    if other_picks:
-        api_results = await _process_api_football_live(other_picks, email)
-        results.extend(api_results)
-    return results
+    API-Football is the authoritative source for soccer fixtures, player rows,
+    live stats, and settlement.  The historical BallDontLie soccer routes are
+    not reliable for live tracking (several mapped leagues return 401/429 and
+    can leave a pick marked LIVE with no current stat).  In particular, La
+    Liga picks must not be sent to ``/laliga/v1/matches``.
+    """
+    return await _process_api_football_live(picks, email)
 
 
 async def _process_api_football_live(picks: list, email: str) -> list:
@@ -3937,7 +3933,11 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     known_fids     = list({p["fixtureId"] for p in picks_with_fid})
 
     async def _by_fid(fid: int) -> dict | None:
-        res = await priority_api_football_request("fixtures", {"id": fid}) or []
+        # A live fixture response contains the changing clock, score, and
+        # status. Do not reuse the normal 10-minute fixture cache here.
+        res = await priority_api_football_request(
+            "fixtures", {"id": fid}, force_refresh=True
+        ) or []
         return res[0] if res else None
 
     # ── Pre-fetch shared caches for picks WITHOUT a stored fixtureId ─────
@@ -4001,7 +4001,9 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _by_team(tid: int) -> list:
         # T1: live team lookup is most specific.
-        live = await priority_api_football_request("fixtures", {"team": tid, "live": "all"}) or []
+        live = await priority_api_football_request(
+            "fixtures", {"team": tid, "live": "all"}, force_refresh=True
+        ) or []
         if live:
             return live
         # Fallback: 3-day window. South American / Mexican kickoffs often land
@@ -4011,14 +4013,18 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _by_league(lid: int) -> list:
         # T2: live league lookup.
-        live = await priority_api_football_request("fixtures", {"league": lid, "live": "all"}) or []
+        live = await priority_api_football_request(
+            "fixtures", {"league": lid, "live": "all"}, force_refresh=True
+        ) or []
         if live:
             return live
         # Fallback: 3-day window for the same UTC-date reason.
         return await _league_window(lid, yesterday_str, tomorrow_str)
 
     async def _all_live() -> list:
-        return await priority_api_football_request("fixtures", {"live": "all"}) or []
+        return await priority_api_football_request(
+            "fixtures", {"live": "all"}, force_refresh=True
+        ) or []
 
     async def _empty_list() -> list:
         return []
@@ -4233,7 +4239,11 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
     async def _fetch_players(fid: int) -> list:
         try:
-            data = await priority_api_football_request("fixtures/players", {"fixture": fid})
+            # Player totals change during the match. The normal five-minute
+            # cache is appropriate for history, not for a live card.
+            data = await priority_api_football_request(
+                "fixtures/players", {"fixture": fid}, force_refresh=True
+            )
             if data:
                 print(f"[LIVE] fixtures/players fixture={fid} → {len(data)} teams")
             else:
@@ -4541,7 +4551,9 @@ def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
 async def _fetch_fixture_possession(fixture_id: int, home_id: int, away_id: int) -> tuple:
     """Return (home_poss, away_poss) from fixtures/statistics, or (None, None) on failure."""
     try:
-        stats_data = await priority_api_football_request("fixtures/statistics", {"fixture": fixture_id})
+        stats_data = await priority_api_football_request(
+            "fixtures/statistics", {"fixture": fixture_id}, force_refresh=True
+        )
         if not stats_data:
             return (None, None)
         h_poss, a_poss = None, None
@@ -4695,7 +4707,9 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         (home_poss, away_poss) = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
     else:
         player_stats_data, (home_poss, away_poss) = await aio.gather(
-            priority_api_football_request("fixtures/players", {"fixture": fixture_id}),
+            priority_api_football_request(
+                "fixtures/players", {"fixture": fixture_id}, force_refresh=True
+            ),
             _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
         )
     # Normalize both the current response shape (a list) and older test/cache
