@@ -590,10 +590,16 @@ def _parse_fixtures_to_results(fixtures: list, team_id: int, count: int) -> list
         home_goals = f.get("goals", {}).get("home", 0) or 0
         away_goals = f.get("goals", {}).get("away", 0) or 0
         opponent_name = f.get("teams", {}).get("away" if venue == "home" else "home", {}).get("name", "Unknown")
+        opponent_team = f.get("teams", {}).get("away" if venue == "home" else "home", {}) or {}
+        home_team = f.get("teams", {}).get("home", {}) or {}
+        away_team = f.get("teams", {}).get("away", {}) or {}
         results.append({
             "fixtureId": f.get("fixture", {}).get("id"),
             "date": f.get("fixture", {}).get("date", ""),
             "opponent": opponent_name,
+            "opponentId": opponent_team.get("id"),
+            "homeTeamId": home_team.get("id"),
+            "awayTeamId": away_team.get("id"),
             "venue": venue,
             "homeGoals": home_goals,
             "awayGoals": away_goals,

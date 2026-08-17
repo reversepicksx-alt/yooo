@@ -42,117 +42,6 @@ function safeFixed(value: unknown, digits = 1): string {
   return Number.isFinite(numeric) ? numeric.toFixed(digits) : '—';
 }
 
-function TacticalNarrativeCard({
-  narrative,
-  recommendation,
-  tacticalContext,
-}: {
-  narrative?: string | null;
-  recommendation?: string | null;
-  tacticalContext?: any;
-}) {
-  const text = String(narrative || '').trim();
-  if (!text) return null;
-
-  const rec = String(recommendation || '').toUpperCase();
-  const recColor = rec === 'OVER'
-    ? Colors.success
-    : rec === 'UNDER'
-      ? Colors.error
-      : Colors.textSecondary;
-  const pressIntensity = tacticalContext?.pressIntensity ?? {};
-  const hasPressIntensity = pressIntensity?.status === 'available';
-
-  const renderLine = (raw: string, key: number) => {
-    const trimmed = raw.trimEnd();
-    if (!trimmed) return null;
-    const isHeader = /^\*{2}[^*]/.test(trimmed)
-      && trimmed.endsWith('**')
-      && !trimmed.slice(2, -2).includes('**');
-    const isBullet = /^\s{0,3}[*-]\s{1,3}/.test(trimmed) && !isHeader;
-    const isSubBullet = /^\s{4,}[*-]\s/.test(trimmed);
-    const clean = trimmed
-      .replace(/^\s{0,6}[*-]\s+/, '')
-      .replace(/^\*{2}(.*)\*{2}$/, '$1')
-      .trim();
-    const parts = clean.split(/(\*\*[^*]+\*\*)/g);
-    const nodes = parts.map((part, index) =>
-      part.startsWith('**') && part.endsWith('**')
-        ? <Text key={index} style={{ fontWeight: '800', color: Colors.text }}>{part.slice(2, -2)}</Text>
-        : <Text key={index}>{part}</Text>
-    );
-
-    if (isHeader) {
-      return (
-        <Text key={key} style={{ fontSize: 11.5, fontWeight: '800', color: recColor, letterSpacing: 0.6, marginTop: 10, marginBottom: 3 }}>
-          {clean.toUpperCase()}
-        </Text>
-      );
-    }
-    if (isSubBullet) {
-      return (
-        <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginLeft: 16, marginBottom: 1 }}>
-          {'◦ '}{nodes}
-        </Text>
-      );
-    }
-    if (isBullet) {
-      return (
-        <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginLeft: 8, marginBottom: 1 }}>
-          {'• '}{nodes}
-        </Text>
-      );
-    }
-    return (
-      <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginBottom: 2 }}>
-        {nodes}
-      </Text>
-    );
-  };
-
-  return (
-    <View style={[styles.scoutCard, { borderColor: recColor + '33', marginTop: 10 }]}>
-      <View style={styles.scoutHeader}>
-        <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.primary} />
-        <Text style={styles.scoutTitle}>TACTICAL READ</Text>
-        <Text style={{ fontSize: 9, color: Colors.textTertiary, marginLeft: 'auto', fontWeight: '600' }}>
-          MATCH CONTEXT
-        </Text>
-      </View>
-      {hasPressIntensity ? (
-        <View style={{
-          marginTop: 8,
-          paddingHorizontal: 9,
-          paddingVertical: 7,
-          borderRadius: 8,
-          backgroundColor: Colors.primary + '10',
-          borderWidth: 1,
-          borderColor: Colors.primary + '2b',
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Ionicons name="flash-outline" size={12} color={Colors.primary} />
-            <Text style={{ fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 0.5 }}>
-              TEAM PRESSURE
-            </Text>
-            <Text style={{ marginLeft: 'auto', fontSize: 9, color: Colors.textTertiary, fontWeight: '700' }}>
-              PRESS INTENSITY
-            </Text>
-          </View>
-          <Text style={{ marginTop: 4, fontSize: 12, color: Colors.text, fontWeight: '700' }}>
-            {Number(pressIntensity.score100 ?? ((Number(pressIntensity.score) || 0) * 100)).toFixed(0)}/100 · {String(pressIntensity.label || 'classified').toUpperCase()}
-          </Text>
-          <Text style={{ marginTop: 2, fontSize: 10.5, lineHeight: 15, color: Colors.textSecondary }}>
-            {pressIntensity.sampleSize ?? 0} matches. Aggregate pressure signal; not a player-level assignment.
-          </Text>
-        </View>
-      ) : null}
-      <View style={{ gap: 0, marginTop: 4 }}>
-        {text.split('\n').map(renderLine)}
-      </View>
-    </View>
-  );
-}
-
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 type RenderPredictionValue<T> =
   T extends (...args: any[]) => any ? T :
@@ -555,6 +444,7 @@ function buildSectionExplanationSnapshot(prediction: Record<string, any>): Recor
       possessionGameScript: tactical.possessionGameScript,
       positionPassesReceived: tactical.positionPassesReceived,
       pressIntensity: tactical.pressIntensity,
+        recentOpponentPressIntensity: (prediction.tacticalContext as any)?.recentOpponentPressIntensity,
       recentOpponentBlockProfiles: Array.isArray(profiles)
         ? { profiles: profiles.slice(0, 12) }
         : undefined,

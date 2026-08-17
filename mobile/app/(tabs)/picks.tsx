@@ -39,7 +39,7 @@ import {
   AnalysisFactor,
 } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
+import { CompactAnalysisBars } from '@/components/CompactAnalysisBars';
 import { renderTacticalContext } from '@/components/AnalysisCards';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
@@ -1460,17 +1460,6 @@ export default function PicksScreen() {
   const displayIsOver = displayRec === 'OVER';
   const displayIsUnder = displayRec === 'UNDER';
   const displayRecColor = displayIsOver ? Colors.success : displayIsUnder ? Colors.error : Colors.textSecondary;
-  const modalText = (
-    String(
-      (analysisModal?.data as any)?.tacticalBreakdown
-        ?? (analysisModal?.pick as any)?.tacticalBreakdown
-        ?? '',
-    ).trim()
-    || getTacticalRead({
-      ...(analysisModal?.pick as any),
-      ...(analysisModal?.data as any),
-    })
-  );
   const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
   const capturedModalFactors = (
     (analysisModal?.data?.analysisFactors ?? (analysisModal?.pick as any)?.analysisFactors ?? []) as AnalysisFactor[]

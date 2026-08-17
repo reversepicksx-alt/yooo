@@ -420,6 +420,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   )
     ? (prediction.tacticalContext as any).recentOpponentBlockProfiles.profiles
     : [];
+  const pressureProfiles: Array<Record<string, any>> = Array.isArray(
+    (prediction.tacticalContext as any)?.recentOpponentPressIntensity?.profiles,
+  )
+    ? (prediction.tacticalContext as any).recentOpponentPressIntensity.profiles
+    : [];
   const tacticalProfileFor = (game: Record<string, any>): Record<string, any> | null => {
     const byFixture = tacticalProfiles.find((profile) => (
       profile?.fixtureId != null
@@ -430,6 +435,18 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     return tacticalProfiles.find((profile) => (
       String(profile?.date || '').slice(0, 10) === String(game?.date || '').slice(0, 10)
       && String(profile?.opponent || '').toLowerCase() === String(game?.opponent || '').toLowerCase()
+    )) ?? null;
+  };
+  const pressureProfileFor = (game: Record<string, any>): Record<string, any> | null => {
+    const byFixture = pressureProfiles.find((profile) => (
+      profile?.fixtureId != null
+      && game?.fixtureId != null
+      && String(profile.fixtureId) === String(game.fixtureId)
+    ));
+    if (byFixture) return byFixture;
+    return pressureProfiles.find((profile) => (
+      String(profile?.date || '').slice(0, 10) === String(game?.date || '').slice(0, 10)
+      && String(profile?.opponent || '').toLowerCase() === String(opponentName(game) || '').toLowerCase()
     )) ?? null;
   };
   const last10Logs = recentLogs.slice(0, 10);
@@ -697,7 +714,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
             </View>
           )}
            {showRecent && <>{displayLogs.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-                <View style={{ width: displayLogs.length * 55 + 10 }}>
+                 <View style={{ width: displayLogs.length * 126 + 10 }}>
                <View style={styles.chart}>
                  {displayLogs.map((game, index) => {
                   const value = Number(game.value);
@@ -706,7 +723,36 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                   const date = game.date ? displayH2HDate(game.date) : '—';
                    const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
                   const minutes = game.minutesPlayed ?? game.minutes;
-                  const blockLabel = String(tacticalProfileFor(game)?.blockProfile?.label || 'UNAVAILABLE')
+                   const tacticalProfile = tacticalProfileFor(game);
+                   const pressureProfile = pressureProfileFor(game);
+                   const pressurePacket = (
+                     pressureProfile?.pressIntensity
+                     ?? tacticalProfile?.pressIntensity
+                     ?? null
+                   ) as Record<string, any> | null;
+                   const pressureAvailable = pressurePacket?.available === true
+                     && String(pressurePacket?.label || '').trim().length > 0;
+                   const pressureLabel = pressureAvailable
+                     ? String(pressurePacket?.label).toUpperCase()
+                     : 'UNAVAILABLE';
+                   const pressureScore = Number.isFinite(Number(pressurePacket?.score100))
+                     ? `${Math.round(Number(pressurePacket?.score100))}/100`
+                     : '';
+                   const pressureSample = pressureAvailable
+                     ? `N=${Number(pressurePacket?.sampleSize || 0)} · ${String(pressurePacket?.sampleStatus || 'LIMITED').toUpperCase()}`
+                     : String(pressurePacket?.reason || 'NO VERIFIED SAMPLE')
+                         .replace(/_/g, ' ')
+                         .toUpperCase();
+                   const pressureColor = !pressureAvailable
+                     ? '#667085'
+                     : pressureLabel === 'ELITE'
+                       ? '#FF453A'
+                       : pressureLabel === 'HIGH'
+                         ? '#FF9F0A'
+                         : pressureLabel === 'MODERATE'
+                           ? '#60A5FA'
+                           : '#34C759';
+                   const blockLabel = String(tacticalProfile?.blockProfile?.label || 'UNAVAILABLE')
                     .replace('_BLOCK', '')
                     .replace('UNAVAILABLE', 'UNAVAIL');
                    const isSelected = selected?.group === (isH2HFilter ? 'h2h' : 'recent') && selected.index === index;
@@ -741,6 +787,14 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                       >
                         {blockLabel} · {venueMark(rowVenue(game))}
                       </Text>
+                       <View style={styles.pressureRow}>
+                         <Text style={[styles.pressureLabel, { color: pressureColor }]}>
+                           PRESS {pressureLabel}{pressureScore ? ` · ${pressureScore}` : ''}
+                         </Text>
+                         <Text style={[styles.pressureSample, { color: pressureAvailable ? '#8B95A5' : '#667085' }]} numberOfLines={1}>
+                           {pressureSample}
+                         </Text>
+                       </View>
                     {showSotEvidence && (
                       <Text style={styles.possessionLabel}>
                         OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
@@ -766,6 +820,20 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    {showSotEvidence
                      ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
                      : ''}
+                    {(() => {
+                        const selectedPressure = (
+                          pressureProfileFor(selectedGame)?.pressIntensity
+                          ?? tacticalProfileFor(selectedGame)?.pressIntensity
+                          ?? null
+                        ) as Record<string, any> | null;
+                        const selectedLabel = selectedPressure?.available === true
+                          ? String(selectedPressure.label || 'Classified').toUpperCase()
+                          : 'UNAVAILABLE';
+                        const selectedScore = Number.isFinite(Number(selectedPressure?.score100))
+                          ? ` ${Math.round(Number(selectedPressure?.score100))}/100`
+                          : '';
+                        return ` · PRESS ${selectedLabel}${selectedScore}`;
+                      })()}
                 </Text>
               )}
             </View>
@@ -1038,12 +1106,31 @@ const styles = {
     letterSpacing: 0.25,
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
-  chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },
+  chart: { height: 174, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 8 },
   blockVenueLabel: {
-    fontSize: 5.5,
-    lineHeight: 7,
+    fontSize: 7,
+    lineHeight: 9,
     fontWeight: '900' as const,
     letterSpacing: 0.25,
+  },
+  pressureRow: {
+    alignItems: 'center' as const,
+    marginTop: 3,
+    minHeight: 19,
+  },
+  pressureLabel: {
+    fontSize: 7,
+    lineHeight: 9,
+    fontWeight: '900' as const,
+    letterSpacing: 0.2,
+    textAlign: 'center' as const,
+  },
+  pressureSample: {
+    maxWidth: 112,
+    fontSize: 6.5,
+    lineHeight: 8,
+    fontWeight: '800' as const,
+    textAlign: 'center' as const,
   },
   recentInlineStats: {
     color: '#697586',
@@ -1112,17 +1199,17 @@ const styles = {
     fontWeight: '800' as const,
     letterSpacing: 0.85,
   },
-  barColumn: { width: 42, height: 118, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 4, paddingTop: 1 },
+  barColumn: { width: 116, height: 174, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 6, paddingTop: 3, paddingHorizontal: 4 },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
-  value: { fontSize: 7, lineHeight: 8, fontWeight: '800' as const, marginBottom: 1 },
-  bar: { width: 22, minHeight: 7, borderRadius: 3, justifyContent: 'flex-end' as const, alignItems: 'center' as const, position: 'relative' as const },
+  value: { fontSize: 10, lineHeight: 12, fontWeight: '900' as const, marginBottom: 2 },
+  bar: { width: 28, minHeight: 7, borderRadius: 4, justifyContent: 'flex-end' as const, alignItems: 'center' as const, position: 'relative' as const },
   possession: { position: 'absolute' as const, bottom: 4, color: '#FFF', fontSize: 6.5, fontWeight: '900' as const },
-  possessionLabel: { fontSize: 5.5, color: '#7D8796', lineHeight: 7, fontWeight: '800' as const },
-  venueLabel: { fontSize: 6, lineHeight: 7, fontWeight: '900' as const, letterSpacing: 0.4 },
-  date: { fontSize: 7, color: '#A1AAB8', fontWeight: '800' as const, lineHeight: 8, marginTop: 2 },
-  opponent: { fontSize: 6, fontWeight: '700' as const, lineHeight: 8 },
-  detail: { paddingHorizontal: 2, paddingTop: 4, paddingBottom: 2, color: '#9CA3AF', fontSize: 8, lineHeight: 12 },
+  possessionLabel: { fontSize: 7, color: '#8B95A5', lineHeight: 9, fontWeight: '800' as const },
+  venueLabel: { fontSize: 8, lineHeight: 10, fontWeight: '900' as const, letterSpacing: 0.4 },
+  date: { fontSize: 8.5, color: '#B1BAC7', fontWeight: '800' as const, lineHeight: 10, marginTop: 3 },
+  opponent: { fontSize: 9.5, fontWeight: '800' as const, lineHeight: 11, marginTop: 1 },
+  detail: { paddingHorizontal: 2, paddingTop: 7, paddingBottom: 3, color: '#AAB4C2', fontSize: 10, lineHeight: 15 },
   splitRow: {
     marginHorizontal: 14,
     marginBottom: 12,

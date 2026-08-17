@@ -879,6 +879,18 @@ export interface PredictionResult {
         verified?: boolean;
         ppda?: number | null;
         ppdaStatus?: string | null;
+        pressIntensity?: {
+          available?: boolean;
+          status?: string;
+          score?: number | null;
+          score100?: number | null;
+          label?: string | null;
+          source?: string | null;
+          sampleSize?: number;
+          sampleStatus?: string;
+          reason?: string | null;
+        } | null;
+        pressIntensityStatus?: string | null;
         pressureByThird?: Record<string, number> | null;
         formation?: {
           status?: string;
@@ -902,6 +914,35 @@ export interface PredictionResult {
         projectionAdjustment?: number;
         weights?: Record<string, number>;
       };
+      limitations?: string[];
+    } | null;
+    recentOpponentPressIntensity?: {
+      status?: string;
+      available?: boolean;
+      sampleSize?: number;
+      verifiedMatches?: number;
+      source?: string | null;
+      projectionInfluence?: string;
+      profiles?: Array<{
+        fixtureId?: number | string | null;
+        date?: string | null;
+        opponent?: string | null;
+        venue?: string | null;
+        status?: string;
+        verified?: boolean;
+        pressIntensity?: {
+          available?: boolean;
+          status?: string;
+          score?: number | null;
+          score100?: number | null;
+          label?: string | null;
+          source?: string | null;
+          sampleSize?: number;
+          sampleStatus?: string;
+          reason?: string | null;
+        } | null;
+        reason?: string | null;
+      }>;
       limitations?: string[];
     } | null;
     fbrefEnrichment?: {

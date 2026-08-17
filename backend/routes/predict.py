@@ -1762,6 +1762,213 @@ async def predict(req: PredictionRequest):
                 [r for r in results_raw if r and not isinstance(r, Exception)]
             )
 
+        async def fetch_recent_opponent_press_intensity(
+            history_rows,
+            *,
+            limit=_RECENT_ARCHIVE_TARGET,
+            max_network_matches=12,
+        ):
+            """Attach one exact-fixture API-Football pressure packet per history row.
+
+            The normal Press Intensity packet is a recent opponent baseline. This
+            companion packet is deliberately descriptive: it scores the opponent
+            from the defensive actions and opposing pass volume in the exact
+            fixture represented by the player's history row.
+            """
+            from bayesian_engine import compute_press_intensity_score
+
+            def unavailable(row, reason):
+                return {
+                    "fixtureId": row.get("_fid") or row.get("fixtureId"),
+                    "date": row.get("date"),
+                    "opponent": row.get("opponent"),
+                    "venue": row.get("venue"),
+                    "pressIntensity": {
+                        "available": False,
+                        "status": "unavailable",
+                        "score": None,
+                        "score100": None,
+                        "label": "Unavailable",
+                        "source": "api_football",
+                        "sampleSize": 0,
+                        "sampleStatus": "unavailable",
+                        "reason": reason,
+                    },
+                    "status": "unavailable",
+                    "verified": False,
+                    "source": None,
+                    "reason": reason,
+                }
+
+            rows = []
+            seen = set()
+            for row in _newest_first_rows(history_rows, limit):
+                if not isinstance(row, dict):
+                    continue
+                fid = str(row.get("_fid") or row.get("fixtureId") or "").strip()
+                if not fid or fid in seen:
+                    continue
+                seen.add(fid)
+                rows.append(row)
+
+            async def read_cached():
+                cached = {}
+                for row in rows:
+                    fid = str(row.get("_fid") or row.get("fixtureId") or "")
+                    opp_id = row.get("fixtureOpponentId") or row.get("opponentId")
+                    if not fid or not opp_id:
+                        continue
+                    try:
+                        doc = await db.fixture_player_cache.find_one(
+                            {"_k": f"fx_press_intensity_v1_{fid}_{opp_id}"},
+                            {"_id": 0, "d": 1, "_ts": 1},
+                        )
+                        cached_profile = (doc or {}).get("d")
+                        cached_ts = (doc or {}).get("_ts")
+                        cached_available = (
+                            isinstance(cached_profile, dict)
+                            and (cached_profile.get("pressIntensity") or {}).get("available") is True
+                        )
+                        cached_recent_unavailable = False
+                        if isinstance(cached_profile, dict) and not cached_available:
+                            try:
+                                cached_recent_unavailable = (
+                                    datetime.now(timezone.utc) - cached_ts
+                                ).total_seconds() < 600
+                            except Exception:
+                                cached_recent_unavailable = False
+                        if cached_available or cached_recent_unavailable:
+                            cached[fid] = cached_profile
+                    except Exception:
+                        continue
+                return cached
+
+            cached = await read_cached()
+            pending_all = [
+                row for row in rows
+                if str(row.get("_fid") or row.get("fixtureId") or "") not in cached
+            ]
+            pending = pending_all[:max(0, int(max_network_matches or 0))]
+            deferred = pending_all[len(pending):]
+            sem = aio.Semaphore(4)
+
+            async def build_one(row):
+                fid = str(row.get("_fid") or row.get("fixtureId") or "")
+                opponent_id = row.get("fixtureOpponentId") or row.get("opponentId")
+                if not opponent_id:
+                    return unavailable(row, "missing_opponent_team_id")
+                fixture_row = {
+                    "fixtureId": fid,
+                    "date": row.get("date", ""),
+                    # The helper is called from the opponent's perspective.
+                    "opponent": corrected_team_name or req.teamName,
+                    "venue": "away" if row.get("venue") == "home" else "home",
+                }
+                try:
+                    stats_rows = await fetch_fixture_team_stats(
+                        [fixture_row],
+                        int(opponent_id),
+                        limit=1,
+                    )
+                    packet = compute_press_intensity_score(stats_rows or [])
+                    available = packet.get("available") is True
+                    profile = {
+                        "fixtureId": fid,
+                        "date": row.get("date"),
+                        "opponent": row.get("opponent"),
+                        "venue": row.get("venue"),
+                        "pressIntensity": packet,
+                        "status": "available" if available else "unavailable",
+                        "verified": available,
+                        "source": (
+                            "API-Football fixture statistics + fixture player "
+                            "defensive actions"
+                            if available
+                            else None
+                        ),
+                        "reason": packet.get("reason"),
+                    }
+                    try:
+                        # Available packets are durable for this exact fixture.
+                        # Unavailable packets get a short retry TTL so quota or
+                        # provider gaps do not fan out on every scan.
+                        await db.fixture_player_cache.update_one(
+                            {"_k": f"fx_press_intensity_v1_{fid}_{opponent_id}"},
+                            {
+                                "$set": {
+                                    "_k": f"fx_press_intensity_v1_{fid}_{opponent_id}",
+                                    "_ts": datetime.now(timezone.utc),
+                                    "d": profile,
+                                }
+                            },
+                            upsert=True,
+                        )
+                    except Exception:
+                        pass
+                    return profile
+                except Exception as exc:
+                    return unavailable(row, f"pressure_fetch_{type(exc).__name__}")
+
+            async def bounded(row):
+                async with sem:
+                    try:
+                        return await aio.wait_for(build_one(row), timeout=8.0)
+                    except Exception as exc:
+                        return unavailable(row, f"pressure_fetch_{type(exc).__name__}")
+
+            async def warm_rows(rows_to_warm):
+                if not rows_to_warm:
+                    return
+                fresh = await aio.gather(
+                    *(bounded(row) for row in rows_to_warm),
+                    return_exceptions=True,
+                )
+                for row, profile in zip(rows_to_warm, fresh):
+                    if isinstance(profile, dict):
+                        fid = str(row.get("_fid") or row.get("fixtureId") or "")
+                        if fid:
+                            cached[fid] = profile
+
+            await warm_rows(pending)
+            if deferred:
+                aio.create_task(warm_rows(deferred))
+
+            profiles = []
+            for row in rows:
+                fid = str(row.get("_fid") or row.get("fixtureId") or "")
+                profiles.append(
+                    cached.get(fid)
+                    if isinstance(cached.get(fid), dict)
+                    else unavailable(row, "not_yet_warmed")
+                )
+            available_count = sum(
+                1
+                for profile in profiles
+                if (profile.get("pressIntensity") or {}).get("available") is True
+            )
+            return {
+                "status": (
+                    "verified"
+                    if profiles and available_count == len(profiles)
+                    else "partial"
+                    if available_count
+                    else "warming"
+                    if profiles
+                    else "unavailable"
+                ),
+                "available": bool(available_count),
+                "sampleSize": len(profiles),
+                "verifiedMatches": available_count,
+                "source": "API-Football fixture statistics + fixture player defensive actions",
+                "projectionInfluence": "explanation_only",
+                "profiles": profiles,
+                "limitations": [
+                    "Each row is an exact-match descriptive pressure packet.",
+                    "A single fixture is labeled limited; stable baseline status requires seven valid rows.",
+                    "Missing provider fields are unavailable, never a guessed zero.",
+                ],
+            }
+
         async def fetch_fixture_matchup_volume(fixture_list, team_id, limit=10):
             """Fetch exact team/opponent SOT and pass totals for venue samples.
 
@@ -2774,6 +2981,12 @@ async def predict(req: PredictionRequest):
                                 is_home = False
                             else:
                                 is_home = gl.get("venue") == "home"
+                            gl["fixtureTeamId"] = actual_team_id
+                            gl["fixtureOpponentId"] = (
+                                away_id_meta if is_home else home_id_meta
+                            )
+                            gl["homeTeamId"] = home_id_meta
+                            gl["awayTeamId"] = away_id_meta
                             gl["venue"] = (
                                 "home"
                                 if is_home
@@ -3159,6 +3372,18 @@ async def predict(req: PredictionRequest):
                                     gl["competitionName"] = fix_league
                                     gl["round"] = fix_round
                                     gl["fixtureId"] = str(fid)
+                                    gl["fixtureTeamId"] = actual_team_id
+                                    gl["fixtureOpponentId"] = (
+                                        fix_raw.get("teams", {})
+                                        .get("away" if fix_venue == "home" else "home", {})
+                                        .get("id")
+                                    )
+                                    gl["homeTeamId"] = (
+                                        fix_raw.get("teams", {}).get("home", {}).get("id")
+                                    )
+                                    gl["awayTeamId"] = (
+                                        fix_raw.get("teams", {}).get("away", {}).get("id")
+                                    )
                                     raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                                     if raw_val is not None and minutes > 0:
                                         gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
@@ -5095,6 +5320,13 @@ async def predict(req: PredictionRequest):
                 max_network_matches=12,
             )
         )
+        _recent_opponent_press_task = aio.create_task(
+            fetch_recent_opponent_press_intensity(
+                _recent_profile_rows,
+                limit=_RECENT_ARCHIVE_TARGET,
+                max_network_matches=12,
+            )
+        )
         if _prediction_elapsed() < 20.0:
             try:
                 recent_block_profiles = await aio.wait_for(
@@ -5150,6 +5382,107 @@ async def predict(req: PredictionRequest):
                     "Missing coverage is unavailable, not a guessed block.",
                 ],
             }
+
+        if _prediction_elapsed() < 22.0:
+            try:
+                recent_opponent_press_intensity = await aio.wait_for(
+                    aio.shield(_recent_opponent_press_task),
+                    timeout=1.5,
+                )
+            except Exception as _recent_press_err:
+                print(
+                    f"[RECENT PRESS INTENSITY] bounded response window: "
+                    f"{type(_recent_press_err).__name__}"
+                )
+                recent_opponent_press_intensity = {
+                    "status": "warming",
+                    "available": False,
+                    "sampleSize": len(_recent_profile_rows),
+                    "verifiedMatches": 0,
+                    "source": "API-Football fixture statistics + fixture player defensive actions",
+                    "projectionInfluence": "explanation_only",
+                    "profiles": [
+                        {
+                            **{
+                                key: row.get(key)
+                                for key in ("_fid", "fixtureId", "date", "opponent", "venue")
+                            },
+                            "fixtureId": row.get("_fid") or row.get("fixtureId"),
+                            "pressIntensity": {
+                                "available": False,
+                                "status": "unavailable",
+                                "score": None,
+                                "score100": None,
+                                "label": "Unavailable",
+                                "source": "api_football",
+                                "sampleSize": 0,
+                                "sampleStatus": "unavailable",
+                                "reason": "not_yet_warmed",
+                            },
+                            "status": "unavailable",
+                            "verified": False,
+                            "reason": "not_yet_warmed",
+                        }
+                        for row in _recent_profile_rows
+                    ],
+                    "limitations": [
+                        "Recent opponent Press Intensity rows are still warming from cache/provider.",
+                        "Missing coverage is unavailable, not a guessed pressure score.",
+                    ],
+                }
+        else:
+            _recent_opponent_press_task.cancel()
+            recent_opponent_press_intensity = {
+                "status": "skipped",
+                "available": False,
+                "sampleSize": len(_recent_profile_rows),
+                "verifiedMatches": 0,
+                "source": "API-Football fixture statistics + fixture player defensive actions",
+                "projectionInfluence": "explanation_only",
+                "profiles": [
+                    {
+                        "fixtureId": row.get("_fid") or row.get("fixtureId"),
+                        "date": row.get("date"),
+                        "opponent": row.get("opponent"),
+                        "venue": row.get("venue"),
+                        "pressIntensity": {
+                            "available": False,
+                            "status": "unavailable",
+                            "score": None,
+                            "score100": None,
+                            "label": "Unavailable",
+                            "source": "api_football",
+                            "sampleSize": 0,
+                            "sampleStatus": "unavailable",
+                            "reason": "prediction_response_window",
+                        },
+                        "status": "unavailable",
+                        "verified": False,
+                        "reason": "prediction_response_window",
+                    }
+                    for row in _recent_profile_rows
+                ],
+                "limitations": [
+                    "Recent opponent Press Intensity rows were skipped to keep the core prediction responsive.",
+                    "Missing coverage is unavailable, not a guessed pressure score.",
+                ],
+            }
+
+        # Keep the existing block-profile packet backward compatible while
+        # making the exact API-Football pressure packet available to the same
+        # fixture row in older saved-pick renderers.
+        _press_by_fixture = {
+            str(profile.get("fixtureId")): profile
+            for profile in (recent_opponent_press_intensity.get("profiles") or [])
+            if isinstance(profile, dict) and profile.get("fixtureId") is not None
+        }
+        for _block_profile in recent_block_profiles.get("profiles") or []:
+            if not isinstance(_block_profile, dict):
+                continue
+            _press_profile = _press_by_fixture.get(str(_block_profile.get("fixtureId")))
+            if _press_profile:
+                _block_profile["pressIntensity"] = _press_profile.get("pressIntensity")
+                _block_profile["pressIntensityStatus"] = _press_profile.get("status")
 
         # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
         _manager_ctx = {}
@@ -13529,6 +13862,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "pressureResponse": _pressure_response,
             "pressIntensity": _press_intensity,
             "recentOpponentBlockProfiles": recent_block_profiles,
+            "recentOpponentPressIntensity": recent_opponent_press_intensity,
             "opponentProfileTier": _tc_opp_profile.get("tier"),
             "opponentProfileDiffPct": _tc_opp_profile.get("diffPct"),
             "venueAverage": venue_avg,
