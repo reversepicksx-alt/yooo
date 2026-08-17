@@ -1,0 +1,98 @@
+Build a “Synthetic PPDA”
+
+This is the approach I’d seriously consider for Reverse Picks.
+
+Something like:
+
+Synthetic PPDA = Expected Opponent Passes / Effective Defensive Actions
+
+Where:
+
+Effective Defensive Actions
+
+could be:
+
+Tackles
++ Interceptions
++ Fouls
++ Possession Recoveries
++ Blocked Passes
++ Duel Wins
+
+But don’t give each action equal weight.
+
+For example
+
+Interception       = 1.00
+Tackle             = 0.90
+Blocked pass       = 0.75
+Possession recovery= 0.70
+Duel won           = 0.45
+Foul               = 0.35
+
+Those weights should eventually be learned from historical data, rather than chosen arbitrarily.
+
+That’s where your model gets interesting.
+
+Even better: don’t try to replicate PPDA
+
+I’d actually make a Pressing Intensity Score (PIS).
+
+Something like:
+
+PIS = f(DA rate, opponent pass suppression, recoveries, tackles, interceptions, possession, territory, game state)
+
+Then normalize it to:
+
+0–100
+
+For example:
+
+PIS	Interpretation
+90–100	Extreme press
+75–89	Very aggressive
+60–74	Aggressive
+45–59	Moderate
+30–44	Passive
+0–29	Deep/low block
+
+This gives your Game Simulator a much more useful variable than a single PPDA number.
+
+And there’s one huge upgrade
+
+You can create separate pressing phases.
+
+Instead of:
+
+Team PPDA = 8.4
+
+your bot could determine:
+
+HIGH PRESS       82/100
+MID-BLOCK        61/100
+LOW BLOCK        34/100
+COUNTERPRESS     76/100
+
+Then feed those into your Bayesian model.
+
+For example:
+
+Team a
+
+High press:       86
+Counterpress:     81
+Mid-block:        63
+Low block:        28
+
+Versus team b
+
+High press:       41
+Counterpress:     38
+Mid-block:        72
+Low block:        84
+
+That tells your simulator how the teams defend, not merely what their PPDA happened to be.
+
+And that’s especially useful for predicting things like possession, shots, passes, turnovers, corners, etc.
+
+The fundamental limitation is that without event coordinates you can’t perfectly reconstruct location-based PPDA; however, API-Sports gives enough aggregate information to construct a proxy/synthetic pressing metric. 
