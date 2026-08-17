@@ -776,6 +776,34 @@ class IAPGrantRequest(BaseModel):
     session_token: str
     revenuecat_customer_id: str
 
+# Keep a short rolling window because email delivery can arrive out of order.
+# Every entry still expires after ten minutes and is marked used individually.
+OTP_HISTORY_LIMIT = 10
+
+def _parse_otp_expiry(raw):
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    except (TypeError, ValueError):
+        return None
+
+def _otp_entries(record: dict | None) -> list[dict]:
+    """Normalize rolling OTP records and the legacy single-code shape."""
+    if not record:
+        return []
+    raw_entries = record.get("codes")
+    if not isinstance(raw_entries, list):
+        raw_entries = [{
+            "code": record.get("code"),
+            "expiresAt": record.get("expiresAt"),
+            "createdAt": record.get("createdAt"),
+            "used": bool(record.get("used")),
+        }]
+    return [
+        entry for entry in raw_entries
+        if isinstance(entry, dict) and str(entry.get("code") or "").strip()
+    ]
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/send-code")
@@ -797,9 +825,32 @@ async def send_code(req: SendCodeRequest):
     }
 
     async def _store_code() -> None:
+        existing = await db.auth_codes.find_one(
+            {"email": email_lower},
+            {"_id": 0, "codes": 1, "code": 1, "expiresAt": 1, "createdAt": 1, "used": 1},
+        )
+        now = datetime.now(timezone.utc)
+        retained = []
+        for entry in _otp_entries(existing):
+            expires = _parse_otp_expiry(entry.get("expiresAt"))
+            # Expired entries cannot authenticate and only make it harder to
+            # reason about which emailed code is still usable.
+            if expires and expires > now:
+                retained.append(entry)
+        entries = (retained + [{
+            "code": code,
+            "expiresAt": expires_at.isoformat(),
+            "createdAt": now.isoformat(),
+            "used": False,
+        }])[-OTP_HISTORY_LIMIT:]
         await db.auth_codes.update_one(
             {"email": email_lower},
-            {"$set": otp_doc},
+            {
+                "$set": {
+                    **otp_doc,
+                    "codes": entries,
+                },
+            },
             upsert=True,
         )
 
@@ -855,26 +906,47 @@ async def verify_code(req: VerifyCodeRequest):
     record = await db.auth_codes.find_one({"email": email_lower}, {"_id": 0})
     if not record:
         raise HTTPException(status_code=400, detail="No code found. Please request a new one.")
-    if record.get("used"):
-        raise HTTPException(status_code=400, detail="Code already used. Please request a new one.")
+    entries = _otp_entries(record)
+    now = datetime.now(timezone.utc)
+    matched_index = None
+    matched_used = False
+    matched_expired = False
+    has_active_entry = False
 
-    expires_raw = record.get("expiresAt", "")
-    try:
-        exp_dt = datetime.fromisoformat(str(expires_raw))
-        if exp_dt.tzinfo is None:
-            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > exp_dt:
+    for index, entry in enumerate(entries):
+        expires = _parse_otp_expiry(entry.get("expiresAt"))
+        is_expired = expires is None or now > expires
+        if not entry.get("used") and not is_expired:
+            has_active_entry = True
+        if str(entry.get("code") or "").strip() != code_input:
+            continue
+        if entry.get("used"):
+            matched_used = True
+        elif is_expired:
+            matched_expired = True
+        else:
+            matched_index = index
+            break
+
+    if matched_index is None:
+        if matched_used:
+            raise HTTPException(status_code=400, detail="Code already used. Please request a new one.")
+        if matched_expired or not has_active_entry:
             raise HTTPException(status_code=400, detail="Code expired. Please request a new one.")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid code record. Please request a new one.")
-
-    if record.get("code") != code_input:
         raise HTTPException(status_code=400, detail="Incorrect code. Try again.")
 
-    # Mark used (single-use)
-    await db.auth_codes.update_one({"email": email_lower}, {"$set": {"used": True}})
+    # Mark only the accepted code used. A newer or delayed email may still
+    # contain another valid entry in the rolling window.
+    entries[matched_index] = {
+        **entries[matched_index],
+        "used": True,
+        "usedAt": now.isoformat(),
+    }
+    latest_used = bool(entries[-1].get("used")) if entries else True
+    await db.auth_codes.update_one(
+        {"email": email_lower},
+        {"$set": {"codes": entries, "used": latest_used}},
+    )
 
     # Check ALL subscription sources (local grants, Apple IAP, Stripe live)
     access_type = await check_access(email_lower)
