@@ -988,7 +988,7 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
           {teamPossessionRows.length > 0 && opponentPossessionRows.length > 0 && (
             <View style={{ marginTop: 4 }}>
               <Text style={mStyles.proCardNote} numberOfLines={1}>
-                HOME POSSESSION MATCHES USED · {Math.min(10, teamPossessionRows.length)} of {teamPossessionRows.length}
+                HOME POSSESSION MATCHES USED · {teamPossessionRows.length} latest verified
               </Text>
               {teamPossessionRows.slice(0, 10).map((row, index) => (
                 <Text key={`team-possession-${String(row.fixtureId ?? index)}`} style={mStyles.proCardNote} numberOfLines={1}>
@@ -996,7 +996,7 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
                 </Text>
               ))}
               <Text style={[mStyles.proCardNote, { marginTop: 3 }]} numberOfLines={1}>
-                AWAY POSSESSION MATCHES USED · {Math.min(10, opponentPossessionRows.length)} of {opponentPossessionRows.length}
+                AWAY POSSESSION MATCHES USED · {opponentPossessionRows.length} latest verified
               </Text>
               {opponentPossessionRows.slice(0, 10).map((row, index) => (
                 <Text key={`opponent-possession-${String(row.fixtureId ?? index)}`} style={mStyles.proCardNote} numberOfLines={1}>

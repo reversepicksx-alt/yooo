@@ -22,3 +22,9 @@ When a valid two-sided fixture-possession cache already exists under the general
 **Why:** A real Deportivo home sample was present in fixture-possession history, but the independent team key and cached matchup result made the response look like `0/N` until both layers were reconciled.
 
 **How to apply:** Normalize every returned sample row with fixture ID, date, opponent, venue, value, and source; carry those rows through the matchup response and recalculate cached dominance when evidence rows exist.
+
+The displayed and modeled sample is exactly the ten newest rows that have verified possession statistics, not the ten newest fixtures regardless of data availability. Team fixture caches must be refreshed when their newest date is season-stale, and API-Football `fixtures` queries using `from`/`to` require an explicit season.
+
+**Why:** A recently written local cache still contained the prior season, and the recovery query silently fell back after omitting `season`; the result showed old home matches even though current-season fixtures were available. Selecting valid rows only also prevents missing possession from becoming an implicit zero.
+
+**How to apply:** Refresh stale schedule caches with the configured current season, gather a wider candidate window, sort by fixture date descending, discard rows without exact two-sided possession, and truncate to the required verified sample before averaging or rendering.

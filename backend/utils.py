@@ -4,7 +4,12 @@ import asyncio as aio
 import unicodedata
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
-from config import API_FOOTBALL_BASE, api_semaphore, get_dynamic_api_key
+from config import (
+    API_FOOTBALL_BASE,
+    CURRENT_SEASON,
+    api_semaphore,
+    get_dynamic_api_key,
+)
 
 # ── Quota circuit breaker ─────────────────────────────────────────────────────
 # Once the daily quota is confirmed exhausted, we stop ALL outbound API calls
@@ -602,8 +607,12 @@ def _parse_fixtures_to_results(fixtures: list, team_id: int, count: int) -> list
 async def get_recent_fixtures_fast(team_id: int, count: int = 20):
     """
     Get recent fixtures for a team.
-    Checks local DB first (team_fixture_history), falls back to live API.
+    Checks local DB first (team_fixture_history), but refreshes from the live
+    API when the cached fixture list is season-stale.  A cache document can be
+    recently written while still containing an old season after a schedule
+    rollover, so cache age alone is not enough for recent-form consumers.
     """
+    cached_results = []
     try:
         # ── Local cache first ──────────────────────────────────────────
         from config import db
@@ -611,16 +620,46 @@ async def get_recent_fixtures_fast(team_id: int, count: int = 20):
         if doc and doc.get("fixtures"):
             import time as _t
             age = _t.time() - doc.get("_ts", 0)
-            if age < 48 * 3600:  # use local if < 48h old
-                return _parse_fixtures_to_results(doc["fixtures"], team_id, count)
+            cached_results = _parse_fixtures_to_results(
+                doc["fixtures"],
+                team_id,
+                count,
+            )
+            latest_cached_date = max(
+                (
+                    str(row.get("date") or "")[:10]
+                    for row in cached_results
+                    if row.get("date")
+                ),
+                default="",
+            )
+            freshness_cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=45)
+            ).date().isoformat()
+            if (
+                age < 48 * 3600
+                and cached_results
+                and latest_cached_date >= freshness_cutoff
+            ):
+                return cached_results
 
         # ── Live API fallback ──────────────────────────────────────────
         _u_from = (datetime.now(timezone.utc) - timedelta(days=count * 21)).strftime("%Y-%m-%d")
         _u_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        fixtures = await api_football_request("fixtures", {"team": team_id, "from": _u_from, "to": _u_to, "status": "FT"})
-        return _parse_fixtures_to_results(fixtures or [], team_id, count)
+        fixtures = await api_football_request(
+            "fixtures",
+            {
+                "team": team_id,
+                "season": CURRENT_SEASON,
+                "from": _u_from,
+                "to": _u_to,
+                "status": "FT",
+            },
+        )
+        live_results = _parse_fixtures_to_results(fixtures or [], team_id, count)
+        return live_results or cached_results
     except Exception:
-        return []
+        return cached_results
 
 
 def strip_accents(text):

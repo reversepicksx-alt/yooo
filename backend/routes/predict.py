@@ -2046,7 +2046,13 @@ async def predict(req: PredictionRequest):
                 row for row in results
                 if isinstance(row, dict) and isinstance(row.get("value"), (int, float))
             ]
-            valid = _newest_first_rows(valid, limit)
+            # The candidate window may include rows whose fixture statistics
+            # are unavailable. Keep searching that window for valid evidence,
+            # then use only the newest verified sample requested by the
+            # contract. Older verified rows must not displace more recent ones
+            # just because they were easier to load from cache.
+            valid = _newest_first_rows(valid)
+            valid = valid[:required_sample]
             status, verified = possession_sample_status(
                 len(valid),
                 required=required_sample,
