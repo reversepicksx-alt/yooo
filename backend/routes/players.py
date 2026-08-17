@@ -1854,10 +1854,10 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
     verifies the player with Gemini web search and caches the evidence for 7 days.
 
     Request body: { playerId?, playerName, teamName?, genericPosition?, stats? }
-    Response:     { position, role, source, cached }
+    Response:     { position, role, source, confidence, evidence, cached }
     """
     try:
-        from ai_positions import resolve_player_role
+        from ai_positions import resolve_player_role, _MANUAL_EXACT_PROFILES
         from config import POSITION_PROMPT_VERSION
         from cache import COL_PLAYERS
         from datetime import datetime, timezone
@@ -1865,7 +1865,7 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
         GENERIC_TO_SPECIFIC = {
             "Goalkeeper": {"GK"},
             "Defender": {"CB", "LB", "RB", "LWB", "RWB"},
-            "Midfielder": {"CDM", "CM", "CAM", "LM", "RM"},
+            "Midfielder": {"CDM", "CM", "CAM", "LM", "RM", "LW", "RW"},
             "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
         }
         # The search cache is the source for the API's generic category.  Do
@@ -1895,11 +1895,114 @@ async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
             stats=req.stats,
         )
 
+        # The resolver intentionally returns a compact tuple for its internal
+        # callers. Read the persisted profile here so the selection-time API
+        # also returns the evidence the next prediction must carry forward.
+        profile = None
+        if req.playerId:
+            try:
+                profile = await db.player_positions.find_one(
+                    {
+                        "$or": [
+                            {"playerId": req.playerId},
+                            {"playerId": str(req.playerId)},
+                        ]
+                    },
+                    {
+                        "_id": 0,
+                        "source": 1,
+                        "roleSource": 1,
+                        "specificPosition": 1,
+                        "role": 1,
+                        "confidence": 1,
+                        "evidenceSources": 1,
+                        "roleEvidence": 1,
+                        "roleSampleSize": 1,
+                    },
+                )
+            except Exception as profile_error:
+                # Evidence enrichment is optional. A temporary Atlas read
+                # failure must not turn a successful role resolution into a
+                # failed selection request.
+                print(f"[RESOLVE ROLE] Evidence lookup skipped: {profile_error}")
+        evidence = (
+            (profile or {}).get("roleEvidence")
+            or [
+                f"{item.get('title') or item.get('url')}"
+                for item in ((profile or {}).get("evidenceSources") or [])
+                if isinstance(item, dict) and (item.get("title") or item.get("url"))
+            ]
+        )
+        profile_source = str(
+            (profile or {}).get("source")
+            or (profile or {}).get("roleSource")
+            or ""
+        ).strip()
+        profile_position = str((profile or {}).get("specificPosition") or "").strip().upper()
+        profile_role = str((profile or {}).get("role") or "").strip()
+        # Explicit player-ID corrections must not be clobbered by an older
+        # persisted fixture-history inference for the same player.
+        manual_profile = _MANUAL_EXACT_PROFILES.get(int(req.playerId or 0))
+        if source == "manual_override" and manual_profile:
+            profile_source = source
+            profile_position = manual_profile["specificPosition"]
+            profile_role = manual_profile["role"]
+            evidence = list(manual_profile.get("evidence") or [])
+        exact_positions = {
+            "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
+            "LM", "RM", "LW", "RW", "CF", "ST", "SS",
+        }
+        generic_positions = {
+            "Goalkeeper": {"GK"},
+            "Defender": {"CB", "LB", "RB", "LWB", "RWB"},
+            "Midfielder": {"CDM", "CM", "CAM", "LM", "RM", "LW", "RW"},
+            "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
+        }
+        trusted_profile_sources = {
+            "gemini_web_grounded",
+            "manual_override",
+            "api_sports_lineup_history",
+        }
+        inferred_fixture_sources = {
+            "h2h_fixture_role_inferred",
+            "h2h_fixture_lineup_history",
+            "h2h_fixture_position_history",
+        }
+        # If Gemini is unavailable, the role resolver may return the broad
+        # provider category even though the durable player-ID history already
+        # contains an exact positive-minutes fixture position. Use that exact
+        # observed history immediately at selection time, including a
+        # cross-category change such as Midfielder → ST. Mark it inferred so
+        # the UI and prediction provenance remain honest.
+        if (
+            profile_position in exact_positions
+            and profile_source in (trusted_profile_sources | inferred_fixture_sources)
+            and (
+                profile_source in inferred_fixture_sources
+                or profile_position in generic_positions.get(generic_position, set())
+            )
+            and (
+                str(pos or "").upper() not in exact_positions
+                or source == "provider_category_fallback"
+            )
+        ):
+            pos = profile_position
+            role = profile_role
+            source = profile_source
+            if not evidence:
+                evidence = [f"exact {profile_position} from verified player fixture history"]
+        response_source = profile_source or source
+        role_is_inferred = response_source in inferred_fixture_sources or response_source.endswith("_inferred")
         return {
             "position": pos,
             "role": role,
-            "source": source,
-            "cached": False,
+            "source": response_source,
+            "confidence": (profile or {}).get("confidence") or (
+                "medium" if pos else "low"
+            ),
+            "evidence": evidence,
+            "cached": source == "cache",
+            "roleIsInferred": role_is_inferred,
         }
 
     except Exception as e:

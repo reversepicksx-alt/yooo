@@ -655,6 +655,22 @@ async def save_pick(req: SavePickRequest):
         "sport": sport,
         "playerId": _saved_player_id,
         "playerName": pick.get("player", {}).get("name") or pick.get("playerName", ""),
+        "playerAge": pick.get("playerAge")
+            if pick.get("playerAge") is not None
+            else (pick.get("player") or {}).get("age"),
+        "age": pick.get("age")
+            if pick.get("age") is not None
+            else (pick.get("player") or {}).get("age"),
+        "averageMinutesPerMatch": pick.get("averageMinutesPerMatch")
+            if pick.get("averageMinutesPerMatch") is not None
+            else pick.get("averageMinutesPerGame")
+            if pick.get("averageMinutesPerGame") is not None
+            else (pick.get("playerGameLogs") or {}).get("avgMinutes"),
+        "averageMinutesPerGame": pick.get("averageMinutesPerGame")
+            if pick.get("averageMinutesPerGame") is not None
+            else pick.get("averageMinutesPerMatch")
+            if pick.get("averageMinutesPerMatch") is not None
+            else (pick.get("playerGameLogs") or {}).get("avgMinutes"),
         "playerNameKey": normalize_player_name(
             pick.get("player", {}).get("name") or pick.get("playerName", "")
         ),
@@ -2582,6 +2598,8 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "confidenceLevel": 1, "confidenceInterval": 1,
         "distribution": 1, "mostLikelyValue": 1, "range60": 1, "range80": 1,
         "player": 1, "opponent": 1, "propType": 1, "line": 1,
+         "playerAge": 1, "age": 1, "averageMinutesPerMatch": 1,
+         "averageMinutesPerGame": 1,
          "moneyline": 1, "homeTeam": 1, "awayTeam": 1,
         "recentSamples": 1, "bayesianMetrics": 1,
         "playerGameLogs": 1, "gameLogs": 1, "tacticalAlerts": 1, "aiSource": 1,
@@ -2639,6 +2657,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                       "tacticalMetrics", "tacticalContext", "tacticalIntelligence",
                        "positionComparison",
                       "matchScript", "positionalReality", "gameScript", "moneyline", "homeTeam", "awayTeam",
+                       "playerAge", "age", "averageMinutesPerMatch", "averageMinutesPerGame",
                       "tacticalBreakdownRefreshedAt", "tacticalBreakdownSource"):
             val = pick.get(field)
             if val is not None:

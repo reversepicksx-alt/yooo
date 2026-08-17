@@ -165,6 +165,12 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
         if item and item not in limitations:
             limitations.append(str(item))
     opponent_profile = prediction.get("opponentDefensiveProfile") or prediction.get("opponentProfile") or {}
+    tactical_context = prediction.get("tacticalContext") or {}
+    understat = tactical_context.get("understatPressure") or {}
+    recent_blocks = tactical_context.get("recentOpponentBlockProfiles") or {}
+    recent_block_rows = recent_blocks.get("profiles") if isinstance(recent_blocks, dict) else []
+    if not isinstance(recent_block_rows, list):
+        recent_block_rows = []
     quality = prediction.get("evidenceQuality") or {}
     ledger = prediction.get("factorLedger") or {}
     ledger_steps = ledger.get("steps") if isinstance(ledger, dict) else []
@@ -198,8 +204,20 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "historicalSample": prediction.get("propHistoricalN"),
         },
         "context": {
+            "age": prediction.get("playerAge")
+            if prediction.get("playerAge") is not None
+            else (prediction.get("player") or {}).get("age"),
+            "averageMinutesPerMatch": prediction.get("averageMinutesPerMatch")
+            if prediction.get("averageMinutesPerMatch") is not None
+            else (prediction.get("playerGameLogs") or {}).get("avgMinutes"),
             "position": player.get("position") or prediction.get("playerPosition"),
             "role": player.get("role") or (ti.get("tacticalContext") or {}).get("role"),
+            "roleSource": prediction.get("playerRoleSource")
+            or player.get("roleSource")
+            or tactical_context.get("roleSource"),
+            "roleConfidence": prediction.get("playerRoleConfidence")
+            or player.get("roleConfidence")
+            or tactical_context.get("roleConfidence"),
             "homeFormation": lineup.get("homeFormation") or matchup.get("homeFormation"),
             "awayFormation": lineup.get("awayFormation") or matchup.get("awayFormation"),
             "playerTeamPossession": expected.get("playerTeam") or expected.get("team"),
@@ -212,6 +230,18 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "opponentTier": prediction.get("currentOppTier"),
             "moneyline": prediction.get("moneyline"),
             "gameScript": prediction.get("gameScript") or prediction.get("matchScript"),
+            "opponentPressure": {
+                "status": understat.get("status") or "unavailable",
+                "ppda": (understat.get("opponentPress") or {}).get("ppda")
+                if isinstance(understat, dict)
+                else None,
+                "label": (understat.get("opponentPress") or {}).get("label")
+                if isinstance(understat, dict)
+                else None,
+                "source": understat.get("source") if isinstance(understat, dict) else None,
+                "reason": understat.get("reason") if isinstance(understat, dict) else None,
+            },
+            "recentOpponentBlockProfiles": recent_block_rows[:5],
         },
         "h2h": _h2h_packet(prediction),
         "recentForm": _recent_packet(prediction),
@@ -244,6 +274,9 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "capReasons": (quality.get("capReasons") or [])[:5],
         },
         "limitations": limitations[:3],
+        "roleEvidence": prediction.get("positionEvidence")
+        or prediction.get("roleEvidence")
+        or player.get("roleEvidence"),
     }
     return packet
 
@@ -506,6 +539,37 @@ async def build_compact_explanation(
             f"Season baseline: {_fmt(baseline)} | Recent momentum: {_fmt(momentum)} ({momentum_label})",
             f"Home average: {_fmt(home_avg)} | Away average: {_fmt(away_avg)} | Sample: {recent.get('sampleSize') or 0} matches",
         ]
+        context = packet.get("context") or {}
+        evidence_lines.append(
+            f"Player profile: age {_fmt(context.get('age'))} | average minutes per match "
+            f"{_fmt(context.get('averageMinutesPerMatch'))} | position {context.get('position') or 'unavailable'} "
+            f"| role {context.get('role') or 'unavailable'} "
+            f"| role source {context.get('roleSource') or 'unavailable'}"
+        )
+        expected_team_poss = context.get("playerTeamPossession")
+        expected_opp_poss = context.get("opponentPossession")
+        evidence_lines.append(
+            f"Fixture context: expected possession {team} {_fmt(expected_team_poss)}% / "
+            f"{opponent} {_fmt(expected_opp_poss)}% | match script {context.get('matchScript') or 'unavailable'}"
+        )
+        pressure_context = context.get("opponentPressure") or {}
+        evidence_lines.append(
+            f"Opponent pressure: status {pressure_context.get('status') or 'unavailable'} | "
+            f"PPDA {_fmt(pressure_context.get('ppda'))} | "
+            f"source {pressure_context.get('source') or 'unavailable'} | "
+            f"reason {pressure_context.get('reason') or 'none supplied'}"
+        )
+        recent_opponent_blocks = context.get("recentOpponentBlockProfiles") or []
+        if recent_opponent_blocks:
+            evidence_lines.append(
+                "Most recent opponent block evidence: "
+                + "; ".join(
+                    f"{row.get('date') or 'undated'} vs {row.get('opponent') or opponent}: "
+                    f"{row.get('blockProfile', {}).get('label') if isinstance(row.get('blockProfile'), dict) else row.get('blockProfile') or 'unavailable'}"
+                    for row in recent_opponent_blocks[:5]
+                    if isinstance(row, dict)
+                )
+            )
         if opp_profile.get("allowedAverage") is not None:
             evidence_lines.append(
                 f"Opponent allowed average for this prop: {_fmt(opp_profile.get('allowedAverage'))} "
@@ -534,17 +598,20 @@ async def build_compact_explanation(
             _tactic_instruction = (
                 f"The FACT BUNDLE above contains verified facts about {player_name}'s "
                 f"role and {opponent}'s tactical style. Use these as your primary foundation. "
-                f"You may explain broader soccer mechanisms, but all specific claims about "
-                f"this player's position/role or the opponent's tactical identity must come "
-                f"from the bundle — do not invent facts beyond it."
+                f"Combine it with the most recent fixture/opponent evidence in THE PICK block. "
+                f"Prefer the most recent dated evidence when sources disagree. You may explain "
+                f"broader soccer mechanisms, but all specific claims about this player's "
+                f"position/role or the opponent's tactical identity must come from supplied "
+                f"evidence — do not invent facts beyond it."
             )
         else:
             _tactic_instruction = (
-                f"You know who {player_name} is, what {team} look like tactically, "
-                f"and how {opponent} press and defend. Use that real-world knowledge as "
-                f"your primary foundation. The numbers above are anchors — reference them "
-                f"when they support the argument, but build the reasoning from actual soccer "
-                f"tactics, not from re-reading the stats back to the subscriber."
+                f"Use the supplied dated opponent and fixture evidence first, then your "
+                f"general soccer knowledge to explain the mechanism. Never turn general "
+                f"knowledge into a confirmed current fact about {team} or {opponent}. The "
+                f"numbers above are anchors — reference them when they support the argument, "
+                f"but build the reasoning from the role and latest available matchup context, "
+                f"not from re-reading the stats back to the subscriber."
             )
         prompt = (
             f"You are a soccer prop analyst writing for subscribers of a player prop analytics platform.\n\n"
@@ -568,6 +635,8 @@ async def build_compact_explanation(
             f"- Call the player by name ({player_name}) throughout.\n"
             f"- Do NOT say 'Bayesian' — say 'Reverse Formula' instead.\n"
             f"- Do NOT invent statistics. Use only the numbers in THE PICK block for specific figures.\n"
+            f"- Treat PPDA as unavailable when its status is unavailable; never infer a number from a pressure label.\n"
+            f"- Treat role/source, dated opponent rows, and fixture identity as provenance; do not upgrade inferred evidence to confirmed fact.\n"
             f"- The {rec} recommendation is final — do not argue the other side or hedge the direction.\n"
             f"- No headings, no bullets, no markdown, no provider names, no betting guarantees.\n"
             f"- Write as if talking to a subscriber who follows soccer — skip the basics, go tactical."

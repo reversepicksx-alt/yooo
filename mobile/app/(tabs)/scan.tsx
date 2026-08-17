@@ -25,6 +25,11 @@ import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
+import {
+  renderTacticalContext,
+  renderTacticalIntelligence,
+  renderTacticalVerdict,
+} from '@/components/AnalysisCards';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
 import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenuecat';
@@ -887,6 +892,8 @@ export default function ScanScreen() {
   const [resolvedPlayer, setResolvedPlayer] = useState<FuzzyPlayerResult | null>(null);
   const [resolvedRole, setResolvedRole] = useState<PlayerRoleResult | null>(null);
   const [roleLoading, setRoleLoading] = useState(false);
+  const roleResolutionRef = useRef<Promise<PlayerRoleResult | null>>(Promise.resolve(null));
+  const roleSelectionKeyRef = useRef('');
   const [manualOpponentQuery, setManualOpponentQuery] = useState('');
   const [resolvedManualOpponent, setResolvedManualOpponent] = useState<FuzzyTeamResult | null>(null);
 
@@ -1077,14 +1084,25 @@ export default function ScanScreen() {
     setClubVerificationStatus('loading');
     Haptics.selectionAsync();
     setRoleLoading(true);
-    resolvePlayerRole(
+    const roleSelectionKey = `${p.playerId}:${p.playerName}`;
+    roleSelectionKeyRef.current = roleSelectionKey;
+    const rolePromise = resolvePlayerRole(
       p.playerId || null,
       p.playerName,
       p.teamName,
       p.position || '',
-    ).then((result) => {
-      if (result.position || result.role) setResolvedRole(result);
-    }).catch(() => {}).finally(() => setRoleLoading(false));
+    );
+    roleResolutionRef.current = rolePromise;
+    rolePromise.then((result) => {
+      if (
+        roleSelectionKeyRef.current === roleSelectionKey
+        && (result.position || result.role)
+      ) {
+        setResolvedRole(result);
+      }
+    }).catch(() => {}).finally(() => {
+      if (roleSelectionKeyRef.current === roleSelectionKey) setRoleLoading(false);
+    });
     if (p.playerId) {
       setContextsLoading(true);
       try {
@@ -1702,6 +1720,19 @@ export default function ScanScreen() {
         && typeof autoMatch.isHome === 'boolean'
         ? (autoMatch.isHome ? 'home' : 'away')
         : null;
+      const selectionRole = sport === 'soccer'
+        ? (resolvedRole || await roleResolutionRef.current)
+        : resolvedRole;
+      const exactRolePositions = new Set([
+        'GK', 'CB', 'LB', 'RB', 'LWB', 'RWB', 'CDM', 'CM', 'CAM',
+        'LM', 'RM', 'LW', 'RW', 'CF', 'ST', 'SS',
+      ]);
+      const selectionPosition = String(selectionRole?.position || '').toUpperCase();
+      const selectionRoleOverride = (
+        sport === 'soccer'
+        && selectionRole?.position
+        && exactRolePositions.has(selectionPosition)
+      ) ? selectionRole : null;
       const req = {
         email: session.email,
         token: session.token,
@@ -1717,6 +1748,17 @@ export default function ScanScreen() {
         leagueId: data.leagueId || leagueId,
         propType: data.propType || propType,
         line: data.line || 0,
+         // Carry the selection-time grounded identity into prediction. The
+         // backend may enrich it with a confirmed current lineup, but a
+         // predicted/generic lineup must not silently replace this role.
+         ...(selectionRoleOverride ? {
+           positionOverride: selectionRoleOverride.position,
+           roleOverride: selectionRoleOverride.role || '',
+           positionSourceOverride: selectionRoleOverride.source || '',
+           roleSourceOverride: selectionRoleOverride.source || '',
+           roleConfidenceOverride: selectionRoleOverride.confidence || '',
+           roleEvidenceOverride: selectionRoleOverride.evidence || [],
+         } : {}),
         sport: sport,
         fixtureId: data.fixtureId || (sport === 'soccer' ? autoMatch?.fixtureId : undefined) || undefined,
       };
@@ -3571,7 +3613,41 @@ export default function ScanScreen() {
                                       setPhase('analyzing');
                                       setShowAltPlayers(false);
                                       try {
-                                        const req = { ...predictionRequest, playerId: c.playerId, teamName: c.teamName, teamId: undefined, sport: sport };
+                                        const req: Record<string, unknown> = {
+                                          ...predictionRequest,
+                                          playerId: c.playerId,
+                                          teamName: c.teamName,
+                                          teamId: undefined,
+                                          sport: sport,
+                                        };
+                                        if (sport === 'soccer') {
+                                          const alternateRole = await resolvePlayerRole(
+                                            c.playerId,
+                                            c.playerName || prediction.playerName || '',
+                                            c.teamName,
+                                            c.position,
+                                          );
+                                          const alternatePosition = String(alternateRole.position || '').toUpperCase();
+                                          const exactRolePositions = new Set([
+                                            'GK', 'CB', 'LB', 'RB', 'LWB', 'RWB', 'CDM', 'CM', 'CAM',
+                                            'LM', 'RM', 'LW', 'RW', 'CF', 'ST', 'SS',
+                                          ]);
+                                          if (exactRolePositions.has(alternatePosition)) {
+                                            req.positionOverride = alternateRole.position;
+                                            req.roleOverride = alternateRole.role || '';
+                                            req.positionSourceOverride = alternateRole.source || '';
+                                            req.roleSourceOverride = alternateRole.source || '';
+                                            req.roleConfidenceOverride = alternateRole.confidence || '';
+                                            req.roleEvidenceOverride = alternateRole.evidence || [];
+                                          } else {
+                                            delete req.positionOverride;
+                                            delete req.roleOverride;
+                                            delete req.positionSourceOverride;
+                                            delete req.roleSourceOverride;
+                                            delete req.roleConfidenceOverride;
+                                            delete req.roleEvidenceOverride;
+                                          }
+                                        }
                                         const result = await predict(req);
                                         if (!result.error) {
                                           setPrediction(result);
@@ -3609,6 +3685,26 @@ export default function ScanScreen() {
               </View>
 
               <View style={styles.analysisDivider} />
+
+              {/* ─── GROUNDED PLAYER + MATCH TACTICAL READ ─── */}
+              {prediction.sport === 'soccer' && (
+                <>
+                  {renderTacticalVerdict(
+                    prediction as any,
+                    {
+                      playerName: prediction.playerName,
+                      propType: prediction.propType,
+                      recommendation: prediction.recommendation,
+                      projectedValue: prediction.projection ?? prediction.projectedValue,
+                      line: prediction.line,
+                      teamName: prediction.teamName,
+                      opponentName: prediction.opponentName || prediction.opponent,
+                    },
+                  )}
+                  {renderTacticalIntelligence(prediction as any)}
+                  {renderTacticalContext(prediction as any)}
+                </>
+              )}
 
               {/* Verified fixture context belongs at the top of the card, before
                   the model evidence and history. */}

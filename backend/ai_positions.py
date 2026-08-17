@@ -21,9 +21,10 @@ _position_usage_date = ""
 _position_usage_attempts = 0
 _position_usage_lock = aio.Lock()
 
-# Identity-keyed authoritative profile used only when provider lineups expose
-# a broad category and grounded lookup is unavailable. A trusted cached
-# lineup/profile record still takes precedence above this table.
+# Identity-keyed authoritative profiles used when provider lineups expose a
+# broad category and grounded lookup is unavailable. These explicit player-ID
+# corrections take precedence over stale cached fixture-role inferences; a
+# confirmed current lineup can still win later in the prediction pipeline.
 _MANUAL_EXACT_PROFILES = {
     51620: {
         "specificPosition": "RW",
@@ -32,6 +33,15 @@ _MANUAL_EXACT_PROFILES = {
         "evidence": [
             "Transfermarkt lists Right Winger as the main position",
             "Austin FC describes Facundo Torres as a winger",
+        ],
+    },
+    161965: {
+        "specificPosition": "LW",
+        "role": "Traditional Winger",
+        "source": "manual_override",
+        "evidence": [
+            "Current player profile identifies Mario Soriano as a left winger for Deportivo de La Coruña",
+            "Player identity is keyed to API-Football player ID 161965",
         ],
     },
 }
@@ -69,7 +79,10 @@ _POSITION_ROLE_MAP = {
 _GENERIC_TO_SPECIFIC = {
     "Goalkeeper": {"GK"},
     "Defender":   {"CB", "LB", "RB", "LWB", "RWB"},
-    "Midfielder": {"CDM", "CM", "CAM", "LM", "RM"},
+    # Provider feeds commonly classify wide midfielders/wingers as MID.
+    # Rejecting LW/RW here made grounded search evidence disappear for
+    # players whose public profile calls them a winger.
+    "Midfielder": {"CDM", "CM", "CAM", "LM", "RM", "LW", "RW"},
     "Attacker":   {"LW", "RW", "CF", "ST", "SS", "CAM"},
 }
 _VALID_POSITIONS = {
@@ -425,13 +438,10 @@ async def resolve_player_role(
             projection,
         )
 
-    cached_profile = _trusted_cached_profile(cached, category)
-    if cached_profile:
-        cached_pos, cached_role = cached_profile
-        return cached_pos, cached_role, "cache"
-
     manual_profile = _MANUAL_EXACT_PROFILES.get(int(player_id or 0))
-    if manual_profile and manual_profile["specificPosition"] in allowed_positions:
+    if manual_profile and (
+        not category or manual_profile["specificPosition"] in allowed_positions
+    ):
         print(
             f"[POSITION MANUAL] {player_name} → "
             f"{manual_profile['specificPosition']}/{manual_profile['role']}"
@@ -441,6 +451,11 @@ async def resolve_player_role(
             manual_profile["role"],
             manual_profile["source"],
         )
+
+    cached_profile = _trusted_cached_profile(cached, category)
+    if cached_profile:
+        cached_pos, cached_role = cached_profile
+        return cached_pos, cached_role, "cache"
 
     verified = await _verify_with_grounded_gemini(player_name, team_name, category)
     if verified:

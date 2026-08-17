@@ -165,6 +165,20 @@ def _team_packet(team: dict[str, Any], *, venue: str, as_of: datetime) -> dict[s
     }
 
 
+def _empty_team_packet(team_name: str) -> dict[str, Any]:
+    """Keep opponent-only Understat coverage explicit when target is absent."""
+    return {
+        "understatTeamId": None,
+        "name": team_name,
+        "overall": _summary([]),
+        "venue": _summary([]),
+        "recent5": _summary([]),
+        "recent10": _summary([]),
+        "status": "unavailable",
+        "reason": "team_not_in_understat_season",
+    }
+
+
 def _find_team(teams: Any, requested_name: str) -> dict[str, Any] | None:
     if not isinstance(teams, dict):
         return None
@@ -325,25 +339,36 @@ async def fetch_understat_pressure_context(
         candidate_payload = await _load_league(league["slug"], candidate)
         if not candidate_payload:
             continue
-        candidate_target = _find_team(candidate_payload.get("teams"), team_name)
         candidate_opponent = _find_team(candidate_payload.get("teams"), opponent_name)
-        if candidate_target and candidate_opponent:
+        candidate_target = _find_team(candidate_payload.get("teams"), team_name)
+        # The requested club can be outside the Understat league while the
+        # opponent is covered (e.g. a Segunda club facing a former La Liga
+        # side). Opponent PPDA does not require the target club's own history.
+        if candidate_opponent:
             payload = candidate_payload
             used_season = candidate
             target_raw = candidate_target
             opponent_raw = candidate_opponent
-            if _rows_until(candidate_target.get("history"), cutoff) and _rows_until(candidate_opponent.get("history"), cutoff):
+            if _rows_until(candidate_opponent.get("history"), cutoff):
                 break
 
-    if not payload or not target_raw or not opponent_raw or used_season is None:
+    if not payload or not opponent_raw or used_season is None:
         return _unavailable(lid, "team_not_found_or_season_unavailable")
 
-    target_history = _rows_until(target_raw.get("history"), cutoff)
     opponent_history = _rows_until(opponent_raw.get("history"), cutoff)
-    if not target_history or not opponent_history:
+    target_history = (
+        _rows_until(target_raw.get("history"), cutoff)
+        if target_raw
+        else []
+    )
+    if not opponent_history:
         return _unavailable(lid, "no_completed_matches_before_cutoff")
 
-    target_packet = _team_packet(target_raw, venue=target_venue, as_of=cutoff)
+    target_packet = (
+        _team_packet(target_raw, venue=target_venue, as_of=cutoff)
+        if target_raw
+        else _empty_team_packet(team_name)
+    )
     opponent_packet = _team_packet(opponent_raw, venue=opponent_venue, as_of=cutoff)
 
     league_ppda: list[float] = []
@@ -355,12 +380,11 @@ async def fetch_understat_pressure_context(
             league_ppda.append(value)
     opponent_press = opponent_packet["venue"].get("ppda")
     percentile = _press_percentile(opponent_press, league_ppda)
-    latest_date = max(
-        target_history[-1].get("date") or "",
-        opponent_history[-1].get("date") or "",
-    ) or None
-
-    return {
+    latest_dates = [
+        row.get("date") or ""
+        for row in (target_history[-1:] + opponent_history[-1:])
+    ]
+    result = {
         "status": "verified_team_level",
         "availability": "available",
         "source": "understat",
@@ -369,7 +393,7 @@ async def fetch_understat_pressure_context(
         "league": league["name"],
         "leagueSlug": league["slug"],
         "season": used_season,
-        "asOf": latest_date,
+        "asOf": None,
         "cutoff": cutoff.isoformat(),
         "venue": target_venue,
         "projectionInfluence": "explanation_only",
@@ -390,3 +414,39 @@ async def fetch_understat_pressure_context(
             "leagueTeamCount": len(league_ppda),
         },
     }
+    result["asOf"] = max(latest_dates) if latest_dates else None
+    try:
+        await db.understat_pressure_cache.update_one(
+            {
+                "_key": (
+                    f"understat-pressure:{lid}:{used_season}:"
+                    f"{opponent_raw.get('id')}:{opponent_venue}"
+                )
+            },
+            {
+                "$set": {
+                    "_key": (
+                        f"understat-pressure:{lid}:{used_season}:"
+                        f"{opponent_raw.get('id')}:{opponent_venue}"
+                    ),
+                    "source": "understat",
+                    "leagueId": lid,
+                    "league": league["name"],
+                    "season": used_season,
+                    "teamName": team_name,
+                    "opponentName": opponent_name,
+                    "venue": opponent_venue,
+                    "ppda": opponent_press,
+                    "sampleSize": opponent_packet["venue"].get("sampleSize", 0),
+                    "asOf": result["asOf"],
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    "packet": result,
+                }
+            },
+            upsert=True,
+        )
+    except Exception as exc:
+        # Pressure evidence is regenerable; Atlas/cache write failures must
+        # never remove a verified response from this prediction.
+        print(f"[UNDERSTAT] pressure cache write skipped: {type(exc).__name__}")
+    return result

@@ -120,3 +120,38 @@ When a provider exposes only a broad category and grounded lookup times out, an 
 
 ## How prediction cache interacts with position
 The prediction cache (`soc|{playerId}|{prop}|{line}|{opp}|{date}`) stores only the Grok AI synthesis text for reuse. The Bayesian math reruns fresh on every request — so even a "cache hit" still uses the correct (fresh) position for the quantitative projection.
+
+## Selection-time grounded role precedence
+
+When the mobile selector has a trusted grounded/manual exact position, carry that
+identity and its evidence into the prediction request. A predicted lineup or a
+confirmed lineup that reports only broad `DEF`/`MID`/`FWD` evidence cannot replace
+it; only a confirmed exact current position may win.
+
+**Why:** Provider lineups can be predicted or category-only. Letting those
+observations replace a grounded winger/midfielder identity made the final card
+show an invented role such as `Complete Forward` and caused the tactical
+explanation to use the wrong mechanism.
+
+**How to apply:** Keep exact position/role/source/confidence/evidence together
+through `player`, `positionEvidence`, `tacticalContext`, and saved analysis.
+Treat broad categories as supplementary evidence and keep Understat coverage
+explicitly unavailable when the competition is not supported.
+
+## Inferred fixture-history fallback at selection
+
+When grounded resolution is unavailable, an exact positive-minutes fixture-history
+profile may be surfaced immediately as an explicitly inferred selection role,
+even when it crosses the search provider's broad category (for example,
+Midfielder → ST). That inferred role must not act as a manual override: a
+confirmed exact current lineup still wins.
+
+**Why:** Mario Soriano's durable fixture evidence said ST while the provider
+search category said Midfielder. Returning the broad category at selection
+made the first role card disagree with the prediction, while treating the
+inferred role as manual could hide a confirmed current role change.
+
+**How to apply:** Return the exact history position with its inferred source and
+evidence, carry it through the request, and keep the override guard provenance-aware.
+Never silently promote this fallback to grounded/manual identity or quantitative
+projection input.

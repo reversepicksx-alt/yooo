@@ -389,15 +389,17 @@ export function renderTacticalVerdict(
 export function renderTacticalContext(
   data: Record<string, unknown> | null,
 ) {
-  const enrichment = ((data as any)?.tacticalContext?.fbrefEnrichment
-    ?? (data as any)?.fbrefEnrichment) as any;
+  const sport = String((data as any)?.sport ?? 'soccer').toLowerCase();
+  if (sport && sport !== 'soccer') return null;
+  const enrichment = (((data as any)?.tacticalContext?.fbrefEnrichment
+    ?? (data as any)?.fbrefEnrichment) || {}) as any;
   const understat = ((data as any)?.tacticalContext?.understatPressure
     ?? (data as any)?.tacticalIntelligence?.understatPressure) as any;
   const understatPress = understat?.opponentPress ?? {};
+  const understatPpda = understatPress.ppda ?? understat?.targetTeamOppPpda;
   const hasUnderstat =
     ['available', 'verified_team_level'].includes(understat?.status)
-    && understatPress.ppda != null;
-  if (!enrichment?.available && !hasUnderstat) return null;
+    && understatPpda != null;
   const pressure = enrichment.pressure ?? {};
   const zones = enrichment.zones ?? {};
   const hasPressure = hasUnderstat || pressure.label || pressure.ppda != null || pressure.pressures != null;
@@ -408,11 +410,23 @@ export function renderTacticalContext(
     || zones.attThirdSharePct != null
     || zones.progressivePasses != null
     || zones.progressiveCarries != null;
-  if (!hasPressure && !hasZones) return null;
+  const hasTacticalPacket = Boolean(
+    (data as any)?.tacticalContext
+    || (data as any)?.tacticalIntelligence
+  );
+  if (!hasTacticalPacket && !enrichment?.available) return null;
 
   const pressureLabel = String(pressure.label ?? 'profile unavailable')
     .replace(/_/g, ' ')
     .toUpperCase();
+  const pressureSource = understat?.source
+    ?? understatPress.source
+    ?? pressure.source
+    ?? null;
+  const pressureReason = String(
+    understat?.reason
+      ?? (understat?.status && !hasUnderstat ? `status_${understat.status}` : ''),
+  ).replace(/_/g, ' ');
   const zoneLabel = zones.dominance
     ? String(zones.dominance).replace(/_/g, ' ').toUpperCase()
     : 'ZONE MIX';
@@ -430,10 +444,10 @@ export function renderTacticalContext(
       <View style={aStyles.tacticalContextGrid}>
         {hasPressure ? (
           <View style={aStyles.tacticalContextCell}>
-            <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE</Text>
+            <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE / PPDA</Text>
             <Text style={aStyles.tacticalContextValue}>
               {hasUnderstat
-                ? String(understatPress.label ?? 'classified').replace(/_/g, ' ').toUpperCase()
+                ? `PPDA ${Number(understatPpda).toFixed(1)} · ${String(understatPress.label ?? 'classified').replace(/_/g, ' ').toUpperCase()}`
                 : pressureLabel}
             </Text>
             {hasUnderstat ? (
@@ -444,7 +458,22 @@ export function renderTacticalContext(
                 {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} · ` : ''}
                 {understatPress.sampleSize ?? 0} matches
               </Text>
-            ) : null}
+            ) : (
+              <Text style={aStyles.proCardNote}>
+                PPDA UNAVAILABLE{pressureReason ? ` · ${pressureReason}` : ''}
+                {pressureSource ? ` · source: ${String(pressureSource).replace(/_/g, ' ')}` : ''}
+              </Text>
+            )}
+          </View>
+        ) : !hasUnderstat ? (
+          <View style={aStyles.tacticalContextCell}>
+            <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE / PPDA</Text>
+            <Text style={aStyles.tacticalContextValue}>UNAVAILABLE</Text>
+            <Text style={aStyles.proCardNote}>
+              PPDA unavailable
+              {pressureReason ? ` · ${pressureReason}` : ''}
+              {pressureSource ? ` · source: ${String(pressureSource).replace(/_/g, ' ')}` : ''}
+            </Text>
           </View>
         ) : null}
         {hasZones ? (
@@ -457,6 +486,11 @@ export function renderTacticalContext(
           </View>
         ) : null}
       </View>
+      {!hasPressure && !hasZones ? (
+        <Text style={aStyles.proCardNote}>
+          No additional public event or zone profile is available for this fixture.
+        </Text>
+      ) : null}
       {hasZones && (zones.progressivePasses != null || zones.progressiveCarries != null) ? (
         <Text style={aStyles.proCardNote}>
           Progressive actions: {count(zones.progressivePasses)} passes · {count(zones.progressiveCarries)} carries

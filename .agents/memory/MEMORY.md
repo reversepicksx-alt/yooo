@@ -128,6 +128,7 @@
 - [Tactical evidence provenance](tactical-evidence-provenance.md) — provider-observed roles and exact sample-labeled opponent/cohort evidence prevent generic or overstated tactical explanations.
 - [Prediction synthesis scope](prediction-synthesis-scope.md) — evidence assembly precedes prediction creation; final-direction metadata must wait until deterministic synthesis completes.
 - [Bzzoiro enrichment boundary](bzzoiro-enrichment-boundary.md) — optional lineup/position/stat enrichment uses name-bridged exact fixtures; its defensive-actions proxy is not true PPDA and stays shadow-only.
+- [Understat opponent pressure cache](understat-opponent-pressure-cache.md) — opponent PPDA can be verified from a covered former-league club even when the target club is outside Understat coverage.
 - [Historical evidence replay limits](historical-evidence-replay.md) — separate prediction reruns from evidence coverage; preserve provider date-coverage and rate-limit reasons.
 - [Prediction response identity](prediction-response-identity.md) — normalize explicit null identity fields at the final response boundary, not only missing keys.
 - [Tactical explanation assembly](tactical-explanation-assembly.md) — generate one final role-specific narrative after the ledger; never append early and late explanations together.

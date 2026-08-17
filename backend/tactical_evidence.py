@@ -46,6 +46,52 @@ _EXACT_POSITIONS = {
     "LM", "RM", "LW", "RW", "CF", "ST", "SS",
 }
 
+_TRUSTED_SELECTION_ROLE_SOURCES = {
+    "gemini_web_grounded",
+    "cache",
+    "manual_override",
+    "api_sports_lineup_history",
+}
+
+
+def preserve_selection_role(
+    selection: dict[str, Any] | None,
+    observed: dict[str, Any] | None,
+    lineup_status: Any,
+) -> dict[str, Any] | None:
+    """Keep a trusted selection-time identity over inferred lineup output.
+
+    A confirmed exact current lineup is handled by the caller before this
+    boundary and intentionally wins. A confirmed broad category is still
+    incomplete evidence. Predicted grids, generic provider categories, and
+    stat fingerprints do not have enough certainty to turn a grounded
+    winger/midfielder into a different customer-facing role.
+    """
+    selection = selection or {}
+    observed = observed or {}
+    position = str(selection.get("position") or "").strip()
+    source = str(selection.get("source") or "").strip()
+    observed_position = str(observed.get("position") or "").strip().upper()
+    confirmed_exact_observation = (
+        str(lineup_status or "").strip().lower() == "confirmed"
+        and observed_position in _EXACT_POSITIONS
+    )
+    if not position or source not in _TRUSTED_SELECTION_ROLE_SOURCES or confirmed_exact_observation:
+        return None
+    evidence = list(selection.get("evidence") or [])
+    if observed.get("position") and observed.get("position") != position:
+        evidence.append(
+            f"non-confirmed lineup reported {observed['position']}; "
+            "selection-time verified identity retained"
+        )
+    return {
+        "position": position,
+        "role": str(selection.get("role") or "").strip() or None,
+        "source": source,
+        "confidence": selection.get("confidence") or "medium",
+        "evidence": evidence,
+    }
+
 
 def infer_grid_position(
     grid: Any,

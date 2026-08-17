@@ -33,6 +33,7 @@ from tactical_evidence import (
     exact_position_from_lineup_payload,
     normalize_observed_position,
     position_cohort_verdict,
+    preserve_selection_role,
     resolve_observed_role,
     summarize_observed_positions,
     summarize_player_opponent_history,
@@ -282,6 +283,21 @@ def _recompute_landing_bands(
                 1,
             )
     return rebuilt
+def _age_from_birth_date(value: Any) -> int | None:
+    """Calculate current age instead of trusting a season-snapshot age."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        birth_date = datetime.fromisoformat(raw[:10]).date()
+    except (TypeError, ValueError):
+        return None
+    today = datetime.now(timezone.utc).date()
+    return today.year - birth_date.year - (
+        (today.month, today.day) < (birth_date.month, birth_date.day)
+    )
+
+
 def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> dict:
     """Keep the public prediction identity contract complete.
 
@@ -302,6 +318,38 @@ def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> 
         or prediction.get("position")
         or ""
     )
+    # Promote profile facts into the compact response contract as well as the
+    # nested identity packet. Saved-pick analysis reads this boundary directly.
+    _calculated_age = _age_from_birth_date(
+        (player.get("birth") or {}).get("date")
+        if isinstance(player.get("birth"), dict)
+        else None
+    )
+    _player_age = (
+        _calculated_age
+        if _calculated_age is not None
+        else prediction.get("playerAge")
+        if prediction.get("playerAge") is not None
+        else player.get("age")
+        if player.get("age") is not None
+        else prediction.get("age")
+    )
+    if _player_age is not None:
+        prediction["playerAge"] = _player_age
+        prediction["age"] = _player_age
+    _player_logs = prediction.get("playerGameLogs") or {}
+    _avg_minutes = (
+        prediction.get("averageMinutesPerMatch")
+        if prediction.get("averageMinutesPerMatch") is not None
+        else prediction.get("averageMinutesPerGame")
+        if prediction.get("averageMinutesPerGame") is not None
+        else _player_logs.get("avgMinutes")
+        if isinstance(_player_logs, dict)
+        else None
+    )
+    if _avg_minutes is not None:
+        prediction["averageMinutesPerMatch"] = _avg_minutes
+        prediction["averageMinutesPerGame"] = _avg_minutes
     prediction["leagueId"] = prediction.get("leagueId") or req.leagueId or None
 
     is_home = prediction.get("isHome")
@@ -6265,6 +6313,7 @@ async def predict(req: PredictionRequest):
                 game_log_summary["per90Avg"] = round(sum(per90_values) / len(per90_values), 2)
             if minutes_list:
                 game_log_summary["avgMinutes"] = round(sum(minutes_list) / len(minutes_list), 1)
+                game_log_summary["avgMinutesPerMatch"] = game_log_summary["avgMinutes"]
             if _all_history_values and req.line:
                 over_hits = sum(1 for v in _all_history_values if v > req.line)
                 under_hits = sum(1 for v in _all_history_values if v < req.line)
@@ -8363,7 +8412,21 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         player_role = ""
         cached_pos = None
         _position_resolution_source = "fallback"
-        _role_override_active = bool(req.positionOverride)
+        _selection_role_source = str(req.positionSourceOverride or req.roleSourceOverride or "").strip()
+        _selection_role_is_trusted = _selection_role_source in {
+            "gemini_web_grounded",
+            "cache",
+            "manual_override",
+            "api_sports_lineup_history",
+        }
+        # An inferred fixture-history role may be shown at selection time, but
+        # it must not suppress a confirmed current lineup or be treated as a
+        # user/manual override. Older clients that omit provenance retain the
+        # historical manual-override behavior.
+        _role_override_active = bool(req.positionOverride) and (
+            not _selection_role_source or _selection_role_is_trusted
+        )
+        _selection_role_evidence = list(req.roleEvidenceOverride or [])
         GENERIC_POSITIONS = {"Goalkeeper", "Defender", "Midfielder", "Attacker", ""}
 
         # Position-to-role compatibility: ensures roles match positions
@@ -8397,11 +8460,19 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # Conservative fallback used only when the grounded resolver cannot
         # return a specific position. Keep the provider category broad:
         # generic M/MID is not proof of CM, CDM, or CAM.
-        if req.positionOverride:
+        if req.positionOverride and _role_override_active:
             specific_position = req.positionOverride
             player_role = req.roleOverride or ""
             _position_resolution_source = "manual_override"
             print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
+        elif req.positionOverride:
+            specific_position = req.positionOverride
+            player_role = req.roleOverride or ""
+            _position_resolution_source = _selection_role_source or "selection_inferred"
+            print(
+                f"[POS RESOLVE] Inferred selection role: {req.playerName} → "
+                f"{specific_position} ({player_role or 'role unavailable'})"
+            )
         elif player_position in GENERIC_POSITIONS or not player_position:
             from ai_positions import resolve_player_role
             cached_pos = await db.player_positions.find_one(
@@ -8572,18 +8643,46 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
                 "LM", "RM", "LW", "RW", "CF", "ST", "SS",
             }:
-                # Exact current-fixture evidence outranks grounded profile
-                # evidence.  This prevents a stale Fullback cache from
-                # surviving a verified CB/LB/RB lineup observation.
-                specific_position = _observed_position
-                player_role = _observed_role.get("role") or ""
-                display_position = specific_position
-                display_role = player_role
-                _position_resolution_source = (
-                    "fixture_lineup_observation"
-                    if _lineup_status == "confirmed"
-                    else "predicted_lineup_grid"
-                )
+                # A confirmed, exact current lineup is stronger than a
+                # selection-time profile. A predicted lineup grid is not:
+                # provider projections and stat fingerprints used to turn a
+                # grounded midfielder/winger into an invented striker role.
+                # Preserve the grounded identity until the fixture is
+                # actually confirmed.
+                if (
+                    (
+                        _selection_role_is_trusted
+                        or _position_resolution_source in {
+                            "manual_override",
+                            "gemini_web_grounded",
+                        }
+                    )
+                    and _lineup_status != "confirmed"
+                ):
+                    _observed_role = {
+                        "position": specific_position,
+                        "role": player_role or None,
+                        "source": _selection_role_source or _position_resolution_source,
+                        "confidence": req.roleConfidenceOverride or "medium",
+                        "evidence": _selection_role_evidence + [
+                            f"predicted lineup reported {_observed_position}; selection-time verified identity retained",
+                        ],
+                    }
+                else:
+                    # Exact current-fixture evidence outranks grounded profile
+                    # evidence only when the lineup is confirmed. This prevents
+                    # a stale profile from surviving an actual CB/LB/RB/ST
+                    # observation while avoiding false certainty from a
+                    # predicted lineup.
+                    specific_position = _observed_position
+                    player_role = _observed_role.get("role") or ""
+                    display_position = specific_position
+                    display_role = player_role
+                    _position_resolution_source = (
+                        "fixture_lineup_observation"
+                        if _lineup_status == "confirmed"
+                        else "predicted_lineup_grid"
+                    )
         _historical_position_summary = summarize_observed_positions(
             [{"position": item.get("observedPosition")} for item in h2h_player_stats]
         )
@@ -8715,6 +8814,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 and _position_resolution_source not in {
                     "gemini_web_grounded",
                     "cache",
+                    "manual_override",
                     "fixture_lineup_observation",
                     "api_sports_lineup_history",
                     "h2h_fixture_lineup_history",
@@ -8753,6 +8853,29 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "confidence": "low",
                 "evidence": ["no confirmed lineup or positive-minutes position history"],
             }
+
+        # Keep the selection-time grounded identity as the final customer
+        # identity whenever the only competing observation is predicted,
+        # generic, or stat-inferred. This final boundary is deliberately after
+        # all history/role fallbacks so none of them can clobber the card.
+        _selection_role_packet = preserve_selection_role(
+            {
+                "position": req.positionOverride,
+                "role": req.roleOverride,
+                "source": _selection_role_source,
+                "confidence": req.roleConfidenceOverride,
+                "evidence": _selection_role_evidence,
+            },
+            _observed_role,
+            _lineup_status,
+        )
+        if _selection_role_packet:
+            specific_position = _selection_role_packet["position"]
+            player_role = _selection_role_packet.get("role") or ""
+            display_position = specific_position
+            display_role = player_role
+            _position_resolution_source = _selection_role_packet["source"]
+            _observed_role = _selection_role_packet
 
         # ── POSITION-CORRECTED BASELINE RE-SQUEEZE ────────────────────────────
         # The positional baseline ran at line ~2866 using _bayes_position from
@@ -11412,10 +11535,25 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             else player_position or "UNSPECIFIED"
         )
         _league_role_bucket = f"{_league_label} · {_role_bucket_label}"
+        _player_profile = (
+            player_stats.get("player")
+            if isinstance(player_stats, dict)
+            and isinstance(player_stats.get("player"), dict)
+            else {}
+        )
         prediction["player"] = {
             "id": req.playerId,
             "name": req.playerName,
             "team": player_team_display,
+            "birth": _player_profile.get("birth"),
+            "age": (
+                _age_from_birth_date(
+                    (_player_profile.get("birth") or {}).get("date")
+                    if isinstance(_player_profile.get("birth"), dict)
+                    else None
+                )
+                or _player_profile.get("age")
+            ),
             "position": _position_display_value or "Unknown",
             "role": display_role or "",
             "positionSource": _position_resolution_source,
@@ -12671,7 +12809,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     venue=player_venue,
                     as_of=(match_odds or {}).get("matchDate"),
                 ),
-                timeout=4.5,
+                # Understat's league payload is bounded and normally returns
+                # in ~1s; 4.5s was short enough to cancel valid responses
+                # before they could be cached.
+                timeout=15.0,
             )
             if not isinstance(_understat_pressure, dict):
                 _understat_pressure = {
@@ -13107,9 +13248,21 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # and should be updated unconditionally.
             _ti_player.update({
                 "role": display_role or player_role or None,
-                "roleSource": _observed_role.get("source") if _observed_role else None,
-                "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
-                "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
+                "roleSource": (
+                    _selection_role_source
+                    if _selection_role_is_trusted and _lineup_status != "confirmed"
+                    else _observed_role.get("source") if _observed_role else None
+                ),
+                "roleConfidence": (
+                    req.roleConfidenceOverride
+                    if _selection_role_is_trusted and _lineup_status != "confirmed"
+                    else _observed_role.get("confidence") if _observed_role else None
+                ),
+                "roleEvidence": (
+                    _selection_role_evidence
+                    if _selection_role_is_trusted and _lineup_status != "confirmed"
+                    else _observed_role.get("evidence", []) if _observed_role else []
+                ),
                 "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
             })
             # Position and its provenance are only overwritten when the
@@ -13244,6 +13397,17 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     and _pgl_log.get("opponentPossession") is not None
                 ),
             }
+            _pgl_minutes = [
+                g.get("minutes")
+                for g in player_game_logs
+                if isinstance(g.get("minutes"), (int, float))
+                and g.get("minutes") > 0
+            ]
+            if _pgl_minutes:
+                _pgl_summary["avgMinutes"] = round(
+                    sum(_pgl_minutes) / len(_pgl_minutes), 1
+                )
+                _pgl_summary["avgMinutesPerMatch"] = _pgl_summary["avgMinutes"]
             if _pgl_vals:
                 _pgl_summary["rawAvg"] = round(sum(_pgl_vals) / len(_pgl_vals), 2)
             if _pgl_home:

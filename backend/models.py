@@ -60,6 +60,12 @@ class PredictionRequest(BaseModel):
     line: float = 0
     positionOverride: str = ""
     roleOverride: str = ""
+    # These fields carry the provenance of the role resolved at player
+    # selection time.  They are explanation identity, not projection inputs.
+    positionSourceOverride: str = ""
+    roleSourceOverride: str = ""
+    roleConfidenceOverride: str = ""
+    roleEvidenceOverride: Optional[list[str]] = None
     sport: str = "soccer"
     odds: Optional[dict] = None
     # Optional client-verified fixture identity. When present, prediction

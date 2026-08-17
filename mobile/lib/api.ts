@@ -665,6 +665,8 @@ export interface PredictionResult {
     };
     homeAvg?: number;
     awayAvg?: number;
+    avgMinutes?: number;
+    avgMinutesPerMatch?: number;
     tpHomeAvg?: number | null;
     tpAwayAvg?: number | null;
     tpHomeCount?: number;
@@ -1117,6 +1119,10 @@ export interface PredictionResult {
   opponentId?: number;
   leagueId?: number;
   playerId?: number;
+  playerAge?: number | null;
+  age?: number | null;
+  averageMinutesPerMatch?: number | null;
+  averageMinutesPerGame?: number | null;
   playerPosition?: string;
   playerRole?: string;
   playerPositionSource?: string;
@@ -1256,6 +1262,7 @@ interface RawPrediction {
     id?: number;
     name?: string;
     team?: string;
+    age?: number | null;
     position?: string;
     role?: string;
     positionSource?: string;
@@ -1265,6 +1272,10 @@ interface RawPrediction {
   };
   propType?: string;
   line?: number;
+  playerAge?: number | null;
+  age?: number | null;
+  averageMinutesPerMatch?: number | null;
+  averageMinutesPerGame?: number | null;
   projectedValue?: number;
   recommendation?: string;
   passLeaning?: string | null;
@@ -1357,6 +1368,8 @@ interface RawPrediction {
     };
     homeAvg?: number;
     awayAvg?: number;
+    avgMinutes?: number;
+    avgMinutesPerMatch?: number;
     tpHomeAvg?: number | null;
     tpAwayAvg?: number | null;
     tpHomeCount?: number;
@@ -1895,6 +1908,18 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     opponentId: raw.fixtureOpponentId || raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
     playerId: raw._request?.playerId || raw.player?.id || undefined,
+    playerAge: (raw.playerAge ?? raw.age ?? raw.player?.age) as number | null | undefined,
+    age: (raw.age ?? raw.playerAge ?? raw.player?.age) as number | null | undefined,
+    averageMinutesPerMatch: (
+      raw.averageMinutesPerMatch
+      ?? raw.averageMinutesPerGame
+      ?? raw.playerGameLogs?.avgMinutes
+    ) as number | null | undefined,
+    averageMinutesPerGame: (
+      raw.averageMinutesPerGame
+      ?? raw.averageMinutesPerMatch
+      ?? raw.playerGameLogs?.avgMinutes
+    ) as number | null | undefined,
     playerPosition: raw.player?.position || undefined,
     playerRole: customerRole(raw.player?.position, raw.player?.role),
     playerPositionSource: raw.player?.positionSource || undefined,
@@ -2055,6 +2080,10 @@ export interface Pick {
   trackingId?: string;
   position?: string;
   role?: string;
+  playerAge?: number | null;
+  age?: number | null;
+  averageMinutesPerMatch?: number | null;
+  averageMinutesPerGame?: number | null;
   roleEvidence?: Record<string, unknown> | string[];
   leagueId?: number;
   leagueName?: string;
@@ -2176,6 +2205,18 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     trackingId: p.trackingId as string,
     position: (p.position as string) || undefined,
     role: customerRole(p.position, p.role),
+    playerAge: (p.playerAge as number) ?? (p.age as number) ?? null,
+    age: (p.age as number) ?? (p.playerAge as number) ?? null,
+    averageMinutesPerMatch: (
+      p.averageMinutesPerMatch as number
+      ?? p.averageMinutesPerGame as number
+      ?? (p.playerGameLogs as any)?.avgMinutes
+    ) ?? null,
+    averageMinutesPerGame: (
+      p.averageMinutesPerGame as number
+      ?? p.averageMinutesPerMatch as number
+      ?? (p.playerGameLogs as any)?.avgMinutes
+    ) ?? null,
     roleEvidence: (p.roleEvidence as Pick['roleEvidence']) || undefined,
     coinFlip: (p.coinFlip as boolean) || undefined,
     matchScore: (p.matchScore as string) || undefined,

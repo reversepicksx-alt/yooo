@@ -1568,6 +1568,31 @@ export default function PicksScreen() {
                   ? (analysisModal?.pick.venue === 'away' ? `@ ${analysisModal?.pick.opponentName}` : `vs ${analysisModal?.pick.opponentName}`)
                   : null].filter(Boolean).join(' · ')}
               </Text>
+               {(() => {
+                 const data: any = analysisModal?.data ?? {};
+                 const pick: any = analysisModal?.pick ?? {};
+                 const age = data.playerAge ?? data.age ?? data.player?.age
+                   ?? pick.playerAge ?? pick.age;
+                 const avgMinutes = data.averageMinutesPerMatch
+                   ?? data.averageMinutesPerGame
+                   ?? data.playerGameLogs?.avgMinutes
+                   ?? pick.averageMinutesPerMatch
+                   ?? pick.averageMinutesPerGame
+                   ?? pick.playerGameLogs?.avgMinutes;
+                 if (age == null && avgMinutes == null) return null;
+                 return (
+                   <View style={mStyles.modalProfileRow}>
+                     {age != null ? (
+                       <Text style={mStyles.modalProfileItem}>AGE {Math.round(Number(age))}</Text>
+                     ) : null}
+                     {avgMinutes != null ? (
+                       <Text style={mStyles.modalProfileItem}>
+                         AVG MIN {Number(avgMinutes).toFixed(1)}
+                       </Text>
+                     ) : null}
+                   </View>
+                 );
+               })()}
             </View>
             <View style={mStyles.modalRight}>
               {displayRec ? (
@@ -2079,6 +2104,10 @@ const mStyles = StyleSheet.create({
   modalPlayerInfo: { flex: 1 },
   modalPlayer: { fontSize: 18, fontWeight: '800', color: Colors.text },
   modalMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  modalProfileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 5 },
+  modalProfileItem: {
+    fontSize: 9, color: Colors.textTertiary, fontWeight: '800', letterSpacing: 0.8,
+  },
   modalRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   modalRecBadge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
   modalRecText: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
