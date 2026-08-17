@@ -142,7 +142,7 @@ def test_understat_cache_refreshes_after_expiry_and_fails_open(monkeypatch):
     assert asyncio.run(understat._load_league("EPL", 2025)) is None
 
 
-def test_tactical_explanation_labels_team_pressure_without_claiming_a_marker():
+def test_tactical_explanation_labels_press_intensity_without_claiming_a_marker():
     explanation = build_tactical_explanation({
         "playerName": "Florian Lejeune",
         "teamName": "Rayo Vallecano",
@@ -158,20 +158,16 @@ def test_tactical_explanation_labels_team_pressure_without_claiming_a_marker():
         "seasonAverage": 56,
         "venueAverage": 52,
         "recentAverage": 53,
-        "understatPressure": {
+        "pressIntensity": {
             "status": "available",
-            "opponentPress": {
-                "ppda": 8.0,
-                "label": "high",
-                "leaguePercentile": 90,
-                "sampleSize": 19,
-                "venue": "home",
-            },
-            "targetTeamOppPpda": 9.0,
-            "opponent": {"name": "Sevilla"},
+            "score100": 88,
+            "label": "Elite",
+            "sampleSize": 19,
+            "source": "api_football",
+            "projectionApplied": True,
         },
     })
-    assert "PPDA 8" in explanation
-    assert "team-level pressure evidence" in explanation
-    assert "one-to-one marker" in explanation
+    assert "Press Intensity is 88/100" in explanation
+    assert "observed aggregate actions and same-fixture opponent passes" in explanation
+    assert "individual markers are not claimed" in explanation
     assert "80% projection interval" not in explanation  # no interval supplied

@@ -1565,8 +1565,16 @@ async def predict(req: PredictionRequest):
                     cache_key = f"fxt_{fid}_{team_id}"
                     cached = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
 
-                    # Full cache hit — has all four PPDA denominator components cached
-                    if cached and cached.get("d") and "fouls_committed_agg" in cached["d"]:
+                    # Full cache hit — has the API-Football pressure inputs cached.
+                    # Older rows are deliberately enriched below instead of
+                    # silently reusing the pre-press schema.
+                    if (
+                        cached
+                        and cached.get("d")
+                        and "fouls_committed_agg" in cached["d"]
+                        and "opponentTotalPasses" in cached["d"]
+                        and "duels_won_agg" in cached["d"]
+                    ):
                         r = cached["d"]
                         r["date"] = fix.get("date", "")[:10]
                         r["opponent"] = fix.get("opponent", "")
@@ -1579,38 +1587,48 @@ async def predict(req: PredictionRequest):
                                                else fix.get("homeGoals", 0))
                         return r
 
-                    # Partial cache hit — has team stats but no tackles yet
-                    if cached and cached.get("d"):
-                        result = dict(cached["d"])
-                    else:
-                        # Cold fetch — get team-level stats from /fixtures/statistics
+                    # Partial cache hit — preserve what is known, then enrich
+                    # missing pressure fields from the same fixture.  The
+                    # opponent's pass total is the numerator for synthetic
+                    # pressing; the defending team's own passes are not.
+                    result = dict(cached["d"]) if cached and cached.get("d") else {}
+                    if "opponentTotalPasses" not in result:
                         data = await api_football_request("fixtures/statistics", {"fixture": fid})
-                        if not data:
-                            return None
-                        result = None
-                        for team_data in data:
-                            if team_data.get("team", {}).get("id") == team_id:
+                        if data:
+                            stats_by_team = {}
+                            for team_data in data:
                                 raw_stats = {}
-                                for s in team_data.get("statistics", []):
-                                    raw_stats[s.get("type", "")] = s.get("value")
-                                result = {
-                                    "possession": raw_stats.get("Ball Possession", ""),
-                                    "totalShots": raw_stats.get("Total Shots"),
-                                    "shotsOnTarget": raw_stats.get("Shots on Goal"),
-                                    "shotsOffTarget": raw_stats.get("Shots off Goal"),
-                                    "blockedShots": raw_stats.get("Blocked Shots"),
-                                    "shotsInsideBox": raw_stats.get("Shots insidebox"),
-                                    "shotsOutsideBox": raw_stats.get("Shots outsidebox"),
-                                    "totalPasses": raw_stats.get("Total passes"),
-                                    "passAccuracy": raw_stats.get("Passes %"),
-                                    "accuratePasses": raw_stats.get("Passes accurate"),
-                                    "fouls": raw_stats.get("Fouls"),
-                                    "corners": raw_stats.get("Corner Kicks"),
-                                    "expectedGoals": raw_stats.get("expected_goals"),
-                                }
-                                break
-                        if not result:
-                            return None
+                                for stat in team_data.get("statistics", []):
+                                    raw_stats[stat.get("type", "")] = stat.get("value")
+                                stats_by_team[(team_data.get("team") or {}).get("id")] = raw_stats
+
+                            raw_stats = stats_by_team.get(team_id) or {}
+                            opponent_stats = next(
+                                (stats for tid, stats in stats_by_team.items() if tid and tid != team_id),
+                                {},
+                            )
+                            if raw_stats:
+                                result.update({
+                                    "possession": raw_stats.get("Ball Possession", result.get("possession", "")),
+                                    "totalShots": raw_stats.get("Total Shots", result.get("totalShots")),
+                                    "shotsOnTarget": raw_stats.get("Shots on Goal", result.get("shotsOnTarget")),
+                                    "shotsOffTarget": raw_stats.get("Shots off Goal", result.get("shotsOffTarget")),
+                                    "blockedShots": raw_stats.get("Blocked Shots", result.get("blockedShots")),
+                                    "shotsInsideBox": raw_stats.get("Shots insidebox", result.get("shotsInsideBox")),
+                                    "shotsOutsideBox": raw_stats.get("Shots outsidebox", result.get("shotsOutsideBox")),
+                                    "totalPasses": raw_stats.get("Total passes", result.get("totalPasses")),
+                                    "passAccuracy": raw_stats.get("Passes %", result.get("passAccuracy")),
+                                    "accuratePasses": raw_stats.get("Passes accurate", result.get("accuratePasses")),
+                                    "fouls": raw_stats.get("Fouls", result.get("fouls")),
+                                    "corners": raw_stats.get("Corner Kicks", result.get("corners")),
+                                    "expectedGoals": raw_stats.get("expected_goals", result.get("expectedGoals")),
+                                    "opponentTotalPasses": opponent_stats.get("Total passes"),
+                                    "opponentPossession": opponent_stats.get("Ball Possession"),
+                                    "opponentTotalShots": opponent_stats.get("Total Shots"),
+                                })
+
+                    if not result:
+                        return None
 
                     # Fetch player-level data to aggregate tackles + interceptions
                     # (these are not available from /fixtures/statistics at team level)
@@ -1622,6 +1640,8 @@ async def predict(req: PredictionRequest):
                         tkl_int    = 0
                         tkl_blocks = 0
                         fls_committed = 0
+                        duels_won = 0
+                        duels_total = 0
                         cards_yellow = 0
                         cards_red = 0
                         got_tkl = False
@@ -1637,16 +1657,23 @@ async def predict(req: PredictionRequest):
                                         tkl_int       += (tkl.get("interceptions")  or 0)
                                         tkl_blocks    += (tkl.get("blocks")         or 0)
                                         fls_committed += (fls.get("committed")      or 0)
+                                        duel = st.get("duels") or {}
+                                        duels_won     += (duel.get("won")           or 0)
+                                        duels_total   += (duel.get("total")         or 0)
                                         cards_yellow  += (crd.get("yellow")         or 0)
                                         cards_red     += (crd.get("red")            or 0)
                                     got_tkl = True
                                     break
-                        # All four components of the PPDA denominator
-                        # (tackles + interceptions + fouls + blocks — full-pitch approximation)
+                        # API-Football's player rows provide the defensive
+                        # actions used by the synthetic Press Intensity
+                        # denominator.  Recoveries and blocked-pass locations
+                        # are not available, so they are never invented.
                         result["tackles_total"]         = tkl_total     if got_tkl else None
                         result["tackles_interceptions"] = tkl_int       if got_tkl else None
                         result["tackles_blocks"]        = tkl_blocks    if got_tkl else None
                         result["fouls_committed_agg"]   = fls_committed if got_tkl else None
+                        result["duels_won_agg"]          = duels_won     if got_tkl else None
+                        result["duels_total_agg"]        = duels_total   if got_tkl else None
                         result["cards_yellow_agg"]      = cards_yellow  if got_tkl else None
                         result["cards_red_agg"]         = cards_red     if got_tkl else None
                     except Exception:
@@ -1654,6 +1681,8 @@ async def predict(req: PredictionRequest):
                         result["tackles_interceptions"] = None
                         result["tackles_blocks"]        = None
                         result["fouls_committed_agg"]   = None
+                        result["duels_won_agg"]          = None
+                        result["duels_total_agg"]        = None
                         result["cards_yellow_agg"]      = None
                         result["cards_red_agg"]         = None
 
@@ -6523,6 +6552,15 @@ async def predict(req: PredictionRequest):
                     _bayes_role     = _pos_doc.get("role", "")
             except Exception:
                 pass
+
+            # The selection-time position is the trusted identity context for
+            # this request. Do not let a stale cache row silently change the
+            # role-aware Press Intensity multiplier before the later display
+            # resolver gets a chance to restore the verified position.
+            if req.positionOverride:
+                _bayes_position = req.positionOverride
+            if req.roleOverride:
+                _bayes_role = req.roleOverride
 
             # ── GK detection — always override for saves prop ────────────────
             # "saves" is an exclusively GK stat. If the position cache has a
@@ -12793,38 +12831,24 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "progressiveCarries": _fbref_player_kb.get("progressiveCarries"),
             }
         _fbref_available = bool(_fbref_pressure or _fbref_zones)
-        _understat_pressure = {
-            "status": "unavailable",
-            "reason": "not_requested",
-            "projectionInfluence": "explanation_only",
-        }
-        try:
-            from understat_client import fetch_understat_pressure_context
-            _understat_pressure = await aio.wait_for(
-                fetch_understat_pressure_context(
-                    league_id=prediction.get("leagueId") or req.leagueId,
-                    season=getattr(req, "season", None) or CURRENT_SEASON,
-                    team_name=player_team_display or req.teamName,
-                    opponent_name=req.opponentName,
-                    venue=player_venue,
-                    as_of=(match_odds or {}).get("matchDate"),
-                ),
-                # This function is cache-only. Keep the local database read
-                # bounded so an unavailable cache never delays prediction.
-                timeout=2.0,
-            )
-            if not isinstance(_understat_pressure, dict):
-                _understat_pressure = {
-                    "status": "unavailable",
-                    "reason": "invalid_provider_packet",
-                    "projectionInfluence": "explanation_only",
-                }
-        except Exception as _understat_err:
-            print(f"[UNDERSTAT CONTEXT] read skipped: {type(_understat_err).__name__}")
-            _understat_pressure = {
+        _press_intensity = (
+            (early_bayes or {}).get("pressIntensity")
+            if isinstance(early_bayes, dict)
+            else None
+        )
+        if not isinstance(_press_intensity, dict):
+            _press_intensity = {
+                "available": False,
                 "status": "unavailable",
-                "reason": "bounded_fetch_failed",
-                "projectionInfluence": "explanation_only",
+                "score": 0.0,
+                "score100": 0,
+                "label": "Unavailable",
+                "source": "api_football",
+                "reasoning": "Press Intensity was not returned by the Bayesian layer.",
+                "sampleSize": 0,
+                "sampleStatus": "unavailable",
+                "projectionApplied": False,
+                "projectionMultiplier": 1.0,
             }
         prediction["tacticalContext"] = {
             "available": bool(
@@ -12832,7 +12856,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 or _tc_role
                 or _tc_poss_player is not None
                 or _fbref_available
-                or _understat_pressure.get("status") in {"available", "verified_team_level"}
+                or isinstance(_press_intensity, dict)
                 or recent_block_profiles.get("available")
             ),
             "position": _tc_position or None,
@@ -12863,7 +12887,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 or 0
             ),
             "pressureResponse": _pressure_response,
-            "understatPressure": _understat_pressure,
+            "pressIntensity": _press_intensity,
             "recentOpponentBlockProfiles": recent_block_profiles,
             "opponentProfileTier": _tc_opp_profile.get("tier"),
             "opponentProfileDiffPct": _tc_opp_profile.get("diffPct"),
@@ -12942,7 +12966,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
-                understat_pressure=_understat_pressure,
+                press_intensity=_press_intensity,
             )
         except Exception as _tactical_intel_err:
             print(f"[TACTICAL INTELLIGENCE] failed: {_tactical_intel_err}")
@@ -13226,7 +13250,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 game_script=prediction.get("gameScript"),
                 lineup=prediction.get("lineup"),
                 history_values=_tactical_history_values,
-                understat_pressure=_understat_pressure,
+                press_intensity=_press_intensity,
             )
             prediction["matchScript"] = prediction["tacticalIntelligence"].get("matchScript")
             prediction["positionalReality"] = prediction["tacticalIntelligence"].get("positionalReality")
@@ -13306,7 +13330,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "possessionSource": match_dominance.get("possessionSource"),
                 "teamPassAverage": _team_pass_average,
                 "pressureResponse": _pressure_response,
-                "understatPressure": _understat_pressure,
+                "pressIntensity": _press_intensity,
                 "gameScript": prediction.get("gameScript"),
                 "positionCohort": position_comp_data,
                 "h2h": _tactical_h2h,

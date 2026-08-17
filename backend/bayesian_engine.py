@@ -403,14 +403,28 @@ def compute_bayesian_projection(
     Compute a 3-layer Bayesian projection from raw game data.
     Returns the full bayesianMetrics dict with real computed values.
     """
+    # Calculate this for every Bayesian call, including n=0/club-prior
+    # predictions.  The UI and audit payload must never depend on a prop-specific
+    # branch to know whether Press Intensity was evaluated.
+    press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
     if not game_logs:
         # Tournament n=0: use club season stats as prior instead of generic median
         if player_stats and league_id and league_id in {1, 4, 5, 8, 9, 10}:
             _club_prior = _build_club_prior(player_stats, prop_type, line, expected_minutes)
             if _club_prior:
+                _apply_press_intensity_to_metrics(
+                    _club_prior,
+                    press_intensity_info,
+                    prop_type=prop_type,
+                    position=position,
+                    venue=venue,
+                    line=line,
+                )
                 print(f"[TOURNAMENT n=0] {prop_type}: using club prior={_club_prior['priorMean']:.2f} (samples={_club_prior['priorSamples']})")
                 return _club_prior
-        return _empty_metrics(line)
+        _empty = _empty_metrics(line)
+        _empty["pressIntensity"] = press_intensity_info
+        return _empty
 
     # ── Is this a discrete count prop? ──────────────────────────────────────
     is_count_stat = prop_type in COUNT_PROPS
@@ -439,7 +453,9 @@ def compute_bayesian_projection(
             if g.get(stat_field, g.get("targetStat")) is not None
         ]
     if not _raw_pairs:
-        return _empty_metrics(line)
+        _empty = _empty_metrics(line)
+        _empty["pressIntensity"] = press_intensity_info
+        return _empty
 
     # Normalise to per-90
     all_vals    = [v * 90.0 / max(m, _MIN_MINUTES) for v, m in _raw_pairs]
@@ -1649,78 +1665,76 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     # PRESS INTENSITY — Position & Prop Aware
     # ═══════════════════════════════════════════
-    # Press signal is computed for any prop where opponent pressing meaningfully
-    # changes player workload (passes, saves, defensive actions, etc.) — not just
-    # pass_attempts. Direction is decided by position + prop, magnitude scales
-    # with the press score (0–1), and the cap is ±20% (was ±10%) so elite-press
-    # matchups can actually move the projection enough to matter.
-    #
-    # Direction matrix (high opponent press →):
-    #   • GK saves                       → BOOST  (turnovers high up → keeper bombarded)
-    #   • GK pass_attempts (away only)   → BOOST  (defenders pinned back, more back-passes)
-    #   • Defender pass_attempts         → BOOST  (rushed recycling — attempted ≠ completed)
-    #   • Defender tackles/interceptions → BOOST  (more defensive workload under chaos)
-    #   • Midfielder defensive actions   → BOOST  (more reclaim attempts)
-    #   • Midfielder/Attacker passes     → NEUTRAL (effects mixed in real data)
-    #
-    # We deliberately do NOT apply blanket suppression to outfield pass_attempts
-    # anymore — empirically that direction proved wrong for build-up positions
-    # against teams like Rayo Vallecano (high press → MORE attempted passes from
-    # pressed CBs/FBs, not fewer).
-    # ═══════════════════════════════════════════
+    # Press Intensity is calculated for every Bayesian call.  Only passing
+    # attempts/passes receive the role-aware pass multiplier; the other
+    # defensive prop paths retain their existing bounded workload adjustments.
+    # The single pass multiplier is centered at neutral pressure so low and high
+    # pressure move in opposite, interpretable directions rather than always
+    # suppressing or always boosting a player.
     PRESS_AFFECTED_PROPS = {
         "pass_attempts", "passes", "saves",
         "tackles", "interceptions", "clearances", "blocks",
     }
-    # Canonical empty/default schema — every path below MUST keep these keys
-    press_intensity_info = {
-        "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
-        "ppda": None, "reasoning": "",
-        "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
-        "avg_poss": None, "avg_passes": None,
-    }
-    if prop_type in PRESS_AFFECTED_PROPS and opponent_fixture_stats:
-        press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
-        # else: keep canonical default — already initialised above
-
+    press_intensity_info.setdefault("projectionApplied", False)
+    press_intensity_info.setdefault("projectionMultiplier", 1.0)
+    press_intensity_info.setdefault("projectionReason", "Press Intensity recorded; no adjustment applied.")
+    if prop_type in PRESS_AFFECTED_PROPS:
         press_score = press_intensity_info.get("score", 0.0) or 0.0
-        press_label = press_intensity_info.get("label", "Unknown")
+        press_label = press_intensity_info.get("label", "Unavailable")
+        applied_mult = 1.0
+        projection_reason = "Press Intensity recorded; no adjustment applied."
 
-        # Boost cap (positive = boost, negative = suppress) — scaled by press_score
-        boost_cap = 0.0
-        if _is_gk:
-            if prop_type == "saves":
-                boost_cap = 0.20   # up to +20% at elite press
-            elif prop_type in {"pass_attempts", "passes"} and venue == "away":
-                boost_cap = 0.12   # away GK back-pass boost (was capped at +5%)
-        elif _pos_group == "defender":
-            if prop_type in {"pass_attempts", "passes"}:
-                boost_cap = 0.15
-            elif prop_type in {"tackles", "interceptions", "clearances", "blocks"}:
+        if prop_type in {"pass_attempts", "passes"}:
+            applied_mult, projection_reason = _press_pass_projection_multiplier(
+                press_intensity_info,
+                prop_type,
+                position,
+                venue,
+            )
+        else:
+            # Defensive workload props retain the prior one-sided, bounded
+            # adjustment: stronger pressure can create more defensive work.
+            boost_cap = 0.0
+            if _is_gk and prop_type == "saves":
+                boost_cap = 0.20
+            elif _pos_group == "defender" and prop_type in {
+                "tackles", "interceptions", "clearances", "blocks",
+            }:
                 boost_cap = 0.10
-        elif _pos_group == "midfielder":
-            if prop_type in {"tackles", "interceptions"}:
+            elif _pos_group == "midfielder" and prop_type in {
+                "tackles", "interceptions",
+            }:
                 boost_cap = 0.08
-            # midfielder pass_attempts intentionally neutral (mixed empirical signal)
-        # attacker props intentionally neutral — press effect is too matchup-specific
+            applied_mult = round(1.0 + boost_cap * press_score, 3)
+            projection_reason = (
+                f"defensive workload boost from Press Intensity score "
+                f"{round(press_score * 100)}."
+            )
 
-        if press_score > 0 and boost_cap != 0.0:
-            adj = boost_cap * press_score
-            applied_mult = round(1.0 + adj, 3)
-            press_intensity_info["multiplier"] = applied_mult
+        press_intensity_info["multiplier"] = applied_mult
+        press_intensity_info["projectionMultiplier"] = applied_mult
+        press_intensity_info["projectionApplied"] = (
+            press_intensity_info.get("status") == "available"
+            and abs(applied_mult - 1.0) >= 0.001
+        )
+        press_intensity_info["projectionReason"] = projection_reason
+        if press_intensity_info["projectionApplied"]:
             raw_before = posterior_mean
             posterior_mean = round(posterior_mean * applied_mult, 1)
-            _cov_sigma += 0.04  # AI press estimate is highest-uncertainty covariate (±0.15 score)
-            tag = "BOOST" if adj > 0 else "SUPPRESS"
-            print(f"[PRESS {tag}] {prop_type} pos={_pos_group} venue={venue} "
-                  f"opp={press_label}(score={press_score}, signal={press_intensity_info['signal_used']}) "
-                  f"da={press_intensity_info.get('avg_defensive_actions')} → "
-                  f"mult={applied_mult} : {raw_before} → {posterior_mean}")
+            _cov_sigma += 0.04
+            tag = "BOOST" if applied_mult > 1.0 else "SUPPRESS"
+            print(
+                f"[PRESS {tag}] {prop_type} pos={_pos_group} venue={venue} "
+                f"position={position or 'unknown'} "
+                f"opp={press_label}(score={press_score}, signal={press_intensity_info.get('signal_used')}) "
+                f"effectiveDA={press_intensity_info.get('avg_effective_defensive_actions')} "
+                f"mult={applied_mult} : {raw_before} → {posterior_mean}"
+            )
         else:
-            # Press info captured for transparency but no posterior change applied
-            press_intensity_info["multiplier"] = 1.0
-            print(f"[PRESS NEUTRAL] {prop_type} pos={_pos_group} venue={venue} "
-                  f"opp={press_label}(score={press_score}) — no directional adjustment for this combo")
+            print(
+                f"[PRESS NEUTRAL] {prop_type} pos={_pos_group} venue={venue} "
+                f"opp={press_label}(score={press_score}) — no adjustment applied"
+            )
 
     # ═══════════════════════════════════════════
     # GAME-SCRIPT NUDGE (Vegas-derived chase / nailbiter signals)
@@ -2616,126 +2630,146 @@ def _normal_cdf(z: float) -> float:
 
 def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     """
-    Press Intensity Score — PPDA Proxy for pass_attempts/passes props.
+    Calculate a transparent API-Football Press Intensity signal.
 
-    ─── PRIMARY SIGNAL (when available) ───────────────────────────────────────
-    Opponent's avg tackles + interceptions per game, aggregated from player-level
-    data via /fixtures/players (fetched and cached in fetch_fixture_team_stats).
+    Each row represents a historical match for the *defending* opponent.
+    ``opponentTotalPasses`` is the pass total for the other team in that
+    fixture, which is the correct numerator for a full-pitch synthetic PPDA
+    ratio.  The provider does not expose defensive-third locations or
+    recoveries, so this deliberately uses only observed aggregate inputs.
 
-    This is the correct PPDA-proxy signal: defensive actions directly measure
-    how aggressively a team hunts the ball when not in possession.
-      Low-press team  : ~14 tackles + 8  interceptions = ~22 def actions/game
-      Average team    : ~18 tackles + 11 interceptions = ~29 def actions/game
-      High-press team : ~22 tackles + 14 interceptions = ~36 def actions/game
-      Elite press     : ~26 tackles + 16 interceptions = ~42+ def actions/game
-
-    ─── FALLBACK SIGNAL (when tackles data not yet cached) ─────────────────────
-    Opponent's avg possession % and total passes per game (possession-based signal).
-    Possession thresholds: 50% = neutral, 70% = dominant.
-
-    ─── MULTIPLIER CAP ─────────────────────────────────────────────────────────
-    Capped at 10% max reduction (multiplier floor = 0.90), NOT 20%.
-    This is independent of match dominance (which handles possession imbalance).
-    Pressing = disruption/turnovers. Dominance = ball-time. They are additive
-    but the pressing effect is smaller and more marginal — hence the 10% cap.
-
-    Returns:
-      score                 : 0.0 → 1.0
-      multiplier            : 1.0 → 0.90 (max 10% reduction)
-      label                 : "Low" / "Moderate" / "High" / "Elite"
-      signal_used           : "tackles" or "possession"
-      avg_defensive_actions : tackles + interceptions per game (if tackles used)
-      avg_tackles           : opponent avg tackles / game
-      avg_interceptions     : opponent avg interceptions / game
-      avg_poss              : opponent avg possession % (if possession used)
-      avg_passes            : opponent avg total passes / game
+    The returned score is 0.0 → 1.0 (also emitted as ``score100``).  Lower
+    synthetic PPDA and more weighted defensive actions mean stronger press.
+    Possession is retained as context but is not allowed to masquerade as
+    pressure: a possession-dominant team can still press passively.
     """
     unknown = {
-        "score": 0.0, "multiplier": 1.0, "label": "Unknown",
+        "available": False,
+        "status": "unavailable",
+        "score": 0.0,
+        "score100": 0,
+        "multiplier": 1.0,
+        "label": "Unavailable",
         "signal_used": None,
-        "ppda": None, "reasoning": "",
-        "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
-        "avg_poss": None, "avg_passes": None,
+        "source": "api_football",
+        "synthetic_ppda": None,
+        "ppda": None,
+        "reasoning": "API-Football pressure inputs were not available for this fixture sample.",
+        "sampleSize": 0,
+        "sampleStatus": "unavailable",
+        "featureCoverage": 0.0,
+        "avg_defensive_actions": None,
+        "avg_effective_defensive_actions": None,
+        "avg_tackles": None,
+        "avg_interceptions": None,
+        "avg_blocks": None,
+        "avg_duels_won": None,
+        "avg_fouls": None,
+        "avg_poss": None,
+        "avg_passes": None,
+        "avg_opponent_passes": None,
+        "projectionApplied": False,
+        "projectionMultiplier": 1.0,
     }
-    if not opp_fixture_stats or len(opp_fixture_stats) < 2:
+    if not isinstance(opp_fixture_stats, list):
         return unknown
 
-    # ── PRIMARY: tackles + interceptions from /fixtures/players aggregation ──
-    tackles       = [s.get("tackles_total")         for s in opp_fixture_stats if s.get("tackles_total")         is not None]
-    interceptions = [s.get("tackles_interceptions")  for s in opp_fixture_stats if s.get("tackles_interceptions") is not None]
-
-    if len(tackles) >= 2:
-        avg_tkl = sum(tackles) / len(tackles)
-        avg_int = sum(interceptions) / len(interceptions) if len(interceptions) >= 2 else 10.0
-        avg_da  = avg_tkl + avg_int
-        # Baseline 22 def-actions/game (low press) → 42+ = elite (score=1.0)
-        score = round(max(0.0, min(1.0, (avg_da - 22) / 20)), 3)
-        multiplier = round(max(0.90, 1.0 - score * 0.10), 3)
-        if score < 0.20:
-            label = "Low"
-        elif score < 0.45:
-            label = "Moderate"
-        elif score < 0.70:
-            label = "High"
-        else:
-            label = "Elite"
-        # Compute approximate PPDA = avg_passes / avg_da
-        # totalPasses is stored in opp_fixture_stats by fetch_fixture_team_stats
-        _ppda_pass_list = [s.get("totalPasses") for s in opp_fixture_stats if s.get("totalPasses") is not None]
-        _ppda_avg_passes = sum(_ppda_pass_list) / len(_ppda_pass_list) if len(_ppda_pass_list) >= 2 else None
-        approx_ppda = round(_ppda_avg_passes / max(avg_da, 1), 1) if _ppda_avg_passes else None
-        return {
-            "score":                 score,
-            "multiplier":            multiplier,
-            "label":                 label,
-            "signal_used":           "tackles",
-            "ppda":                  approx_ppda,
-            "reasoning":             "",
-            "avg_defensive_actions": round(avg_da, 1),
-            "avg_tackles":           round(avg_tkl, 1),
-            "avg_interceptions":     round(avg_int, 1),
-            "avg_poss":              None,
-            "avg_passes":            round(_ppda_avg_passes, 1) if _ppda_avg_passes else None,
-        }
-
-    # ── FALLBACK: possession % + total passes ───────────────────────────────
-    raw_poss = []
-    for s in opp_fixture_stats:
-        p = s.get("possession")
-        if p is None:
-            continue
-        if isinstance(p, str):
-            p = p.replace("%", "").strip()
-            try:
-                p = float(p)
-            except ValueError:
-                continue
+    def number(value):
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, str):
+            value = value.replace("%", "").replace(",", "").strip()
         try:
-            raw_poss.append(float(p))
+            value = float(value)
         except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    weights = {
+        "tackles_total": 0.90,
+        "tackles_interceptions": 1.00,
+        "tackles_blocks": 0.75,
+        "duels_won_agg": 0.45,
+        "fouls_committed_agg": 0.35,
+    }
+    action_rows = []
+    opponent_passes = []
+    possessions = []
+    component_values = {key: [] for key in weights}
+
+    for row in opp_fixture_stats:
+        if not isinstance(row, dict):
             continue
+        available_components = {}
+        for key, weight in weights.items():
+            value = number(row.get(key))
+            if value is not None:
+                available_components[key] = value
+                component_values[key].append(value)
+        if available_components:
+            effective = sum(weights[key] * value for key, value in available_components.items())
+            action_rows.append((effective, len(available_components) / len(weights)))
+        opp_pass = number(row.get("opponentTotalPasses"))
+        if opp_pass is not None and opp_pass > 0:
+            opponent_passes.append(opp_pass)
+        possession = number(row.get("possession"))
+        if possession is not None:
+            possessions.append(possession)
 
-    passes = [s.get("totalPasses") for s in opp_fixture_stats if s.get("totalPasses") is not None]
+    # Pass volume alone cannot identify pressing intensity.  Without at least
+    # one observed defensive-action packet, expose an unavailable state instead
+    # of turning a denominator-free ratio into a false signal.
+    if not action_rows:
+        result = dict(unknown)
+        result["reasoning"] = (
+            "No usable API-Football defensive-action fields were returned; "
+            "opponent pass volume alone is not a pressure measure."
+        )
+        return result
 
-    if len(raw_poss) < 2 and len(passes) < 2:
-        return unknown
+    avg_effective = (
+        sum(value for value, _coverage in action_rows) / len(action_rows)
+        if action_rows else None
+    )
+    avg_coverage = (
+        sum(coverage for _value, coverage in action_rows) / len(action_rows)
+        if action_rows else 0.0
+    )
+    avg_opponent_passes = (
+        sum(opponent_passes) / len(opponent_passes)
+        if opponent_passes else None
+    )
+    synthetic_ppda = (
+        avg_opponent_passes / avg_effective
+        if avg_opponent_passes is not None and avg_effective and avg_effective > 0
+        else None
+    )
 
-    avg_poss   = sum(raw_poss) / len(raw_poss) if len(raw_poss) >= 2 else None
-    avg_passes = sum(passes)   / len(passes)   if len(passes)   >= 2 else None
-
-    poss_score = max(0.0, min(1.0, (avg_poss - 50) / 20))   if avg_poss   is not None else None
-    pass_score = max(0.0, min(1.0, (avg_passes - 450) / 200)) if avg_passes is not None else None
-
-    if poss_score is not None and pass_score is not None:
-        score = poss_score * 0.70 + pass_score * 0.30
-    elif poss_score is not None:
-        score = poss_score
+    # Weighted actions are the direct signal.  Synthetic PPDA is the stronger
+    # signal when the same-fixture opponent pass numerator is available.
+    action_score = (
+        # The weighted action total includes duels and fouls that are not
+        # classical PPDA events, so use a wider conservative range than a
+        # raw-tackle baseline. This keeps normal API-Football match packets
+        # from saturating at "Elite".
+        max(0.0, min(1.0, (avg_effective - 35.0) / 45.0))
+        if avg_effective is not None else None
+    )
+    ppda_score = (
+        max(0.0, min(1.0, (12.0 - synthetic_ppda) / 6.0))
+        if synthetic_ppda is not None else None
+    )
+    if ppda_score is not None and action_score is not None:
+        score = ppda_score * 0.65 + action_score * 0.35
+        signal_used = "synthetic_ppda_and_actions"
+    elif ppda_score is not None:
+        score = ppda_score
+        signal_used = "synthetic_ppda"
     else:
-        score = pass_score
+        score = action_score if action_score is not None else 0.0
+        signal_used = "defensive_actions"
 
     score = round(max(0.0, min(1.0, score)), 3)
-    multiplier = round(max(0.90, 1.0 - score * 0.10), 3)
-
     if score < 0.20:
         label = "Low"
     elif score < 0.45:
@@ -2745,22 +2779,155 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     else:
         label = "Elite"
 
-    # Approximate PPDA from possession-path: estimate da from score (score=0→22 da, score=1→42 da)
-    _est_da_poss = 22 + score * 20
-    approx_ppda_poss = round(avg_passes / max(_est_da_poss, 1), 1) if avg_passes else None
-    return {
-        "score":                 score,
-        "multiplier":            multiplier,
-        "label":                 label,
-        "signal_used":           "possession",
-        "ppda":                  approx_ppda_poss,
-        "reasoning":             "",
-        "avg_defensive_actions": None,
-        "avg_tackles":           None,
-        "avg_interceptions":     None,
-        "avg_poss":              round(avg_poss, 1)   if avg_poss   is not None else None,
-        "avg_passes":            round(avg_passes, 1) if avg_passes is not None else None,
+    sample_size = max(len(action_rows), len(opponent_passes))
+    result = {
+        "available": True,
+        "status": "available",
+        "score": score,
+        "score100": int(round(score * 100)),
+        "multiplier": 1.0,
+        "label": label,
+        "signal_used": signal_used,
+        "source": "api_football",
+        "synthetic_ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
+        # Keep ppda as a compatibility alias for older saved records, but
+        # Press Intensity is the canonical product metric.
+        "ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
+        "reasoning": (
+            "Lower opponent pass volume per weighted defensive action indicates "
+            "more intense pressure. Possession is context only."
+        ),
+        "sampleSize": sample_size,
+        "sampleStatus": "sufficient" if sample_size >= 5 else "limited",
+        "featureCoverage": round(avg_coverage, 2),
+        "avg_defensive_actions": round(avg_effective, 1) if avg_effective is not None else None,
+        "avg_effective_defensive_actions": round(avg_effective, 1) if avg_effective is not None else None,
+        "avg_tackles": round(sum(component_values["tackles_total"]) / len(component_values["tackles_total"]), 1)
+            if component_values["tackles_total"] else None,
+        "avg_interceptions": round(sum(component_values["tackles_interceptions"]) / len(component_values["tackles_interceptions"]), 1)
+            if component_values["tackles_interceptions"] else None,
+        "avg_blocks": round(sum(component_values["tackles_blocks"]) / len(component_values["tackles_blocks"]), 1)
+            if component_values["tackles_blocks"] else None,
+        "avg_duels_won": round(sum(component_values["duels_won_agg"]) / len(component_values["duels_won_agg"]), 1)
+            if component_values["duels_won_agg"] else None,
+        "avg_fouls": round(sum(component_values["fouls_committed_agg"]) / len(component_values["fouls_committed_agg"]), 1)
+            if component_values["fouls_committed_agg"] else None,
+        "avg_poss": round(sum(possessions) / len(possessions), 1) if possessions else None,
+        "avg_passes": round(sum(opponent_passes) / len(opponent_passes), 1) if opponent_passes else None,
+        "avg_opponent_passes": round(avg_opponent_passes, 1) if avg_opponent_passes is not None else None,
+        "projectionApplied": False,
+        "projectionMultiplier": 1.0,
     }
+    return result
+
+
+def _press_pass_projection_multiplier(
+    press_intensity: dict,
+    prop_type: str,
+    position: str,
+    venue: str,
+) -> tuple[float, str]:
+    """Return a bounded, role-aware pass-attempt multiplier.
+
+    High pressure tends to create more recycling/back-pass attempts for
+    defenders and keepers, while reducing clean midfield/attacking circulation.
+    The effect is centered at neutral pressure and capped at 12%, so a missing
+    or weak signal cannot dominate the player's own history or possession layer.
+    """
+    if prop_type not in {"pass_attempts", "passes"}:
+        return 1.0, "Press Intensity recorded; no pass-attempt adjustment for this prop."
+    if not isinstance(press_intensity, dict) or press_intensity.get("status") != "available":
+        return 1.0, "Press Intensity unavailable; pass projection left unchanged."
+    try:
+        score = float(press_intensity.get("score") or 0.0)
+    except (TypeError, ValueError):
+        return 1.0, "Press Intensity score invalid; pass projection left unchanged."
+    score = max(0.0, min(1.0, score))
+    position_upper = (position or "").upper().strip()
+    is_gk = position_upper in {"GK", "GOALKEEPER"}
+    group = POSITION_GROUP_MAP.get(position_upper, "midfielder")
+    if is_gk:
+        cap = 0.12 if venue == "away" else 0.08
+        explanation = "keeper recycling/back-pass volume"
+    elif group == "defender":
+        cap = 0.10
+        explanation = "defensive recycling and pressured build-up"
+    elif group == "midfielder":
+        cap = -0.06
+        explanation = "reduced clean midfield circulation"
+    else:
+        cap = -0.04
+        explanation = "reduced attacking circulation"
+    centered_score = (score - 0.5) * 2.0
+    multiplier = round(max(0.88, min(1.12, 1.0 + cap * centered_score)), 3)
+    direction = "boost" if multiplier > 1.0 else "suppression" if multiplier < 1.0 else "neutral"
+    return multiplier, f"{direction}: {explanation} (score {round(score * 100)})."
+
+
+def _apply_press_intensity_to_metrics(
+    metrics: dict,
+    press_intensity: dict,
+    *,
+    prop_type: str,
+    position: str,
+    venue: str,
+    line: float | None = None,
+) -> dict:
+    """Attach Press Intensity and apply its single bounded pass adjustment."""
+    if not isinstance(metrics, dict):
+        return metrics
+    info = dict(press_intensity or {})
+    multiplier, reason = _press_pass_projection_multiplier(
+        info,
+        prop_type,
+        position,
+        venue,
+    )
+    info["projectionApplied"] = abs(multiplier - 1.0) >= 0.001
+    info["projectionMultiplier"] = multiplier
+    info["projectionReason"] = reason
+    # Keep the legacy multiplier key aligned with the actual Bayesian
+    # projection.  It is no longer a generic pressure score reduction.
+    info["multiplier"] = multiplier
+    metrics["pressIntensity"] = info
+    if not info["projectionApplied"]:
+        return metrics
+
+    posterior_mean = metrics.get("posteriorMean")
+    if posterior_mean is None:
+        return metrics
+    try:
+        adjusted_mean = round(float(posterior_mean) * multiplier, 1)
+    except (TypeError, ValueError):
+        return metrics
+    metrics["posteriorMean"] = adjusted_mean
+    metrics["mostLikelyValue"] = adjusted_mean
+    for range_key in ("range60", "range80"):
+        values = metrics.get(range_key)
+        if isinstance(values, list) and len(values) == 2:
+            metrics[range_key] = [
+                round(max(0.0, float(value) * multiplier), 1)
+                for value in values
+            ]
+    confidence_interval = metrics.get("confidenceInterval")
+    if isinstance(confidence_interval, list) and len(confidence_interval) == 2:
+        metrics["confidenceInterval"] = [
+            round(max(0.0, float(value) * multiplier), 1)
+            for value in confidence_interval
+        ]
+    distribution = metrics.get("distribution")
+    if isinstance(distribution, dict):
+        distribution["mostLikelyValue"] = adjusted_mean
+        for range_key in ("range60", "range80"):
+            values = distribution.get(range_key)
+            if isinstance(values, list) and len(values) == 2:
+                distribution[range_key] = [
+                    round(max(0.0, float(value) * multiplier), 1)
+                    for value in values
+                ]
+    if line is not None:
+        metrics["recommendation"] = "over" if adjusted_mean > float(line) else "under"
+    return metrics
 
 
 def _estimate_opponent_concession(opp_fixture_stats: list, prop_type: str) -> Optional[float]:

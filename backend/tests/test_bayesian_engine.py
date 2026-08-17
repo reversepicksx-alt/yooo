@@ -9,6 +9,7 @@ sys.path.insert(0, '/app/backend')
 import pytest
 from bayesian_engine import (
     compute_bayesian_projection,
+    compute_press_intensity_score,
     compute_live_gaussian_update,
     gaussian_likelihood_update,
 )
@@ -217,6 +218,99 @@ class TestPriorMomentumDominance:
             result = compute_bayesian_projection(logs, 'pass_attempts', random.uniform(10, 35), 'home')
             player_weight = result['priorWeight'] + result['momentumWeight']
             assert player_weight >= 74, f"Player data weight {player_weight}% < 74%"
+
+
+class TestPressIntensity:
+    """Press Intensity uses exact-fixture opponent passes and bounded effects."""
+
+    @staticmethod
+    def _stats(**overrides):
+        row = {
+            # Deliberately make the defending team's passes very different from
+            # the opponent's passes. The latter must be the synthetic numerator.
+            "totalPasses": 900,
+            "opponentTotalPasses": 300,
+            "possession": "55%",
+            "tackles_total": 20,
+            "tackles_interceptions": 10,
+            "tackles_blocks": 5,
+            "duels_won_agg": 20,
+            "fouls_committed_agg": 10,
+        }
+        row.update(overrides)
+        return [dict(row), dict(row)]
+
+    def test_uses_same_fixture_opponent_passes_as_numerator(self):
+        packet = compute_press_intensity_score(self._stats())
+        assert packet["status"] == "available"
+        assert packet["signal_used"] == "synthetic_ppda_and_actions"
+        assert packet["avg_opponent_passes"] == 300.0
+        assert packet["synthetic_ppda"] < 10
+        assert packet["score"] > 0.6
+
+    def test_missing_action_fields_are_explicitly_unavailable(self):
+        packet = compute_press_intensity_score([
+            {"totalPasses": 450, "opponentTotalPasses": 300, "possession": "51%"},
+        ])
+        assert packet["status"] == "unavailable"
+        assert packet["sampleStatus"] == "unavailable"
+        assert packet["projectionApplied"] is False
+        assert "defensive-action" in packet["reasoning"]
+
+    def test_every_bayesian_call_exposes_press_contract(self):
+        logs = [{"targetStat": 30, "minutes": 90}] * 8
+        for prop in ("pass_attempts", "passes", "key_passes", "crosses"):
+            result = compute_bayesian_projection(
+                logs,
+                prop,
+                25.5,
+                "home",
+                opponent_fixture_stats=self._stats(),
+                position="LW",
+            )
+            assert result["pressIntensity"]["status"] == "available"
+            assert 0 <= result["pressIntensity"]["score100"] <= 100
+        assert compute_bayesian_projection(
+            logs,
+            "pass_attempts",
+            25.5,
+            "home",
+            opponent_fixture_stats=[],
+            position="LW",
+        )["pressIntensity"]["status"] == "unavailable"
+
+    def test_multiplier_direction_is_role_aware_and_bounded(self):
+        logs = [{"targetStat": 30, "minutes": 90}] * 8
+        defender_base = compute_bayesian_projection(
+            logs, "passes", 25.5, "home", position="CB"
+        )
+        defender_pressed = compute_bayesian_projection(
+            logs,
+            "passes",
+            25.5,
+            "home",
+            opponent_fixture_stats=self._stats(),
+            position="CB",
+        )
+        midfielder_base = compute_bayesian_projection(
+            logs, "passes", 25.5, "home", position="CM"
+        )
+        midfielder_pressed = compute_bayesian_projection(
+            logs,
+            "passes",
+            25.5,
+            "home",
+            opponent_fixture_stats=self._stats(),
+            position="CM",
+        )
+        defender_factor = defender_pressed["pressIntensity"]["projectionMultiplier"]
+        midfielder_factor = midfielder_pressed["pressIntensity"]["projectionMultiplier"]
+        assert defender_factor > 1.0
+        assert midfielder_factor < 1.0
+        assert 0.88 <= defender_factor <= 1.12
+        assert 0.88 <= midfielder_factor <= 1.12
+        assert defender_pressed["posteriorMean"] > defender_base["posteriorMean"]
+        assert midfielder_pressed["posteriorMean"] < midfielder_base["posteriorMean"]
 
 
 if __name__ == "__main__":

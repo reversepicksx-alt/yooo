@@ -166,7 +166,11 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             limitations.append(str(item))
     opponent_profile = prediction.get("opponentDefensiveProfile") or prediction.get("opponentProfile") or {}
     tactical_context = prediction.get("tacticalContext") or {}
-    understat = tactical_context.get("understatPressure") or {}
+    press_intensity = (
+        tactical_context.get("pressIntensity")
+        or bm.get("pressIntensity")
+        or {}
+    )
     recent_blocks = tactical_context.get("recentOpponentBlockProfiles") or {}
     recent_block_rows = recent_blocks.get("profiles") if isinstance(recent_blocks, dict) else []
     if not isinstance(recent_block_rows, list):
@@ -231,15 +235,13 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "moneyline": prediction.get("moneyline"),
             "gameScript": prediction.get("gameScript") or prediction.get("matchScript"),
             "opponentPressure": {
-                "status": understat.get("status") or "unavailable",
-                "ppda": (understat.get("opponentPress") or {}).get("ppda")
-                if isinstance(understat, dict)
-                else None,
-                "label": (understat.get("opponentPress") or {}).get("label")
-                if isinstance(understat, dict)
-                else None,
-                "source": understat.get("source") if isinstance(understat, dict) else None,
-                "reason": understat.get("reason") if isinstance(understat, dict) else None,
+                "status": press_intensity.get("status") or "unavailable",
+                "pressIntensity": press_intensity.get("score100"),
+                "label": press_intensity.get("label"),
+                "sampleSize": press_intensity.get("sampleSize"),
+                "source": press_intensity.get("source"),
+                "reason": press_intensity.get("reasoning")
+                or press_intensity.get("reason"),
             },
             "recentOpponentBlockProfiles": recent_block_rows[:5],
         },
@@ -554,8 +556,10 @@ async def build_compact_explanation(
         )
         pressure_context = context.get("opponentPressure") or {}
         evidence_lines.append(
-            f"Opponent pressure: status {pressure_context.get('status') or 'unavailable'} | "
-            f"PPDA {_fmt(pressure_context.get('ppda'))} | "
+            f"Opponent Press Intensity: status {pressure_context.get('status') or 'unavailable'} | "
+            f"score {_fmt(pressure_context.get('pressIntensity'))}/100 | "
+            f"label {pressure_context.get('label') or 'unavailable'} | "
+            f"sample {pressure_context.get('sampleSize') or 0} | "
             f"source {pressure_context.get('source') or 'unavailable'} | "
             f"reason {pressure_context.get('reason') or 'none supplied'}"
         )
@@ -635,7 +639,7 @@ async def build_compact_explanation(
             f"- Call the player by name ({player_name}) throughout.\n"
             f"- Do NOT say 'Bayesian' — say 'Reverse Formula' instead.\n"
             f"- Do NOT invent statistics. Use only the numbers in THE PICK block for specific figures.\n"
-            f"- Treat PPDA as unavailable when its status is unavailable; never infer a number from a pressure label.\n"
+            f"- Treat Press Intensity as unavailable when its status is unavailable; never infer a score from a pressure label.\n"
             f"- Treat role/source, dated opponent rows, and fixture identity as provenance; do not upgrade inferred evidence to confirmed fact.\n"
             f"- The {rec} recommendation is final — do not argue the other side or hedge the direction.\n"
             f"- No headings, no bullets, no markdown, no provider names, no betting guarantees.\n"

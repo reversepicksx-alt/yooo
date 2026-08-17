@@ -60,11 +60,8 @@ function TacticalNarrativeCard({
     : rec === 'UNDER'
       ? Colors.error
       : Colors.textSecondary;
-  const understat = tacticalContext?.understatPressure;
-  const understatPress = understat?.opponentPress;
-  const hasUnderstatPressure =
-    ['available', 'verified_team_level'].includes(understat?.status)
-    && understatPress?.ppda != null;
+  const pressIntensity = tacticalContext?.pressIntensity ?? {};
+  const hasPressIntensity = pressIntensity?.status === 'available';
 
   const renderLine = (raw: string, key: number) => {
     const trimmed = raw.trimEnd();
@@ -122,7 +119,7 @@ function TacticalNarrativeCard({
           MATCH CONTEXT
         </Text>
       </View>
-      {hasUnderstatPressure ? (
+      {hasPressIntensity ? (
         <View style={{
           marginTop: 8,
           paddingHorizontal: 9,
@@ -138,18 +135,14 @@ function TacticalNarrativeCard({
               TEAM PRESSURE
             </Text>
             <Text style={{ marginLeft: 'auto', fontSize: 9, color: Colors.textTertiary, fontWeight: '700' }}>
-              CONFIRMED PPDA
+              PRESS INTENSITY
             </Text>
           </View>
           <Text style={{ marginTop: 4, fontSize: 12, color: Colors.text, fontWeight: '700' }}>
-            {String(understatPress.label || 'classified').toUpperCase()}
+            {Number(pressIntensity.score100 ?? ((Number(pressIntensity.score) || 0) * 100)).toFixed(0)}/100 · {String(pressIntensity.label || 'classified').toUpperCase()}
           </Text>
           <Text style={{ marginTop: 2, fontSize: 10.5, lineHeight: 15, color: Colors.textSecondary }}>
-            {understatPress.leaguePercentile != null
-              ? `${Number(understatPress.leaguePercentile).toFixed(0)}th league percentile · `
-              : ''}
-            {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} venue · ` : ''}
-            {understatPress.sampleSize ?? 0} matches. Team-level pressure does not identify a one-to-one marker.
+            {pressIntensity.sampleSize ?? 0} matches. Aggregate pressure signal; not a player-level assignment.
           </Text>
         </View>
       ) : null}
@@ -561,7 +554,7 @@ function buildSectionExplanationSnapshot(prediction: Record<string, any>): Recor
       lineup: tactical.lineup,
       possessionGameScript: tactical.possessionGameScript,
       positionPassesReceived: tactical.positionPassesReceived,
-      understatPressure: tactical.understatPressure,
+      pressIntensity: tactical.pressIntensity,
       recentOpponentBlockProfiles: Array.isArray(profiles)
         ? { profiles: profiles.slice(0, 12) }
         : undefined,

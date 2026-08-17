@@ -385,40 +385,49 @@ export function renderTacticalVerdict(
   );
 }
 
-/** Confirmed team-pressure card. Provider branding stays out of the product UI. */
+/** Press Intensity card. It stays visible even when the provider sample is unavailable. */
 export function renderTacticalContext(data: Record<string, unknown> | null) {
   const sport = String((data as any)?.sport ?? 'soccer').toLowerCase();
   if (sport && sport !== 'soccer') return null;
-  const understat = ((data as any)?.tacticalContext?.understatPressure
-    ?? (data as any)?.tacticalIntelligence?.understatPressure) as any;
-  const understatPress = understat?.opponentPress ?? {};
-  const understatPpda = understatPress.ppda ?? understat?.targetTeamOppPpda;
-  const hasUnderstat =
-    ['available', 'verified_team_level'].includes(understat?.status)
-    && understatPpda != null;
-  if (!hasUnderstat) return null;
+  const pressIntensity = (
+    (data as any)?.tacticalContext?.pressIntensity
+    ?? (data as any)?.bayesianMetrics?.pressIntensity
+    ?? (data as any)?.pressIntensity
+    ?? {}
+  ) as any;
+  const available = pressIntensity?.status === 'available';
+  const score = Number.isFinite(Number(pressIntensity?.score100))
+    ? Number(pressIntensity.score100)
+    : Math.round((Number(pressIntensity?.score) || 0) * 100);
+  const label = available
+    ? String(pressIntensity?.label || 'Classified').toUpperCase()
+    : 'UNAVAILABLE';
+  const sampleSize = Number(pressIntensity?.sampleSize || 0);
   return (
     <View style={aStyles.tacticalContextCard}>
       <View style={aStyles.proCardHeader}>
-        <View style={[aStyles.proCardPill, { backgroundColor: '#60A5FA18' }]}>
-          <Text style={[aStyles.proCardPillText, { color: '#60A5FA' }]}>CONFIRMED PPDA</Text>
+        <View style={[aStyles.proCardPill, { backgroundColor: available ? '#60A5FA18' : '#94A3B818' }]}>
+          <Text style={[aStyles.proCardPillText, { color: available ? '#60A5FA' : '#94A3B8' }]}>PRESS INTENSITY</Text>
         </View>
         <Text style={aStyles.proCardTitle}>TEAM PRESSURE</Text>
       </View>
       <View style={aStyles.tacticalContextGrid}>
         <View style={aStyles.tacticalContextCell}>
-          <Text style={aStyles.proCardMetricLabel}>OPPONENT PPDA</Text>
+          <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESS</Text>
           <Text style={aStyles.tacticalContextValue}>
-            {Number(understatPpda).toFixed(1)}
-            {understatPress.label ? ` · ${String(understatPress.label).toUpperCase()}` : ''}
+            {score}/100 · {label}
           </Text>
           <Text style={aStyles.proCardNote}>
-            {understatPress.leaguePercentile != null
-              ? `${Number(understatPress.leaguePercentile).toFixed(0)}th percentile · `
-              : ''}
-            {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} · ` : ''}
-            {understatPress.sampleSize ?? 0} matches
+            {available
+              ? `${sampleSize} match${sampleSize === 1 ? '' : 'es'} · `
+                + `${pressIntensity?.sampleStatus === 'sufficient' ? 'stable sample' : 'limited sample'}`
+              : 'No usable API-Football pressure sample was returned for this prediction.'}
           </Text>
+          {available && pressIntensity?.projectionApplied ? (
+            <Text style={aStyles.proCardNote}>
+              Passing projection factor: ×{Number(pressIntensity.projectionMultiplier || 1).toFixed(3)}
+            </Text>
+          ) : null}
         </View>
       </View>
     </View>

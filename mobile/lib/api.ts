@@ -802,6 +802,32 @@ export interface PredictionResult {
       limitations?: string[];
       reason?: string;
     } | null;
+    pressIntensity?: {
+      available?: boolean;
+      status?: string;
+      score?: number;
+      score100?: number;
+      label?: string | null;
+      source?: string | null;
+      signal_used?: string | null;
+      synthetic_ppda?: number | null;
+      sampleSize?: number;
+      sampleStatus?: string;
+      featureCoverage?: number;
+      avg_effective_defensive_actions?: number | null;
+      avg_tackles?: number | null;
+      avg_interceptions?: number | null;
+      avg_blocks?: number | null;
+      avg_duels_won?: number | null;
+      avg_fouls?: number | null;
+      avg_poss?: number | null;
+      avg_opponent_passes?: number | null;
+      projectionApplied?: boolean;
+      projectionMultiplier?: number;
+      projectionReason?: string | null;
+      reasoning?: string | null;
+    } | null;
+    /** @deprecated Kept only so older saved picks can be decoded. */
     understatPressure?: {
       status?: string;
       source?: string | null;

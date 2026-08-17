@@ -343,10 +343,6 @@ async def _run_startup_tasks():
     # from settled picks every few hours so it never goes stale.
     asyncio.create_task(_cheat_sheet_loop())
 
-    # Understat is a slow supplemental source. Refresh covered league snapshots
-    # in the background; prediction requests only read the saved local packet.
-    asyncio.create_task(_understat_refresh_loop())
-
     # Bulk player-stats prefetch is intentionally opt-in. It can consume
     # hundreds of API-Football calls before a user makes a request; predictions
     # now fill the cache on demand instead.
@@ -489,29 +485,6 @@ async def _cheat_sheet_loop():
         except Exception as e:
             print(f"[CHEAT SHEET] Render failed: {e}")
         await asyncio.sleep(INTERVAL_SECS)
-
-
-async def _understat_refresh_loop():
-    """Keep the local Understat snapshot warm without touching predictions."""
-    import asyncio
-    from config import CURRENT_SEASON
-
-    # Let the normal startup/cache work settle before making provider requests.
-    await asyncio.sleep(45)
-    while True:
-        try:
-            from understat_client import refresh_understat_cache
-            result = await refresh_understat_cache(
-                seasons=(CURRENT_SEASON, CURRENT_SEASON - 1),
-            )
-            print(
-                f"[UNDERSTAT] background refresh complete: "
-                f"{result.get('refreshed', 0)} refreshed, "
-                f"{result.get('failed', 0)} failed"
-            )
-        except Exception as exc:
-            print(f"[UNDERSTAT] background refresh failed: {type(exc).__name__}")
-        await asyncio.sleep(12 * 60 * 60)
 
 
 async def _backfill_mlb_sport():
