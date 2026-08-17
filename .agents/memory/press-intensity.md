@@ -16,3 +16,9 @@ Stable pressure evidence requires at least seven valid defensive-action rows. Fe
 **Why:** A smaller action sample can still provide useful context, but labeling it stable overstates reliability and makes provider coverage look better than it is.
 
 **How to apply:** Sort fixture and history rows newest-first before applying any lookback limit. Keep the actual valid action count in the response and show limited/stable status in the UI. For wide players, broad provider-category comparison rows may be shown as context only when exact rows are unavailable; they must not influence projection or calibration.
+
+For exact historical match labels, fixture-level API-Football team statistics may provide a real limited packet from observed fouls when the optional fixture-player endpoint is rate-limited. Keep the packet marked limited and retain its source; never replace it with possession, odds, or an aggregate opponent baseline.
+
+**Why:** The player endpoint can stall or return empty while the exact fixture statistics endpoint remains usable; serial player enrichment made the history card time out and showed “not yet warmed” instead of available evidence.
+
+**How to apply:** Bound optional player-action enrichment and let the exact fixture team-stat row classify from its available defensive field. Preserve the seven-row threshold for stable aggregate evidence.

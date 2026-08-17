@@ -4723,16 +4723,6 @@ export default function ScanScreen() {
                  );
                })}
              </View>
-               {analysisTab === 'read' && (
-                 <SectionNarrativeCard
-                   section={analysisTab}
-                   text={sectionNarratives[analysisTab]}
-                   source={sectionNarrativeSources[analysisTab]}
-                   loading={sectionNarrativeLoading[analysisTab]}
-                   error={sectionNarrativeErrors[analysisTab]}
-                    onRetry={() => void requestSectionExplanation('read', predictionState, true)}
-                 />
-               )}
              <CompactAnalysisBars
                  prediction={prediction}
                section={analysisTab}

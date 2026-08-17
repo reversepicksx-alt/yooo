@@ -449,6 +449,30 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       && String(profile?.opponent || '').toLowerCase() === String(opponentName(game) || '').toLowerCase()
     )) ?? null;
   };
+  const isDenseRecent = !isH2HFilter;
+  const pressureCounts = displayLogs.reduce(
+    (counts, game) => {
+      const packet = (
+        pressureProfileFor(game)?.pressIntensity
+        ?? tacticalProfileFor(game)?.pressIntensity
+        ?? null
+      ) as Record<string, any> | null;
+      const label = packet?.available === true
+        ? String(packet.label || '').toUpperCase()
+        : '';
+      if (label === 'LOW' || label === 'MODERATE' || label === 'HIGH' || label === 'ELITE') {
+        counts[label] += 1;
+      }
+      return counts;
+    },
+    { LOW: 0, MODERATE: 0, HIGH: 0, ELITE: 0 },
+  );
+  const classifiedPressureCount = (
+    pressureCounts.LOW
+    + pressureCounts.MODERATE
+    + pressureCounts.HIGH
+    + pressureCounts.ELITE
+  );
   const last10Logs = recentLogs.slice(0, 10);
   const tpHomeValues = last10Logs
     .filter((row) => rowVenue(row) === 'home' && row.teamPossession != null)
@@ -713,9 +737,32 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               </Text>
             </View>
           )}
-           {showRecent && <>{displayLogs.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-                 <View style={{ width: displayLogs.length * 126 + 10 }}>
-               <View style={styles.chart}>
+           {showRecent && isDenseRecent && (
+             <View style={styles.pressureLegend}>
+               <View style={styles.pressureLegendHeader}>
+                 <Text style={styles.pressureLegendTitle}>PRESS INTENSITY · MATCH DOTS</Text>
+                 <Text style={styles.pressureLegendCoverage}>
+                   {classifiedPressureCount}/{displayLogs.length} CLASSIFIED
+                 </Text>
+               </View>
+               <Text style={styles.pressureLegendKey}>
+                 <Text style={{ color: '#34C759' }}>L LOW {pressureCounts.LOW}</Text>
+                 {'  ·  '}
+                 <Text style={{ color: '#60A5FA' }}>M MOD {pressureCounts.MODERATE}</Text>
+                 {'  ·  '}
+                 <Text style={{ color: '#FF9F0A' }}>H HIGH {pressureCounts.HIGH}</Text>
+                 {'  ·  '}
+                 <Text style={{ color: '#FF453A' }}>E ELITE {pressureCounts.ELITE}</Text>
+               </Text>
+             </View>
+           )}
+            {showRecent && <>{displayLogs.length > 0 ? <ScrollView
+              horizontal={!isDenseRecent}
+              showsHorizontalScrollIndicator={!isDenseRecent}
+              contentContainerStyle={isDenseRecent ? styles.denseScrollContent : styles.scrollContent}
+            >
+                 <View style={isDenseRecent ? styles.denseChartWidth : { width: displayLogs.length * 126 + 10 }}>
+               <View style={[styles.chart, isDenseRecent && styles.denseChart]}>
                  {displayLogs.map((game, index) => {
                   const value = Number(game.value);
                   const color = prediction.line != null && value > prediction.line ? Colors.success : Colors.error;
@@ -759,50 +806,62 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                   return (
                     <TouchableOpacity
                       key={`${date}-${index}`}
-                       style={[
-                         styles.barColumn,
-                         preferredVenue && rowVenue(game) === preferredVenue && styles.barColumnVenueSelected,
-                         isSelected && styles.barColumnSelected,
-                       ]}
+                        style={[
+                          styles.barColumn,
+                          isDenseRecent && styles.barColumnDense,
+                          preferredVenue && rowVenue(game) === preferredVenue && styles.barColumnVenueSelected,
+                          isSelected && styles.barColumnSelected,
+                        ]}
                        onPress={() => selectBar(isH2HFilter ? 'h2h' : 'recent', index)}
                       activeOpacity={0.8}
                       accessibilityLabel={`${game.opponent || 'Recent match'}, ${game.value} ${prediction.line != null ? `against line ${prediction.line}` : ''}`}
                     >
-                      <Text style={[styles.value, { color }]}>{game.value}</Text>
-                      <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]} />
-                      <Text style={styles.date}>{date}</Text>
-                      <Text style={[styles.opponent, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
-                        {shortOpponent(opponentName(game))}
-                      </Text>
-                      {showPossessionContext && <Text style={styles.possessionLabel}>{possession}</Text>}
-                      <Text style={styles.possessionLabel}>
-                        MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.blockVenueLabel,
-                          { color: blockLabel === 'UNAVAIL' ? '#444' : '#8EDB8A' },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {blockLabel} · {venueMark(rowVenue(game))}
-                      </Text>
-                       <View style={styles.pressureRow}>
-                         <Text style={[styles.pressureLabel, { color: pressureColor }]}>
-                           PRESS {pressureLabel}{pressureScore ? ` · ${pressureScore}` : ''}
-                         </Text>
-                         <Text style={[styles.pressureSample, { color: pressureAvailable ? '#8B95A5' : '#667085' }]} numberOfLines={1}>
-                           {pressureSample}
-                         </Text>
-                       </View>
-                    {showSotEvidence && (
-                      <Text style={styles.possessionLabel}>
-                        OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
-                      </Text>
-                    )}
-                      <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
-                        {venueMark(rowVenue(game))}
-                      </Text>
+                      {isDenseRecent ? (
+                        <>
+                          <View style={styles.denseBarTrack}>
+                            <View style={[styles.denseBar, { height, backgroundColor: color + 'D8' }]} />
+                          </View>
+                          <View style={[styles.densePressureDot, { backgroundColor: pressureColor }]} />
+                        </>
+                      ) : (
+                        <>
+                          <Text style={[styles.value, { color }]}>{game.value}</Text>
+                          <View style={[styles.bar, { height, backgroundColor: color + 'B8' }]} />
+                          <Text style={styles.date}>{date}</Text>
+                          <Text style={[styles.opponent, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
+                            {shortOpponent(opponentName(game))}
+                          </Text>
+                          {showPossessionContext && <Text style={styles.possessionLabel}>{possession}</Text>}
+                          <Text style={styles.possessionLabel}>
+                            MIN {minutes != null ? Number(minutes).toFixed(0) : '—'}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.blockVenueLabel,
+                              { color: blockLabel === 'UNAVAIL' ? '#444' : '#8EDB8A' },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {blockLabel} · {venueMark(rowVenue(game))}
+                          </Text>
+                          <View style={styles.pressureRow}>
+                            <Text style={[styles.pressureLabel, { color: pressureColor }]}>
+                              PRESS {pressureLabel}{pressureScore ? ` · ${pressureScore}` : ''}
+                            </Text>
+                            <Text style={[styles.pressureSample, { color: pressureAvailable ? '#8B95A5' : '#667085' }]} numberOfLines={1}>
+                              {pressureSample}
+                            </Text>
+                          </View>
+                          {showSotEvidence && (
+                            <Text style={styles.possessionLabel}>
+                              OPP SOT {game.opponentShotsOnTarget != null ? Number(game.opponentShotsOnTarget).toFixed(0) : '—'}
+                            </Text>
+                          )}
+                          <Text style={[styles.venueLabel, { color: rowVenue(game) === 'home' ? Colors.success : '#60A5FA' }]}>
+                            {venueMark(rowVenue(game))}
+                          </Text>
+                        </>
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -1200,6 +1259,7 @@ const styles = {
     letterSpacing: 0.85,
   },
   barColumn: { width: 116, height: 174, alignItems: 'center' as const, justifyContent: 'flex-end' as const, borderRadius: 6, paddingTop: 3, paddingHorizontal: 4 },
+  barColumnDense: { flex: 1, width: undefined, minWidth: 3, height: 128, paddingHorizontal: 0, paddingTop: 0, borderRadius: 3, justifyContent: 'flex-end' as const },
   barColumnSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
   barColumnVenueSelected: { backgroundColor: 'rgba(57,255,20,0.055)' },
   value: { fontSize: 10, lineHeight: 12, fontWeight: '900' as const, marginBottom: 2 },
@@ -1209,6 +1269,17 @@ const styles = {
   venueLabel: { fontSize: 8, lineHeight: 10, fontWeight: '900' as const, letterSpacing: 0.4 },
   date: { fontSize: 8.5, color: '#B1BAC7', fontWeight: '800' as const, lineHeight: 10, marginTop: 3 },
   opponent: { fontSize: 9.5, fontWeight: '800' as const, lineHeight: 11, marginTop: 1 },
+  denseScrollContent: { width: '100%' as const, paddingHorizontal: 8 },
+  denseChartWidth: { width: '100%' as const },
+  denseChart: { height: 128, width: '100%' as const, gap: 0, alignItems: 'stretch' as const },
+  denseBarTrack: { width: '100%' as const, height: 112, justifyContent: 'flex-end' as const, alignItems: 'center' as const },
+  denseBar: { width: 3, minHeight: 3, borderRadius: 2 },
+  densePressureDot: { width: 5, height: 5, borderRadius: 3, marginTop: 4, marginBottom: 2 },
+  pressureLegend: { marginHorizontal: 14, marginBottom: 4 },
+  pressureLegendHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
+  pressureLegendTitle: { color: '#8B95A5', fontSize: 7, fontWeight: '900' as const, letterSpacing: 0.55 },
+  pressureLegendCoverage: { color: '#697586', fontSize: 7, fontWeight: '800' as const, letterSpacing: 0.35 },
+  pressureLegendKey: { color: '#697586', fontSize: 7, fontWeight: '800' as const, letterSpacing: 0.2, marginTop: 3 },
   detail: { paddingHorizontal: 2, paddingTop: 7, paddingBottom: 3, color: '#AAB4C2', fontSize: 10, lineHeight: 15 },
   splitRow: {
     marginHorizontal: 14,

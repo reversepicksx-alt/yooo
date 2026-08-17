@@ -1590,7 +1590,13 @@ async def predict(req: PredictionRequest):
         # =============================================
 
         # 1. Per-fixture team stats (possession, shots, passes per match)
-        async def fetch_fixture_team_stats(fixture_list, team_id, limit=_PRESSURE_SAMPLE_TARGET):
+        async def fetch_fixture_team_stats(
+            fixture_list,
+            team_id,
+            limit=_PRESSURE_SAMPLE_TARGET,
+            *,
+            include_player_actions=True,
+        ):
             """Fetch per-match team stats — cached in MongoDB for finished fixtures.
 
             Fetches two data sources per fixture:
@@ -1677,10 +1683,20 @@ async def predict(req: PredictionRequest):
 
                     # Fetch player-level data to aggregate tackles + interceptions
                     # (these are not available from /fixtures/statistics at team level)
+                    # Player-level rows add tackles/interceptions/duels, but
+                    # API-Football can stall on this endpoint while the
+                    # fixture-level statistics endpoint already has a real
+                    # defensive input (team fouls). Bound the enrichment so a
+                    # slow optional endpoint cannot hide an exact fixture.
                     try:
-                        player_data = await api_football_request(
-                            "fixtures/players", {"fixture": fid, "team": team_id}
-                        )
+                        player_data = []
+                        if include_player_actions:
+                            player_data = await aio.wait_for(
+                                api_football_request(
+                                    "fixtures/players", {"fixture": fid, "team": team_id}
+                                ),
+                                timeout=3.0,
+                            )
                         tkl_total  = 0
                         tkl_int    = 0
                         tkl_blocks = 0
@@ -1716,20 +1732,36 @@ async def predict(req: PredictionRequest):
                         result["tackles_total"]         = tkl_total     if got_tkl else None
                         result["tackles_interceptions"] = tkl_int       if got_tkl else None
                         result["tackles_blocks"]        = tkl_blocks    if got_tkl else None
-                        result["fouls_committed_agg"]   = fls_committed if got_tkl else None
+                        result["fouls_committed_agg"]   = (
+                            fls_committed
+                            if got_tkl
+                            else result.get("fouls")
+                        )
                         result["duels_won_agg"]          = duels_won     if got_tkl else None
                         result["duels_total_agg"]        = duels_total   if got_tkl else None
                         result["cards_yellow_agg"]      = cards_yellow  if got_tkl else None
                         result["cards_red_agg"]         = cards_red     if got_tkl else None
+                        result["pressureActionSource"] = (
+                            "api_football_fixture_players"
+                            if got_tkl
+                            else "api_football_fixture_statistics_fouls"
+                            if result.get("fouls") is not None
+                            else None
+                        )
                     except Exception:
                         result["tackles_total"]         = None
                         result["tackles_interceptions"] = None
                         result["tackles_blocks"]        = None
-                        result["fouls_committed_agg"]   = None
+                        result["fouls_committed_agg"]   = result.get("fouls")
                         result["duels_won_agg"]          = None
                         result["duels_total_agg"]        = None
                         result["cards_yellow_agg"]      = None
                         result["cards_red_agg"]         = None
+                        result["pressureActionSource"] = (
+                            "api_football_fixture_statistics_fouls"
+                            if result.get("fouls") is not None
+                            else None
+                        )
 
                     # Cache the enriched result when storage permits. Atlas
                     # quota exhaustion must never discard an otherwise valid
@@ -1850,7 +1882,11 @@ async def predict(req: PredictionRequest):
             ]
             pending = pending_all[:max(0, int(max_network_matches or 0))]
             deferred = pending_all[len(pending):]
-            sem = aio.Semaphore(4)
+            # The row packet is explanation-only and must be ready for the
+            # history card, so warm the bounded recent window concurrently.
+            # Cached rows still return immediately; provider calls are capped
+            # by max_network_matches below.
+            sem = aio.Semaphore(8)
 
             async def build_one(row):
                 fid = str(row.get("_fid") or row.get("fixtureId") or "")
@@ -1869,6 +1905,7 @@ async def predict(req: PredictionRequest):
                         [fixture_row],
                         int(opponent_id),
                         limit=1,
+                        include_player_actions=False,
                     )
                     packet = compute_press_intensity_score(stats_rows or [])
                     available = packet.get("available") is True
@@ -1881,9 +1918,8 @@ async def predict(req: PredictionRequest):
                         "status": "available" if available else "unavailable",
                         "verified": available,
                         "source": (
-                            "API-Football fixture statistics + fixture player "
-                            "defensive actions"
-                            if available
+                            stats_rows[0].get("pressureActionSource")
+                            if available and stats_rows
                             else None
                         ),
                         "reason": packet.get("reason"),
@@ -1912,7 +1948,7 @@ async def predict(req: PredictionRequest):
             async def bounded(row):
                 async with sem:
                     try:
-                        return await aio.wait_for(build_one(row), timeout=8.0)
+                        return await aio.wait_for(build_one(row), timeout=10.0)
                     except Exception as exc:
                         return unavailable(row, f"pressure_fetch_{type(exc).__name__}")
 
@@ -5383,57 +5419,21 @@ async def predict(req: PredictionRequest):
                 ],
             }
 
-        if _prediction_elapsed() < 22.0:
-            try:
-                recent_opponent_press_intensity = await aio.wait_for(
-                    aio.shield(_recent_opponent_press_task),
-                    timeout=1.5,
-                )
-            except Exception as _recent_press_err:
-                print(
-                    f"[RECENT PRESS INTENSITY] bounded response window: "
-                    f"{type(_recent_press_err).__name__}"
-                )
-                recent_opponent_press_intensity = {
-                    "status": "warming",
-                    "available": False,
-                    "sampleSize": len(_recent_profile_rows),
-                    "verifiedMatches": 0,
-                    "source": "API-Football fixture statistics + fixture player defensive actions",
-                    "projectionInfluence": "explanation_only",
-                    "profiles": [
-                        {
-                            **{
-                                key: row.get(key)
-                                for key in ("_fid", "fixtureId", "date", "opponent", "venue")
-                            },
-                            "fixtureId": row.get("_fid") or row.get("fixtureId"),
-                            "pressIntensity": {
-                                "available": False,
-                                "status": "unavailable",
-                                "score": None,
-                                "score100": None,
-                                "label": "Unavailable",
-                                "source": "api_football",
-                                "sampleSize": 0,
-                                "sampleStatus": "unavailable",
-                                "reason": "not_yet_warmed",
-                            },
-                            "status": "unavailable",
-                            "verified": False,
-                            "reason": "not_yet_warmed",
-                        }
-                        for row in _recent_profile_rows
-                    ],
-                    "limitations": [
-                        "Recent opponent Press Intensity rows are still warming from cache/provider.",
-                        "Missing coverage is unavailable, not a guessed pressure score.",
-                    ],
-                }
-        else:
-            _recent_opponent_press_task.cancel()
+        try:
+            # Do not serialize the new packet as "not yet warmed" after a
+            # 1.5-second placeholder window. The caller needs the actual
+            # exact-fixture classification or a real provider limitation.
+            recent_opponent_press_intensity = await aio.wait_for(
+                aio.shield(_recent_opponent_press_task),
+                timeout=20.0,
+            )
+        except Exception as _recent_press_err:
+            print(
+                f"[RECENT PRESS INTENSITY] bounded response window: "
+                f"{type(_recent_press_err).__name__}"
+            )
             recent_opponent_press_intensity = {
-                "status": "skipped",
+                "status": "limited",
                 "available": False,
                 "sampleSize": len(_recent_profile_rows),
                 "verifiedMatches": 0,
@@ -5447,24 +5447,24 @@ async def predict(req: PredictionRequest):
                         "venue": row.get("venue"),
                         "pressIntensity": {
                             "available": False,
-                            "status": "unavailable",
+                            "status": "limited",
                             "score": None,
                             "score100": None,
-                            "label": "Unavailable",
+                            "label": "Limited",
                             "source": "api_football",
                             "sampleSize": 0,
                             "sampleStatus": "unavailable",
-                            "reason": "prediction_response_window",
+                            "reason": f"pressure_fetch_{type(_recent_press_err).__name__}",
                         },
-                        "status": "unavailable",
+                        "status": "limited",
                         "verified": False,
-                        "reason": "prediction_response_window",
+                        "reason": f"pressure_fetch_{type(_recent_press_err).__name__}",
                     }
                     for row in _recent_profile_rows
                 ],
                 "limitations": [
-                    "Recent opponent Press Intensity rows were skipped to keep the core prediction responsive.",
-                    "Missing coverage is unavailable, not a guessed pressure score.",
+                    "Exact-fixture defensive-action enrichment exceeded the bounded provider window.",
+                    "No pressure score was guessed from possession, odds, or the aggregate matchup packet.",
                 ],
             }
 
@@ -5483,6 +5483,16 @@ async def predict(req: PredictionRequest):
             if _press_profile:
                 _block_profile["pressIntensity"] = _press_profile.get("pressIntensity")
                 _block_profile["pressIntensityStatus"] = _press_profile.get("status")
+        for _history_log in player_game_logs or []:
+            if not isinstance(_history_log, dict):
+                continue
+            _history_fid = str(
+                _history_log.get("_fid") or _history_log.get("fixtureId") or ""
+            )
+            _history_press = _press_by_fixture.get(_history_fid)
+            if _history_press:
+                _history_log["pressIntensity"] = _history_press.get("pressIntensity")
+                _history_log["pressIntensityStatus"] = _history_press.get("status")
 
         # ── Await manager task (nearly instant on cache hit, <1 API call/7 days) ───
         _manager_ctx = {}
