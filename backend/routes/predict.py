@@ -1845,8 +1845,8 @@ async def predict(req: PredictionRequest):
             """
             from bayesian_engine import compute_press_intensity_score
 
-            profile_version = "opponent-pressure-v4"
-            profile_cache_prefix = "opp_press_profile_v4_"
+            profile_version = "opponent-pressure-v5"
+            profile_cache_prefix = "opp_press_profile_v5_"
             target_matches = _OPPONENT_PRESSURE_MATCH_TARGET
             candidate_limit = _OPPONENT_PRESSURE_CANDIDATE_LIMIT
 
@@ -1860,10 +1860,10 @@ async def predict(req: PredictionRequest):
                     "label": "Unavailable",
                     "signal_used": None,
                     "source": "api_football",
-                    "metric": "synthetic_press_intensity_index",
+                    "metric": "reverse_picks_pressure_index",
                     "scoreInterpretation": (
-                        "This is a bounded defensive-action/pass-volume index, "
-                        "not a count of pressure events."
+                        "Reverse Picks Pressure Index is a custom bounded 0-100 product rating; "
+                        "it is not PPDA, a count of pressure events, or a raw provider statistic."
                     ),
                     "sampleSize": 0,
                     "sampleTarget": target_matches,

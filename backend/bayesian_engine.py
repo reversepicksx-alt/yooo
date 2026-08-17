@@ -2639,6 +2639,23 @@ def _normal_cdf(z: float) -> float:
     return 0.5 + sign * (0.5 - p)
 
 
+def pressure_index_label(score100: int) -> str:
+    """Return the product's five fixed Reverse Picks pressure bands."""
+    try:
+        bounded_score = max(0, min(100, int(round(float(score100)))))
+    except (TypeError, ValueError):
+        bounded_score = 0
+    if bounded_score <= 20:
+        return "Very Low"
+    if bounded_score <= 40:
+        return "Low"
+    if bounded_score <= 60:
+        return "Moderate"
+    if bounded_score <= 80:
+        return "High"
+    return "Elite"
+
+
 def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     """
     Calculate a transparent API-Football Press Intensity signal.
@@ -2786,14 +2803,8 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         signal_used = "defensive_actions"
 
     score = round(max(0.0, min(1.0, score)), 3)
-    if score < 0.20:
-        label = "Low"
-    elif score < 0.45:
-        label = "Moderate"
-    elif score < 0.70:
-        label = "High"
-    else:
-        label = "Elite"
+    score100 = int(round(score * 100))
+    label = pressure_index_label(score100)
 
     # Defensive actions are the required pressure evidence. Opponent pass
     # volume is an optional numerator, so it must not inflate the sample count
@@ -2803,7 +2814,7 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         "available": True,
         "status": "available",
         "score": score,
-        "score100": int(round(score * 100)),
+        "score100": score100,
         "multiplier": 1.0,
         "label": label,
         "signal_used": signal_used,

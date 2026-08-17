@@ -40,3 +40,9 @@ The displayed 0–100 pressure value is the custom Reverse Picks Pressure Index,
 **Why:** Users can reasonably read “LOW 0/100” as literal zero pressure, and old cached packets otherwise hide new provenance or interpretation fields after a contract update.
 
 **How to apply:** Label the UI as the Reverse Picks Pressure Index, show limited sample status, and keep raw provider inputs behind the audit/math boundary. Bump the exact-fixture cache identity whenever packet fields or semantics change.
+
+The product pressure bands are fixed at 0–20 Very Low, 21–40 Low, 41–60 Moderate, 61–80 High, and 81–100 Elite. Derive the displayed label from the numeric index so stale saved labels cannot override the product bands.
+
+**Why:** The former 45–69 High and 70–100 Elite thresholds contradicted the owner's intended scale and made a 63/100 card misleading.
+
+**How to apply:** Keep the same five boundaries in backend classification, cached-profile versioning, recent-history legends, and saved-card rendering.

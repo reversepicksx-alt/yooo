@@ -10,6 +10,7 @@ import pytest
 from bayesian_engine import (
     compute_bayesian_projection,
     compute_press_intensity_score,
+    pressure_index_label,
     compute_live_gaussian_update,
     gaussian_likelihood_update,
 )
@@ -222,6 +223,24 @@ class TestPriorMomentumDominance:
 
 class TestPressIntensity:
     """Press Intensity uses exact-fixture opponent passes and bounded effects."""
+
+    @pytest.mark.parametrize(
+        ("score", "expected"),
+        [
+            (0, "Very Low"),
+            (20, "Very Low"),
+            (21, "Low"),
+            (40, "Low"),
+            (41, "Moderate"),
+            (60, "Moderate"),
+            (61, "High"),
+            (80, "High"),
+            (81, "Elite"),
+            (100, "Elite"),
+        ],
+    )
+    def test_pressure_index_uses_the_five_product_bands(self, score, expected):
+        assert pressure_index_label(score) == expected
 
     @staticmethod
     def _stats(**overrides):

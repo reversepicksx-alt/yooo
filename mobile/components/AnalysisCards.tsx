@@ -9,6 +9,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { AnalysisFactor, MatchScript, PositionalReality, TacticalIntelligence } from '@/lib/api';
+import { reversePicksPressureLabel, reversePicksPressureScore } from '@/lib/pressure';
 
 export const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -491,13 +492,9 @@ export function renderTacticalContext(data: Record<string, unknown> | null) {
     ?? {}
   ) as any;
   const available = pressIntensity?.status === 'available';
-  const score = available && Number.isFinite(Number(pressIntensity?.score100))
-    ? Number(pressIntensity.score100)
-    : available && Number.isFinite(Number(pressIntensity?.score))
-      ? Math.round(Number(pressIntensity.score) * 100)
-      : null;
+  const score = available ? reversePicksPressureScore(pressIntensity) : null;
   const label = available
-    ? String(pressIntensity?.label || 'Classified').toUpperCase()
+    ? reversePicksPressureLabel(pressIntensity)
     : 'NO VERIFIED SAMPLE';
   const sampleSize = Number(pressIntensity?.sampleSize || 0);
   return (

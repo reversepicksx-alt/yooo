@@ -3,6 +3,7 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
+import { reversePicksPressureLabel, reversePicksPressureScore } from '@/lib/pressure';
 
 type CompactPrediction = {
   line?: number | null;
@@ -468,14 +469,14 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     (counts, game) => {
       const packet = pressurePacketFor(game);
       const label = packet?.available === true
-        ? String(packet.label || '').toUpperCase()
+        ? reversePicksPressureLabel(packet)
         : '';
-      if (label === 'LOW' || label === 'MODERATE' || label === 'HIGH' || label === 'ELITE') {
+      if (label === 'VERY LOW' || label === 'LOW' || label === 'MODERATE' || label === 'HIGH' || label === 'ELITE') {
         counts[label] += 1;
       }
       return counts;
     },
-    { LOW: 0, MODERATE: 0, HIGH: 0, ELITE: 0 },
+    { 'VERY LOW': 0, LOW: 0, MODERATE: 0, HIGH: 0, ELITE: 0 },
   );
   const historyOpponentKeys = new Set(
     displayLogs.map((game) => pressureOpponentKeyFor(game)).filter(Boolean),
@@ -766,7 +767,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                  </Text>
                </View>
                <Text style={styles.pressureLegendKey}>
-                 <Text style={{ color: '#34C759' }}>L LOW {pressureCounts.LOW}</Text>
+                  <Text style={{ color: '#34C759' }}>VL VERY LOW {pressureCounts['VERY LOW']}</Text>
+                  {'  ·  '}
+                  <Text style={{ color: '#8EDB8A' }}>L LOW {pressureCounts.LOW}</Text>
                  {'  ·  '}
                  <Text style={{ color: '#60A5FA' }}>M MOD {pressureCounts.MODERATE}</Text>
                  {'  ·  '}
@@ -799,13 +802,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    const pressureAvailable = pressurePacket?.available === true
                      && String(pressurePacket?.label || '').trim().length > 0;
                    const pressureLabel = pressureAvailable
-                     ? String(pressurePacket?.label).toUpperCase()
+                      ? reversePicksPressureLabel(pressurePacket)
                      : 'UNAVAILABLE';
-                    const pressureScore = Number.isFinite(Number(pressurePacket?.score100))
-                       ? `INDEX ${Math.round(Number(pressurePacket?.score100))}/100`
-                       : Number.isFinite(Number(pressurePacket?.score))
-                         ? `INDEX ${Math.round(Number(pressurePacket?.score) * 100)}/100`
-                         : '';
+                     const pressureScore = reversePicksPressureScore(pressurePacket) != null
+                       ? `INDEX ${reversePicksPressureScore(pressurePacket)}/100`
+                       : '';
                     const pressureSample = pressureAvailable
                       ? `N=${Number(pressureProfile?.sampleTarget || pressurePacket?.sampleTarget || pressurePacket?.sampleSize || 0)} RECENT`
                       : 'NO VERIFIED OPPONENT SAMPLE';
@@ -815,8 +816,10 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                        ? '#FF453A'
                        : pressureLabel === 'HIGH'
                          ? '#FF9F0A'
-                         : pressureLabel === 'MODERATE'
+                        : pressureLabel === 'MODERATE'
                            ? '#60A5FA'
+                            : pressureLabel === 'LOW'
+                              ? '#8EDB8A'
                            : '#34C759';
                    const blockLabel = String(tacticalProfile?.blockProfile?.label || 'UNAVAILABLE')
                     .replace('_BLOCK', '')
@@ -918,11 +921,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                      const selectedPressureProfile = pressureProfileFor(selectedGame);
                      const selectedPressure = pressurePacketFor(selectedGame);
                     if (selectedPressure?.available === true) {
-                      const selectedIndex = Number.isFinite(Number(selectedPressure?.score100))
-                        ? Math.round(Number(selectedPressure.score100))
-                        : Number.isFinite(Number(selectedPressure?.score))
-                          ? Math.round(Number(selectedPressure.score) * 100)
-                          : null;
+                      const selectedIndex = reversePicksPressureScore(selectedPressure);
                       return (
                         <Text style={styles.pressureExplain} numberOfLines={3}>
                           {`Reverse Picks Pressure Index${selectedIndex != null ? ` ${selectedIndex}/100` : ''} · `}
