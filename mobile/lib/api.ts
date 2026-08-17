@@ -824,7 +824,11 @@ export interface PredictionResult {
       signal_used?: string | null;
       synthetic_ppda?: number | null;
       sampleSize?: number;
+       sampleTarget?: number;
       sampleStatus?: string;
+       sampleUnit?: string | null;
+       profileScope?: string | null;
+       recentMatchupsUsed?: number;
       featureCoverage?: number;
       avg_effective_defensive_actions?: number | null;
       avg_tackles?: number | null;
@@ -928,6 +932,10 @@ export interface PredictionResult {
       available?: boolean;
       sampleSize?: number;
       verifiedMatches?: number;
+      opponentCount?: number;
+      opponentsWithPressure?: number;
+      matchupsPerOpponentTarget?: number;
+      sampleUnit?: string | null;
       source?: string | null;
       projectionInfluence?: string;
       profiles?: Array<{
@@ -935,8 +943,20 @@ export interface PredictionResult {
         date?: string | null;
         opponent?: string | null;
         venue?: string | null;
+        opponentId?: number | string | null;
         status?: string;
         verified?: boolean;
+        pressureScope?: string | null;
+        sampleTarget?: number;
+        sampleMatches?: Array<{
+          fixtureId?: number | string | null;
+          date?: string | null;
+          opponent?: string | null;
+          venue?: string | null;
+          score?: string | null;
+          pressureLabel?: string | null;
+          pressureIndex?: number | null;
+        }>;
         pressIntensity?: {
           available?: boolean;
           status?: string;
@@ -947,7 +967,11 @@ export interface PredictionResult {
            metric?: string | null;
            scoreInterpretation?: string | null;
           sampleSize?: number;
+          sampleTarget?: number;
           sampleStatus?: string;
+          sampleUnit?: string | null;
+          profileScope?: string | null;
+          recentMatchupsUsed?: number;
            synthetic_ppda?: number | null;
            avg_effective_defensive_actions?: number | null;
            avg_opponent_passes?: number | null;

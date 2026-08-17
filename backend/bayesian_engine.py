@@ -2657,8 +2657,8 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     unknown = {
         "available": False,
         "status": "unavailable",
-        "score": 0.0,
-        "score100": 0,
+        "score": None,
+        "score100": None,
         "multiplier": 1.0,
         "label": "Unavailable",
         "signal_used": None,

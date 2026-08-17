@@ -491,12 +491,14 @@ export function renderTacticalContext(data: Record<string, unknown> | null) {
     ?? {}
   ) as any;
   const available = pressIntensity?.status === 'available';
-  const score = Number.isFinite(Number(pressIntensity?.score100))
+  const score = available && Number.isFinite(Number(pressIntensity?.score100))
     ? Number(pressIntensity.score100)
-    : Math.round((Number(pressIntensity?.score) || 0) * 100);
+    : available && Number.isFinite(Number(pressIntensity?.score))
+      ? Math.round(Number(pressIntensity.score) * 100)
+      : null;
   const label = available
     ? String(pressIntensity?.label || 'Classified').toUpperCase()
-    : 'UNAVAILABLE';
+    : 'NO VERIFIED SAMPLE';
   const sampleSize = Number(pressIntensity?.sampleSize || 0);
   return (
     <View style={aStyles.tacticalContextCard}>
@@ -504,19 +506,19 @@ export function renderTacticalContext(data: Record<string, unknown> | null) {
         <View style={[aStyles.proCardPill, { backgroundColor: available ? '#60A5FA18' : '#94A3B818' }]}>
           <Text style={[aStyles.proCardPillText, { color: available ? '#60A5FA' : '#94A3B8' }]}>PRESS INTENSITY</Text>
         </View>
-        <Text style={aStyles.proCardTitle}>TEAM PRESSURE</Text>
+         <Text style={aStyles.proCardTitle}>CURRENT OPPONENT PRESSURE</Text>
       </View>
       <View style={aStyles.tacticalContextGrid}>
         <View style={aStyles.tacticalContextCell}>
           <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESS</Text>
           <Text style={aStyles.tacticalContextValue}>
-            {score}/100 · {label}
+            {score != null ? `INDEX ${score}/100 · ${label}` : label}
           </Text>
           <Text style={aStyles.proCardNote}>
             {available
-              ? `${sampleSize} match${sampleSize === 1 ? '' : 'es'} · `
-                + `${pressIntensity?.sampleStatus === 'sufficient' ? 'stable sample' : 'limited sample'}`
-              : 'No usable API-Football pressure sample was returned for this prediction.'}
+              ? `${sampleSize} verified current-match pressure input${sampleSize === 1 ? '' : 's'} · `
+                + 'the history section shows each opponent’s recent-match profile'
+              : 'No verified current-match pressure input was returned; no 0/100 is implied.'}
           </Text>
           {available && pressIntensity?.projectionApplied ? (
             <Text style={aStyles.proCardNote}>

@@ -449,14 +449,24 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       && String(profile?.opponent || '').toLowerCase() === String(opponentName(game) || '').toLowerCase()
     )) ?? null;
   };
+  const pressurePacketFor = (game: Record<string, any>): Record<string, any> | null => (
+    pressureProfileFor(game)?.pressIntensity
+    ?? tacticalProfileFor(game)?.pressIntensity
+    ?? null
+  );
+  const pressureOpponentKeyFor = (game: Record<string, any>, profile?: Record<string, any> | null) => (
+    String(
+      game?.fixtureOpponentId
+        ?? game?.opponentId
+        ?? profile?.opponentId
+        ?? opponentName(game)
+        ?? '',
+    ).trim().toLowerCase()
+  );
   const isDenseRecent = !isH2HFilter;
   const pressureCounts = displayLogs.reduce(
     (counts, game) => {
-      const packet = (
-        pressureProfileFor(game)?.pressIntensity
-        ?? tacticalProfileFor(game)?.pressIntensity
-        ?? null
-      ) as Record<string, any> | null;
+      const packet = pressurePacketFor(game);
       const label = packet?.available === true
         ? String(packet.label || '').toUpperCase()
         : '';
@@ -467,12 +477,22 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     },
     { LOW: 0, MODERATE: 0, HIGH: 0, ELITE: 0 },
   );
-  const classifiedPressureCount = (
-    pressureCounts.LOW
-    + pressureCounts.MODERATE
-    + pressureCounts.HIGH
-    + pressureCounts.ELITE
+  const historyOpponentKeys = new Set(
+    displayLogs.map((game) => pressureOpponentKeyFor(game)).filter(Boolean),
   );
+  const classifiedOpponentKeys = new Set(
+    displayLogs
+      .map((game) => {
+        const profile = pressureProfileFor(game);
+        const packet = pressurePacketFor(game);
+        return packet?.available === true
+          ? pressureOpponentKeyFor(game, profile)
+          : '';
+      })
+      .filter(Boolean),
+  );
+  const classifiedOpponentCount = classifiedOpponentKeys.size;
+  const historyOpponentCount = historyOpponentKeys.size;
   const last10Logs = recentLogs.slice(0, 10);
   const tpHomeValues = last10Logs
     .filter((row) => rowVenue(row) === 'home' && row.teamPossession != null)
@@ -740,9 +760,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
            {showRecent && isDenseRecent && (
              <View style={styles.pressureLegend}>
                <View style={styles.pressureLegendHeader}>
-                  <Text style={styles.pressureLegendTitle}>PRESS INTENSITY INDEX · MATCH DOTS</Text>
+                   <Text style={styles.pressureLegendTitle}>OPPONENT PRESSURE · RECENT MATCHUPS</Text>
                  <Text style={styles.pressureLegendCoverage}>
-                   {classifiedPressureCount}/{displayLogs.length} CLASSIFIED
+                    {classifiedOpponentCount}/{historyOpponentCount} OPPONENTS
                  </Text>
                </View>
                <Text style={styles.pressureLegendKey}>
@@ -754,8 +774,8 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                  {'  ·  '}
                  <Text style={{ color: '#FF453A' }}>E ELITE {pressureCounts.ELITE}</Text>
                </Text>
-                <Text style={styles.pressureLegendNote} numberOfLines={2}>
-                  INDEX = defensive-action/pass-volume proxy · 0 is the low-band floor, not zero pressure
+                 <Text style={styles.pressureLegendNote} numberOfLines={3}>
+                   Each pressure value summarizes this opponent&apos;s recent completed matches (target N=5). It is a defensive-action/pass-volume index, not a count of pressure events.
                 </Text>
              </View>
            )}
@@ -774,12 +794,8 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    const possession = game.teamPossession != null ? `TP ${Number(game.teamPossession).toFixed(0)}%` : 'TP —';
                   const minutes = game.minutesPlayed ?? game.minutes;
                    const tacticalProfile = tacticalProfileFor(game);
-                   const pressureProfile = pressureProfileFor(game);
-                   const pressurePacket = (
-                     pressureProfile?.pressIntensity
-                     ?? tacticalProfile?.pressIntensity
-                     ?? null
-                   ) as Record<string, any> | null;
+                    const pressureProfile = pressureProfileFor(game);
+                    const pressurePacket = pressurePacketFor(game);
                    const pressureAvailable = pressurePacket?.available === true
                      && String(pressurePacket?.label || '').trim().length > 0;
                    const pressureLabel = pressureAvailable
@@ -788,11 +804,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                     const pressureScore = Number.isFinite(Number(pressurePacket?.score100))
                       ? `INDEX ${Math.round(Number(pressurePacket?.score100))}/100`
                      : '';
-                   const pressureSample = pressureAvailable
-                     ? `N=${Number(pressurePacket?.sampleSize || 0)} · ${String(pressurePacket?.sampleStatus || 'LIMITED').toUpperCase()}`
-                     : String(pressurePacket?.reason || 'NO VERIFIED SAMPLE')
-                         .replace(/_/g, ' ')
-                         .toUpperCase();
+                    const pressureSample = pressureAvailable
+                      ? `N=${Number(pressureProfile?.sampleTarget || pressurePacket?.sampleTarget || pressurePacket?.sampleSize || 0)} RECENT`
+                      : 'NO VERIFIED OPPONENT SAMPLE';
                    const pressureColor = !pressureAvailable
                      ? '#667085'
                      : pressureLabel === 'ELITE'
@@ -884,29 +898,23 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                      ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
                      : ''}
                     {(() => {
-                        const selectedPressure = (
-                          pressureProfileFor(selectedGame)?.pressIntensity
-                          ?? tacticalProfileFor(selectedGame)?.pressIntensity
-                          ?? null
-                        ) as Record<string, any> | null;
+                         const selectedPressureProfile = pressureProfileFor(selectedGame);
+                         const selectedPressure = pressurePacketFor(selectedGame);
                         const selectedLabel = selectedPressure?.available === true
                           ? String(selectedPressure.label || 'Classified').toUpperCase()
-                          : 'UNAVAILABLE';
+                           : 'NO VERIFIED SAMPLE';
                         const selectedScore = Number.isFinite(Number(selectedPressure?.score100))
                            ? ` INDEX ${Math.round(Number(selectedPressure?.score100))}/100`
                           : '';
                         const selectedSample = selectedPressure?.available === true
-                          ? ` · N=${Number(selectedPressure?.sampleSize || 0)} ${String(selectedPressure?.sampleStatus || 'LIMITED').toUpperCase()}`
+                           ? ` · N=${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || selectedPressure?.sampleSize || 0)} RECENT`
                           : '';
                         return ` · PRESS ${selectedLabel}${selectedScore}${selectedSample}`;
                       })()}
                   </Text>
                  {(() => {
-                   const selectedPressure = (
-                     pressureProfileFor(selectedGame)?.pressIntensity
-                     ?? tacticalProfileFor(selectedGame)?.pressIntensity
-                     ?? null
-                   ) as Record<string, any> | null;
+                    const selectedPressureProfile = pressureProfileFor(selectedGame);
+                    const selectedPressure = pressurePacketFor(selectedGame);
                    if (selectedPressure?.available === true) {
                      const inputParts = [
                        Number.isFinite(Number(selectedPressure.synthetic_ppda))
@@ -921,10 +929,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                      ].filter(Boolean).join(' · ');
                      return (
                        <Text style={styles.pressureExplain} numberOfLines={3}>
-                         {String(
-                           selectedPressure.scoreInterpretation
-                           || 'Synthetic index only: the score is not a count of pressure events.',
-                         )}{' '}
+                          {`Opponent recent-match profile using at least ${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || 5)} completed matches. `}
+                          {String(
+                            selectedPressure.scoreInterpretation
+                            || 'The score is not a count of pressure events.',
+                          )}{' '}
                          {inputParts
                            ? `Inputs: ${inputParts}.`
                            : 'Inputs unavailable beyond the classification.'}
@@ -933,7 +942,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    }
                    return (
                      <Text style={styles.pressureExplain} numberOfLines={2}>
-                       Pressure index unavailable for this match; missing provider fields are not treated as zero pressure.
+                        No verified recent opponent pressure profile is available yet. No 0/100 is shown because missing provider fields are not treated as zero pressure.
                      </Text>
                    );
                  })()}

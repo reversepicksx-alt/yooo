@@ -75,6 +75,11 @@ _PREDICTION_CACHE_MIN = 15
 # seven recent, valid fixture packets. The provider can still return fewer
 # rows; that is surfaced as a limited sample instead of being padded.
 _PRESSURE_SAMPLE_TARGET = 7
+# Customer-facing opponent pressure is a recent-team profile, not a single
+# historical fixture row. Five valid completed matches is the minimum profile
+# contract; extra candidate fixtures cover provider gaps without inventing data.
+_OPPONENT_PRESSURE_MATCH_TARGET = 5
+_OPPONENT_PRESSURE_CANDIDATE_LIMIT = 10
 # A possession calculation is only called verified when BOTH clubs have this
 # many exact fixture-statistics rows at the relevant venue.  A shorter sample
 # remains visible as limited context but cannot drive the precise model signal.
@@ -1649,6 +1654,11 @@ async def predict(req: PredictionRequest):
                         and "fouls_committed_agg" in cached["d"]
                         and "opponentTotalPasses" in cached["d"]
                         and "duels_won_agg" in cached["d"]
+                        and (
+                            not include_player_actions
+                            or cached["d"].get("pressureActionSource")
+                            == "api_football_fixture_players"
+                        )
                     ):
                         r = cached["d"]
                         r["date"] = fix.get("date", "")[:10]
@@ -1822,38 +1832,47 @@ async def predict(req: PredictionRequest):
             history_rows,
             *,
             limit=_RECENT_ARCHIVE_TARGET,
-            max_network_matches=12,
+            max_network_matches=50,
         ):
-            """Attach one exact-fixture API-Football pressure packet per history row.
+            """Attach a recent opponent pressure profile to every history row.
 
-            The normal Press Intensity packet is a recent opponent baseline. This
-            companion packet is deliberately descriptive: it scores the opponent
-            from the defensive actions and opposing pass volume in the exact
-            fixture represented by the player's history row.
+            The old implementation scored the opponent from the same single
+            fixture as the player's history row. That produced misleading
+            ``N=1`` cards and made the value look like a direct measurement.
+            This explanation-only packet now builds one cached profile per
+            opponent from at least five of that team's recent completed
+            fixtures, then reuses that profile for each matching player row.
             """
             from bayesian_engine import compute_press_intensity_score
 
-            def unavailable(row, reason):
+            profile_version = "opponent-pressure-v3"
+            profile_cache_prefix = "opp_press_profile_v3_"
+            target_matches = _OPPONENT_PRESSURE_MATCH_TARGET
+            candidate_limit = _OPPONENT_PRESSURE_CANDIDATE_LIMIT
+
+            def unavailable_packet(reason, *, status="unavailable"):
                 return {
-                    "fixtureId": row.get("_fid") or row.get("fixtureId"),
-                    "date": row.get("date"),
-                    "opponent": row.get("opponent"),
-                    "venue": row.get("venue"),
-                    "pressIntensity": {
-                        "available": False,
-                        "status": "unavailable",
-                        "score": None,
-                        "score100": None,
-                        "label": "Unavailable",
-                        "source": "api_football",
-                        "sampleSize": 0,
-                        "sampleStatus": "unavailable",
-                        "reason": reason,
-                    },
-                    "status": "unavailable",
-                    "verified": False,
-                    "source": None,
+                    "available": False,
+                    "status": status,
+                    "score": None,
+                    "score100": None,
+                    "multiplier": 1.0,
+                    "label": "Unavailable",
+                    "signal_used": None,
+                    "source": "api_football",
+                    "metric": "synthetic_press_intensity_index",
+                    "scoreInterpretation": (
+                        "This is a bounded defensive-action/pass-volume index, "
+                        "not a count of pressure events."
+                    ),
+                    "sampleSize": 0,
+                    "sampleTarget": target_matches,
+                    "sampleStatus": "unavailable",
+                    "sampleUnit": "opponent_recent_fixture",
+                    "profileScope": "opponent_recent_matchups",
                     "reason": reason,
+                    "projectionApplied": False,
+                    "projectionMultiplier": 1.0,
                 }
 
             rows = []
@@ -1867,164 +1886,445 @@ async def predict(req: PredictionRequest):
                 seen.add(fid)
                 rows.append(row)
 
-            async def read_cached():
-                cached = {}
-                for row in rows:
-                    fid = str(row.get("_fid") or row.get("fixtureId") or "")
-                    opp_id = row.get("fixtureOpponentId") or row.get("opponentId")
-                    if not fid or not opp_id:
-                        continue
-                    try:
-                        doc = await db.fixture_player_cache.find_one(
-                            {"_k": f"fx_press_intensity_v2_{fid}_{opp_id}"},
-                            {"_id": 0, "d": 1, "_ts": 1},
-                        )
-                        cached_profile = (doc or {}).get("d")
-                        cached_ts = (doc or {}).get("_ts")
-                        cached_available = (
-                            isinstance(cached_profile, dict)
-                            and (cached_profile.get("pressIntensity") or {}).get("available") is True
-                        )
-                        cached_recent_unavailable = False
-                        if isinstance(cached_profile, dict) and not cached_available:
-                            try:
-                                cached_recent_unavailable = (
-                                    datetime.now(timezone.utc) - cached_ts
-                                ).total_seconds() < 600
-                            except Exception:
-                                cached_recent_unavailable = False
-                        if cached_available or cached_recent_unavailable:
-                            cached[fid] = cached_profile
-                    except Exception:
-                        continue
-                return cached
-
-            cached = await read_cached()
-            pending_all = [
-                row for row in rows
-                if str(row.get("_fid") or row.get("fixtureId") or "") not in cached
-            ]
-            pending = pending_all[:max(0, int(max_network_matches or 0))]
-            deferred = pending_all[len(pending):]
-            # The row packet is explanation-only and must be ready for the
-            # history card, so warm the bounded recent window concurrently.
-            # Cached rows still return immediately; provider calls are capped
-            # by max_network_matches below.
-            sem = aio.Semaphore(8)
-
-            async def build_one(row):
-                fid = str(row.get("_fid") or row.get("fixtureId") or "")
+            # Group by verified opponent team ID. A single opponent profile is
+            # intentionally shared across its player-history rows so one club
+            # cannot consume the provider quota once per appearance.
+            opponents = {}
+            for row in rows:
                 opponent_id = row.get("fixtureOpponentId") or row.get("opponentId")
                 if not opponent_id:
-                    return unavailable(row, "missing_opponent_team_id")
-                fixture_row = {
-                    "fixtureId": fid,
-                    "date": row.get("date", ""),
-                    # The helper is called from the opponent's perspective.
-                    "opponent": corrected_team_name or req.teamName,
-                    "venue": "away" if row.get("venue") == "home" else "home",
-                }
+                    continue
                 try:
-                    stats_rows = await fetch_fixture_team_stats(
-                        [fixture_row],
-                        int(opponent_id),
-                        limit=1,
-                        include_player_actions=False,
+                    opponent_id = int(opponent_id)
+                except (TypeError, ValueError):
+                    continue
+                key = str(opponent_id)
+                if key not in opponents:
+                    opponents[key] = {
+                        "teamId": opponent_id,
+                        "name": row.get("opponent") or "Opponent",
+                    }
+
+            def _fixture_date(raw):
+                fixture = raw.get("fixture") or {}
+                return str(
+                    raw.get("date")
+                    or fixture.get("date")
+                    or raw.get("matchDate")
+                    or "",
+                )[:10]
+
+            def _normalize_team_fixture(raw, team_id):
+                """Normalize API-Football or cached team fixture rows."""
+                if not isinstance(raw, dict):
+                    return None
+                fixture = raw.get("fixture") or {}
+                teams = raw.get("teams") or {}
+                home = teams.get("home") or {}
+                away = teams.get("away") or {}
+                fixture_id = fixture.get("id") or raw.get("fixtureId")
+                home_id = home.get("id") or raw.get("homeTeamId")
+                away_id = away.get("id") or raw.get("awayTeamId")
+                if not fixture_id or home_id is None or away_id is None:
+                    return None
+                if team_id not in {home_id, away_id}:
+                    return None
+                date_value = _fixture_date(raw)
+                if not date_value:
+                    return None
+                status_short = str(
+                    (fixture.get("status") or {}).get("short")
+                    or raw.get("statusShort")
+                    or "",
+                ).upper()
+                if status_short and status_short not in {"FT", "AET", "PEN", "AWD", "WO"}:
+                    return None
+                try:
+                    if datetime.strptime(date_value, "%Y-%m-%d").date() > datetime.now(
+                        timezone.utc
+                    ).date():
+                        return None
+                except ValueError:
+                    pass
+                team_is_home = home_id == team_id
+                return {
+                    "fixtureId": fixture_id,
+                    "date": date_value,
+                    "opponent": (
+                        (away.get("name") if team_is_home else home.get("name"))
+                        or raw.get("opponent")
+                        or "Opponent",
+                    ),
+                    "venue": "home" if team_is_home else "away",
+                    "homeGoals": (raw.get("goals") or {}).get("home", 0)
+                    if raw.get("goals") is not None
+                    else raw.get("homeGoals", 0),
+                    "awayGoals": (raw.get("goals") or {}).get("away", 0)
+                    if raw.get("goals") is not None
+                    else raw.get("awayGoals", 0),
+                }
+
+            team_fixture_pools = {}
+
+            async def load_opponent_fixture_pool(team_id):
+                key = str(team_id)
+                if key in team_fixture_pools:
+                    return team_fixture_pools[key]
+                raw_fixtures = []
+                try:
+                    from cache import get_cached_team_fixtures
+                    raw_fixtures = await get_cached_team_fixtures(team_id)
+                except Exception:
+                    raw_fixtures = []
+
+                normalized = []
+                seen_fixture_ids = set()
+
+                def add_fixtures(candidate_rows):
+                    for raw in candidate_rows or []:
+                        normalized_row = _normalize_team_fixture(raw, team_id)
+                        if not normalized_row:
+                            continue
+                        fixture_key = str(normalized_row["fixtureId"])
+                        if fixture_key in seen_fixture_ids:
+                            continue
+                        seen_fixture_ids.add(fixture_key)
+                        normalized.append(normalized_row)
+
+                add_fixtures(raw_fixtures)
+                if len(normalized) < target_matches:
+                    try:
+                        live_fixtures = await aio.wait_for(
+                            api_football_request(
+                                "fixtures",
+                                {
+                                    "team": team_id,
+                                    "last": candidate_limit * 2,
+                                    "status": "FT",
+                                },
+                            ),
+                            timeout=6.0,
+                        )
+                        add_fixtures(live_fixtures)
+                    except Exception as fixture_err:
+                        print(
+                            f"[OPP PRESS FIXTURES] team={team_id} "
+                            f"unavailable={type(fixture_err).__name__}"
+                        )
+                normalized = _newest_first_rows(normalized, candidate_limit)
+                team_fixture_pools[key] = normalized
+                return normalized
+
+            async def read_cached_profile(opponent):
+                team_id = opponent["teamId"]
+                try:
+                    doc = await db.fixture_player_cache.find_one(
+                        {"_k": f"{profile_cache_prefix}{team_id}"},
+                        {"_id": 0, "d": 1},
                     )
-                    packet = compute_press_intensity_score(stats_rows or [])
-                    available = packet.get("available") is True
-                    profile = {
-                        "fixtureId": fid,
-                        "date": row.get("date"),
-                        "opponent": row.get("opponent"),
-                        "venue": row.get("venue"),
-                        "pressIntensity": packet,
-                        "status": "available" if available else "unavailable",
-                        "verified": available,
-                        "source": (
-                            stats_rows[0].get("pressureActionSource")
-                            if available and stats_rows
+                    profile = (doc or {}).get("d")
+                    packet = (profile or {}).get("pressIntensity") if isinstance(profile, dict) else None
+                    if (
+                        isinstance(profile, dict)
+                        and profile.get("version") == profile_version
+                        and isinstance(packet, dict)
+                        and packet.get("available") is True
+                        and int(packet.get("sampleSize") or 0) >= target_matches
+                    ):
+                        return profile
+                except Exception:
+                    pass
+                return None
+
+            cached_profiles = {}
+            cached_results = await aio.gather(
+                *(read_cached_profile(opponent) for opponent in opponents.values()),
+                return_exceptions=True,
+            )
+            for opponent, profile in zip(opponents.values(), cached_results):
+                if isinstance(profile, dict):
+                    cached_profiles[str(opponent["teamId"])] = profile
+
+            def _has_pressure_action(row):
+                return isinstance(row, dict) and any(
+                    row.get(field) is not None
+                    for field in (
+                        "tackles_total",
+                        "tackles_interceptions",
+                        "tackles_blocks",
+                        "duels_won_agg",
+                        "fouls_committed_agg",
+                    )
+                )
+
+            def _profile_match_rows(stats_rows):
+                matches = []
+                for stats_row in _newest_first_rows(stats_rows):
+                    if not _has_pressure_action(stats_row):
+                        continue
+                    single = compute_press_intensity_score([stats_row])
+                    matches.append({
+                        "fixtureId": stats_row.get("fixtureId"),
+                        "date": stats_row.get("date"),
+                        "opponent": stats_row.get("opponent"),
+                        "venue": stats_row.get("venue"),
+                        "score": stats_row.get("score"),
+                        "pressureLabel": (
+                            single.get("label")
+                            if single.get("available") is True
                             else None
                         ),
+                        "pressureIndex": (
+                            single.get("score100")
+                            if single.get("available") is True
+                            else None
+                        ),
+                    })
+                return matches
+
+            async def build_opponent_profile(opponent):
+                team_id = opponent["teamId"]
+                team_name = opponent["name"]
+                try:
+                    fixture_pool = await load_opponent_fixture_pool(team_id)
+                    if len(fixture_pool) < target_matches:
+                        packet = unavailable_packet(
+                            f"Only {len(fixture_pool)} recent completed opponent matches "
+                            f"were found; {target_matches} are required.",
+                            status="insufficient_sample",
+                        )
+                        stats_rows = []
+                    else:
+                        # Player-level defensive actions are requested when
+                        # possible. fetch_fixture_team_stats falls back to
+                        # exact team fouls when the optional player endpoint is
+                        # unavailable, so a provider gap never becomes zero.
+                        stats_rows = await fetch_fixture_team_stats(
+                            fixture_pool,
+                            team_id,
+                            limit=len(fixture_pool),
+                            include_player_actions=True,
+                        )
+                        packet = compute_press_intensity_score(stats_rows or [])
+                        valid_count = int(packet.get("sampleSize") or 0)
+                        if packet.get("available") is not True or valid_count < target_matches:
+                            packet = unavailable_packet(
+                                f"Only {valid_count} valid pressure matches were returned "
+                                f"from the opponent's recent {target_matches}-match target.",
+                                status="insufficient_sample",
+                            )
+                    sample_matches = _profile_match_rows(stats_rows)
+                    if packet.get("available") is True:
+                        packet.update({
+                            "sampleTarget": target_matches,
+                            "sampleUnit": "opponent_recent_fixture",
+                            "profileScope": "opponent_recent_matchups",
+                            "recentMatchupsUsed": len(sample_matches),
+                        })
+                    profile = {
+                        "version": profile_version,
+                        "opponentId": team_id,
+                        "opponent": team_name,
+                        "status": (
+                            "available"
+                            if packet.get("available") is True
+                            else packet.get("status") or "unavailable"
+                        ),
+                        "verified": packet.get("available") is True,
+                        "source": (
+                            "API-Football opponent fixtures + fixture statistics "
+                            "+ fixture player defensive actions"
+                        ),
+                        "sampleTarget": target_matches,
+                        "sampleMatches": sample_matches,
+                        "pressIntensity": packet,
                         "reason": packet.get("reason"),
                     }
                     try:
-                        # Available packets are durable for this exact fixture.
-                        # Unavailable packets get a short retry TTL so quota or
-                        # provider gaps do not fan out on every scan.
                         await db.fixture_player_cache.update_one(
-                            {"_k": f"fx_press_intensity_v2_{fid}_{opponent_id}"},
+                            {"_k": f"{profile_cache_prefix}{team_id}"},
                             {
                                 "$set": {
-                                    "_k": f"fx_press_intensity_v2_{fid}_{opponent_id}",
+                                    "_k": f"{profile_cache_prefix}{team_id}",
                                     "_ts": datetime.now(timezone.utc),
                                     "d": profile,
                                 }
                             },
                             upsert=True,
                         )
-                    except Exception:
-                        pass
+                    except Exception as cache_err:
+                        print(
+                            f"[OPP PRESS CACHE] team={team_id} skipped="
+                            f"{type(cache_err).__name__}"
+                        )
                     return profile
                 except Exception as exc:
-                    return unavailable(row, f"pressure_fetch_{type(exc).__name__}")
+                    packet = unavailable_packet(
+                        f"opponent_recent_pressure_{type(exc).__name__}"
+                    )
+                    return {
+                        "version": profile_version,
+                        "opponentId": team_id,
+                        "opponent": team_name,
+                        "status": "unavailable",
+                        "verified": False,
+                        "source": None,
+                        "sampleTarget": target_matches,
+                        "sampleMatches": [],
+                        "pressIntensity": packet,
+                        "reason": packet.get("reason"),
+                    }
 
-            async def bounded(row):
-                async with sem:
+            pending_all = [
+                opponent
+                for key, opponent in opponents.items()
+                if key not in cached_profiles
+            ]
+            pending = pending_all[:max(0, int(max_network_matches or 0))]
+            deferred = pending_all[len(pending):]
+            profile_sem = aio.Semaphore(4)
+
+            async def bounded_profile(opponent):
+                async with profile_sem:
                     try:
-                        return await aio.wait_for(build_one(row), timeout=10.0)
+                        return await aio.wait_for(
+                            build_opponent_profile(opponent),
+                            timeout=30.0,
+                        )
                     except Exception as exc:
-                        return unavailable(row, f"pressure_fetch_{type(exc).__name__}")
+                        return {
+                            "version": profile_version,
+                            "opponentId": opponent["teamId"],
+                            "opponent": opponent["name"],
+                            "status": "unavailable",
+                            "verified": False,
+                            "source": None,
+                            "sampleTarget": target_matches,
+                            "sampleMatches": [],
+                            "pressIntensity": unavailable_packet(
+                                f"opponent_recent_pressure_{type(exc).__name__}"
+                            ),
+                            "reason": f"opponent_recent_pressure_{type(exc).__name__}",
+                        }
 
-            async def warm_rows(rows_to_warm):
-                if not rows_to_warm:
+            async def warm_profiles(opponents_to_warm):
+                if not opponents_to_warm:
                     return
                 fresh = await aio.gather(
-                    *(bounded(row) for row in rows_to_warm),
+                    *(bounded_profile(opponent) for opponent in opponents_to_warm),
                     return_exceptions=True,
                 )
-                for row, profile in zip(rows_to_warm, fresh):
+                for opponent, profile in zip(opponents_to_warm, fresh):
                     if isinstance(profile, dict):
-                        fid = str(row.get("_fid") or row.get("fixtureId") or "")
-                        if fid:
-                            cached[fid] = profile
+                        cached_profiles[str(opponent["teamId"])] = profile
 
-            await warm_rows(pending)
+            await warm_profiles(pending)
             if deferred:
-                aio.create_task(warm_rows(deferred))
+                aio.create_task(warm_profiles(deferred))
 
             profiles = []
             for row in rows:
                 fid = str(row.get("_fid") or row.get("fixtureId") or "")
+                opponent_id = row.get("fixtureOpponentId") or row.get("opponentId")
+                try:
+                    opponent_key = str(int(opponent_id)) if opponent_id else ""
+                except (TypeError, ValueError):
+                    opponent_key = ""
+                baseline = cached_profiles.get(opponent_key)
+                if baseline:
+                    packet = dict(baseline.get("pressIntensity") or {})
+                    profile_status = baseline.get("status") or packet.get("status")
+                    profile = {
+                        "fixtureId": row.get("_fid") or row.get("fixtureId"),
+                        "date": row.get("date"),
+                        "opponent": row.get("opponent"),
+                        "venue": row.get("venue"),
+                        "opponentId": opponent_id,
+                        "status": profile_status,
+                        "verified": baseline.get("verified") is True,
+                        "source": baseline.get("source"),
+                        "pressureScope": "opponent_recent_matchups",
+                        "sampleTarget": target_matches,
+                        "sampleMatches": baseline.get("sampleMatches") or [],
+                        "pressIntensity": packet,
+                        "reason": baseline.get("reason") or packet.get("reason"),
+                    }
+                else:
+                    profile = {
+                        "fixtureId": row.get("_fid") or row.get("fixtureId"),
+                        "date": row.get("date"),
+                        "opponent": row.get("opponent"),
+                        "venue": row.get("venue"),
+                        "opponentId": opponent_id,
+                        "status": "warming" if opponent_key else "unavailable",
+                        "verified": False,
+                        "source": None,
+                        "pressureScope": "opponent_recent_matchups",
+                        "sampleTarget": target_matches,
+                        "sampleMatches": [],
+                        "pressIntensity": unavailable_packet(
+                            "missing_opponent_team_id"
+                            if not opponent_key
+                            else "opponent_recent_pressure_not_yet_warmed",
+                            status="warming" if opponent_key else "unavailable",
+                        ),
+                        "reason": (
+                            "missing_opponent_team_id"
+                            if not opponent_key
+                            else "opponent_recent_pressure_not_yet_warmed"
+                        ),
+                    }
                 profiles.append(
-                    cached.get(fid)
-                    if isinstance(cached.get(fid), dict)
-                    else unavailable(row, "not_yet_warmed")
+                    profile
                 )
-            available_count = sum(
+            available_opponents = sum(
                 1
-                for profile in profiles
-                if (profile.get("pressIntensity") or {}).get("available") is True
+                for opponent in opponents.values()
+                if (
+                    cached_profiles.get(str(opponent["teamId"]), {})
+                    .get("pressIntensity", {})
+                    .get("available")
+                    is True
+                )
+            )
+            opponent_count = len(opponents)
+            verified_matches = sum(
+                int(
+                    (cached_profiles.get(str(opponent["teamId"]), {})
+                     .get("pressIntensity", {})
+                     .get("sampleSize") or 0)
+                )
+                for opponent in opponents.values()
             )
             return {
                 "status": (
                     "verified"
-                    if profiles and available_count == len(profiles)
+                    if opponent_count and available_opponents == opponent_count
                     else "partial"
-                    if available_count
+                    if available_opponents
                     else "warming"
-                    if profiles
+                    if opponent_count
                     else "unavailable"
                 ),
-                "available": bool(available_count),
+                "available": bool(available_opponents),
                 "sampleSize": len(profiles),
-                "verifiedMatches": available_count,
-                "source": "API-Football fixture statistics + fixture player defensive actions",
+                "verifiedMatches": verified_matches,
+                "opponentCount": opponent_count,
+                "opponentsWithPressure": available_opponents,
+                "matchupsPerOpponentTarget": target_matches,
+                "sampleUnit": "opponent_recent_matchups",
+                "source": (
+                    "API-Football opponent fixtures + fixture statistics "
+                    "+ fixture player defensive actions"
+                ),
                 "projectionInfluence": "explanation_only",
                 "profiles": profiles,
                 "limitations": [
-                    "Each row is an exact-match descriptive pressure packet.",
-                    "A single fixture is labeled limited; stable baseline status requires seven valid rows.",
+                    (
+                        f"Each opponent profile uses at least {target_matches} "
+                        "recent completed team matches when provider coverage permits."
+                    ),
+                    "The profile is descriptive and is not used to change the deterministic projection.",
                     "Missing provider fields are unavailable, never a guessed zero.",
                 ],
             }
@@ -5431,7 +5731,7 @@ async def predict(req: PredictionRequest):
             fetch_recent_opponent_press_intensity(
                 _recent_profile_rows,
                 limit=_RECENT_ARCHIVE_TARGET,
-                max_network_matches=12,
+                max_network_matches=50,
             )
         )
         if _prediction_elapsed() < 20.0:
