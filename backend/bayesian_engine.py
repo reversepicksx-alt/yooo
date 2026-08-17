@@ -2663,10 +2663,10 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         "label": "Unavailable",
         "signal_used": None,
         "source": "api_football",
-        "metric": "synthetic_press_intensity_index",
+         "metric": "reverse_picks_pressure_index",
         "scoreInterpretation": (
-            "The 0-100 value is a bounded synthetic index, not a count of pressure events; "
-            "0 is the floor of the low band."
+            "Reverse Picks Pressure Index is a custom bounded 0-100 product rating; "
+            "it is not PPDA, a count of pressure events, or a raw provider statistic."
         ),
         "synthetic_ppda": None,
         "ppda": None,
@@ -2808,10 +2808,10 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         "label": label,
         "signal_used": signal_used,
         "source": "api_football",
-        "metric": "synthetic_press_intensity_index",
+         "metric": "reverse_picks_pressure_index",
         "scoreInterpretation": (
-            "The 0-100 value is a bounded synthetic index, not a count of pressure events; "
-            "0 is the floor of the low band."
+            "Reverse Picks Pressure Index is a custom bounded 0-100 product rating; "
+            "it is not PPDA, a count of pressure events, or a raw provider statistic."
         ),
         "synthetic_ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
         # Keep ppda as a compatibility alias for older saved records, but

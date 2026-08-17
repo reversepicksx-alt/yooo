@@ -1845,8 +1845,8 @@ async def predict(req: PredictionRequest):
             """
             from bayesian_engine import compute_press_intensity_score
 
-            profile_version = "opponent-pressure-v3"
-            profile_cache_prefix = "opp_press_profile_v3_"
+            profile_version = "opponent-pressure-v4"
+            profile_cache_prefix = "opp_press_profile_v4_"
             target_matches = _OPPONENT_PRESSURE_MATCH_TARGET
             candidate_limit = _OPPONENT_PRESSURE_CANDIDATE_LIMIT
 
@@ -14223,10 +14223,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             _press_intensity = {
                 "available": False,
                 "status": "unavailable",
-                "score": 0.0,
-                "score100": 0,
+                 "score": None,
+                 "score100": None,
                 "label": "Unavailable",
                 "source": "api_football",
+                 "metric": "reverse_picks_pressure_index",
                 "reasoning": "Press Intensity was not returned by the Bayesian layer.",
                 "sampleSize": 0,
                 "sampleStatus": "unavailable",

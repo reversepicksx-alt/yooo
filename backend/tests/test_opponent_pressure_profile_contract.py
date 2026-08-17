@@ -33,8 +33,8 @@ def test_unavailable_pressure_never_has_a_numeric_zero_score():
 def test_recent_profiles_require_five_completed_matches_and_are_versioned():
     assert '_OPPONENT_PRESSURE_MATCH_TARGET = 5' in PREDICT_SOURCE
     assert '_OPPONENT_PRESSURE_CANDIDATE_LIMIT = 8' in PREDICT_SOURCE
-    assert 'profile_version = "opponent-pressure-v3"' in PREDICT_SOURCE
-    assert 'profile_cache_prefix = "opp_press_profile_v3_"' in PREDICT_SOURCE
+    assert 'profile_version = "opponent-pressure-v4"' in PREDICT_SOURCE
+    assert 'profile_cache_prefix = "opp_press_profile_v4_"' in PREDICT_SOURCE
     assert 'if len(fixture_pool) < target_matches:' in PREDICT_SOURCE
     assert '"sampleTarget": target_matches' in PREDICT_SOURCE
     assert 'done, pending_tasks = await aio.wait(' in PREDICT_SOURCE
@@ -53,3 +53,7 @@ def test_mobile_does_not_render_unavailable_pressure_as_zero_over_one_hundred():
     assert "{score != null ? `INDEX ${score}/100 · ${label}` : label}" in ANALYSIS_SOURCE
     assert "NO VERIFIED OPPONENT SAMPLE" in COMPACT_SOURCE
     assert "N=${Number(pressureProfile?.sampleTarget" in COMPACT_SOURCE
+    assert "Reverse Picks Pressure Index" in COMPACT_SOURCE
+    assert "raw provider statistics are audit inputs, not pressure scores" in COMPACT_SOURCE
+    assert "custom Reverse Picks Pressure Index" in COMPACT_SOURCE
+    assert "Inputs: ${inputParts}." not in COMPACT_SOURCE

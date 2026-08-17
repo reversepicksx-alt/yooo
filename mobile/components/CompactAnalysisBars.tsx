@@ -775,7 +775,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                  <Text style={{ color: '#FF453A' }}>E ELITE {pressureCounts.ELITE}</Text>
                </Text>
                  <Text style={styles.pressureLegendNote} numberOfLines={3}>
-                   Each pressure value summarizes this opponent&apos;s recent completed matches (target N=5). It is a defensive-action/pass-volume index, not a count of pressure events.
+                    Each value is the custom Reverse Picks Pressure Index for this opponent&apos;s recent completed matches (target N=5). It is not PPDA, a raw provider statistic, or a count of pressure events.
                 </Text>
              </View>
            )}
@@ -802,8 +802,10 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                      ? String(pressurePacket?.label).toUpperCase()
                      : 'UNAVAILABLE';
                     const pressureScore = Number.isFinite(Number(pressurePacket?.score100))
-                      ? `INDEX ${Math.round(Number(pressurePacket?.score100))}/100`
-                     : '';
+                       ? `INDEX ${Math.round(Number(pressurePacket?.score100))}/100`
+                       : Number.isFinite(Number(pressurePacket?.score))
+                         ? `INDEX ${Math.round(Number(pressurePacket?.score) * 100)}/100`
+                         : '';
                     const pressureSample = pressureAvailable
                       ? `N=${Number(pressureProfile?.sampleTarget || pressurePacket?.sampleTarget || pressurePacket?.sampleSize || 0)} RECENT`
                       : 'NO VERIFIED OPPONENT SAMPLE';
@@ -912,40 +914,29 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                         return ` · PRESS ${selectedLabel}${selectedScore}${selectedSample}`;
                       })()}
                   </Text>
-                 {(() => {
-                    const selectedPressureProfile = pressureProfileFor(selectedGame);
-                    const selectedPressure = pressurePacketFor(selectedGame);
-                   if (selectedPressure?.available === true) {
-                     const inputParts = [
-                       Number.isFinite(Number(selectedPressure.synthetic_ppda))
-                         ? `PPDA ${Number(selectedPressure.synthetic_ppda).toFixed(1)}`
-                         : null,
-                       Number.isFinite(Number(selectedPressure.avg_effective_defensive_actions))
-                         ? `DA ${Number(selectedPressure.avg_effective_defensive_actions).toFixed(1)}`
-                         : null,
-                       Number.isFinite(Number(selectedPressure.avg_opponent_passes))
-                         ? `OPP PASS ${Number(selectedPressure.avg_opponent_passes).toFixed(1)}`
-                         : null,
-                     ].filter(Boolean).join(' · ');
-                     return (
-                       <Text style={styles.pressureExplain} numberOfLines={3}>
-                          {`Opponent recent-match profile using at least ${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || 5)} completed matches. `}
-                          {String(
-                            selectedPressure.scoreInterpretation
-                            || 'The score is not a count of pressure events.',
-                          )}{' '}
-                         {inputParts
-                           ? `Inputs: ${inputParts}.`
-                           : 'Inputs unavailable beyond the classification.'}
-                       </Text>
-                     );
-                   }
-                   return (
-                     <Text style={styles.pressureExplain} numberOfLines={2}>
-                        No verified recent opponent pressure profile is available yet. No 0/100 is shown because missing provider fields are not treated as zero pressure.
-                     </Text>
-                   );
-                 })()}
+                  {(() => {
+                     const selectedPressureProfile = pressureProfileFor(selectedGame);
+                     const selectedPressure = pressurePacketFor(selectedGame);
+                    if (selectedPressure?.available === true) {
+                      const selectedIndex = Number.isFinite(Number(selectedPressure?.score100))
+                        ? Math.round(Number(selectedPressure.score100))
+                        : Number.isFinite(Number(selectedPressure?.score))
+                          ? Math.round(Number(selectedPressure.score) * 100)
+                          : null;
+                      return (
+                        <Text style={styles.pressureExplain} numberOfLines={3}>
+                          {`Reverse Picks Pressure Index${selectedIndex != null ? ` ${selectedIndex}/100` : ''} · `}
+                          {`recent opponent profile using at least ${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || 5)} completed matches. `}
+                          This is the product&apos;s custom 0–100 pressure rating; raw provider statistics are audit inputs, not pressure scores.
+                        </Text>
+                      );
+                    }
+                    return (
+                      <Text style={styles.pressureExplain} numberOfLines={2}>
+                         No verified recent opponent pressure profile is available yet. No 0/100 is shown because missing provider fields are not treated as zero pressure.
+                      </Text>
+                    );
+                  })()}
                 </>
               )}
             </View>

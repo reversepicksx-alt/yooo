@@ -35,8 +35,8 @@ For exact historical match labels, fixture-level API-Football team statistics ma
 
 **How to apply:** Bound optional player-action enrichment and let the exact fixture team-stat row classify from its available defensive field. Preserve the seven-row threshold for stable aggregate evidence.
 
-The displayed 0–100 pressure value is a bounded synthetic index, not a count of pressure events; zero means the floor of the low band, not that the opponent applied no pressure. Exact-fixture history packets are explanation-only and must be cache-versioned when their response contract changes.
+The displayed 0–100 pressure value is the custom Reverse Picks Pressure Index, not PPDA, a raw provider statistic, or a count of pressure events. Zero means the floor of the low band, not that the opponent applied no pressure. Exact-fixture history packets are explanation-only and must be cache-versioned when their response contract changes.
 
 **Why:** Users can reasonably read “LOW 0/100” as literal zero pressure, and old cached packets otherwise hide new provenance or interpretation fields after a contract update.
 
-**How to apply:** Label the UI as an index, show limited sample status, and explain the defensive-action/pass-volume inputs. Bump the exact-fixture cache identity whenever packet fields or semantics change.
+**How to apply:** Label the UI as the Reverse Picks Pressure Index, show limited sample status, and keep raw provider inputs behind the audit/math boundary. Bump the exact-fixture cache identity whenever packet fields or semantics change.
