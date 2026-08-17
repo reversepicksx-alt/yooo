@@ -339,7 +339,7 @@ def build_tactical_explanation(context: dict[str, Any]) -> str:
         else:
             press_effect = "This is matchup context, not a direct player assignment."
         environment.append(
-            f"Understat's {opponent_name} venue record shows a {press_label} team press: "
+            f"{opponent_name}'s venue record shows a {press_label} team press: "
             f"PPDA {fmt(opponent_press_ppda)}{press_percentile_text} across {press_sample} matches."
             f"{target_opp_text} {press_effect} This is team-level pressure evidence; "
             "it does not identify a one-to-one marker or exact pressing trigger."

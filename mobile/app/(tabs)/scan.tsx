@@ -28,7 +28,6 @@ import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 import {
   renderTacticalContext,
   renderTacticalIntelligence,
-  renderTacticalVerdict,
 } from '@/components/AnalysisCards';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
@@ -139,7 +138,7 @@ function TacticalNarrativeCard({
               TEAM PRESSURE
             </Text>
             <Text style={{ marginLeft: 'auto', fontSize: 9, color: Colors.textTertiary, fontWeight: '700' }}>
-              UNDERSTAT · CONTEXT ONLY
+              CONFIRMED PPDA
             </Text>
           </View>
           <Text style={{ marginTop: 4, fontSize: 12, color: Colors.text, fontWeight: '700' }}>
@@ -3689,18 +3688,6 @@ export default function ScanScreen() {
               {/* ─── GROUNDED PLAYER + MATCH TACTICAL READ ─── */}
               {prediction.sport === 'soccer' && (
                 <>
-                  {renderTacticalVerdict(
-                    prediction as any,
-                    {
-                      playerName: prediction.playerName,
-                      propType: prediction.propType,
-                      recommendation: prediction.recommendation,
-                      projectedValue: prediction.projection ?? prediction.projectedValue,
-                      line: prediction.line,
-                      teamName: prediction.teamName,
-                      opponentName: prediction.opponentName || prediction.opponent,
-                    },
-                  )}
                   {renderTacticalIntelligence(prediction as any)}
                   {renderTacticalContext(prediction as any)}
                 </>

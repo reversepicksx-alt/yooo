@@ -385,14 +385,10 @@ export function renderTacticalVerdict(
   );
 }
 
-/** Compact public-source tactical context. This card is explanatory only. */
-export function renderTacticalContext(
-  data: Record<string, unknown> | null,
-) {
+/** Confirmed team-pressure card. Provider branding stays out of the product UI. */
+export function renderTacticalContext(data: Record<string, unknown> | null) {
   const sport = String((data as any)?.sport ?? 'soccer').toLowerCase();
   if (sport && sport !== 'soccer') return null;
-  const enrichment = (((data as any)?.tacticalContext?.fbrefEnrichment
-    ?? (data as any)?.fbrefEnrichment) || {}) as any;
   const understat = ((data as any)?.tacticalContext?.understatPressure
     ?? (data as any)?.tacticalIntelligence?.understatPressure) as any;
   const understatPress = understat?.opponentPress ?? {};
@@ -400,107 +396,31 @@ export function renderTacticalContext(
   const hasUnderstat =
     ['available', 'verified_team_level'].includes(understat?.status)
     && understatPpda != null;
-  const pressure = enrichment.pressure ?? {};
-  const zones = enrichment.zones ?? {};
-  const hasPressure = hasUnderstat || pressure.label || pressure.ppda != null || pressure.pressures != null;
-  const hasZones =
-    zones.dominance
-    || zones.defThirdSharePct != null
-    || zones.midThirdSharePct != null
-    || zones.attThirdSharePct != null
-    || zones.progressivePasses != null
-    || zones.progressiveCarries != null;
-  const hasTacticalPacket = Boolean(
-    (data as any)?.tacticalContext
-    || (data as any)?.tacticalIntelligence
-  );
-  if (!hasTacticalPacket && !enrichment?.available) return null;
-
-  const pressureLabel = String(pressure.label ?? 'profile unavailable')
-    .replace(/_/g, ' ')
-    .toUpperCase();
-  const pressureSource = understat?.source
-    ?? understatPress.source
-    ?? pressure.source
-    ?? null;
-  const pressureReason = String(
-    understat?.reason
-      ?? (understat?.status && !hasUnderstat ? `status_${understat.status}` : ''),
-  ).replace(/_/g, ' ');
-  const zoneLabel = zones.dominance
-    ? String(zones.dominance).replace(/_/g, ' ').toUpperCase()
-    : 'ZONE MIX';
-  const pct = (value: unknown) => value == null ? '—' : `${Number(value).toFixed(0)}%`;
-  const count = (value: unknown) => value == null ? '—' : Number(value).toFixed(1);
-
+  if (!hasUnderstat) return null;
   return (
     <View style={aStyles.tacticalContextCard}>
       <View style={aStyles.proCardHeader}>
-        <View style={[aStyles.proCardPill, { backgroundColor: Colors.primary + '18' }]}>
-          <Text style={[aStyles.proCardPillText, { color: Colors.primary }]}>TACTICAL CONTEXT</Text>
+        <View style={[aStyles.proCardPill, { backgroundColor: '#60A5FA18' }]}>
+          <Text style={[aStyles.proCardPillText, { color: '#60A5FA' }]}>CONFIRMED PPDA</Text>
         </View>
-        <Text style={aStyles.proCardTitle}>PUBLIC MATCH PROFILE</Text>
+        <Text style={aStyles.proCardTitle}>TEAM PRESSURE</Text>
       </View>
       <View style={aStyles.tacticalContextGrid}>
-        {hasPressure ? (
-          <View style={aStyles.tacticalContextCell}>
-            <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE / PPDA</Text>
-            <Text style={aStyles.tacticalContextValue}>
-              {hasUnderstat
-                ? `PPDA ${Number(understatPpda).toFixed(1)} · ${String(understatPress.label ?? 'classified').replace(/_/g, ' ').toUpperCase()}`
-                : pressureLabel}
-            </Text>
-            {hasUnderstat ? (
-              <Text style={aStyles.proCardNote}>
-                {understatPress.leaguePercentile != null
-                  ? `${Number(understatPress.leaguePercentile).toFixed(0)}th pct · `
-                  : ''}
-                {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} · ` : ''}
-                {understatPress.sampleSize ?? 0} matches
-              </Text>
-            ) : (
-              <Text style={aStyles.proCardNote}>
-                PPDA UNAVAILABLE{pressureReason ? ` · ${pressureReason}` : ''}
-                {pressureSource ? ` · source: ${String(pressureSource).replace(/_/g, ' ')}` : ''}
-              </Text>
-            )}
-          </View>
-        ) : !hasUnderstat ? (
-          <View style={aStyles.tacticalContextCell}>
-            <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESSURE / PPDA</Text>
-            <Text style={aStyles.tacticalContextValue}>UNAVAILABLE</Text>
-            <Text style={aStyles.proCardNote}>
-              PPDA unavailable
-              {pressureReason ? ` · ${pressureReason}` : ''}
-              {pressureSource ? ` · source: ${String(pressureSource).replace(/_/g, ' ')}` : ''}
-            </Text>
-          </View>
-        ) : null}
-        {hasZones ? (
-          <View style={aStyles.tacticalContextCell}>
-            <Text style={aStyles.proCardMetricLabel}>PLAYER ZONES</Text>
-            <Text style={aStyles.tacticalContextValue}>{zoneLabel}</Text>
-            <Text style={aStyles.proCardNote}>
-              DEF {pct(zones.defThirdSharePct)} · MID {pct(zones.midThirdSharePct)} · ATT {pct(zones.attThirdSharePct)}
-            </Text>
-          </View>
-        ) : null}
+        <View style={aStyles.tacticalContextCell}>
+          <Text style={aStyles.proCardMetricLabel}>OPPONENT PPDA</Text>
+          <Text style={aStyles.tacticalContextValue}>
+            {Number(understatPpda).toFixed(1)}
+            {understatPress.label ? ` · ${String(understatPress.label).toUpperCase()}` : ''}
+          </Text>
+          <Text style={aStyles.proCardNote}>
+            {understatPress.leaguePercentile != null
+              ? `${Number(understatPress.leaguePercentile).toFixed(0)}th percentile · `
+              : ''}
+            {understatPress.venue ? `${String(understatPress.venue).toUpperCase()} · ` : ''}
+            {understatPress.sampleSize ?? 0} matches
+          </Text>
+        </View>
       </View>
-      {!hasPressure && !hasZones ? (
-        <Text style={aStyles.proCardNote}>
-          No additional public event or zone profile is available for this fixture.
-        </Text>
-      ) : null}
-      {hasZones && (zones.progressivePasses != null || zones.progressiveCarries != null) ? (
-        <Text style={aStyles.proCardNote}>
-          Progressive actions: {count(zones.progressivePasses)} passes · {count(zones.progressiveCarries)} carries
-        </Text>
-      ) : null}
-      <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>
-        {hasUnderstat
-          ? 'Understat team pressure is explanatory only; no one-to-one marker is verified.'
-          : 'Context only; it does not add an unvalidated projection adjustment.'}
-      </Text>
     </View>
   );
 }
@@ -875,8 +795,109 @@ export function renderManagerContext(data: Record<string, unknown> | null) {
   );
 }
 
-/** Tactical Intelligence card — role, opponent shape, market script, and limits. */
+/** Minimal role and positional-reality card. */
 export function renderTacticalIntelligence(data: Record<string, unknown> | null) {
+  if (!data) return null;
+  const ti = (data as any)?.tacticalIntelligence as TacticalIntelligence | undefined;
+  const player = ti?.player ?? {};
+  const positional = (
+    ti?.positionalReality
+      ?? (data as any)?.positionalReality
+      ?? {}
+  ) as PositionalReality;
+  const roleLabel = [player.position, player.role].filter(Boolean).join(' · ');
+  const signal = positional.propSignal ?? {};
+  const hasReality = Boolean(
+    positional.zone
+      || positional.roleMechanism
+      || signal.shadowDirection
+      || positional.robustEvidence?.sampleSize,
+  );
+  if (!roleLabel && !hasReality) return null;
+
+  const roleSource = String(
+    player.roleSource ?? (data as any)?.tacticalContext?.roleSource ?? '',
+  );
+  const roleSourceLabel = roleSource === 'fixture_lineup_observation'
+    ? 'confirmed fixture lineup'
+    : roleSource === 'manual_override'
+    ? 'manual player profile'
+    : roleSource.replace(/_/g, ' ') || 'role resolver';
+  const signalColor = signal.shadowDirection === 'higher_volume'
+    ? Colors.success
+    : signal.shadowDirection === 'lower_volume'
+    ? Colors.error
+    : Colors.textSecondary;
+  const signalLabel = String(signal.shadowDirection ?? 'neutral').replace(/_/g, ' ');
+
+  return (
+    <View style={[aStyles.proCard, { borderColor: Colors.primary + '55' }]}>
+      <View style={aStyles.proCardHeader}>
+        <View style={[aStyles.proCardPill, { backgroundColor: Colors.primary + '20' }]}>
+          <Text style={[aStyles.proCardPillText, { color: Colors.primary }]}>ROLE + POSITION</Text>
+        </View>
+        <Text style={aStyles.proCardTitle}>POSITIONAL REALITY</Text>
+      </View>
+
+      {roleLabel ? (
+        <>
+          <View style={aStyles.tacticalGrid}>
+            <View style={aStyles.tacticalCell}>
+              <Text style={aStyles.tacticalValue}>{roleLabel}</Text>
+              <Text style={aStyles.proCardMetricLabel}>CURRENT PLAYER PROFILE</Text>
+            </View>
+          </View>
+          <Text style={aStyles.proCardNote}>
+            Role evidence: <Text style={{ fontWeight: '800' }}>{roleSourceLabel}</Text>
+            {player.roleConfidence ? ` · ${player.roleConfidence} confidence` : ''}
+          </Text>
+        </>
+      ) : null}
+
+      {hasReality ? (
+        <View style={aStyles.intelSection}>
+          <View style={aStyles.intelSectionHeader}>
+            <Text style={aStyles.intelSectionTitle}>POSITIONAL REALITY</Text>
+            <Text style={aStyles.intelBadge}>
+              {positional.zoneConfidence != null
+                ? `${Math.round(Number(positional.zoneConfidence) * 100)}% ZONE`
+                : 'ROLE ZONE'}
+            </Text>
+          </View>
+          <View style={aStyles.tacticalGrid}>
+            {positional.zone ? (
+              <View style={aStyles.tacticalCell}>
+                <Text style={aStyles.tacticalValue}>
+                  {String(positional.zone).replace(/_/g, ' ')}
+                </Text>
+                <Text style={aStyles.proCardMetricLabel}>ROLE ZONE</Text>
+              </View>
+            ) : null}
+            {signal.shadowDirection ? (
+              <View style={aStyles.tacticalCell}>
+                <Text style={[aStyles.tacticalValue, { color: signalColor }]}>
+                  {signalLabel}
+                </Text>
+                <Text style={aStyles.proCardMetricLabel}>PROP SIGNAL</Text>
+              </View>
+            ) : null}
+          </View>
+          {positional.roleMechanism ? (
+            <Text style={aStyles.proCardNote}>{positional.roleMechanism}</Text>
+          ) : null}
+          {signal.shadowMultiplier != null && signal.shadowDirection !== 'neutral' ? (
+            <Text style={[aStyles.proCardNote, { color: signalColor }]}>
+              Positional read: {signalLabel} · ×{Number(signal.shadowMultiplier).toFixed(3)}.
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Legacy tactical packet renderer retained for saved-data compatibility only. */
+function renderLegacyTacticalIntelligence(data: Record<string, unknown> | null) {
   if (!data) return null;
   const ti = (data as any)?.tacticalIntelligence as TacticalIntelligence | undefined;
   const topMatchScript = (data as any)?.matchScript as MatchScript | undefined;

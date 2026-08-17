@@ -1891,21 +1891,6 @@ export default function PicksScreen() {
               return null;
             })()}
 
-            {/* ── TACTICAL READ — primary explanation destination ── */}
-            {!analysisModal?.loading && modalText && (
-              <View style={mStyles.tacticalSection}>
-                <View style={mStyles.factorSectionHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={mStyles.factorSectionTitle}>TACTICAL READ</Text>
-                    <Text style={mStyles.factorSectionSubtitle}>Why the fixture context supports or limits this prop</Text>
-                  </View>
-                  <Ionicons name="compass-outline" size={17} color={modalRecColor} />
-                </View>
-                <View style={mStyles.tacticalCard}>
-                  {renderAnalysisBlocks(modalText, modalRec)}
-                </View>
-              </View>
-            )}
             {!analysisModal?.loading && renderRoleEvidence((() => {
               const data = analysisModal?.data as any;
               const pick = analysisModal?.pick as any;
@@ -1950,17 +1935,6 @@ export default function PicksScreen() {
                  line={(analysisModal?.data as any)?.line ?? (analysisModal?.pick as any)?.line}
                />
              )}
-
-            {/* ── TACTICAL EXPLANATION ── */}
-            {!analysisModal?.loading && modalText && (
-              <View style={mStyles.tacticalSection}>
-                <View style={mStyles.tacticalHeader}>
-                  <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
-                  <Text style={mStyles.tacticalTitle}>TACTICAL ANALYSIS</Text>
-                </View>
-                {renderAnalysisBlocks(modalText, modalRec)}
-              </View>
-            )}
 
             {/* No supporting analysis yet */}
             {!analysisModal?.loading && modalAlerts.length === 0 && (() => {

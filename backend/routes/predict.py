@@ -12809,10 +12809,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     venue=player_venue,
                     as_of=(match_odds or {}).get("matchDate"),
                 ),
-                # Understat's league payload is bounded and normally returns
-                # in ~1s; 4.5s was short enough to cancel valid responses
-                # before they could be cached.
-                timeout=15.0,
+                # This function is cache-only. Keep the local database read
+                # bounded so an unavailable cache never delays prediction.
+                timeout=2.0,
             )
             if not isinstance(_understat_pressure, dict):
                 _understat_pressure = {

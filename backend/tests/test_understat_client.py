@@ -76,7 +76,7 @@ def test_understat_pressure_packet_inverts_fixture_venue_and_preserves_provenanc
         assert season == 2025
         return payload
 
-    monkeypatch.setattr(understat, "_load_league", fake_load)
+    monkeypatch.setattr(understat, "_read_cached_league", fake_load)
     packet = asyncio.run(understat.fetch_understat_pressure_context(
         league_id=140,
         season=2025,

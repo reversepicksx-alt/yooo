@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 import unicodedata
@@ -222,23 +223,29 @@ def _press_label(percentile: float | None) -> str:
     return "average"
 
 
-async def _load_league(slug: str, season: int) -> dict[str, Any] | None:
+async def _read_cached_league(slug: str, season: int) -> dict[str, Any] | None:
     key = f"understat:{slug}:{season}"
-    now = time.time()
     memory = _MEMORY_CACHE.get(key)
-    if memory and now - memory[0] < _CACHE_TTL_SECONDS:
+    if memory:
         return memory[1]
 
     try:
         cached = await db.understat_cache.find_one({"_key": key}, {"_id": 0})
-        if cached and now - float(cached.get("_ts") or 0) < _CACHE_TTL_SECONDS:
+        if cached:
             payload = cached.get("payload")
             if isinstance(payload, dict) and isinstance(payload.get("teams"), dict):
-                _MEMORY_CACHE[key] = (now, payload)
+                _MEMORY_CACHE[key] = (float(cached.get("_ts") or time.time()), payload)
                 return payload
     except Exception as exc:
         print(f"[UNDERSTAT] cache read skipped: {type(exc).__name__}")
 
+    return None
+
+
+async def _refresh_league(slug: str, season: int) -> dict[str, Any] | None:
+    """Refresh one league payload from Understat for the background worker."""
+    key = f"understat:{slug}:{season}"
+    now = time.time()
     try:
         url = f"https://understat.com/getLeagueData/{slug}/{season}"
         headers = {
@@ -281,6 +288,40 @@ async def _load_league(slug: str, season: int) -> dict[str, Any] | None:
     except Exception as exc:
         print(f"[UNDERSTAT] fetch failed {slug}/{season}: {type(exc).__name__}")
         return None
+
+
+async def _load_league(slug: str, season: int) -> dict[str, Any] | None:
+    """Load a payload for a refresh job, using the provider only when stale."""
+    cached = await _read_cached_league(slug, season)
+    if cached:
+        fetched_at = _parse_dt(cached.get("fetchedAt"))
+        cache_stamp = _MEMORY_CACHE.get(f"understat:{slug}:{season}", (0, None))[0]
+        age = (
+            (datetime.now(timezone.utc) - fetched_at).total_seconds()
+            if fetched_at is not None
+            else time.time() - float(cache_stamp or 0)
+        )
+        if age < _CACHE_TTL_SECONDS:
+            return cached
+    return await _refresh_league(slug, season)
+
+
+async def refresh_understat_cache(
+    *,
+    seasons: tuple[int, ...] = (2025, 2024),
+) -> dict[str, int]:
+    """Refresh covered league snapshots outside the prediction request path."""
+    refreshed = 0
+    failed = 0
+    for league in UNDERSTAT_LEAGUES.values():
+        for season in seasons:
+            payload = await _refresh_league(league["slug"], season)
+            if payload:
+                refreshed += 1
+            else:
+                failed += 1
+            await asyncio.sleep(0.25)
+    return {"refreshed": refreshed, "failed": failed}
 
 
 def _unavailable(league_id: int | None, reason: str) -> dict[str, Any]:
@@ -336,7 +377,10 @@ async def fetch_understat_pressure_context(
     for candidate in dict.fromkeys((requested_season, requested_season - 1, requested_season - 2)):
         if candidate <= 0:
             continue
-        candidate_payload = await _load_league(league["slug"], candidate)
+        # Predictions are strictly cache-only.  The background refresh loop
+        # owns all provider requests so a user request can never scrape
+        # Understat or wait on its response.
+        candidate_payload = await _read_cached_league(league["slug"], candidate)
         if not candidate_payload:
             continue
         candidate_opponent = _find_team(candidate_payload.get("teams"), opponent_name)
@@ -414,6 +458,13 @@ async def fetch_understat_pressure_context(
             "leagueTeamCount": len(league_ppda),
         },
     }
+    fetched_at = _parse_dt(payload.get("fetchedAt"))
+    result["freshness"] = (
+        "fresh"
+        if fetched_at is not None
+        and (datetime.now(timezone.utc) - fetched_at).total_seconds() < _CACHE_TTL_SECONDS
+        else "stale"
+    )
     result["asOf"] = max(latest_dates) if latest_dates else None
     try:
         await db.understat_pressure_cache.update_one(
