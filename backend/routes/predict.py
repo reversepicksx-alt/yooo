@@ -1922,6 +1922,7 @@ async def predict(req: PredictionRequest):
                 row_meta = {
                     "fixtureId": fid,
                     "date": str(fix.get("date") or "")[:10],
+                    "opponent": fix.get("opponent") or "Unknown",
                     "venue": fix.get("venue") or "unknown",
                     "teamId": team_id,
                 }
@@ -1936,6 +1937,50 @@ async def predict(req: PredictionRequest):
                         return {
                             **row_meta,
                             "value": float(cached_value),
+                            "source": "fixture_statistics_cache",
+                        }
+                except Exception:
+                    pass
+
+                # The player-history path stores the exact two-sided fixture
+                # possession packet under fxt_poss_{fixture}. Reuse that
+                # verified fixture statistic before spending another provider
+                # request on the team-level key. The schedule row already
+                # carries the club's verified home/away orientation.
+                try:
+                    fixture_poss = await db.fixture_player_cache.find_one(
+                        {"_k": f"fxt_poss_{fid}"}, {"_id": 0, "d": 1}
+                    )
+                    fixture_poss_data = (fixture_poss or {}).get("d") or {}
+                    home_value = fixture_poss_data.get("home_poss")
+                    away_value = fixture_poss_data.get("away_poss")
+                    if (
+                        isinstance(home_value, (int, float))
+                        and isinstance(away_value, (int, float))
+                    ):
+                        value = (
+                            float(home_value)
+                            if fix.get("venue") == "home"
+                            else float(away_value)
+                        )
+                        try:
+                            await db.fixture_player_cache.update_one(
+                                {"_k": cache_key},
+                                {"$set": {
+                                    "_k": cache_key,
+                                    "d": {
+                                        "teamId": team_id,
+                                        "teamPossession": value,
+                                        "fixtureId": fid,
+                                    },
+                                }},
+                                upsert=True,
+                            )
+                        except Exception:
+                            pass
+                        return {
+                            **row_meta,
+                            "value": value,
                             "source": "fixture_statistics_cache",
                         }
                 except Exception:
@@ -4264,6 +4309,155 @@ async def predict(req: PredictionRequest):
 
         opponent_fixture_list = _normalize_opponent_fixtures(opponent_recent_raw)
 
+        async def _prepare_possession_schedule_pool(
+            base_rows,
+            team_id,
+            venue_filter,
+        ):
+            """Build a real club schedule pool for possession evidence.
+
+            The normal recent-fixture feed is intentionally shallow and can
+            contain only the current competition season. Possession evidence
+            needs the club schedule, so use the durable multi-season fixture
+            archive and, when the verified possession sample is still short,
+            fetch prior completed seasons before declaring a venue unavailable.
+            """
+            rows_by_id = {}
+
+            def _add_row(row):
+                if not isinstance(row, dict):
+                    return
+                fixture_id = row.get("fixtureId") or (
+                    row.get("fixture") or {}
+                ).get("id")
+                if not fixture_id:
+                    return
+                teams = row.get("teams") or {}
+                home = teams.get("home") or {}
+                away = teams.get("away") or {}
+                home_id = home.get("id")
+                away_id = away.get("id")
+                if home_id is not None and away_id is not None and team_id:
+                    if team_id not in {home_id, away_id}:
+                        return
+                    row_venue = "home" if home_id == team_id else "away"
+                    opponent = (
+                        away.get("name") if row_venue == "home"
+                        else home.get("name")
+                    )
+                    date = (row.get("fixture") or {}).get("date") or row.get("date")
+                else:
+                    row_venue = row.get("venue")
+                    opponent = row.get("opponent") or ""
+                    date = row.get("date") or ""
+                if row_venue not in {"home", "away"}:
+                    return
+                if venue_filter and row_venue != venue_filter:
+                    return
+                rows_by_id[str(fixture_id)] = {
+                    "fixtureId": fixture_id,
+                    "date": str(date or "")[:10],
+                    "opponent": opponent or "Unknown",
+                    "venue": row_venue,
+                }
+
+            for base_row in base_rows or []:
+                _add_row(base_row)
+
+            async def _add_history_cache():
+                try:
+                    history_doc = await db.team_fixture_history.find_one(
+                        {"teamId": team_id},
+                        {"_id": 0, "fixtures": 1},
+                    )
+                    for history_row in (history_doc or {}).get("fixtures") or []:
+                        _add_row(history_row)
+                except Exception:
+                    pass
+
+            await _add_history_cache()
+
+            async def _cached_possession_count():
+                fixture_ids = list(rows_by_id.keys())
+                if not fixture_ids:
+                    return 0
+                try:
+                    cached_rows = await db.fixture_player_cache.find(
+                        {
+                            "_k": {
+                                "$in": [f"fxt_poss_{fixture_id}" for fixture_id in fixture_ids]
+                            }
+                        },
+                        {"_id": 0, "_k": 1, "d": 1},
+                    ).to_list(len(fixture_ids))
+                    return sum(
+                        1
+                        for cached_row in cached_rows
+                        if isinstance((cached_row.get("d") or {}).get("home_poss"), (int, float))
+                        and isinstance((cached_row.get("d") or {}).get("away_poss"), (int, float))
+                    )
+                except Exception:
+                    return 0
+
+            venue_fixture_count = sum(
+                1 for row in rows_by_id.values()
+                if not venue_filter or row.get("venue") == venue_filter
+            )
+            cached_possession_count = await _cached_possession_count()
+            if (
+                venue_filter
+                and (
+                    venue_fixture_count < _POSSESSION_SAMPLE_TARGET
+                    or cached_possession_count < _POSSESSION_SAMPLE_TARGET
+                )
+            ):
+                seasons = list(
+                    range(CURRENT_SEASON - 1, CURRENT_SEASON - 5, -1)
+                )
+
+                async def _fetch_prior_season(season):
+                    try:
+                        return await api_football_request(
+                            "fixtures",
+                            {
+                                "team": team_id,
+                                "season": season,
+                                "status": "FT",
+                            },
+                        ) or []
+                    except Exception:
+                        return []
+
+                season_batches = await aio.gather(
+                    *[_fetch_prior_season(season) for season in seasons],
+                    return_exceptions=True,
+                )
+                for season_rows in season_batches:
+                    if isinstance(season_rows, Exception):
+                        continue
+                    for season_row in season_rows:
+                        _add_row(season_row)
+
+            return _newest_first_rows(list(rows_by_id.values()), 100)
+
+        async def _fetch_schedule_possession(
+            base_rows,
+            team_id,
+            venue_filter,
+        ):
+            prepared_rows = await _prepare_possession_schedule_pool(
+                base_rows,
+                team_id,
+                venue_filter,
+            )
+            return await fetch_team_possession_average(
+                prepared_rows,
+                team_id,
+                20,
+                venue_filter=venue_filter,
+                required_sample=_POSSESSION_SAMPLE_TARGET,
+            )
+
         # Filter opponent fixtures by their venue in THIS matchup (skipped for neutral)
         venue_filtered_opp_fixtures = (
             [] if _is_neutral else [f for f in opponent_fixture_list if f.get("venue") == opponent_venue]
@@ -4282,19 +4476,18 @@ async def predict(req: PredictionRequest):
         _opponent_possession_fixtures = (
             opponent_fixture_list if _is_neutral else venue_filtered_opp_fixtures
         )
-        team_schedule_possession_task = fetch_team_possession_average(
+        # Keep the explicit venue contract visible here: venue_filter=None if _is_neutral else player_venue.
+        # The wrapper below expands the club schedule before applying that same filter.
+        team_schedule_possession_task = _fetch_schedule_possession(
             _team_possession_fixtures,
             actual_team_id or 40,
-            20,
-            venue_filter=None if _is_neutral else player_venue,
-            required_sample=_POSSESSION_SAMPLE_TARGET,
+            None if _is_neutral else player_venue,
         )
-        opponent_schedule_possession_task = fetch_team_possession_average(
+        # Keep the explicit venue contract visible here: venue_filter=None if _is_neutral else opponent_venue.
+        opponent_schedule_possession_task = _fetch_schedule_possession(
             _opponent_possession_fixtures,
             req.opponentId,
-            20,
-            venue_filter=None if _is_neutral else opponent_venue,
-            required_sample=_POSSESSION_SAMPLE_TARGET,
+            None if _is_neutral else opponent_venue,
         )
 
         _pressure_team_fixtures = (
@@ -5542,6 +5735,10 @@ async def predict(req: PredictionRequest):
             dom["opponentPossessionSampleSize"] = _opp_packet_n
             dom["teamPossessionObservedAvg"] = _team_packet_avg
             dom["opponentPossessionObservedAvg"] = _opp_packet_avg
+            dom["teamPossessionRows"] = list(_team_packet.get("rows") or [])
+            dom["opponentPossessionRows"] = list(_opp_packet.get("rows") or [])
+            dom["teamPossessionUsedCount"] = _team_packet_n
+            dom["opponentPossessionUsedCount"] = _opp_packet_n
             dom["teamPossessionVenue"] = _team_packet.get(
                 "venue",
                 dom["teamPossessionVenue"],
@@ -5969,7 +6166,11 @@ async def predict(req: PredictionRequest):
             if _entry and (_time.time() - _entry["ts"]) < _MATCH_DOM_TTL:
                 _cached_dom = _entry["dom"]
 
-        if _cached_dom is not None:
+        _schedule_poss_evidence_available = bool(
+            (team_schedule_possession or {}).get("rows")
+            or (opponent_schedule_possession or {}).get("rows")
+        )
+        if _cached_dom is not None and not _schedule_poss_evidence_available:
             # Remap expectedPoss/oppExpectedPoss for this player's perspective
             match_dominance = dict(_cached_dom)
             if _is_home:
@@ -9978,6 +10179,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "possessionSampleRequired": _POSSESSION_SAMPLE_TARGET,
                 "teamPossessionVenue": (team_schedule_possession or {}).get("venue"),
                 "opponentPossessionVenue": (opponent_schedule_possession or {}).get("venue"),
+                "teamPossessionRows": list(
+                    (team_schedule_possession or {}).get("rows") or []
+                ),
+                "opponentPossessionRows": list(
+                    (opponent_schedule_possession or {}).get("rows") or []
+                ),
                 "teamPossessionStatus": _team_schedule_poss_status,
                 "opponentPossessionStatus": _opponent_schedule_poss_status,
                 "possessionRecencyWeighting": (
@@ -10088,6 +10295,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
                 "LM", "RM", "LW", "RW", "CF", "ST", "SS",
             }
+            _fallback_team_packet = team_schedule_possession or {}
+            _fallback_opponent_packet = opponent_schedule_possession or {}
+            _fallback_team_n = int(_fallback_team_packet.get("sampleSize") or 0)
+            _fallback_opponent_n = int(
+                _fallback_opponent_packet.get("sampleSize") or 0
+            )
+            _fallback_poss_verified = (
+                _fallback_team_packet.get("verified") is True
+                and _fallback_opponent_packet.get("verified") is True
+                and _fallback_team_n >= _POSSESSION_SAMPLE_TARGET
+                and _fallback_opponent_n >= _POSSESSION_SAMPLE_TARGET
+            )
             position_comp_data = {
                 "position": _fallback_position,
                 "positionShort": _fallback_position,
@@ -10096,15 +10315,34 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "average": None,
                 "weightedAverage": None,
                 "avgPer90": None,
-                "avgPossession": None,
-                "avgOpponentPossession": None,
+                "avgPossession": _fallback_team_packet.get("average"),
+                "avgOpponentPossession": _fallback_opponent_packet.get("average"),
                 "expectedPlayerPossession": None,
-                "possessionSampleSize": 0,
-                "teamPossessionSampleSize": 0,
-                "opponentPossessionSampleSize": 0,
-                "possessionStatus": "unavailable",
-                "possessionSource": None,
-                "possessionComparison": "verified team-schedule possession unavailable",
+                "possessionSampleSize": min(_fallback_team_n, _fallback_opponent_n),
+                "teamPossessionSampleSize": _fallback_team_n,
+                "opponentPossessionSampleSize": _fallback_opponent_n,
+                "possessionSampleRequired": _POSSESSION_SAMPLE_TARGET,
+                "teamPossessionVenue": _fallback_team_packet.get("venue"),
+                "opponentPossessionVenue": _fallback_opponent_packet.get("venue"),
+                "teamPossessionRows": list(_fallback_team_packet.get("rows") or []),
+                "opponentPossessionRows": list(
+                    _fallback_opponent_packet.get("rows") or []
+                ),
+                "possessionStatus": (
+                    "verified" if _fallback_poss_verified else "unavailable"
+                ),
+                "possessionSource": (
+                    "fixture_statistics_team_schedule"
+                    if _fallback_poss_verified
+                    else None
+                ),
+                "possessionComparison": (
+                    "team schedules averaged "
+                    f"{float(_fallback_team_packet.get('average')):.1f}% possession vs "
+                    f"{float(_fallback_opponent_packet.get('average')):.1f}% for the opponent"
+                    if _fallback_poss_verified
+                    else "verified team-schedule possession unavailable"
+                ),
                 "sampleSize": 0,
                 "minimumRecommendedSample": 15,
                 "sampleStatus": "unavailable",
@@ -12818,6 +13056,22 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         )
         real_matchup["opponentPossessionObservedAvg"] = match_dominance.get(
             "opponentPossessionObservedAvg"
+        )
+        real_matchup["teamPossessionRows"] = match_dominance.get(
+            "teamPossessionRows",
+            [],
+        )
+        real_matchup["opponentPossessionRows"] = match_dominance.get(
+            "opponentPossessionRows",
+            [],
+        )
+        real_matchup["teamPossessionUsedCount"] = match_dominance.get(
+            "teamPossessionUsedCount",
+            0,
+        )
+        real_matchup["opponentPossessionUsedCount"] = match_dominance.get(
+            "opponentPossessionUsedCount",
+            0,
         )
         real_matchup["moneylineWeight"] = match_dominance.get(
             "moneylineWeight",

@@ -620,6 +620,16 @@ export interface H2HMatch {
   opponentPossession?: number | null;
 }
 
+export interface PossessionSampleRow {
+  fixtureId?: number;
+  date?: string;
+  opponent?: string;
+  venue?: string;
+  value?: number;
+  source?: string;
+  teamId?: number;
+}
+
 export interface PredictionResult {
   playerName?: string;
   teamName?: string;
@@ -1062,6 +1072,8 @@ export interface PredictionResult {
      possessionSampleSize?: number;
      teamPossessionSampleSize?: number;
      opponentPossessionSampleSize?: number;
+      teamPossessionRows?: PossessionSampleRow[];
+      opponentPossessionRows?: PossessionSampleRow[];
      possessionSource?: string;
      possessionStatus?: string;
     minimumRecommendedSample?: number;
@@ -1136,6 +1148,8 @@ export interface PredictionResult {
   possessionSampleRequired?: number;
   teamPossessionSampleSize?: number;
   opponentPossessionSampleSize?: number;
+  teamPossessionRows?: PossessionSampleRow[];
+  opponentPossessionRows?: PossessionSampleRow[];
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
   possessionOppAvg?: number;
@@ -1156,6 +1170,8 @@ export interface PredictionResult {
     opponentPossessionVenue?: string;
     teamPossessionObservedAvg?: number;
     opponentPossessionObservedAvg?: number;
+    teamPossessionRows?: PossessionSampleRow[];
+    opponentPossessionRows?: PossessionSampleRow[];
     moneylineWeight?: number;
     moneylineExpectedHomePoss?: number;
     recencyWeighting?: string;
@@ -1177,6 +1193,8 @@ export interface PredictionResult {
     opponentPossessionVenue?: string;
     teamPossessionObservedAvg?: number;
     opponentPossessionObservedAvg?: number;
+    teamPossessionRows?: PossessionSampleRow[];
+    opponentPossessionRows?: PossessionSampleRow[];
     moneylineWeight?: number;
     moneylineExpectedHomePoss?: number;
     recencyWeighting?: string;
@@ -1372,6 +1390,8 @@ interface RawPrediction {
   possessionSampleRequired?: number;
   teamPossessionSampleSize?: number;
   opponentPossessionSampleSize?: number;
+  teamPossessionRows?: PossessionSampleRow[];
+  opponentPossessionRows?: PossessionSampleRow[];
   confidenceInterval?: [number, number];
   distribution?: PredictionResult['distribution'];
   mostLikelyValue?: number;
@@ -1550,6 +1570,8 @@ interface RawPrediction {
     opponentPossessionVenue?: string;
     teamPossessionObservedAvg?: number;
     opponentPossessionObservedAvg?: number;
+    teamPossessionRows?: PossessionSampleRow[];
+    opponentPossessionRows?: PossessionSampleRow[];
     moneylineWeight?: number;
     moneylineExpectedHomePoss?: number;
     recencyWeighting?: string;
@@ -1583,6 +1605,8 @@ interface RawPrediction {
     opponentPossessionVenue?: string;
     teamPossessionObservedAvg?: number;
     opponentPossessionObservedAvg?: number;
+    teamPossessionRows?: PossessionSampleRow[];
+    opponentPossessionRows?: PossessionSampleRow[];
     moneylineWeight?: number;
     moneylineExpectedHomePoss?: number;
     recencyWeighting?: string;
@@ -2016,6 +2040,14 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
       ?? raw.matchupOverview?.opponentPossessionSampleSize
       ?? raw.matchDominance?.opponentPossessionSampleSize
       ?? undefined,
+    teamPossessionRows: raw.teamPossessionRows
+      ?? raw.matchupOverview?.teamPossessionRows
+      ?? raw.matchDominance?.teamPossessionRows
+      ?? [],
+    opponentPossessionRows: raw.opponentPossessionRows
+      ?? raw.matchupOverview?.opponentPossessionRows
+      ?? raw.matchDominance?.opponentPossessionRows
+      ?? [],
     possessionMultiplier: raw.matchDominance?.multiplier,
     possessionTeamAvg: raw.matchDominance?.teamSeasonAvg ?? undefined,
     possessionOppAvg: raw.matchDominance?.oppSeasonAvg ?? undefined,

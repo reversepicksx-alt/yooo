@@ -923,6 +923,12 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
     ? possessionMeta.opponentPossessionObservedAvg
     : Number.NaN;
   const moneylineWeight = Number(possessionMeta.moneylineWeight ?? 0);
+  const teamPossessionRows = Array.isArray(possessionMeta.teamPossessionRows)
+    ? possessionMeta.teamPossessionRows as Array<Record<string, unknown>>
+    : [];
+  const opponentPossessionRows = Array.isArray(possessionMeta.opponentPossessionRows)
+    ? possessionMeta.opponentPossessionRows as Array<Record<string, unknown>>
+    : [];
   const possessionCalculationStatus =
     possessionVerificationStatus === 'verified' && possessionStatus === 'verified'
       ? 'VERIFIED'
@@ -979,6 +985,26 @@ function renderMatchupPossession(data: Record<string, unknown> | null, pick: any
         <>
           <Text style={mStyles.proCardNote} numberOfLines={2}>{possessionSampleLabel}</Text>
           <Text style={mStyles.proCardNote} numberOfLines={2}>{possessionEvidenceLabel}</Text>
+          {teamPossessionRows.length > 0 && opponentPossessionRows.length > 0 && (
+            <View style={{ marginTop: 4 }}>
+              <Text style={mStyles.proCardNote} numberOfLines={1}>
+                HOME POSSESSION MATCHES USED · {Math.min(10, teamPossessionRows.length)} of {teamPossessionRows.length}
+              </Text>
+              {teamPossessionRows.slice(0, 10).map((row, index) => (
+                <Text key={`team-possession-${String(row.fixtureId ?? index)}`} style={mStyles.proCardNote} numberOfLines={1}>
+                  {String(row.date ?? 'Unknown date')} · vs {String(row.opponent ?? 'Unknown')} · {Number(row.value).toFixed(1)}%
+                </Text>
+              ))}
+              <Text style={[mStyles.proCardNote, { marginTop: 3 }]} numberOfLines={1}>
+                AWAY POSSESSION MATCHES USED · {Math.min(10, opponentPossessionRows.length)} of {opponentPossessionRows.length}
+              </Text>
+              {opponentPossessionRows.slice(0, 10).map((row, index) => (
+                <Text key={`opponent-possession-${String(row.fixtureId ?? index)}`} style={mStyles.proCardNote} numberOfLines={1}>
+                  {String(row.date ?? 'Unknown date')} · vs {String(row.opponent ?? 'Unknown')} · {Number(row.value).toFixed(1)}%
+                </Text>
+              ))}
+            </View>
+          )}
         </>
       )}
       {possessionStatus !== 'verified' && (

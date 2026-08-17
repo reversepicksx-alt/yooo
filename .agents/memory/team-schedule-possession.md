@@ -16,3 +16,9 @@ The ten-match gate is an end-to-end response contract, not only a calculation gu
 **Why:** A late response-assembly diagnostic path once referenced a stale sample variable and turned an otherwise valid prediction into a retryable 500; pure helper/source tests did not exercise that path.
 
 **How to apply:** Validate at least one full prediction response after changing the possession packet, and keep sample counts, status, provenance, and projection eligibility distinct in both backend and UI.
+
+When a valid two-sided fixture-possession cache already exists under the general fixture key, the team-schedule packet must reuse it before requesting a team-specific cache key. Any in-memory matchup cache must also be bypassed or refreshed when new schedule rows are available, or a corrected evidence packet can still render the old odds-only result.
+
+**Why:** A real Deportivo home sample was present in fixture-possession history, but the independent team key and cached matchup result made the response look like `0/N` until both layers were reconciled.
+
+**How to apply:** Normalize every returned sample row with fixture ID, date, opponent, venue, value, and source; carry those rows through the matchup response and recalculate cached dominance when evidence rows exist.
