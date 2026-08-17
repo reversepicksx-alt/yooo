@@ -1132,9 +1132,63 @@ export interface PredictionResult {
   expectedPossession?: { home: number; away: number };
   possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
   possessionSource?: string | null;
+  possessionVerificationStatus?: 'verified' | 'insufficient_sample' | 'unavailable' | string;
+  possessionSampleRequired?: number;
+  teamPossessionSampleSize?: number;
+  opponentPossessionSampleSize?: number;
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
   possessionOppAvg?: number;
+  matchDominance?: {
+    applied?: boolean;
+    multiplier?: number;
+    expectedPoss?: number;
+    oppExpectedPoss?: number;
+    teamSeasonAvg?: number;
+    oppSeasonAvg?: number;
+    hasRealPossData?: boolean;
+    possessionSource?: string | null;
+    possessionVerificationStatus?: 'verified' | 'insufficient_sample' | 'unavailable' | string;
+    possessionSampleRequired?: number;
+    teamPossessionSampleSize?: number;
+    opponentPossessionSampleSize?: number;
+    teamPossessionVenue?: string;
+    opponentPossessionVenue?: string;
+    teamPossessionObservedAvg?: number;
+    opponentPossessionObservedAvg?: number;
+    moneylineWeight?: number;
+    moneylineExpectedHomePoss?: number;
+    recencyWeighting?: string;
+    h2hPossAvg?: number;
+    h2hPossCount?: number;
+    h2hPossRole?: string;
+    notes?: string[];
+  };
+  matchFactors?: Record<string, unknown>;
+  matchupOverview?: {
+    expectedPossession?: { home: number; away: number };
+    possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
+    possessionSource?: string | null;
+    possessionVerificationStatus?: 'verified' | 'insufficient_sample' | 'unavailable' | string;
+    possessionSampleRequired?: number;
+    teamPossessionSampleSize?: number;
+    opponentPossessionSampleSize?: number;
+    teamPossessionVenue?: string;
+    opponentPossessionVenue?: string;
+    teamPossessionObservedAvg?: number;
+    opponentPossessionObservedAvg?: number;
+    moneylineWeight?: number;
+    moneylineExpectedHomePoss?: number;
+    recencyWeighting?: string;
+    homeTeam?: string;
+    awayTeam?: string;
+    playerIsHome?: boolean;
+    moneyline?: { home: number | string; draw?: number | string; away: number | string };
+    favorite?: string;
+    expectedGameType?: string;
+    keyMatchupFactor?: string;
+    surface?: string;
+  };
   moneyline?: { home: string; draw: string; away: string };
   expectedGameType?: string;
   favorite?: string;
@@ -1314,6 +1368,10 @@ interface RawPrediction {
   safetyRating?: string;
   possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
   possessionSource?: string | null;
+  possessionVerificationStatus?: 'verified' | 'insufficient_sample' | 'unavailable' | string;
+  possessionSampleRequired?: number;
+  teamPossessionSampleSize?: number;
+  opponentPossessionSampleSize?: number;
   confidenceInterval?: [number, number];
   distribution?: PredictionResult['distribution'];
   mostLikelyValue?: number;
@@ -1479,8 +1537,25 @@ interface RawPrediction {
     applied?: boolean;
     multiplier?: number;
     expectedPoss?: number;
+    oppExpectedPoss?: number;
     teamSeasonAvg?: number;
     oppSeasonAvg?: number;
+    hasRealPossData?: boolean;
+    possessionSource?: string | null;
+    possessionVerificationStatus?: 'verified' | 'insufficient_sample' | 'unavailable' | string;
+    possessionSampleRequired?: number;
+    teamPossessionSampleSize?: number;
+    opponentPossessionSampleSize?: number;
+    teamPossessionVenue?: string;
+    opponentPossessionVenue?: string;
+    teamPossessionObservedAvg?: number;
+    opponentPossessionObservedAvg?: number;
+    moneylineWeight?: number;
+    moneylineExpectedHomePoss?: number;
+    recencyWeighting?: string;
+    h2hPossAvg?: number;
+    h2hPossCount?: number;
+    h2hPossRole?: string;
     notes?: string[];
     qualityGap?: {
       eligible?: boolean;
@@ -1495,10 +1570,22 @@ interface RawPrediction {
       reason?: string;
     };
   };
+  matchFactors?: Record<string, unknown>;
   matchupOverview?: {
     expectedPossession?: { home: number; away: number };
     possessionStatus?: 'verified' | 'estimated' | 'unavailable' | string;
     possessionSource?: string | null;
+    possessionVerificationStatus?: 'verified' | 'insufficient_sample' | 'unavailable' | string;
+    possessionSampleRequired?: number;
+    teamPossessionSampleSize?: number;
+    opponentPossessionSampleSize?: number;
+    teamPossessionVenue?: string;
+    opponentPossessionVenue?: string;
+    teamPossessionObservedAvg?: number;
+    opponentPossessionObservedAvg?: number;
+    moneylineWeight?: number;
+    moneylineExpectedHomePoss?: number;
+    recencyWeighting?: string;
     homeTeam?: string;
     awayTeam?: string;
     playerIsHome?: boolean;
@@ -1913,9 +2000,28 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     possessionSource: raw.possessionSource
       ?? raw.matchupOverview?.possessionSource
       ?? undefined,
+    possessionVerificationStatus: raw.possessionVerificationStatus
+      ?? raw.matchupOverview?.possessionVerificationStatus
+      ?? raw.matchDominance?.possessionVerificationStatus
+      ?? undefined,
+    possessionSampleRequired: raw.possessionSampleRequired
+      ?? raw.matchupOverview?.possessionSampleRequired
+      ?? raw.matchDominance?.possessionSampleRequired
+      ?? undefined,
+    teamPossessionSampleSize: raw.teamPossessionSampleSize
+      ?? raw.matchupOverview?.teamPossessionSampleSize
+      ?? raw.matchDominance?.teamPossessionSampleSize
+      ?? undefined,
+    opponentPossessionSampleSize: raw.opponentPossessionSampleSize
+      ?? raw.matchupOverview?.opponentPossessionSampleSize
+      ?? raw.matchDominance?.opponentPossessionSampleSize
+      ?? undefined,
     possessionMultiplier: raw.matchDominance?.multiplier,
     possessionTeamAvg: raw.matchDominance?.teamSeasonAvg ?? undefined,
     possessionOppAvg: raw.matchDominance?.oppSeasonAvg ?? undefined,
+    matchDominance: raw.matchDominance ?? undefined,
+    matchFactors: raw.matchFactors ?? undefined,
+    matchupOverview: raw.matchupOverview ?? undefined,
     moneyline: raw.matchupOverview?.moneyline
       ? {
           home: String(raw.matchupOverview.moneyline.home),

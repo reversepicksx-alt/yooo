@@ -10,3 +10,9 @@ Team possession evidence is a club-level fixture-history measure. Average the se
 **How to apply:** Add a cache-first team fixture-statistics path with explicit sample counts/source labels. Use separate team and opponent schedule samples in evidence responses and label the UI as team-schedule context.
 
 Exact-position cohorts can remain limited even after expanding multiple seasons when provider lineup histories are sparse. Keep the limited label and disclose lineup-grid versus grounded-profile counts rather than relaxing venue or generic-position rules to reach a target sample.
+
+The ten-match gate is an end-to-end response contract, not only a calculation guard: both schedule packets must be verified before deterministic possession-sensitive math runs, while odds-only values remain visible as estimates.
+
+**Why:** A late response-assembly diagnostic path once referenced a stale sample variable and turned an otherwise valid prediction into a retryable 500; pure helper/source tests did not exercise that path.
+
+**How to apply:** Validate at least one full prediction response after changing the possession packet, and keep sample counts, status, provenance, and projection eligibility distinct in both backend and UI.

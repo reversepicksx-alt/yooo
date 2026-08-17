@@ -498,6 +498,62 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       ?? (prediction as any).possessionSource
       ?? 'unavailable',
   ).toLowerCase();
+  const possessionMeta = (
+    (prediction as any).matchDominance
+      ?? (prediction as any).matchupOverview
+      ?? (prediction as any).matchFactors
+      ?? {}
+  ) as Record<string, unknown>;
+  const possessionVerificationStatus = String(
+    (prediction as any).possessionVerificationStatus
+      ?? possessionMeta.possessionVerificationStatus
+      ?? possessionStatus,
+  ).toLowerCase();
+  const possessionRequired = Number(
+    (prediction as any).possessionSampleRequired
+      ?? possessionMeta.possessionSampleRequired
+      ?? 10,
+  );
+  const teamPossessionSample = Number(
+    (prediction as any).teamPossessionSampleSize
+      ?? possessionMeta.teamPossessionSampleSize
+      ?? 0,
+  );
+  const opponentPossessionSample = Number(
+    (prediction as any).opponentPossessionSampleSize
+      ?? possessionMeta.opponentPossessionSampleSize
+      ?? 0,
+  );
+  const teamPossessionVenue = String(
+    possessionMeta.teamPossessionVenue ?? 'team',
+  ).toUpperCase();
+  const opponentPossessionVenue = String(
+    possessionMeta.opponentPossessionVenue ?? 'opponent',
+  ).toUpperCase();
+  const observedTeamPossession = Number(
+    possessionMeta.teamPossessionObservedAvg,
+  );
+  const observedOpponentPossession = Number(
+    possessionMeta.opponentPossessionObservedAvg,
+  );
+  const moneylineWeight = Number(possessionMeta.moneylineWeight ?? 0);
+  const possessionCalculationStatus =
+    possessionVerificationStatus === 'verified' && possessionStatus === 'verified'
+      ? 'VERIFIED'
+      : possessionVerificationStatus === 'insufficient_sample'
+        ? 'LIMITED'
+        : possessionStatus === 'unavailable'
+          ? 'UNAVAILABLE'
+          : 'ESTIMATE';
+  const possessionSampleLabel = (
+    `${possessionCalculationStatus} · ${teamPossessionVenue} N=${Number.isFinite(teamPossessionSample) ? teamPossessionSample : 0}/${possessionRequired} · `
+    + `${opponentPossessionVenue} N=${Number.isFinite(opponentPossessionSample) ? opponentPossessionSample : 0}/${possessionRequired}`
+  );
+  const possessionEvidenceLabel = (
+    Number.isFinite(observedTeamPossession) && Number.isFinite(observedOpponentPossession)
+      ? `SCHEDULE AVG ${observedTeamPossession.toFixed(1)}% / ${observedOpponentPossession.toFixed(1)}%`
+      : 'VERIFIED SCHEDULE AVG UNAVAILABLE'
+  ) + ` · ML BLEND ${Math.round(Math.max(0, moneylineWeight) * 100)}%`;
   const expectedHome = Number(expectedPossession?.home);
   const expectedAway = Number(expectedPossession?.away);
   const hasExpectedPossession = Number.isFinite(expectedHome)
@@ -531,7 +587,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               <Text style={styles.title}>EXPECTED POSSESSION</Text>
             </View>
             <Text style={styles.meta}>
-              {possessionStatus === 'verified' ? `${expectedVenue.toUpperCase()} SIDE` : 'ESTIMATE'}
+              {possessionCalculationStatus}
             </Text>
           </View>
           <View style={styles.expectedPossessionBar}>
@@ -546,6 +602,12 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               {Math.round(expectedAway)}% {expectedAwayTeam}
             </Text>
           </View>
+          <Text style={styles.possessionEvidence} numberOfLines={2}>
+            {possessionSampleLabel}
+          </Text>
+          <Text style={styles.possessionEvidence} numberOfLines={2}>
+            {possessionEvidenceLabel}
+          </Text>
         </View>
       )}
 
@@ -940,6 +1002,14 @@ const styles = {
     fontSize: 8,
     fontWeight: '900' as const,
     textAlign: 'right' as const,
+  },
+  possessionEvidence: {
+    marginHorizontal: 14,
+    marginTop: 4,
+    color: Colors.textTertiary,
+    fontSize: 7,
+    fontWeight: '800' as const,
+    letterSpacing: 0.25,
   },
   scrollContent: { paddingHorizontal: 14, paddingBottom: 12 },
   chart: { height: 118, flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 3 },

@@ -91,6 +91,27 @@ def test_possession_context_uses_independent_team_schedules():
     assert "player appearances not required" in PREDICT_SOURCE or "player" in PREDICT_SOURCE
 
 
+def test_possession_context_requires_verified_venue_samples_and_exposes_contract():
+    assert "_POSSESSION_SAMPLE_TARGET = POSSESSION_MIN_VERIFIED_SAMPLE" in PREDICT_SOURCE
+    assert "venue_filter=None if _is_neutral else player_venue" in PREDICT_SOURCE
+    assert "venue_filter=None if _is_neutral else opponent_venue" in PREDICT_SOURCE
+    assert '"requiredSample": required_sample' in PREDICT_SOURCE
+    assert '"verified": verified' in PREDICT_SOURCE
+    assert '"status": status' in PREDICT_SOURCE
+    assert '"recencyWeighting"' in PREDICT_SOURCE
+    assert '"possessionSampleRequired": _POSSESSION_SAMPLE_TARGET' in PREDICT_SOURCE
+    assert '"moneylineWeight": match_dominance.get("moneylineWeight", 0.0)' in PREDICT_SOURCE
+
+
+def test_partial_or_odds_only_possession_cannot_be_marked_verified():
+    assert 'match_dominance.get("seasonAvgIsReal") is True' in PREDICT_SOURCE
+    assert 'match_dominance.get("possessionVerificationStatus") == "verified"' in PREDICT_SOURCE
+    assert "_team_schedule_poss_n" not in PREDICT_SOURCE
+    assert 'if len(_h2h_team_poss_vals) >= 2:' not in PREDICT_SOURCE
+    assert '"h2hPossRole" = "context_only"' not in PREDICT_SOURCE
+    assert '"h2hPossRole"] = "context_only"' in PREDICT_SOURCE
+
+
 def test_opponent_cohort_live_fill_handles_empty_fixture_cache():
     assert "opponent_recent_raw = []" in PREDICT_SOURCE
     assert "len(opponent_recent_raw) < _cohort_fixture_lookback" in PREDICT_SOURCE

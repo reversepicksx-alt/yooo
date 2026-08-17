@@ -188,6 +188,62 @@ export function renderMatchupPossession(
         ? 'estimated'
         : 'unavailable'),
   ).toLowerCase();
+  const possessionMeta = (
+    (data as any)?.matchDominance
+      ?? mo
+      ?? (data as any)?.matchFactors
+      ?? {}
+  ) as Record<string, unknown>;
+  const possessionVerificationStatus = String(
+    (data as any)?.possessionVerificationStatus
+      ?? possessionMeta.possessionVerificationStatus
+      ?? possessionStatus,
+  ).toLowerCase();
+  const possessionRequired = Number(
+    (data as any)?.possessionSampleRequired
+      ?? possessionMeta.possessionSampleRequired
+      ?? 10,
+  );
+  const teamPossessionSample = Number(
+    (data as any)?.teamPossessionSampleSize
+      ?? possessionMeta.teamPossessionSampleSize
+      ?? 0,
+  );
+  const opponentPossessionSample = Number(
+    (data as any)?.opponentPossessionSampleSize
+      ?? possessionMeta.opponentPossessionSampleSize
+      ?? 0,
+  );
+  const teamPossessionVenue = String(
+    possessionMeta.teamPossessionVenue ?? 'team',
+  ).toUpperCase();
+  const opponentPossessionVenue = String(
+    possessionMeta.opponentPossessionVenue ?? 'opponent',
+  ).toUpperCase();
+  const observedTeamPossession = typeof possessionMeta.teamPossessionObservedAvg === 'number'
+    ? possessionMeta.teamPossessionObservedAvg
+    : Number.NaN;
+  const observedOpponentPossession = typeof possessionMeta.opponentPossessionObservedAvg === 'number'
+    ? possessionMeta.opponentPossessionObservedAvg
+    : Number.NaN;
+  const moneylineWeight = Number(possessionMeta.moneylineWeight ?? 0);
+  const possessionCalculationStatus =
+    possessionVerificationStatus === 'verified' && possessionStatus === 'verified'
+      ? 'VERIFIED'
+      : possessionVerificationStatus === 'insufficient_sample'
+        ? 'LIMITED'
+        : possessionStatus === 'unavailable'
+          ? 'UNAVAILABLE'
+          : 'ESTIMATE';
+  const possessionSampleLabel = (
+    `${possessionCalculationStatus} · ${teamPossessionVenue} N=${Number.isFinite(teamPossessionSample) ? teamPossessionSample : 0}/${possessionRequired} · `
+    + `${opponentPossessionVenue} N=${Number.isFinite(opponentPossessionSample) ? opponentPossessionSample : 0}/${possessionRequired}`
+  );
+  const possessionEvidenceLabel = (
+    Number.isFinite(observedTeamPossession) && Number.isFinite(observedOpponentPossession)
+      ? `SCHEDULE AVG ${observedTeamPossession.toFixed(1)}% / ${observedOpponentPossession.toFixed(1)}%`
+      : 'VERIFIED SCHEDULE AVG UNAVAILABLE'
+  ) + ` · ML BLEND ${Math.round(Math.max(0, moneylineWeight) * 100)}%`;
   const gt = (data as any)?.expectedGameType ?? mo?.expectedGameType;
   const kmf = (data as any)?.keyMatchupFactor ?? mo?.keyMatchupFactor;
   const ss = (data as any)?.sharpSummary;
@@ -215,6 +271,9 @@ export function renderMatchupPossession(
             {(gt as string).replace(/_/g, ' ').toUpperCase()}
           </Text>
         ) : null}
+          <Text style={aStyles.proCardTitle} numberOfLines={1}>
+            {possessionCalculationStatus}
+          </Text>
       </View>
       {hasPoss && teamPoss != null && oppPoss != null && (
         <View style={aStyles.possRow}>
@@ -241,6 +300,16 @@ export function renderMatchupPossession(
             </Text>
           </View>
         </View>
+      )}
+      {hasPoss && (
+        <>
+          <Text style={aStyles.proCardNote} numberOfLines={2}>
+            {possessionSampleLabel}
+          </Text>
+          <Text style={aStyles.proCardNote} numberOfLines={2}>
+            {possessionEvidenceLabel}
+          </Text>
+        </>
       )}
       {possessionStatus !== 'verified' && (
         <Text style={[aStyles.proCardNote, { color: Colors.textTertiary }]}>

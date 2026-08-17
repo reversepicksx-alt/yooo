@@ -674,7 +674,15 @@ def compute_bayesian_projection(
         covariate_adjustment += venue_adj * venue_weight
 
     # 3b. Match dominance adjustment
-    if match_dominance and match_dominance.get("multiplier"):
+    # Possession multipliers are projection inputs only after both independent
+    # venue-specific schedule samples pass the ten-match verification gate.
+    # Odds/rank estimates can remain visible in the response, but must not
+    # change the deterministic projection when the schedule evidence is thin.
+    if (
+        match_dominance
+        and match_dominance.get("seasonAvgIsReal") is True
+        and match_dominance.get("multiplier")
+    ):
         dom_mult = match_dominance.get("multiplier", 1.0)
 
         # Props where MORE possession = MORE stats

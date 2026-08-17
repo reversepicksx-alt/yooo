@@ -42,6 +42,13 @@ from tactical_evidence import (
 )
 from role_evidence import build_role_evidence_packet
 from matchup_volume import build_matchup_volume_packet
+from possession_context import (
+    POSSESSION_MIN_VERIFIED_SAMPLE,
+    POSSESSION_RECENCY_HALF_LIFE,
+    moneyline_possession_signal,
+    possession_sample_status,
+    recency_weighted_average,
+)
 from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichment
 from opponent_block_profile import (
     fetch_recent_opponent_block_profiles as _fetch_recent_opponent_block_profiles,
@@ -68,6 +75,10 @@ _PREDICTION_CACHE_MIN = 15
 # seven recent, valid fixture packets. The provider can still return fewer
 # rows; that is surfaced as a limited sample instead of being padded.
 _PRESSURE_SAMPLE_TARGET = 7
+# A possession calculation is only called verified when BOTH clubs have this
+# many exact fixture-statistics rows at the relevant venue.  A shorter sample
+# remains visible as limited context but cannot drive the precise model signal.
+_POSSESSION_SAMPLE_TARGET = POSSESSION_MIN_VERIFIED_SAMPLE
 
 
 def _newest_first_rows(rows: list | None, limit: int | None = None) -> list:
@@ -1871,20 +1882,49 @@ async def predict(req: PredictionRequest):
                 if isinstance(row, dict) and row.get("fixtureId")
             ])
 
-        async def fetch_team_possession_average(fixture_list, team_id, limit=20):
-            """Average possession from a team's full fixture schedule.
+        async def fetch_team_possession_average(
+            fixture_list,
+            team_id,
+            limit=20,
+            *,
+            venue_filter=None,
+            required_sample=_POSSESSION_SAMPLE_TARGET,
+        ):
+            """Build independent, venue-specific team possession evidence.
 
-            This is deliberately independent of player logs and lineup rows.
-            A player who did not appear in a fixture must not remove that match
-            from the club's possession average.
+            A player who did not appear in a fixture must not remove that
+            match from the club's sample.  Conversely, a fixture at the wrong
+            venue must not pad the requested home/away sample.  The returned
+            average is recency-weighted, but is only ``verified`` once the
+            required number of exact fixture-statistics rows is present.
             """
+            empty_status, _ = possession_sample_status(0, required=required_sample)
             if not team_id or not fixture_list:
-                return {"average": None, "sampleSize": 0, "fixtureIds": [], "source": None}
+                return {
+                    "average": None,
+                    "sampleSize": 0,
+                    "requiredSample": required_sample,
+                    "verified": False,
+                    "status": empty_status,
+                    "venue": venue_filter or "all",
+                    "fixtureIds": [],
+                    "rows": [],
+                    "source": None,
+                    "recencyWeighting": f"half_life_{POSSESSION_RECENCY_HALF_LIFE:g}_matches",
+                }
 
             async def fetch_one(fix):
+                if venue_filter and fix.get("venue") != venue_filter:
+                    return None
                 fid = fix.get("fixtureId")
                 if not fid:
                     return None
+                row_meta = {
+                    "fixtureId": fid,
+                    "date": str(fix.get("date") or "")[:10],
+                    "venue": fix.get("venue") or "unknown",
+                    "teamId": team_id,
+                }
                 cache_key = f"fxt_team_poss_{fid}_{team_id}"
                 try:
                     cached = await db.fixture_player_cache.find_one(
@@ -1893,7 +1933,11 @@ async def predict(req: PredictionRequest):
                     cached_data = (cached or {}).get("d") or {}
                     cached_value = cached_data.get("teamPossession")
                     if isinstance(cached_value, (int, float)):
-                        return {"fixtureId": fid, "value": float(cached_value)}
+                        return {
+                            **row_meta,
+                            "value": float(cached_value),
+                            "source": "fixture_statistics_cache",
+                        }
                 except Exception:
                     pass
 
@@ -1932,7 +1976,11 @@ async def predict(req: PredictionRequest):
                         )
                     except Exception as cache_err:
                         print(f"[TEAM POSS CACHE] skipped: {cache_err}")
-                    return {"fixtureId": fid, "value": value}
+                    return {
+                        **row_meta,
+                        "value": value,
+                        "source": "fixture_statistics",
+                    }
                 except Exception:
                     return None
 
@@ -1953,12 +2001,28 @@ async def predict(req: PredictionRequest):
                 row for row in results
                 if isinstance(row, dict) and isinstance(row.get("value"), (int, float))
             ]
+            valid = _newest_first_rows(valid, limit)
+            status, verified = possession_sample_status(
+                len(valid),
+                required=required_sample,
+            )
+            unweighted_average = (
+                round(sum(row["value"] for row in valid) / len(valid), 1)
+                if valid
+                else None
+            )
             return {
-                "average": round(sum(row["value"] for row in valid) / len(valid), 1)
-                if valid else None,
+                "average": recency_weighted_average(valid),
+                "unweightedAverage": unweighted_average,
                 "sampleSize": len(valid),
+                "requiredSample": required_sample,
+                "verified": verified,
+                "status": status,
+                "venue": venue_filter or "all",
                 "fixtureIds": [row["fixtureId"] for row in valid],
+                "rows": valid,
                 "source": "fixture_statistics_team_schedule" if valid else None,
+                "recencyWeighting": f"half_life_{POSSESSION_RECENCY_HALF_LIFE:g}_matches",
             }
 
         # 2. Player game-by-game box scores from recent fixtures
@@ -4205,20 +4269,32 @@ async def predict(req: PredictionRequest):
             [] if _is_neutral else [f for f in opponent_fixture_list if f.get("venue") == opponent_venue]
         )
 
-        # Wave 2: Use VENUE-FILTERED fixtures for deep stats
-        # For neutral venue: use all fixtures (no venue preference)
+        # Wave 2: Use VENUE-FILTERED fixtures for possession evidence.
+        # For neutral venue: use all fixtures (no venue preference).  Do not
+        # silently fall back to the opposite venue when the requested sample
+        # is short; the shortfall must remain visible to the caller.
         # Possession context is a team-level sample, not a player-history
         # sample. Use each club's completed schedule independently so a
         # player's minutes or non-appearance cannot change the club average.
+        _team_possession_fixtures = (
+            all_team_fixtures if _is_neutral else venue_filtered_team_fixtures
+        )
+        _opponent_possession_fixtures = (
+            opponent_fixture_list if _is_neutral else venue_filtered_opp_fixtures
+        )
         team_schedule_possession_task = fetch_team_possession_average(
-            all_team_fixtures,
+            _team_possession_fixtures,
             actual_team_id or 40,
             20,
+            venue_filter=None if _is_neutral else player_venue,
+            required_sample=_POSSESSION_SAMPLE_TARGET,
         )
         opponent_schedule_possession_task = fetch_team_possession_average(
-            opponent_fixture_list,
+            _opponent_possession_fixtures,
             req.opponentId,
             20,
+            venue_filter=None if _is_neutral else opponent_venue,
+            required_sample=_POSSESSION_SAMPLE_TARGET,
         )
 
         _pressure_team_fixtures = (
@@ -5381,7 +5457,16 @@ async def predict(req: PredictionRequest):
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
         # =============================================
-        def compute_match_dominance(team_stats_list, opp_stats_list, odds, is_home, standing_data, is_neutral=False):
+        def compute_match_dominance(
+            team_stats_list,
+            opp_stats_list,
+            odds,
+            is_home,
+            standing_data,
+            is_neutral=False,
+            team_possession_packet=None,
+            opponent_possession_packet=None,
+        ):
             """Compute expected possession using opponent-aware model + odds adjustment.
             SYMMETRIC: Always computes from HOME team perspective first, then maps back.
             This ensures the SAME match always produces identical possession numbers
@@ -5402,6 +5487,15 @@ async def predict(req: PredictionRequest):
                 "seasonAvgIsReal": False,
                 "hasRealPossData": False,
                 "possessionSource": "unavailable",
+                "possessionVerificationStatus": "insufficient_sample",
+                "possessionSampleRequired": _POSSESSION_SAMPLE_TARGET,
+                "teamPossessionSampleSize": 0,
+                "opponentPossessionSampleSize": 0,
+                "teamPossessionVenue": "all" if is_neutral else ("home" if is_home else "away"),
+                "opponentPossessionVenue": "all" if is_neutral else ("away" if is_home else "home"),
+                "moneylineWeight": 0.0,
+                "moneylineExpectedHomePoss": None,
+                "recencyWeighting": f"half_life_{POSSESSION_RECENCY_HALF_LIFE:g}_matches",
             }
 
             def avg_poss(sl, venue_filter=None):
@@ -5417,6 +5511,52 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
+            _team_packet = (
+                team_possession_packet
+                if isinstance(team_possession_packet, dict)
+                else {}
+            )
+            _opp_packet = (
+                opponent_possession_packet
+                if isinstance(opponent_possession_packet, dict)
+                else {}
+            )
+            _team_packet_avg = _team_packet.get("average")
+            _opp_packet_avg = _opp_packet.get("average")
+            _team_packet_n = int(_team_packet.get("sampleSize") or 0)
+            _opp_packet_n = int(_opp_packet.get("sampleSize") or 0)
+            _team_packet_verified = bool(
+                _team_packet.get("verified")
+                and _team_packet_n >= _POSSESSION_SAMPLE_TARGET
+                and isinstance(_team_packet_avg, (int, float))
+            )
+            _opp_packet_verified = bool(
+                _opp_packet.get("verified")
+                and _opp_packet_n >= _POSSESSION_SAMPLE_TARGET
+                and isinstance(_opp_packet_avg, (int, float))
+            )
+            _both_schedule_samples_verified = (
+                _team_packet_verified and _opp_packet_verified
+            )
+            dom["teamPossessionSampleSize"] = _team_packet_n
+            dom["opponentPossessionSampleSize"] = _opp_packet_n
+            dom["teamPossessionObservedAvg"] = _team_packet_avg
+            dom["opponentPossessionObservedAvg"] = _opp_packet_avg
+            dom["teamPossessionVenue"] = _team_packet.get(
+                "venue",
+                dom["teamPossessionVenue"],
+            )
+            dom["opponentPossessionVenue"] = _opp_packet.get(
+                "venue",
+                dom["opponentPossessionVenue"],
+            )
+            if _both_schedule_samples_verified:
+                dom["possessionVerificationStatus"] = "verified"
+            elif _team_packet_n or _opp_packet_n:
+                dom["possessionVerificationStatus"] = "insufficient_sample"
+            else:
+                dom["possessionVerificationStatus"] = "unavailable"
+
             def avg_passes(sl):
                 """Average total passes per game from fixture stats."""
                 vals = []
@@ -5429,37 +5569,46 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
+            # Only the independent schedule packets can establish a verified
+            # season average.  The pressure-stat packets below are intentionally
+            # limited to seven rows and must never silently become a possession
+            # substitute when the ten-match venue gate is not met.
+            _team_verified_avg = _team_packet_avg if _team_packet_verified else None
+            _opp_verified_avg = _opp_packet_avg if _opp_packet_verified else None
+
             if is_neutral:
                 # Neutral venue: no home/away split — use overall averages for both teams.
                 # Home/away splits inflate numbers from qualifier mismatches (e.g. a team
                 # that averaged 67% possession at home against weak qualifiers). Using
                 # overall averages is more honest for a neutral-venue tournament match.
                 if is_home:
-                    home_avg = avg_poss(team_stats_list)
-                    away_avg = avg_poss(opp_stats_list)
+                    home_avg = _team_verified_avg
+                    away_avg = _opp_verified_avg
                     home_rank = standing_data.get("teamRank") if standing_data else None
                     away_rank = standing_data.get("oppRank") if standing_data else None
                 else:
-                    home_avg = avg_poss(opp_stats_list)
-                    away_avg = avg_poss(team_stats_list)
+                    home_avg = _opp_verified_avg
+                    away_avg = _team_verified_avg
                     home_rank = standing_data.get("oppRank") if standing_data else None
                     away_rank = standing_data.get("teamRank") if standing_data else None
             elif is_home:
                 # Player's team is HOME → use their home game avg; opponent uses away game avg
-                home_avg = avg_poss(team_stats_list, "home") or avg_poss(team_stats_list)
-                away_avg = avg_poss(opp_stats_list, "away") or avg_poss(opp_stats_list)
+                home_avg = _team_verified_avg
+                away_avg = _opp_verified_avg
                 home_rank = standing_data.get("teamRank") if standing_data else None
                 away_rank = standing_data.get("oppRank") if standing_data else None
             else:
                 # Player's team is AWAY → use their away game avg; opponent (home) uses home game avg
-                home_avg = avg_poss(opp_stats_list, "home") or avg_poss(opp_stats_list)
-                away_avg = avg_poss(team_stats_list, "away") or avg_poss(team_stats_list)
+                home_avg = _opp_verified_avg
+                away_avg = _team_verified_avg
                 home_rank = standing_data.get("oppRank") if standing_data else None
                 away_rank = standing_data.get("teamRank") if standing_data else None
 
             # For the possession squeeze engine, also compute overall season averages
-            team_avg = avg_poss(team_stats_list)
-            opp_avg = avg_poss(opp_stats_list)
+            # from the same verified venue-specific schedule packets.  Do not
+            # use the seven-row pressure sample as a hidden fallback.
+            team_avg = _team_verified_avg
+            opp_avg = _opp_verified_avg
 
             # Fallback: when possession data is unavailable, estimate from standings
             # gap only. Each rank position ≈ 0.8% possession difference.
@@ -5507,67 +5656,49 @@ async def predict(req: PredictionRequest):
                 # doesn't return possession averages for the tournament league.
                 # Last-resort: derive expected possession from match odds probability.
                 # A 70% win-prob favourite is realistically ~55% possession territory.
-                _has_bk = odds and odds.get("bookmakerOdds")
-                _has_ao = odds and odds.get("americanOdds")
-                if _has_bk or _has_ao:
+                _moneyline_signal = moneyline_possession_signal(odds)
+                if _moneyline_signal:
                     try:
-                        if _has_bk:
-                            _ho = float(odds["bookmakerOdds"].get("homeWin", 3.0))
-                            _ao_v = float(odds["bookmakerOdds"].get("awayWin", 3.0))
-                            _hp = 1.0 / max(_ho, 1.01)
-                            _ap = 1.0 / max(_ao_v, 1.01)
+                        _fx_home_poss = _moneyline_signal["expectedHomePossession"]
+                        _fx_away_poss = round(100.0 - _fx_home_poss, 1)
+                        dom["homePoss"] = _fx_home_poss
+                        dom["awayPoss"] = _fx_away_poss
+                        dom["moneylineWeight"] = _moneyline_signal["weight"]
+                        dom["moneylineExpectedHomePoss"] = _fx_home_poss
+                        if is_home:
+                            dom["expectedPoss"] = _fx_home_poss
+                            dom["oppExpectedPoss"] = _fx_away_poss
                         else:
-                            # americanOdds: convert to implied win probability
-                            def _ml_to_prob_inner(ml):
-                                try:
-                                    ml = float(ml)
-                                    return (-ml) / (-ml + 100.0) if ml < 0 else 100.0 / (ml + 100.0)
-                                except Exception:
-                                    return 0.33
-                            _aod = odds["americanOdds"]
-                            _pih = odds.get("playerIsHome")
-                            if _pih is None:
-                                _pih = is_home
-                            _fx_h_p = _ml_to_prob_inner(_aod.get("home", 0))
-                            _fx_a_p = _ml_to_prob_inner(_aod.get("away", 0))
-                            _no_flip = (is_home == _pih)
-                            _hp = _fx_h_p if _no_flip else _fx_a_p
-                            _ap = _fx_a_p if _no_flip else _fx_h_p
-                        _tot = _hp + _ap
-                        if _tot > 0:
-                            _norm_h = _hp / _tot   # fixture home team win-prob
-                            # 50% win-prob → 50% poss; 75% win-prob → ~56% poss
-                            # Slope raised 25→50 so France 91.7% fav → ~73% poss
-                            # (old slope: 90% fav → only 60%, missing elite mismatches)
-                            _fx_home_poss = round(min(76.0, max(28.0, 50.0 + (_norm_h - 0.5) * 50.0)), 1)
-                            _fx_away_poss = round(100.0 - _fx_home_poss, 1)
-                            dom["homePoss"] = _fx_home_poss
-                            dom["awayPoss"] = _fx_away_poss
-                            if is_home:
-                                dom["expectedPoss"]    = _fx_home_poss
-                                dom["oppExpectedPoss"] = _fx_away_poss
-                            else:
-                                dom["expectedPoss"]    = _fx_away_poss
-                                dom["oppExpectedPoss"] = _fx_home_poss
-                            dom["teamSeasonAvg"] = 50.0
-                            dom["oppSeasonAvg"]  = 50.0
-                            dom["notes"].append(
-                                f"Odds-only possession (no stats/standings): "
-                                f"{_fx_home_poss:.0f}%/{_fx_away_poss:.0f}%"
+                            dom["expectedPoss"] = _fx_away_poss
+                            dom["oppExpectedPoss"] = _fx_home_poss
+                        dom["teamSeasonAvg"] = 50.0
+                        dom["oppSeasonAvg"] = 50.0
+                        dom["notes"].append(
+                            f"Moneyline-only estimate (insufficient verified venue samples): "
+                            f"{_fx_home_poss:.0f}%/{_fx_away_poss:.0f}%"
+                        )
+                        dom["possessionSource"] = "odds_fallback"
+                        _otp = dom["expectedPoss"]
+                        _otr = _otp / 50.0
+                        _PASS_P = {"pass_attempts", "key_passes", "crosses", "passes"}
+                        _DEF_P = {"tackles", "interceptions", "blocks", "clearances"}
+                        _SHT_P = {"shots", "shots_on_target"}
+                        if req.propType in _PASS_P:
+                            dom["multiplier"] = round(
+                                1.0 + max(-0.35, min(0.35, _otr - 1.0)),
+                                3,
                             )
-                            dom["possessionSource"] = "odds_fallback"
-                            _otp = dom["expectedPoss"]
-                            _otr = _otp / 50.0
-                            _PASS_P = {"pass_attempts", "key_passes", "crosses", "passes"}
-                            _DEF_P  = {"tackles", "interceptions", "blocks", "clearances"}
-                            _SHT_P  = {"shots", "shots_on_target"}
-                            if req.propType in _PASS_P:
-                                dom["multiplier"] = round(1.0 + max(-0.35, min(0.35, _otr - 1.0)), 3)
-                            elif req.propType in _DEF_P:
-                                _inv = (100.0 - _otp) / 50.0
-                                dom["multiplier"] = round(1.0 + max(-0.25, min(0.25, _inv - 1.0)), 3)
-                            elif req.propType in _SHT_P:
-                                dom["multiplier"] = round(1.0 + max(-0.20, min(0.20, (_otr - 1.0) * 0.6)), 3)
+                        elif req.propType in _DEF_P:
+                            _inv = (100.0 - _otp) / 50.0
+                            dom["multiplier"] = round(
+                                1.0 + max(-0.25, min(0.25, _inv - 1.0)),
+                                3,
+                            )
+                        elif req.propType in _SHT_P:
+                            dom["multiplier"] = round(
+                                1.0 + max(-0.20, min(0.20, (_otr - 1.0) * 0.6)),
+                                3,
+                            )
                     except Exception as _oe:
                         dom["notes"].append(f"Odds-only possession fallback failed: {_oe}")
 
@@ -5629,29 +5760,26 @@ async def predict(req: PredictionRequest):
                     if abs(quality_adj) > 1:
                         dom["notes"].append(f"Standings gap (#{home_rank} vs #{away_rank}): {quality_adj:+.1f}% poss adj")
 
-                if odds and odds.get("bookmakerOdds"):
-                    try:
-                        home_odds_val = float(odds["bookmakerOdds"].get("homeWin", 3.0))
-                        away_odds_val = float(odds["bookmakerOdds"].get("awayWin", 3.0))
-
-                        home_prob = 1.0 / max(home_odds_val, 1.01)
-                        away_prob = 1.0 / max(away_odds_val, 1.01)
-                        prob_diff = home_prob - away_prob
-
-                        odds_dampener = 1.0
-                        if away_avg >= 53 or home_avg >= 57:
-                            odds_dampener = 0.3
-                            dom["notes"].append(f"Possession-dominant team in match ({max(home_avg, away_avg):.0f}% avg): odds signal dampened")
-                        elif away_avg >= 50 or home_avg >= 53:
-                            odds_dampener = 0.6
-
-                        odds_adj = round(prob_diff * 12 * odds_dampener, 1)
-                        odds_adj = min(7.0, max(-7.0, odds_adj))
-                        home_poss += odds_adj
-                        if abs(odds_adj) > 1:
-                            dom["notes"].append(f"Odds signal (home={home_odds_val:.2f}, away={away_odds_val:.2f}): {odds_adj:+.1f}% poss adj")
-                    except Exception:
-                        pass
+                # Current moneyline is a bounded contextual blend.  It can
+                # refine the verified schedule calculation, but it cannot
+                # replace the ten-match venue-specific evidence.
+                _moneyline_signal = moneyline_possession_signal(odds)
+                if _moneyline_signal:
+                    _moneyline_weight = _moneyline_signal["weight"]
+                    _moneyline_target = _moneyline_signal["expectedHomePossession"]
+                    _pre_moneyline_home = home_poss
+                    home_poss = round(
+                        (1.0 - _moneyline_weight) * home_poss
+                        + _moneyline_weight * _moneyline_target,
+                        1,
+                    )
+                    dom["moneylineWeight"] = _moneyline_weight
+                    dom["moneylineExpectedHomePoss"] = _moneyline_target
+                    dom["notes"].append(
+                        f"Moneyline blend: {_moneyline_weight:.0%} weight toward "
+                        f"{_moneyline_target:.0f}% fixture-home possession "
+                        f"({_pre_moneyline_home:.0f}% schedule base)"
+                    )
 
                 # FIX 2 — Regression to mean (22% shrink toward 50%).
                 home_poss = round(50.0 + (home_poss - 50.0) * 0.78, 1)
@@ -5894,7 +6022,11 @@ async def predict(req: PredictionRequest):
                     _eff_odds.update(_req_o)
             match_dominance = compute_match_dominance(
                 team_fixture_stats, opponent_fixture_stats, _eff_odds,
-                _is_home, standing_data, is_neutral=_is_neutral
+                _is_home,
+                standing_data,
+                is_neutral=_is_neutral,
+                team_possession_packet=team_schedule_possession,
+                opponent_possession_packet=opponent_schedule_possession,
             )
             # Store in cache with home/away season avgs for perspective remapping
             if _dom_cache_key and match_dominance.get("homePoss") is not None:
@@ -5907,17 +6039,13 @@ async def predict(req: PredictionRequest):
                     _cache_entry["awaySeasonAvg"] = match_dominance.get("teamSeasonAvg")
                 _match_dom_cache[_dom_cache_key] = {"ts": _time.time(), "dom": _cache_entry}
 
-        # hasRealPossData means a numeric possession signal is available for
-        # math. possessionSource separately records whether that signal came
-        # from fixture statistics or a fallback. When notes is empty the
-        # 50.0/50.0 values are a pure hardcoded default with zero information
-        # behind them (common for international friendlies vs minnows with no
-        # cached possession/standings/odds data at all) and must NOT be treated
-        # downstream as a genuine "close matchup" signal (see
-        # possession-fallback-unknown-tier.md).
+        # A numeric fallback is not verified possession.  The exact model
+        # signal requires both independent venue-specific schedule packets to
+        # pass the ten-match gate; standings and moneyline estimates remain
+        # visible but must not masquerade as fixture-statistics evidence.
         match_dominance["hasRealPossData"] = (
-            match_dominance.get("possessionSource") != "unavailable"
-            and match_dominance.get("expectedPoss") is not None
+            match_dominance.get("seasonAvgIsReal") is True
+            and match_dominance.get("possessionVerificationStatus") == "verified"
         )
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
@@ -5995,46 +6123,26 @@ async def predict(req: PredictionRequest):
                 _h2h_team_poss_vals = []
 
         _h2h_poss_avg: float | None = None
-        if len(_h2h_team_poss_vals) >= 2:
-            _h2h_poss_avg = round(sum(_h2h_team_poss_vals) / len(_h2h_team_poss_vals), 1)
-            _season_base = match_dominance.get("expectedPoss", 50.0)
-            # More H2H samples → higher trust in H2H signal (caps at 70% weight at 5+ games)
+        if _h2h_team_poss_vals:
             _h2h_n = len(_h2h_team_poss_vals)
-            _h2h_weight = min(0.70, 0.50 + (_h2h_n - 2) * 0.06)
-            _blended_poss = round(_h2h_weight * _h2h_poss_avg + (1 - _h2h_weight) * _season_base, 1)
-            _blended_poss = min(78.0, max(28.0, _blended_poss))
-            _blended_opp  = round(100.0 - _blended_poss, 1)
-            print(f"[H2H POSS OVERRIDE] {req.playerName}: H2H avg={_h2h_poss_avg}% "
-                  f"(n={_h2h_n}, wt={_h2h_weight:.0%}) season={_season_base}% "
-                  f"→ blended={_blended_poss}%")
-            # Update match_dominance with H2H-blended possession
-            if _is_home:
-                match_dominance["homePoss"] = _blended_poss
-                match_dominance["awayPoss"] = _blended_opp
-            else:
-                match_dominance["homePoss"] = _blended_opp
-                match_dominance["awayPoss"] = _blended_poss
-            match_dominance["expectedPoss"]    = _blended_poss
-            match_dominance["oppExpectedPoss"] = _blended_opp
-            match_dominance["h2hPossAvg"]      = _h2h_poss_avg
-            match_dominance["hasRealPossData"] = True
-            match_dominance["possessionSource"] = "h2h_fixture_stats"
-            match_dominance["h2hPossCount"]    = _h2h_n
-            # Recompute multiplier from blended possession
-            _PASS_H = {"pass_attempts", "key_passes", "crosses", "passes"}
-            _DEF_H  = {"tackles", "interceptions", "blocks", "clearances"}
-            _t_avg  = match_dominance.get("teamSeasonAvg") or 50.0
-            if req.propType in _PASS_H:
-                _raw = max(-0.35, min(0.35, (_blended_poss / max(_t_avg, 38.0)) - 1.0))
-                match_dominance["multiplier"] = round(1.0 + _raw, 3)
-            elif req.propType in _DEF_H:
-                _inv = (100.0 - _blended_poss) / max(_t_avg, 38.0)
-                _raw = max(-0.25, min(0.25, _inv - 1.0))
-                match_dominance["multiplier"] = round(1.0 + _raw, 3)
-            match_dominance["notes"].append(
-                f"H2H poss override ({_h2h_n} matches): avg {_h2h_poss_avg}% → blended {_blended_poss}%"
+            _h2h_poss_avg = round(
+                sum(_h2h_team_poss_vals) / _h2h_n,
+                1,
             )
-            print(f"[H2H POSS OVERRIDE] new multiplier={match_dominance['multiplier']} for {req.propType}")
+            # Direct meetings are useful context, but they are not an
+            # independent ten-match venue schedule and must not replace the
+            # schedule-gated calculation above.
+            match_dominance["h2hPossAvg"] = _h2h_poss_avg
+            match_dominance["h2hPossCount"] = _h2h_n
+            match_dominance["h2hPossRole"] = "context_only"
+            match_dominance["notes"].append(
+                f"H2H possession context ({_h2h_n} venue-matched matches): "
+                f"{_h2h_poss_avg:.0f}% — not used as the exact possession input"
+            )
+            print(
+                f"[H2H POSS CONTEXT] {req.playerName}: avg={_h2h_poss_avg}% "
+                f"(n={_h2h_n}); schedule/moneyline calculation unchanged"
+            )
 
         # =============================================
         # SITUATION ENGINE: Apply possession boost from knockout/2nd-leg context
@@ -7404,7 +7512,9 @@ async def predict(req: PredictionRequest):
                     # Inject live expectedPoss so Bayesian can gate the
                     # direct-play debuff when possession shows dominance
                     "teamExpectedPoss": match_dominance.get("expectedPoss", 50.0),
-                    "h2hPossAvg": match_dominance.get("h2hPossAvg"),
+                    # H2H possession is displayed as context only. It does
+                    # not bypass the independent ten-match venue gate.
+                    "h2hPossAvg": None,
                     # World Cup: every match is max-stakes elimination pressure
                     "isWorldCup": _is_wc,
                 },
@@ -9815,8 +9925,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             _team_schedule_poss_verified = (
                 isinstance(comp_poss_avg, (int, float))
                 and isinstance(comp_opp_poss_avg, (int, float))
-                and team_schedule_poss_n > 0
-                and opponent_schedule_poss_n > 0
+                and (team_schedule_possession or {}).get("verified") is True
+                and (opponent_schedule_possession or {}).get("verified") is True
+                and team_schedule_poss_n >= _POSSESSION_SAMPLE_TARGET
+                and opponent_schedule_poss_n >= _POSSESSION_SAMPLE_TARGET
+            )
+            _team_schedule_poss_status = (
+                (team_schedule_possession or {}).get("status")
+                or "unavailable"
+            )
+            _opponent_schedule_poss_status = (
+                (opponent_schedule_possession or {}).get("status")
+                or "unavailable"
             )
             # This is the possession expectation for the selected player's
             # team in the current fixture. It is comparison context only:
@@ -9855,6 +9975,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 ),
                 "teamPossessionSampleSize": team_schedule_poss_n,
                 "opponentPossessionSampleSize": opponent_schedule_poss_n,
+                "possessionSampleRequired": _POSSESSION_SAMPLE_TARGET,
+                "teamPossessionVenue": (team_schedule_possession or {}).get("venue"),
+                "opponentPossessionVenue": (opponent_schedule_possession or {}).get("venue"),
+                "teamPossessionStatus": _team_schedule_poss_status,
+                "opponentPossessionStatus": _opponent_schedule_poss_status,
+                "possessionRecencyWeighting": (
+                    team_schedule_possession or {}
+                ).get("recencyWeighting"),
                 "possessionStatus": (
                     "verified" if _team_schedule_poss_verified else "unavailable"
                 ),
@@ -9868,7 +9996,13 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     f"{comp_poss_avg:.1f}% possession vs {comp_opp_poss_avg:.1f}% for "
                     f"the opponent"
                     if _team_schedule_poss_verified
-                    else "verified team-schedule possession unavailable"
+                    else (
+                        "verified team-schedule possession unavailable: "
+                        f"team {team_schedule_poss_n}/{_POSSESSION_SAMPLE_TARGET} "
+                        f"({_team_schedule_poss_status}), opponent "
+                        f"{opponent_schedule_poss_n}/{_POSSESSION_SAMPLE_TARGET} "
+                        f"({_opponent_schedule_poss_status})"
+                    )
                 ),
                 "sampleSize": _cohort_evidence["sampleSize"],
                 "minimumRecommendedSample": _cohort_evidence["minimumRecommendedSample"],
@@ -10243,6 +10377,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "applied": match_dominance["multiplier"] != 1.0,
             "multiplier": match_dominance["multiplier"],
             "expectedPoss": match_dominance["expectedPoss"],
+            "oppExpectedPoss": match_dominance.get("oppExpectedPoss"),
             # Only expose teamSeasonAvg/oppSeasonAvg when they're real season
             # averages — the odds-only fallback hardcodes 50.0/50.0 with zero
             # real signal behind it, and showing that to the UI as a static
@@ -10250,6 +10385,36 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "teamSeasonAvg": match_dominance.get("teamSeasonAvg") if _dom_avg_is_real else None,
             "oppSeasonAvg": match_dominance.get("oppSeasonAvg") if _dom_avg_is_real else None,
             "seasonAvgIsReal": _dom_avg_is_real,
+            "hasRealPossData": bool(match_dominance.get("hasRealPossData")),
+            "possessionSource": match_dominance.get("possessionSource"),
+            "possessionVerificationStatus": match_dominance.get(
+                "possessionVerificationStatus"
+            ),
+            "possessionSampleRequired": _POSSESSION_SAMPLE_TARGET,
+            "teamPossessionSampleSize": match_dominance.get(
+                "teamPossessionSampleSize",
+                0,
+            ),
+            "opponentPossessionSampleSize": match_dominance.get(
+                "opponentPossessionSampleSize",
+                0,
+            ),
+            "teamPossessionVenue": match_dominance.get("teamPossessionVenue"),
+            "opponentPossessionVenue": match_dominance.get("opponentPossessionVenue"),
+            "teamPossessionObservedAvg": match_dominance.get(
+                "teamPossessionObservedAvg"
+            ),
+            "opponentPossessionObservedAvg": match_dominance.get(
+                "opponentPossessionObservedAvg"
+            ),
+            "moneylineWeight": match_dominance.get("moneylineWeight", 0.0),
+            "moneylineExpectedHomePoss": match_dominance.get(
+                "moneylineExpectedHomePoss"
+            ),
+            "recencyWeighting": match_dominance.get("recencyWeighting"),
+            "h2hPossAvg": match_dominance.get("h2hPossAvg"),
+            "h2hPossCount": match_dominance.get("h2hPossCount"),
+            "h2hPossRole": match_dominance.get("h2hPossRole"),
             "notes": match_dominance["notes"],
             "qualityGap": match_dominance.get("qualityGap"),
         }
@@ -10270,6 +10435,32 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         prediction["matchFactors"] = {
             "expectedPoss":   match_dominance.get("expectedPoss"),
             "oppExpectedPoss":match_dominance.get("oppExpectedPoss"),
+            "possessionSource": match_dominance.get("possessionSource"),
+            "possessionVerificationStatus": match_dominance.get(
+                "possessionVerificationStatus"
+            ),
+            "possessionSampleRequired": _POSSESSION_SAMPLE_TARGET,
+            "teamPossessionSampleSize": match_dominance.get(
+                "teamPossessionSampleSize",
+                0,
+            ),
+            "opponentPossessionSampleSize": match_dominance.get(
+                "opponentPossessionSampleSize",
+                0,
+            ),
+            "teamPossessionVenue": match_dominance.get("teamPossessionVenue"),
+            "opponentPossessionVenue": match_dominance.get("opponentPossessionVenue"),
+            "teamPossessionObservedAvg": match_dominance.get(
+                "teamPossessionObservedAvg"
+            ),
+            "opponentPossessionObservedAvg": match_dominance.get(
+                "opponentPossessionObservedAvg"
+            ),
+            "moneylineWeight": match_dominance.get("moneylineWeight", 0.0),
+            "moneylineExpectedHomePoss": match_dominance.get(
+                "moneylineExpectedHomePoss"
+            ),
+            "recencyWeighting": match_dominance.get("recencyWeighting"),
             "firstGoalProfile":     _fg_team if _fg_team.get("available") else None,
             "firstGoalOppProfile":  _fg_opp  if _fg_opp.get("available")  else None,
             "scenarioProbabilities": prediction.get("scenarioProbabilities") or _fg_scenario_weights or None,
@@ -12596,10 +12787,47 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         real_matchup["possessionSource"] = _poss_source
         real_matchup["possessionStatus"] = (
             "verified"
-            if _poss_source in {"fixture_stats", "h2h_fixture_stats"}
+            if (
+                match_dominance.get("seasonAvgIsReal") is True
+                and match_dominance.get("possessionVerificationStatus") == "verified"
+            )
             else "estimated"
             if _poss_source != "unavailable"
             else "unavailable"
+        )
+        real_matchup["possessionVerificationStatus"] = match_dominance.get(
+            "possessionVerificationStatus"
+        )
+        real_matchup["possessionSampleRequired"] = _POSSESSION_SAMPLE_TARGET
+        real_matchup["teamPossessionSampleSize"] = match_dominance.get(
+            "teamPossessionSampleSize",
+            0,
+        )
+        real_matchup["opponentPossessionSampleSize"] = match_dominance.get(
+            "opponentPossessionSampleSize",
+            0,
+        )
+        real_matchup["teamPossessionVenue"] = match_dominance.get(
+            "teamPossessionVenue"
+        )
+        real_matchup["opponentPossessionVenue"] = match_dominance.get(
+            "opponentPossessionVenue"
+        )
+        real_matchup["teamPossessionObservedAvg"] = match_dominance.get(
+            "teamPossessionObservedAvg"
+        )
+        real_matchup["opponentPossessionObservedAvg"] = match_dominance.get(
+            "opponentPossessionObservedAvg"
+        )
+        real_matchup["moneylineWeight"] = match_dominance.get(
+            "moneylineWeight",
+            0.0,
+        )
+        real_matchup["moneylineExpectedHomePoss"] = match_dominance.get(
+            "moneylineExpectedHomePoss"
+        )
+        real_matchup["recencyWeighting"] = match_dominance.get(
+            "recencyWeighting"
         )
         # 2. Moneyline + favorite from real odds data.
         # API-Football's home/away odds and the verified matchup team labels
@@ -12685,6 +12913,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         prediction["isHome"]       = _is_home
         prediction["possessionSource"] = _poss_source
         prediction["possessionStatus"] = real_matchup["possessionStatus"]
+        prediction["possessionVerificationStatus"] = real_matchup.get(
+            "possessionVerificationStatus"
+        )
+        prediction["possessionSampleRequired"] = _POSSESSION_SAMPLE_TARGET
+        prediction["teamPossessionSampleSize"] = real_matchup.get(
+            "teamPossessionSampleSize",
+            0,
+        )
+        prediction["opponentPossessionSampleSize"] = real_matchup.get(
+            "opponentPossessionSampleSize",
+            0,
+        )
         if match_odds and match_odds.get("fixtureId"):
             prediction["fixtureId"] = match_odds["fixtureId"]
             prediction["fixtureDate"] = match_odds.get("matchDate", "")
