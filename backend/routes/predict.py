@@ -338,6 +338,22 @@ def _age_from_birth_date(value: Any) -> int | None:
     )
 
 
+def _provider_full_player_name(player: Any) -> str:
+    """Return the verified provider name when first/last fields are present.
+
+    API-Football's short ``name`` can be an initial or a display alias.  The
+    separate first/last fields are the better identity source for cards,
+    saved-pick rows, and share images.
+    """
+    if not isinstance(player, dict):
+        return ""
+    firstname = str(player.get("firstname") or "").strip()
+    lastname = str(player.get("lastname") or "").strip()
+    if firstname and lastname:
+        return f"{firstname} {lastname}".strip()
+    return ""
+
+
 def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> dict:
     """Keep the public prediction identity contract complete.
 
@@ -348,7 +364,15 @@ def _normalize_prediction_identity(prediction: dict, req: PredictionRequest) -> 
     value with stale request data.
     """
     player = prediction.get("player") or {}
-    prediction["playerName"] = prediction.get("playerName") or player.get("name") or req.playerName or ""
+    provider_name = _provider_full_player_name(player)
+    prediction["playerName"] = (
+        prediction.get("canonicalPlayerName")
+        or provider_name
+        or prediction.get("playerName")
+        or player.get("name")
+        or req.playerName
+        or ""
+    )
     prediction["playerId"] = prediction.get("playerId") or player.get("id") or req.playerId
     prediction["teamName"] = prediction.get("teamName") or player.get("team") or req.teamName or ""
     prediction["opponentName"] = prediction.get("opponentName") or prediction.get("opponent") or req.opponentName or ""
@@ -1852,7 +1876,7 @@ async def predict(req: PredictionRequest):
                         continue
                     try:
                         doc = await db.fixture_player_cache.find_one(
-                            {"_k": f"fx_press_intensity_v1_{fid}_{opp_id}"},
+                            {"_k": f"fx_press_intensity_v2_{fid}_{opp_id}"},
                             {"_id": 0, "d": 1, "_ts": 1},
                         )
                         cached_profile = (doc or {}).get("d")
@@ -1929,10 +1953,10 @@ async def predict(req: PredictionRequest):
                         # Unavailable packets get a short retry TTL so quota or
                         # provider gaps do not fan out on every scan.
                         await db.fixture_player_cache.update_one(
-                            {"_k": f"fx_press_intensity_v1_{fid}_{opponent_id}"},
+                            {"_k": f"fx_press_intensity_v2_{fid}_{opponent_id}"},
                             {
                                 "$set": {
-                                    "_k": f"fx_press_intensity_v1_{fid}_{opponent_id}",
+                                    "_k": f"fx_press_intensity_v2_{fid}_{opponent_id}",
                                     "_ts": datetime.now(timezone.utc),
                                     "d": profile,
                                 }
@@ -3842,6 +3866,17 @@ async def predict(req: PredictionRequest):
             "duels_won": ("duels", "won"), "yellow_cards": ("cards", "yellow"),
         }
 
+        def _cohort_team_key(row):
+            """Use one evidence row per opposing team, not one per player."""
+            team_id = row.get("teamId")
+            if team_id not in (None, "", 0, "0"):
+                return f"id:{team_id}"
+            team_name = str(row.get("team") or "").strip().lower()
+            if team_name:
+                return f"name:{team_name}"
+            player_id = row.get("playerId")
+            return f"player:{player_id or str(row.get('name') or '').strip().lower()}"
+
         async def fetch_position_comparison(
             opp_fixtures,
             target_pos,
@@ -4231,6 +4266,7 @@ async def predict(req: PredictionRequest):
                             results.append({
                                 "name": p_name,
                                 "playerId": p_id,
+                                "teamId": tid,
                                 "team": team_name,
                                 "minutes": minutes,
                                 "statValue": stat_val,
@@ -4404,6 +4440,41 @@ async def predict(req: PredictionRequest):
             # Prefer recent verified players, then stronger observation
             # reliability. Never pad the result with unverified rows.
             unique.sort(
+                key=lambda x: (
+                    str(x.get("date") or ""),
+                    float(x.get("evidenceWeight") or 0),
+                ),
+                reverse=True,
+            )
+            # A team may field two centre-backs (or two players at another
+            # exact position), but those are not independent opponent-team
+            # observations. Keep the strongest, most recently observed
+            # representative so one club cannot visually or statistically
+            # overweight the cohort.
+            def _cohort_row_rank(row):
+                try:
+                    evidence_weight = float(row.get("evidenceWeight") or 0)
+                except (TypeError, ValueError):
+                    evidence_weight = 0.0
+                try:
+                    minutes = float(row.get("minutes") or 0)
+                except (TypeError, ValueError):
+                    minutes = 0.0
+                return (
+                    1 if row.get("positionVerified") is True else 0,
+                    evidence_weight,
+                    minutes,
+                    str(row.get("date") or ""),
+                )
+
+            one_per_team = {}
+            for row in unique:
+                team_key = _cohort_team_key(row)
+                current = one_per_team.get(team_key)
+                if current is None or _cohort_row_rank(row) > _cohort_row_rank(current):
+                    one_per_team[team_key] = row
+            unique = sorted(
+                one_per_team.values(),
                 key=lambda x: (
                     str(x.get("date") or ""),
                     float(x.get("evidenceWeight") or 0),
@@ -10280,8 +10351,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         row.get("positionVerified") is True
                         for row in position_comparison
                     )
-                    by_player = {
-                        row.get("playerId") or str(row.get("name") or "").strip().lower(): row
+                    by_team = {
+                        _cohort_team_key(row): row
                         for row in position_comparison
                     }
                     for row in _prior_comparison:
@@ -10293,10 +10364,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             and row.get("positionVerified") is not True
                         ):
                             continue
-                        key = row.get("playerId") or str(row.get("name") or "").strip().lower()
-                        if key and key not in by_player:
-                            by_player[key] = row
-                    position_comparison = list(by_player.values())
+                        key = _cohort_team_key(row)
+                        if key and key not in by_team:
+                            by_team[key] = row
+                    position_comparison = list(by_team.values())
                     if len(position_comparison) > 15:
                         position_comparison = position_comparison[:15]
                     if len(position_comparison) > 3:
@@ -10570,6 +10641,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "unweightedAverage": _cohort_evidence.get("unweightedAverage"),
                 "effectiveSampleSize": _cohort_evidence.get("effectiveSampleSize"),
                 "weightMethod": _cohort_evidence.get("weightMethod"),
+                "sampleUnit": _cohort_evidence.get("sampleUnit") or "team",
                 "crossPropAverages": cross_prop_averages,
                 "crossPropSampleSizes": cross_prop_samples,
                 "propType": req.propType,
@@ -15638,6 +15710,28 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             prediction["originalRequestVenue"] = (
                 locals().get("_original_request_venue") or req.venue
             )
+
+        # The player stats packet is keyed by the verified player ID.  Prefer
+        # its provider first/last name over a stale OCR/search label before
+        # the response crosses into saved picks and share-card rendering.
+        _verified_player = (
+            player_stats.get("player")
+            if isinstance(player_stats, dict)
+            else None
+        )
+        _verified_player_name = _provider_full_player_name(_verified_player)
+        if _verified_player_name:
+            prediction["canonicalPlayerName"] = _verified_player_name
+            prediction["playerName"] = _verified_player_name
+            _prediction_player = prediction.get("player")
+            if isinstance(_prediction_player, dict):
+                prediction["player"] = {
+                    **_prediction_player,
+                    "id": _prediction_player.get("id") or req.playerId,
+                    "name": _verified_player_name,
+                    "firstname": _verified_player.get("firstname"),
+                    "lastname": _verified_player.get("lastname"),
+                }
 
         prediction = _normalize_prediction_identity(prediction, req)
         # Reconcile the evidence verdict with the final displayed direction.

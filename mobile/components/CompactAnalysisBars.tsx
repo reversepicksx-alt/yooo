@@ -740,7 +740,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
            {showRecent && isDenseRecent && (
              <View style={styles.pressureLegend}>
                <View style={styles.pressureLegendHeader}>
-                 <Text style={styles.pressureLegendTitle}>PRESS INTENSITY · MATCH DOTS</Text>
+                  <Text style={styles.pressureLegendTitle}>PRESS INTENSITY INDEX · MATCH DOTS</Text>
                  <Text style={styles.pressureLegendCoverage}>
                    {classifiedPressureCount}/{displayLogs.length} CLASSIFIED
                  </Text>
@@ -754,6 +754,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                  {'  ·  '}
                  <Text style={{ color: '#FF453A' }}>E ELITE {pressureCounts.ELITE}</Text>
                </Text>
+                <Text style={styles.pressureLegendNote} numberOfLines={2}>
+                  INDEX = defensive-action/pass-volume proxy · 0 is the low-band floor, not zero pressure
+                </Text>
              </View>
            )}
             {showRecent && <>{displayLogs.length > 0 ? <ScrollView
@@ -782,8 +785,8 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    const pressureLabel = pressureAvailable
                      ? String(pressurePacket?.label).toUpperCase()
                      : 'UNAVAILABLE';
-                   const pressureScore = Number.isFinite(Number(pressurePacket?.score100))
-                     ? `${Math.round(Number(pressurePacket?.score100))}/100`
+                    const pressureScore = Number.isFinite(Number(pressurePacket?.score100))
+                      ? `INDEX ${Math.round(Number(pressurePacket?.score100))}/100`
                      : '';
                    const pressureSample = pressureAvailable
                      ? `N=${Number(pressurePacket?.sampleSize || 0)} · ${String(pressurePacket?.sampleStatus || 'LIMITED').toUpperCase()}`
@@ -867,7 +870,8 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                 })}
               </View>
               {selectedGame && (
-                <Text style={styles.detail}>
+                <>
+                  <Text style={styles.detail}>
                     {selectedGame.date ? displayH2HDate(selectedGame.date) : 'Match'} · {selectedGame.opponent || 'Opponent'} · {selectedGame.value} stat · {rowVenue(selectedGame) === 'home' ? 'HOME' : 'AWAY'}
                    {showPossessionContext
                      ? detailPossession != null ? ` · POSS ${detailPossession}%` : ' · POSS unavailable'
@@ -889,11 +893,51 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                           ? String(selectedPressure.label || 'Classified').toUpperCase()
                           : 'UNAVAILABLE';
                         const selectedScore = Number.isFinite(Number(selectedPressure?.score100))
-                          ? ` ${Math.round(Number(selectedPressure?.score100))}/100`
+                           ? ` INDEX ${Math.round(Number(selectedPressure?.score100))}/100`
                           : '';
-                        return ` · PRESS ${selectedLabel}${selectedScore}`;
+                        const selectedSample = selectedPressure?.available === true
+                          ? ` · N=${Number(selectedPressure?.sampleSize || 0)} ${String(selectedPressure?.sampleStatus || 'LIMITED').toUpperCase()}`
+                          : '';
+                        return ` · PRESS ${selectedLabel}${selectedScore}${selectedSample}`;
                       })()}
-                </Text>
+                  </Text>
+                 {(() => {
+                   const selectedPressure = (
+                     pressureProfileFor(selectedGame)?.pressIntensity
+                     ?? tacticalProfileFor(selectedGame)?.pressIntensity
+                     ?? null
+                   ) as Record<string, any> | null;
+                   if (selectedPressure?.available === true) {
+                     const inputParts = [
+                       Number.isFinite(Number(selectedPressure.synthetic_ppda))
+                         ? `PPDA ${Number(selectedPressure.synthetic_ppda).toFixed(1)}`
+                         : null,
+                       Number.isFinite(Number(selectedPressure.avg_effective_defensive_actions))
+                         ? `DA ${Number(selectedPressure.avg_effective_defensive_actions).toFixed(1)}`
+                         : null,
+                       Number.isFinite(Number(selectedPressure.avg_opponent_passes))
+                         ? `OPP PASS ${Number(selectedPressure.avg_opponent_passes).toFixed(1)}`
+                         : null,
+                     ].filter(Boolean).join(' · ');
+                     return (
+                       <Text style={styles.pressureExplain} numberOfLines={3}>
+                         {String(
+                           selectedPressure.scoreInterpretation
+                           || 'Synthetic index only: the score is not a count of pressure events.',
+                         )}{' '}
+                         {inputParts
+                           ? `Inputs: ${inputParts}.`
+                           : 'Inputs unavailable beyond the classification.'}
+                       </Text>
+                     );
+                   }
+                   return (
+                     <Text style={styles.pressureExplain} numberOfLines={2}>
+                       Pressure index unavailable for this match; missing provider fields are not treated as zero pressure.
+                     </Text>
+                   );
+                 })()}
+                </>
               )}
             </View>
            </ScrollView> : isH2HFilter ? (
@@ -1191,6 +1235,15 @@ const styles = {
     fontWeight: '800' as const,
     textAlign: 'center' as const,
   },
+  pressureExplain: {
+    paddingHorizontal: 2,
+    paddingTop: 2,
+    paddingBottom: 3,
+    color: '#7C8796',
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '700' as const,
+  },
   recentInlineStats: {
     color: '#697586',
     fontSize: 7,
@@ -1280,6 +1333,7 @@ const styles = {
   pressureLegendTitle: { color: '#8B95A5', fontSize: 7, fontWeight: '900' as const, letterSpacing: 0.55 },
   pressureLegendCoverage: { color: '#697586', fontSize: 7, fontWeight: '800' as const, letterSpacing: 0.35 },
   pressureLegendKey: { color: '#697586', fontSize: 7, fontWeight: '800' as const, letterSpacing: 0.2, marginTop: 3 },
+  pressureLegendNote: { color: '#596575', fontSize: 7, lineHeight: 9, fontWeight: '700' as const, letterSpacing: 0.1, marginTop: 2 },
   detail: { paddingHorizontal: 2, paddingTop: 7, paddingBottom: 3, color: '#AAB4C2', fontSize: 10, lineHeight: 15 },
   splitRow: {
     marginHorizontal: 14,

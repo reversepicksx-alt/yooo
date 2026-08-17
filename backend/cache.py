@@ -1190,6 +1190,7 @@ async def refresh_player_cache(player_id: int) -> dict:
                 "teamName": team_name,
                 "leagueId": league_id,
                 "name": fullname,
+                "fullName": fullname,
                 "nameLower": name_lower,
                 "nameClean": name_clean,
                 "firstNameClean": fn_clean,

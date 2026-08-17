@@ -2,60 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
-  <title>Reverse Picks — Elite Prop Intelligence</title>
-  <meta name="description" content="Deterministic soccer player prop analytics. Bayesian projections, structured analysis, and data-driven predictions." />
-  <link rel="icon" type="image/png" href="/rp-icon.png" />
-  <link rel="shortcut icon" href="/rp-icon.png" />
-  <link rel="apple-touch-icon" href="/rp-icon.png" />
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content="Reverse Picks — Elite Prop Intelligence" />
-  <meta property="og:description" content="Deterministic soccer player prop analytics. Bayesian projections, structured analysis, and data-driven predictions." />
-  <meta name="theme-color" content="#050505" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Reverse Picks" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <title>Reverse Picks</title>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
-      html, body { height: 100%; }
-      body { overflow: hidden; background: #050505; margin: 0; }
-      #root { display: flex; height: 100%; flex: 1; background: #050505; }
-      input, textarea, select {
-        outline: none !important;
-        -webkit-tap-highlight-color: transparent;
-        caret-color: #39FF14;
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
       }
-      input:focus, textarea:focus, select:focus { outline: none !important; box-shadow: none !important; }
-      input:-webkit-autofill,
-      input:-webkit-autofill:hover,
-      input:-webkit-autofill:focus {
-        -webkit-text-fill-color: #ffffff;
-        -webkit-box-shadow: 0 0 0px 1000px #111111 inset !important;
-        transition: background-color 5000s ease-in-out 0s;
-        caret-color: #39FF14;
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
       }
-      * { box-sizing: border-box; }
-
-      /* CSS-only loading shimmer shown before React mounts */
-      #rp-boot {
-        position: fixed; inset: 0;
-        background: #050505;
-        display: flex; align-items: center; justify-content: center;
-        z-index: 9999;
-        transition: opacity 0.4s ease;
-      }
-      #rp-boot.hidden { opacity: 0; pointer-events: none; }
-      @keyframes rp-pulse {
-        0%, 100% { opacity: 0.3; transform: scale(0.95); }
-        50%       { opacity: 1;   transform: scale(1.05); }
-      }
-      #rp-boot img {
-        width: 72px; height: 72px;
-        animation: rp-pulse 1.6s ease-in-out infinite;
-        filter: drop-shadow(0 0 18px #39FF14aa);
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
       }
     </style>
   </head>
@@ -67,29 +32,6 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
-  <script src="/_expo/static/js/web/index-1df6464311d4cfb5fce3a0a749b97ec1.js" defer></script>
-
-  <!-- CSS boot overlay — visible before React mounts, hidden by JS -->
-  <div id="rp-boot">
-    <img src="/rp-icon.png" alt="Loading Reverse Picks…" />
-  </div>
-  <script>
-    // Hide the CSS overlay once React has rendered something into #root.
-    // Checks every 100ms; falls back at 10s so the overlay never blocks the app.
-    (function () {
-      var overlay = document.getElementById('rp-boot');
-      if (!overlay) return;
-      var attempts = 0;
-      var iv = setInterval(function () {
-        attempts++;
-        var root = document.getElementById('root');
-        if ((root && root.children.length > 0) || attempts > 100) {
-          clearInterval(iv);
-          overlay.classList.add('hidden');
-          setTimeout(function () { overlay.remove(); }, 500);
-        }
-      }, 100);
-    })();
-  </script>
+  <script src="/_expo/static/js/web/index-3ecfc908af5acd518c375cbfe80cc57a.js" defer></script>
 </body>
 </html>

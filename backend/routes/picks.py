@@ -524,6 +524,35 @@ def normalize_player_name(name: str) -> str:
     return name.lower()
 
 
+def _canonical_saved_player_name(pick: dict) -> str:
+    """Choose the most canonical name sent by the prediction response.
+
+    New prediction responses carry ``canonicalPlayerName`` and
+    ``playerName`` at the top level.  Prefer those over a stale nested player
+    label from older clients; nested first/last fields remain a useful legacy
+    fallback.
+    """
+    for key in ("canonicalPlayerName", "playerFullName"):
+        value = str(pick.get(key) or "").strip()
+        if value:
+            return value
+    player = pick.get("player") or {}
+    if isinstance(player, dict):
+        firstname = str(player.get("firstname") or "").strip()
+        lastname = str(player.get("lastname") or "").strip()
+        if firstname and lastname:
+            return f"{firstname} {lastname}".strip()
+    for key in ("playerName",):
+        value = str(pick.get(key) or "").strip()
+        if value:
+            return value
+    if isinstance(player, dict):
+        value = str(player.get("name") or "").strip()
+        if value:
+            return value
+    return ""
+
+
 async def _resolve_saved_soccer_player_id(
     player_id: object,
     player_name: str,
@@ -635,6 +664,7 @@ async def save_pick(req: SavePickRequest):
         _save_team_id = pick.get("teamId") or _save_request.get("teamId") or 0
         _save_opp_id = pick.get("opponentId") or _save_request.get("opponentId") or 0
         _save_fixture_id = pick.get("fixtureId") or _save_request.get("fixtureId") or 0
+        _saved_player_name = _canonical_saved_player_name(pick)
         await _verify_soccer_fixture_context(
             int(_save_fixture_id or 0),
             int(_save_team_id or 0),
@@ -642,11 +672,12 @@ async def save_pick(req: SavePickRequest):
         )
         _saved_player_id = await _resolve_saved_soccer_player_id(
             pick.get("player", {}).get("id") or pick.get("playerId"),
-            pick.get("player", {}).get("name") or pick.get("playerName", ""),
+            _saved_player_name,
             _save_team_id,
         )
     else:
         _saved_player_id = pick.get("player", {}).get("id") or pick.get("playerId")
+        _saved_player_name = _canonical_saved_player_name(pick)
 
     doc = {
         "pickId": pick_id,
@@ -654,7 +685,7 @@ async def save_pick(req: SavePickRequest):
         "email": req.email.lower(),
         "sport": sport,
         "playerId": _saved_player_id,
-        "playerName": pick.get("player", {}).get("name") or pick.get("playerName", ""),
+        "playerName": _saved_player_name,
         "playerAge": pick.get("playerAge")
             if pick.get("playerAge") is not None
             else (pick.get("player") or {}).get("age"),
@@ -672,7 +703,7 @@ async def save_pick(req: SavePickRequest):
             if pick.get("averageMinutesPerMatch") is not None
             else (pick.get("playerGameLogs") or {}).get("avgMinutes"),
         "playerNameKey": normalize_player_name(
-            pick.get("player", {}).get("name") or pick.get("playerName", "")
+            _saved_player_name
         ),
         "teamName": pick.get("player", {}).get("team") or pick.get("teamName", ""),
         # New clients send the verified IDs at the top level; retain the

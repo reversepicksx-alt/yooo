@@ -28,6 +28,7 @@ export interface FuzzyTeamResult {
 export interface FuzzyPlayerResult {
   playerId: number;
   playerName: string;
+  fullName?: string;
   teamId: number;
   teamName: string;
   leagueId: number;
@@ -220,7 +221,8 @@ export default function FuzzySearchInput({
         const data = await searchPlayersQuick(q, leagueId, ownerSession, signal);
         r = (data.players || []).map((p: any) => ({
           playerId: (p.id as number) || 0,
-          playerName: (p.name as string) || '',
+          playerName: (p.fullName as string) || (p.name as string) || '',
+          fullName: (p.fullName as string) || (p.name as string) || '',
           teamId: (p.teamId as number) || 0,
           teamName: (p.teamName as string) || (p.team as string) || '',
           leagueId: (p.leagueId as number) || 0,
@@ -238,7 +240,10 @@ export default function FuzzySearchInput({
             sport,
             playerId: sport === 'soccer' ? (p.id || p.playerId || 0) : (p.id || 0),
             playerName: sport === 'soccer'
-              ? (p.name || p.playerName || '')
+              ? (p.fullName || p.name || p.playerName || '')
+              : (p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()),
+            fullName: sport === 'soccer'
+              ? (p.fullName || p.name || p.playerName || '')
               : (p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()),
             teamId: sport === 'soccer' ? (p.teamId || 0) : (p.team?.id || 0),
             teamName: sport === 'soccer' ? (p.teamName || p.team || '') : (p.team?.full_name || ''),

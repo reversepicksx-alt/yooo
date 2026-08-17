@@ -4,6 +4,7 @@ import Colors from '@/constants/colors';
 
 type CohortPlayer = {
   playerId?: number;
+  teamId?: number;
   name?: string;
   team?: string;
   statValue?: number | null;
@@ -67,6 +68,7 @@ export type SameRoleEvidence = {
   crossPropSampleSizes?: Record<string, number>;
   weightMethod?: string;
   unweightedAverage?: number | null;
+  sampleUnit?: 'team' | 'player' | string;
 };
 
 function label(value: unknown) {
@@ -102,6 +104,43 @@ function positionLabel(value: unknown) {
   return labels[normalized] || String(value || 'Position unavailable');
 }
 
+function formalPositionCode(value: unknown) {
+  const normalized = String(value || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const codes: Record<string, string> = {
+    GOALKEEPER: 'GK',
+    GOALKEEPERS: 'GK',
+    GOALIE: 'GK',
+    GOALKEEPERPOSITION: 'GK',
+    CENTREBACK: 'CB',
+    CENTERBACK: 'CB',
+    DEFENDER: 'DEF',
+    DEF: 'DEF',
+    D: 'DEF',
+    LEFTBACK: 'LB',
+    RIGHTBACK: 'RB',
+    LEFTWINGBACK: 'LWB',
+    RIGHTWINGBACK: 'RWB',
+    DEFENSIVEMIDFIELDER: 'CDM',
+    MIDFIELDER: 'MID',
+    MID: 'MID',
+    M: 'MID',
+    CENTRALMIDFIELDER: 'CM',
+    ATTACKINGMIDFIELDER: 'CAM',
+    LEFTMIDFIELDER: 'LM',
+    RIGHTMIDFIELDER: 'RM',
+    LEFTWINGER: 'LW',
+    RIGHTWINGER: 'RW',
+    ATTACKER: 'FWD',
+    FORWARD: 'FWD',
+    FWD: 'FWD',
+    F: 'FWD',
+    CENTREFORWARD: 'CF',
+    CENTERFORWARD: 'CF',
+    STRIKER: 'ST',
+    SECONDSTRIKER: 'SS',
+  };
+  return codes[normalized] || normalized || 'POS?';
+}
 function cohortSubject(value: unknown) {
   const normalized = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
   const labels: Record<string, string> = {
@@ -238,6 +277,14 @@ export default function SameRoleEvidenceCard({
   const sourcePlayers = (data.players || []).slice().sort(newestFirst).slice(0, 15);
   const hasSourcePlayers = sourcePlayers.length > 0;
   const scope = String(data.sourceScope || '');
+  const sampleUnit = String(data.sampleUnit || '').toLowerCase() === 'team'
+    ? 'team'
+    : 'player';
+  const cohortUnitLabel = sampleUnit === 'team'
+    ? 'source team'
+    : broadPositionOnly
+      ? 'broad-category player'
+      : isSamePosition ? 'exact-position player' : 'same-role player';
   const scopeLabel = scope.includes('broad_category')
     ? `broad ${position.toLowerCase()} rows from ${data.venue || 'venue'} fixtures`
     : scope.includes('mixed_venue')
@@ -332,11 +379,7 @@ export default function SameRoleEvidenceCard({
       </Text>
        <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
            {sample > 0
-             ? `${sample} distinct ${
-                 broadPositionOnly
-                   ? 'broad-category player'
-                   : isSamePosition ? 'exact-position player' : 'same-role player'
-               }${sample === 1 ? '' : 's'} in ${scopeLabel}`
+              ? `${sample} distinct ${cohortUnitLabel}${sample === 1 ? '' : 's'} in ${scopeLabel}`
             : broadPositionOnly
               ? `No verified broad ${position.toLowerCase()} source-player rows were returned`
               : `No exact ${positionLabel(data.targetPosition || data.positionShort || 'position')} source-player rows were returned`}
@@ -383,17 +426,20 @@ export default function SameRoleEvidenceCard({
           borderTopWidth: 1,
           borderTopColor: 'rgba(255,255,255,0.08)',
         }}>
-           <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8, marginBottom: 5 }}>
-             SOURCE PLAYERS · {prop} / POSSESSION
+             <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8, marginBottom: 5 }}>
+              {sampleUnit === 'team' ? 'SOURCE TEAMS' : 'SOURCE PLAYERS'} · {prop} / POSSESSION
           </Text>
           {sourcePlayers.map((player, index) => {
             const statValue = player.statValue
               ?? player.passAttempts
               ?? player.crossPropStats?.[data.propType || ''];
-            const position = positionLabel(
-              player.position || player.matchPosition || player.observedPosition,
-            );
+            const observedPosition = player.position || player.matchPosition || player.observedPosition;
+            const formalCode = formalPositionCode(observedPosition);
+            const positionVerified = player.positionVerified === true;
             const roleText = String(player.role || '').trim();
+            const roleLabel = roleText
+              ? `${roleText.toUpperCase()}${player.roleInferred ? ' · INFERRED' : ''}`
+              : 'ROLE UNAVAILABLE';
             return (
               <View
                 key={`${player.playerId || player.name || 'player'}-${index}`}
@@ -405,18 +451,37 @@ export default function SameRoleEvidenceCard({
                   borderBottomColor: 'rgba(255,255,255,0.05)',
                 }}
               >
-                <View style={{ flex: 1, paddingRight: 8 }}>
+                 <View style={{ flex: 1, paddingRight: 8 }}>
+                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                   <Text
-                    numberOfLines={2}
-                    style={{ fontSize: 12, color: Colors.text, lineHeight: 17, fontWeight: '800' }}
+                     numberOfLines={1}
+                     style={{ flex: 1, fontSize: 12, color: Colors.text, lineHeight: 17, fontWeight: '800' }}
                   >
                     {index + 1}. {player.name || 'Unknown player'}
                   </Text>
+                   <View style={{
+                     paddingHorizontal: 5,
+                     paddingVertical: 1,
+                     borderRadius: 4,
+                     borderWidth: 1,
+                     borderColor: positionVerified ? 'rgba(52,199,89,0.55)' : 'rgba(245,158,11,0.55)',
+                     backgroundColor: positionVerified ? 'rgba(52,199,89,0.10)' : 'rgba(245,158,11,0.10)',
+                   }}>
+                     <Text style={{
+                       fontSize: 8,
+                       color: positionVerified ? Colors.success : '#F59E0B',
+                       fontWeight: '900',
+                       letterSpacing: 0.5,
+                     }}>
+                       {formalCode}
+                     </Text>
+                   </View>
+                   </View>
                   <Text
                     numberOfLines={2}
                     style={{ fontSize: 10.5, color: Colors.textSecondary, lineHeight: 15, marginTop: 1 }}
                   >
-                     {player.team || 'Team unavailable'} · {position}{roleText ? ` · ${roleText}${player.roleInferred ? ' (inferred)' : ''}` : ''}
+                     {player.team || 'Team unavailable'} · {roleLabel}
                      {' · '}{displayDate(player.date)}
                   </Text>
                 </View>

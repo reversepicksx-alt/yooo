@@ -819,6 +819,8 @@ export interface PredictionResult {
       score100?: number;
       label?: string | null;
       source?: string | null;
+       metric?: string | null;
+       scoreInterpretation?: string | null;
       signal_used?: string | null;
       synthetic_ppda?: number | null;
       sampleSize?: number;
@@ -886,8 +888,13 @@ export interface PredictionResult {
           score100?: number | null;
           label?: string | null;
           source?: string | null;
+           metric?: string | null;
+           scoreInterpretation?: string | null;
           sampleSize?: number;
           sampleStatus?: string;
+           synthetic_ppda?: number | null;
+           avg_effective_defensive_actions?: number | null;
+           avg_opponent_passes?: number | null;
           reason?: string | null;
         } | null;
         pressIntensityStatus?: string | null;
@@ -937,8 +944,13 @@ export interface PredictionResult {
           score100?: number | null;
           label?: string | null;
           source?: string | null;
+           metric?: string | null;
+           scoreInterpretation?: string | null;
           sampleSize?: number;
           sampleStatus?: string;
+           synthetic_ppda?: number | null;
+           avg_effective_defensive_actions?: number | null;
+           avg_opponent_passes?: number | null;
           reason?: string | null;
         } | null;
         reason?: string | null;
@@ -1107,6 +1119,7 @@ export interface PredictionResult {
     average?: number;
     weightedAverage?: number | null;
     sampleSize?: number;
+     sampleUnit?: 'team' | 'player' | string;
      avgPossession?: number;
      avgOpponentPossession?: number;
      expectedPlayerPossession?: number;
@@ -1124,6 +1137,7 @@ export interface PredictionResult {
     players?: Array<Record<string, unknown> & {
       name?: string;
       playerId?: number;
+       teamId?: number;
       statValue?: number | null;
       passAttempts?: number | null;
       crossPropStats?: Record<string, number>;
@@ -2701,6 +2715,7 @@ export async function searchLeagues(query: string, signal?: AbortSignal): Promis
 export interface PlayerSearchResult {
   playerId: number;
   playerName: string;
+  fullName?: string;
   teamId: number;
   teamName: string;
   leagueId: number;

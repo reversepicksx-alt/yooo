@@ -2663,6 +2663,11 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         "label": "Unavailable",
         "signal_used": None,
         "source": "api_football",
+        "metric": "synthetic_press_intensity_index",
+        "scoreInterpretation": (
+            "The 0-100 value is a bounded synthetic index, not a count of pressure events; "
+            "0 is the floor of the low band."
+        ),
         "synthetic_ppda": None,
         "ppda": None,
         "reasoning": "API-Football pressure inputs were not available for this fixture sample.",
@@ -2803,6 +2808,11 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         "label": label,
         "signal_used": signal_used,
         "source": "api_football",
+        "metric": "synthetic_press_intensity_index",
+        "scoreInterpretation": (
+            "The 0-100 value is a bounded synthetic index, not a count of pressure events; "
+            "0 is the floor of the low band."
+        ),
         "synthetic_ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
         # Keep ppda as a compatibility alias for older saved records, but
         # Press Intensity is the canonical product metric.

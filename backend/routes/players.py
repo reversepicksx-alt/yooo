@@ -160,6 +160,7 @@ async def _search_players_cache(
             results.append({
                 "id": d.get("playerId", 0),
                 "name": name,
+                "fullName": d.get("fullName") or name,
                 "firstname": name.split()[0] if name.split() else "",
                 "lastname": name.split()[-1] if name.split() else "",
                 "age": d.get("age", 0) or 0,
@@ -204,6 +205,7 @@ async def _search_players_cache(
                     results.append({
                         "id": d.get("playerId", 0),
                         "name": name,
+                        "fullName": d.get("fullName") or name,
                         "firstname": name.split()[0] if name.split() else "",
                         "lastname": name.split()[-1] if name.split() else "",
                         "age": d.get("age", 0) or 0,
@@ -405,6 +407,7 @@ async def _search_players_cache(
         results.append({
             "id": d.get("playerId", 0),
             "name": name,
+            "fullName": d.get("fullName") or name,
             "firstname": name.split()[0] if name.split() else "",
             "lastname": name.split()[-1] if name.split() else "",
             "age": 0,
@@ -440,6 +443,7 @@ async def search_players(req: PlayerSearchRequest):
         return {
             "id": p.get("id", 0),
             "name": display_name,
+            "fullName": display_name,
             "firstname": firstname,
             "lastname": lastname,
             "age": p.get("age", 0),
@@ -848,6 +852,7 @@ async def search_players(req: PlayerSearchRequest):
                 recovered.append({
                     "id": pid,
                     "name": name,
+                    "fullName": name,
                     "firstname": name.split()[0] if name.split() else "",
                     "lastname": name.split()[-1] if name.split() else "",
                     "age": 0,
@@ -1156,18 +1161,44 @@ async def search_players(req: PlayerSearchRequest):
                         profile = profile_by_id.get(player.get("id"))
                         if not profile:
                             continue
+                        provider_name = (
+                            profile.get("fullName")
+                            or profile.get("name")
+                            or ""
+                        ).strip()
+                        if provider_name:
+                            player["name"] = provider_name
+                            player["fullName"] = provider_name
+                            player["firstname"] = provider_name.split()[0]
+                            player["lastname"] = provider_name.split()[-1]
                         player["nationality"] = profile.get("nationality") or ""
                         player["photo"] = player.get("photo") or profile.get("photo") or ""
-                        if player["nationality"]:
-                            metadata_updates.append((player["id"], player["nationality"], player["photo"]))
+                        if provider_name or player["nationality"] or player["photo"]:
+                            metadata_updates.append((
+                                player["id"],
+                                player["nationality"],
+                                player["photo"],
+                                provider_name,
+                            ))
                     if metadata_updates:
                         async def _persist_search_metadata(updates):
                             try:
                                 from cache import COL_PLAYERS
-                                for pid, nationality, photo in updates:
+                                for pid, nationality, photo, provider_name in updates:
                                     fields = {"nationality": nationality}
                                     if photo:
                                         fields["photo"] = photo
+                                    if provider_name:
+                                        from utils import strip_accents
+                                        fields.update({
+                                            "name": provider_name,
+                                            "fullName": provider_name,
+                                            "nameLower": provider_name.lower(),
+                                            "nameClean": strip_accents(provider_name.lower()),
+                                            "firstNameClean": strip_accents(
+                                                provider_name.split()[0].lower()
+                                            ),
+                                        })
                                     await db[COL_PLAYERS].update_many(
                                         {"playerId": pid},
                                         {"$set": fields},

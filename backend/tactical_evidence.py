@@ -520,6 +520,7 @@ def summarize_position_cohort(
         "underHitRate": round(under_hits / weight_total * 100) if values and weight_total else None,
         "effectiveSampleSize": effective_sample_size,
         "weightMethod": "minutes_and_repeat_appearance_evidence_only",
+        "sampleUnit": "team",
         "position": next((row.get("position") for row in rows if row.get("position")), None),
         "venue": next((row.get("venue") for row in rows if row.get("venue")), None),
     }
