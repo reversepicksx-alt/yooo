@@ -2327,6 +2327,36 @@ export default function ScanScreen() {
           <Text style={styles.detectedSportBannerHint}>{mode === 'scan' ? 'AUTO-DETECTED' : 'SELECTED'}</Text>
         </View>
       )}
+      {phase !== 'result' && phase !== 'saved' && (
+        <View style={styles.sportPicker}>
+          <Text style={styles.sportPickerLabel}>SEARCH SPORT</Text>
+          <View style={styles.sportPickerOptions}>
+            {([
+              { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline' },
+              { key: 'mlb' as const, label: 'MLB', icon: 'baseball-outline' },
+              { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline' },
+            ]).map(option => {
+              const active = sport === option.key;
+              return (
+                <TouchableOpacity
+                  key={option.key}
+                  style={[styles.sportPickerOption, active && styles.sportPickerOptionActive]}
+                  onPress={() => selectSport(option.key)}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={`Search ${option.label} players`}
+                >
+                  <Ionicons name={option.icon as any} size={13} color={active ? '#000' : Colors.textSecondary} />
+                  <Text style={[styles.sportPickerOptionText, active && styles.sportPickerOptionTextActive]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       <ScrollView
         contentContainerStyle={styles.body}
@@ -2470,7 +2500,8 @@ export default function ScanScreen() {
                 }
               }}
               searchType="all_players"
-              placeholder="Search player"
+              sportFilter={sport === 'mlb' || sport === 'nfl' ? sport : 'soccer'}
+              placeholder={`Search ${sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'} player`}
                ownerSession={session?.email && session?.token ? { email: session.email, token: session.token } : undefined}
                confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
               style={{ marginBottom: 2 }}

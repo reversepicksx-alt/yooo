@@ -120,12 +120,10 @@
 - [MLB/NFL identity and history](mlb-nfl-confirmation-and-history.md) — invalidate stale search responses; default multi-context soccer players to club fixtures and keep MLB/NFL evidence history visible.
 - [NFL preseason schedule fallback](nfl-preseason-schedule.md) — BallDontLie may omit preseason games; use a clearly marked schedule-only fallback and choose the earliest verified fixture.
 - [Half-line settlement](half-line-settlement.md) — `.5` player-prop lines can only be HIT/MISS; DNP/void outcomes must never be stored or rendered as PUSH.
-- [Universal player search](universal-player-search.md) — one search covers soccer, MLB, and NFL; verified result selection auto-detects the read-only sport badge and form.
 - [NWSL player search](nwsl-player-search.md) — NWSL players not in profiles index found via squad fallback (all 16 teams + fixture fallback for expansion teams); results cached to Atlas.
 - [MLB field name mapping](mlb-field-name-mapping.md) — backend MLB search returns camelCase; api.ts was mapping snake_case, silently producing empty playerName and filtering every MLB result.
 - [Role fingerprint accuracy](role-fingerprint-accuracy.md) — stat fingerprint for Attackers: False 9 requires key_passes≥2.0 + dribbles≥2.0 + shots<2.5; DEFAULT_POSITION_ROLE["Attacker"] must not be "Pressing Forward"; fallback_pos must search _POSITION_ROLE_MAP for the role, not pick alphabetically.
 - [Backend Atlas DNS fallback](backend-atlas-dns-fallback.md) — Atlas SRV/DNS import failures can make every provider search look empty; verify backend health before changing search UI.
-- [Universal selection flow](universal-selection-flow.md) — tapping a verified result must commit identity and start sport-specific matchup lookup, not only fill the text field.
 - [Live projection display](live-projection-display.md) — keep saved PROJ visible; NOW and PACE are separate live context, never a replacement.
 - [Tactical evidence provenance](tactical-evidence-provenance.md) — provider-observed roles and exact sample-labeled opponent/cohort evidence prevent generic or overstated tactical explanations.
 - [Prediction synthesis scope](prediction-synthesis-scope.md) — evidence assembly precedes prediction creation; final-direction metadata must wait until deterministic synthesis completes.
@@ -157,3 +155,4 @@
 - [Verified venue-history threshold](venue-history-threshold.md) — venue priors require 30 verified player appearances; search older competitions/seasons, then use full history with an explicit fallback.
 - [Passing correlation diagnostics](passing-correlation-diagnostics.md) — same-fixture picks are correlated evidence; exact-time settlement ties need deterministic ordering, not false leakage violations.
 - [Lissa voice lifecycle](lissa-voice-lifecycle.md) — supervise segmented recognition and wait for speech completion before restarting so Lissa does not freeze or hear her own answer.
+- [Sport selector visibility](sport-selector-visibility.md) — keep sport selection for setup, but hide the selector once a player prediction enters analysis/results.
