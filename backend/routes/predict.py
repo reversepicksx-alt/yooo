@@ -79,7 +79,7 @@ _PRESSURE_SAMPLE_TARGET = 7
 # historical fixture row. Five valid completed matches is the minimum profile
 # contract; extra candidate fixtures cover provider gaps without inventing data.
 _OPPONENT_PRESSURE_MATCH_TARGET = 5
-_OPPONENT_PRESSURE_CANDIDATE_LIMIT = 10
+_OPPONENT_PRESSURE_CANDIDATE_LIMIT = 8
 # A possession calculation is only called verified when BOTH clubs have this
 # many exact fixture-statistics rows at the relevant venue.  A shorter sample
 # remains visible as limited context but cannot drive the precise model signal.
@@ -2102,7 +2102,7 @@ async def predict(req: PredictionRequest):
                         stats_rows = await fetch_fixture_team_stats(
                             fixture_pool,
                             team_id,
-                            limit=len(fixture_pool),
+                            limit=min(len(fixture_pool), candidate_limit),
                             include_player_actions=True,
                         )
                         packet = compute_press_intensity_score(stats_rows or [])
@@ -2207,16 +2207,44 @@ async def predict(req: PredictionRequest):
                             "reason": f"opponent_recent_pressure_{type(exc).__name__}",
                         }
 
-            async def warm_profiles(opponents_to_warm):
+            async def warm_profiles(opponents_to_warm, *, response_budget=16.0):
                 if not opponents_to_warm:
                     return
-                fresh = await aio.gather(
-                    *(bounded_profile(opponent) for opponent in opponents_to_warm),
-                    return_exceptions=True,
+
+                task_map = {
+                    aio.create_task(bounded_profile(opponent)): opponent
+                    for opponent in opponents_to_warm
+                }
+
+                def store_completed(done_tasks):
+                    for task in done_tasks:
+                        try:
+                            profile = task.result()
+                        except Exception:
+                            continue
+                        if isinstance(profile, dict):
+                            opponent = task_map.get(task)
+                            if opponent:
+                                cached_profiles[str(opponent["teamId"])] = profile
+
+                # Do not wait for every opponent before returning. The old
+                # gather() made a slow 18-opponent batch discard profiles that
+                # had already completed, which rendered 0/N in the first
+                # response even though the provider had returned usable data.
+                done, pending_tasks = await aio.wait(
+                    set(task_map),
+                    timeout=response_budget,
                 )
-                for opponent, profile in zip(opponents_to_warm, fresh):
-                    if isinstance(profile, dict):
-                        cached_profiles[str(opponent["teamId"])] = profile
+                store_completed(done)
+
+                if pending_tasks:
+                    async def finish_remaining():
+                        # Keep warming the cache after the core response is
+                        # assembled. Each completed profile is still persisted
+                        # by build_opponent_profile for the next render.
+                        await aio.gather(*pending_tasks, return_exceptions=True)
+
+                    aio.create_task(finish_remaining())
 
             await warm_profiles(pending)
             if deferred:

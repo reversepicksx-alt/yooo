@@ -32,11 +32,13 @@ def test_unavailable_pressure_never_has_a_numeric_zero_score():
 
 def test_recent_profiles_require_five_completed_matches_and_are_versioned():
     assert '_OPPONENT_PRESSURE_MATCH_TARGET = 5' in PREDICT_SOURCE
-    assert '_OPPONENT_PRESSURE_CANDIDATE_LIMIT = 10' in PREDICT_SOURCE
+    assert '_OPPONENT_PRESSURE_CANDIDATE_LIMIT = 8' in PREDICT_SOURCE
     assert 'profile_version = "opponent-pressure-v3"' in PREDICT_SOURCE
     assert 'profile_cache_prefix = "opp_press_profile_v3_"' in PREDICT_SOURCE
     assert 'if len(fixture_pool) < target_matches:' in PREDICT_SOURCE
     assert '"sampleTarget": target_matches' in PREDICT_SOURCE
+    assert 'done, pending_tasks = await aio.wait(' in PREDICT_SOURCE
+    assert 'aio.create_task(finish_remaining())' in PREDICT_SOURCE
 
 
 def test_one_profile_is_reused_for_each_history_row_of_an_opponent():

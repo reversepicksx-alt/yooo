@@ -23,6 +23,12 @@ Opponent pressure history is cached as one versioned profile per opponent and re
 
 **How to apply:** Build profiles from verified opponent team IDs, never from the player row's single match alone. Display opponent coverage separately from row coverage, and never convert an unavailable packet's null score into `0/100`.
 
+Large opponent histories must warm incrementally rather than through one all-or-nothing `gather()`. Return completed profiles within the prediction window, persist the remaining profiles in background work, and let later renders consume the versioned cache.
+
+**Why:** An 18-opponent batch previously hit the 20-second response boundary and discarded profiles that had already completed, producing `0/18` even when provider data was available.
+
+**How to apply:** Use a bounded `wait()` over per-opponent tasks, prioritize the newest/current opponents, and keep unresolved rows explicitly warming or unavailable instead of replacing the entire response with a synthetic empty packet.
+
 For exact historical match labels, fixture-level API-Football team statistics may provide a real limited packet from observed fouls when the optional fixture-player endpoint is rate-limited. Keep the packet marked limited and retain its source; never replace it with possession, odds, or an aggregate opponent baseline.
 
 **Why:** The player endpoint can stall or return empty while the exact fixture statistics endpoint remains usable; serial player enrichment made the history card time out and showed “not yet warmed” instead of available evidence.
