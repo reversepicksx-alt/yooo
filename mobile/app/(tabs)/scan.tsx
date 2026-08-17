@@ -25,7 +25,6 @@ import PitchDiagram from '@/components/PitchDiagram';
 import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalysisBars';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
-import Reanimated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
 import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenuecat';
@@ -33,6 +32,11 @@ import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenu
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
+
+function safeFixed(value: unknown, digits = 1): string {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : '—';
+}
 
 function TacticalNarrativeCard({
   narrative,
@@ -1221,7 +1225,9 @@ export default function ScanScreen() {
       setDeselectedLogIndices(new Set());
       return;
     }
-    const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
+    const realLogs = Array.isArray(prediction.gameLogs)
+      ? prediction.gameLogs.filter(g => !g.synthetic)
+      : [];
     const toDeselect = new Set<number>();
     realLogs.forEach((g, idx) => {
       if ((g.minutes || 0) > 0 && (g.minutes || 0) < 60) toDeselect.add(idx);
@@ -3434,7 +3440,7 @@ export default function ScanScreen() {
         {/* ─── RESULT: Full Analysis ─── */}
         {phase === 'result' && prediction && (
           <>
-            <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.springify().damping(14).stiffness(100).delay(50) : undefined}>
+            <View>
             <View ref={analysisRef} collapsable={false} style={styles.captureContainer}>
             <View style={styles.analysisCard}>
               <LinearGradient
@@ -3522,7 +3528,7 @@ export default function ScanScreen() {
                     </Text>
                   )}
                   {/* Player disambiguation warning — shown when multiple players share the same abbreviated name */}
-                  {prediction.playerCandidates && prediction.playerCandidates.length > 1 &&
+                  {Array.isArray(prediction.playerCandidates) && prediction.playerCandidates.length > 1 &&
                     prediction.playerCandidates.some(c => c.playerId !== prediction.playerId) && (
                     <View>
                       <TouchableOpacity
@@ -3604,7 +3610,7 @@ export default function ScanScreen() {
                     {prediction.expectedGameType ? (
                       <View style={{ marginLeft: 'auto', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: Colors.primary + '18', borderWidth: 1, borderColor: Colors.primary + '33' }}>
                         <Text style={{ fontSize: 8, color: Colors.primary, fontWeight: '800', letterSpacing: 0.6 }}>
-                          {prediction.expectedGameType.toUpperCase()}
+                          {String(prediction.expectedGameType).toUpperCase()}
                         </Text>
                       </View>
                     ) : null}
@@ -3852,7 +3858,7 @@ export default function ScanScreen() {
                    {prediction.priorMean != null && (
                      <View style={styles.compactMetricChip}>
                        <Text style={styles.compactMetricLabel}>BASE</Text>
-                       <Text style={styles.compactMetricValue}>{prediction.priorMean.toFixed(1)}</Text>
+                       <Text style={styles.compactMetricValue}>{safeFixed(prediction.priorMean)}</Text>
                      </View>
                    )}
                    {(prediction as any).opponentProfile?.allowedAvg != null && (
@@ -3884,7 +3890,7 @@ export default function ScanScreen() {
                      <Text style={styles.compactInputText}>MOMENTUM {prediction.momentumLabel}</Text>
                    )}
                    {prediction.playerPosition && (
-                     <Text style={styles.compactInputText}>{prediction.playerPosition.toUpperCase()}</Text>
+                     <Text style={styles.compactInputText}>{String(prediction.playerPosition).toUpperCase()}</Text>
                    )}
                    {prediction.currentOppTier && (
                      <Text style={styles.compactInputText}>OPP {prediction.currentOppTier}</Text>
@@ -3940,9 +3946,9 @@ export default function ScanScreen() {
 
                 let edgeParagraph = '';
                 if (lineBelow && rec === 'OVER') {
-                  edgeParagraph = `The book set this line ${absPct}% below ${playerFirst}'s season average of ${prediction.priorMean.toFixed(1)} ${propAvgLabel}. That's a ${bandStrength} market underpricing — the sportsbook is essentially betting ${playerFirst} underperforms their own baseline. In ${band ?? ''} deviation cases like this where our model took the OVER, it has hit ${hitRate != null ? hitRate.toFixed(0) + '%' : 'at a strong rate'} historically. The edge is structural: any time a book sets the line meaningfully below a player's proven average, the math favors the over.`;
+                  edgeParagraph = `The book set this line ${absPct}% below ${playerFirst}'s season average of ${safeFixed(prediction.priorMean)} ${propAvgLabel}. That's a ${bandStrength} market underpricing — the sportsbook is essentially betting ${playerFirst} underperforms their own baseline. In ${band ?? ''} deviation cases like this where our model took the OVER, it has hit ${hitRate != null ? safeFixed(hitRate, 0) + '%' : 'at a strong rate'} historically. The edge is structural: any time a book sets the line meaningfully below a player's proven average, the math favors the over.`;
                 } else if (!lineBelow && rec === 'UNDER') {
-                  edgeParagraph = `The book set this line ${absPct}% above ${playerFirst}'s season average of ${prediction.priorMean.toFixed(1)} ${propAvgLabel}. When sportsbooks overprice a line like this — betting the player outperforms their own baseline — the data says that rarely holds. In ${band ?? ''} deviation UNDER cases, our model has hit ${hitRate != null ? hitRate.toFixed(0) + '%' : 'at a strong rate'} historically. The book is overreacting to recent form while ignoring the season trend.`;
+                  edgeParagraph = `The book set this line ${absPct}% above ${playerFirst}'s season average of ${safeFixed(prediction.priorMean)} ${propAvgLabel}. When sportsbooks overprice a line like this — betting the player outperforms their own baseline — the data says that rarely holds. In ${band ?? ''} deviation UNDER cases, our model has hit ${hitRate != null ? safeFixed(hitRate, 0) + '%' : 'at a strong rate'} historically. The book is overreacting to recent form while ignoring the season trend.`;
                 } else if (lineBelow && rec === 'UNDER') {
                   edgeParagraph = `The line is ${absPct}% below season average, yet our model still leans UNDER. This reflects momentum evidence — ${playerFirst}'s recent games have tracked below their season baseline, and the projection expects that trend to continue. The deviation means the book is already pricing in some weakness, but not enough.`;
                 } else if (!lineBelow && rec === 'OVER') {
@@ -3955,7 +3961,7 @@ export default function ScanScreen() {
                     <View style={styles.lineVsAvgRow}>
                       <View style={styles.lineVsAvgLeft}>
                         <Text style={styles.lineVsAvgLabel}>SEASON AVG</Text>
-                        <Text style={styles.lineVsAvgVal}>{prediction.priorMean.toFixed(1)}</Text>
+                        <Text style={styles.lineVsAvgVal}>{safeFixed(prediction.priorMean)}</Text>
                       </View>
                       <View style={styles.lineVsAvgMid}>
                         <Text style={[styles.lineVsAvgDelta, { color: deltaColor }]}>
@@ -4190,7 +4196,7 @@ export default function ScanScreen() {
                         {priorM != null && (
                           <View style={styles.mfMetric}>
                             <Text style={styles.mfMetricLabel}>PRIOR</Text>
-                            <Text style={styles.mfMetricVal}>{priorM.toFixed(1)}</Text>
+                            <Text style={styles.mfMetricVal}>{safeFixed(priorM)}</Text>
                             <Text style={styles.mfMetricSub}>{pos || 'BASE'}</Text>
                           </View>
                         )}
@@ -4201,7 +4207,7 @@ export default function ScanScreen() {
                           }]}>
                             <Text style={styles.mfMetricLabel}>POSTERIOR</Text>
                             <Text style={[styles.mfMetricVal, { color: isOver ? Colors.primary : '#FF6B35' }]}>
-                              {postM.toFixed(1)}
+                              {safeFixed(postM)}
                             </Text>
                             {priorM != null && (
                               <Text style={[styles.mfMetricSub, {
@@ -4224,9 +4230,9 @@ export default function ScanScreen() {
                         {oppAvg != null && (
                           <View style={styles.mfMetric}>
                             <Text style={styles.mfMetricLabel}>OPP ALLOWS</Text>
-                            <Text style={[styles.mfMetricVal, { color: '#A084E8' }]}>{oppAvg.toFixed(1)}</Text>
+                            <Text style={[styles.mfMetricVal, { color: '#A084E8' }]}>{safeFixed(oppAvg)}</Text>
                             {rawOppAvg != null && Math.abs(rawOppAvg - oppAvg) >= 0.5 ? (
-                              <Text style={styles.mfMetricSub}>raw {rawOppAvg.toFixed(1)}</Text>
+                              <Text style={styles.mfMetricSub}>raw {safeFixed(rawOppAvg)}</Text>
                             ) : oppWt != null ? (
                               <Text style={styles.mfMetricSub}>{oppWt}% wt</Text>
                             ) : null}
@@ -4240,9 +4246,9 @@ export default function ScanScreen() {
                                    : pairShare > 1.18 ? Colors.primary
                                    : Colors.textSecondary,
                             }]}>
-                              {(pairShare * 100).toFixed(0)}%
+                              {safeFixed(pairShare * 100, 0)}%
                             </Text>
-                            <Text style={styles.mfMetricSub}>of {compSeasAvg.toFixed(0)} avg</Text>
+                            <Text style={styles.mfMetricSub}>of {safeFixed(compSeasAvg, 0)} avg</Text>
                           </View>
                         )}
                         {momLabel && (
@@ -4253,7 +4259,7 @@ export default function ScanScreen() {
                             }]}>{momLabel}</Text>
                             {momEff != null && momEff !== 0 && (
                               <Text style={[styles.mfMetricSub, { color: momEff > 0 ? Colors.primary : '#FF6B35' }]}>
-                                {momEff > 0 ? '+' : ''}{momEff.toFixed(1)}
+                                {momEff > 0 ? '+' : ''}{safeFixed(momEff)}
                               </Text>
                             )}
                           </View>
@@ -4289,7 +4295,7 @@ export default function ScanScreen() {
                           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                             <View style={styles.mfChainRow}>
                               <View style={styles.mfChainNode}>
-                                <Text style={styles.mfChainNodeNum}>{priorM.toFixed(1)}</Text>
+                                <Text style={styles.mfChainNodeNum}>{safeFixed(priorM)}</Text>
                                 <Text style={styles.mfChainNodeSub}>PRIOR</Text>
                               </View>
                               {chain.map((s, i) => (
@@ -4301,7 +4307,7 @@ export default function ScanScreen() {
                                   }]}>
                                     <Text style={[styles.mfChainStepLabel, { color: s.color }]}>{s.label}</Text>
                                     <Text style={[styles.mfChainStepPct, { color: s.color }]}>
-                                      {s.pct >= 0 ? '+' : ''}{s.pct.toFixed(1)}%
+                                      {s.pct >= 0 ? '+' : ''}{safeFixed(s.pct)}%
                                     </Text>
                                     {s.n != null && <Text style={styles.mfChainStepN}>n={s.n}</Text>}
                                   </View>
@@ -4313,7 +4319,7 @@ export default function ScanScreen() {
                                 backgroundColor: (isOver ? Colors.primary : '#FF6B35') + '10',
                               }]}>
                                 <Text style={[styles.mfChainNodeNum, { color: isOver ? Colors.primary : '#FF6B35' }]}>
-                                  {postM.toFixed(1)}
+                                  {safeFixed(postM)}
                                 </Text>
                                 <Text style={styles.mfChainNodeSub}>FINAL</Text>
                               </View>
@@ -4390,7 +4396,7 @@ export default function ScanScreen() {
                             <View style={styles.mfOppRow}>
                               <Ionicons name="people-outline" size={10} color={Colors.textTertiary} />
                               <Text style={styles.mfOppLabel} numberOfLines={1}>
-                                {pos ? `${pos}s` : 'Players'} vs {prediction.opponentName || 'opp'}: {oppAvg.toFixed(1)} avg allowed
+                                {pos ? `${pos}s` : 'Players'} vs {prediction.opponentName || 'opp'}: {safeFixed(oppAvg)} avg allowed
                                 {oppWt != null ? ` (${oppWt}% influence)` : ''}
                               </Text>
                             </View>
@@ -4513,8 +4519,8 @@ export default function ScanScreen() {
                       <View style={[styles.gameTypeWrap, { display: 'none' }]}>
                       <Text style={styles.gameTypeLabel}>GAME TYPE</Text>
                       <Text style={styles.gameTypeValue}>{
-                        (['open','cagey','one-sided','high-tempo'].includes(prediction.expectedGameType?.toLowerCase())
-                          ? prediction.expectedGameType.toUpperCase()
+                        (['open','cagey','one-sided','high-tempo'].includes(String(prediction.expectedGameType).toLowerCase())
+                          ? String(prediction.expectedGameType).toUpperCase()
                           : 'OPEN')
                       }</Text>
                       {prediction.keyMatchupFactor && (
@@ -4821,8 +4827,8 @@ export default function ScanScreen() {
             })()}
 
             {/* ─── GAME LOG GRID ─── */}
-            {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
-              const realLogs = prediction.gameLogs!.filter(g => !g.synthetic);
+            {Array.isArray(prediction.gameLogs) && prediction.gameLogs.length > 0 && (() => {
+              const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
               const allSynthetic = realLogs.length === 0;
               const displayLogs = allSynthetic ? [] : realLogs;
               const effectiveLine = prediction.line;
@@ -5277,10 +5283,10 @@ export default function ScanScreen() {
                   {!allSynthetic && !isH2H && (prediction.homeAvg != null || prediction.awayAvg != null) && (
                     <View style={styles.avgRow}>
                       {prediction.homeAvg != null && (
-                        <Text style={styles.avgText}>HOME AVG  {prediction.homeAvg.toFixed(1)}</Text>
+                        <Text style={styles.avgText}>HOME AVG  {safeFixed(prediction.homeAvg)}</Text>
                       )}
                       {prediction.awayAvg != null && (
-                        <Text style={styles.avgText}>AWAY AVG  {prediction.awayAvg.toFixed(1)}</Text>
+                        <Text style={styles.avgText}>AWAY AVG  {safeFixed(prediction.awayAvg)}</Text>
                       )}
                     </View>
                   )}
@@ -5495,7 +5501,7 @@ export default function ScanScreen() {
                         </View>
                         <Text style={[styles.rfPct, { color: '#4DA6FF' }]}>{rfPriorPct}%</Text>
                         <Text style={[styles.rfVal, { color: '#4DA6FF' }]}>
-                          {prediction.priorMean != null ? prediction.priorMean.toFixed(1) : '—'}
+                          {prediction.priorMean != null ? safeFixed(prediction.priorMean) : '—'}
                         </Text>
                       </View>
 
@@ -5507,7 +5513,7 @@ export default function ScanScreen() {
                         </View>
                         <Text style={[styles.rfPct, { color: '#FF8C42' }]}>{rfMomPct}%</Text>
                         <Text style={[styles.rfVal, { color: '#FF8C42' }]}>
-                          {prediction.momentumMean != null ? prediction.momentumMean.toFixed(1) : '—'}
+                          {prediction.momentumMean != null ? safeFixed(prediction.momentumMean) : '—'}
                         </Text>
                       </View>
 
@@ -5520,7 +5526,7 @@ export default function ScanScreen() {
                         <Text style={[styles.rfPct, { color: '#A084E8' }]}>{rfCovPct}%</Text>
                         <Text style={[styles.rfVal, { color: '#A084E8' }]}>
                           {prediction.covariateAdjustment != null
-                            ? (prediction.covariateAdjustment >= 0 ? '+' : '') + prediction.covariateAdjustment.toFixed(2)
+                            ? (prediction.covariateAdjustment >= 0 ? '+' : '') + safeFixed(prediction.covariateAdjustment, 2)
                             : '—'}
                         </Text>
                       </View>
@@ -5535,7 +5541,7 @@ export default function ScanScreen() {
                       <Text style={styles.rfBadgeMomentumText}>
                         {prediction.momentumLabel}
                         {prediction.momentumEffect != null && prediction.momentumEffect !== 0
-                          ? ` ${prediction.momentumEffect > 0 ? '+' : ''}${prediction.momentumEffect.toFixed(2)}`
+                          ? ` ${prediction.momentumEffect > 0 ? '+' : ''}${safeFixed(prediction.momentumEffect, 2)}`
                           : ''}
                       </Text>
                     </View>
@@ -5559,7 +5565,7 @@ export default function ScanScreen() {
                   <Text style={styles.rfProjectionLabel}>Math Projection</Text>
                   <View style={styles.rfProjectionRight}>
                     <Text style={styles.rfProjectionVal}>
-                      {(prediction.projection ?? prediction.bayesianProjection)?.toFixed(1) ?? '—'}
+                      {safeFixed(prediction.projection ?? prediction.bayesianProjection)}
                     </Text>
                     {(prediction.pOver != null || prediction.pUnder != null) && (() => {
                       const pO = prediction.pOver ?? 0;
@@ -5568,8 +5574,8 @@ export default function ScanScreen() {
                       return (
                         <Text style={styles.rfProjectionProb}>
                           {showUnder
-                            ? `P(UNDER) ${pU.toFixed(1)}%`
-                            : `P(OVER) ${pO.toFixed(1)}%`}
+                            ? `P(UNDER) ${safeFixed(pU)}%`
+                            : `P(OVER) ${safeFixed(pO)}%`}
                         </Text>
                       );
                     })()}
@@ -5764,8 +5770,8 @@ export default function ScanScreen() {
                         <View style={[styles.mfProbFillUnder, { flex: pU / 100 }]} />
                       </View>
                       <View style={styles.mfProbLabels}>
-                        <Text style={[styles.mfProbLabel, { color: Colors.primary }]}>OVER {pO.toFixed(1)}%</Text>
-                        <Text style={[styles.mfProbLabel, { color: Colors.error,   textAlign: 'right' }]}>UNDER {pU.toFixed(1)}%</Text>
+                        <Text style={[styles.mfProbLabel, { color: Colors.primary }]}>OVER {safeFixed(pO)}%</Text>
+                        <Text style={[styles.mfProbLabel, { color: Colors.error,   textAlign: 'right' }]}>UNDER {safeFixed(pU)}%</Text>
                       </View>
                     </View>
                   )}
@@ -5841,7 +5847,7 @@ export default function ScanScreen() {
                   {/* Season baseline */}
                   {pm != null && (
                     <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 6, fontFamily: 'JetBrainsMono_400Regular' }}>
-                      Season baseline: {pm.toFixed(1)}
+                      Season baseline: {safeFixed(pm)}
                     </Text>
                   )}
 
@@ -6108,9 +6114,9 @@ export default function ScanScreen() {
                     {(prediction.pOver != null || prediction.pUnder != null) && (
                       <Text style={{ color: 'rgba(0,0,0,0.42)', fontWeight: '600', fontSize: 11, marginTop: 1 }}>
                         {prediction.recommendation === 'OVER'
-                          ? `${(prediction.pOver ?? 0).toFixed(1)}%`
+                          ? `${safeFixed(prediction.pOver ?? 0)}%`
                           : prediction.recommendation === 'UNDER'
-                            ? `${(prediction.pUnder ?? 0).toFixed(1)}%`
+                            ? `${safeFixed(prediction.pUnder ?? 0)}%`
                             : 'Saved as calibration-only'
                         } model probability
                       </Text>
@@ -6153,7 +6159,7 @@ export default function ScanScreen() {
                 <Text style={{ color: Colors.textSecondary, fontWeight: '600', fontSize: 13 }}>Analyze Another</Text>
               </TouchableOpacity>
             </View>
-          </Reanimated.View>
+          </View>
           </>
         )}
 

@@ -3304,7 +3304,12 @@ export async function wtaPredict(request: Record<string, unknown>, signal?: Abor
   const bm  = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
 
-  const gameLogs = (raw.matchLogs || raw.gameLogs || []).map((g: any) => ({
+  const wtaLogs = Array.isArray(raw.matchLogs)
+    ? raw.matchLogs
+    : Array.isArray(raw.gameLogs)
+      ? raw.gameLogs
+      : [];
+  const gameLogs = wtaLogs.map((g: any) => ({
     date:     g.date ?? '',
     opponent: g.opponent ?? g.opponentName ?? '',
     venue:    g.venue ?? 'neutral',
@@ -3378,7 +3383,7 @@ export async function cs2Predict(request: Record<string, unknown>, signal?: Abor
   const bm  = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
 
-  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+  const gameLogs = (Array.isArray(raw.gameLogs) ? raw.gameLogs : []).map((g: any) => ({
     date:           g.date ?? '',
     opponent:       g.opponent ?? '',
     venue:          g.wonMap === true ? 'home' : g.wonMap === false ? 'away' : '',
@@ -3505,7 +3510,7 @@ export async function nbaPredict(request: Record<string, unknown>, signal?: Abor
   const bm  = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
 
-  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+  const gameLogs = (Array.isArray(raw.gameLogs) ? raw.gameLogs : []).map((g: any) => ({
     date:       g.date     ?? '',
     opponent:   g.opponent ?? '',
     venue:      g.venue    ?? '',
@@ -3618,7 +3623,7 @@ export async function nhlPredict(request: Record<string, unknown>, signal?: Abor
   const bm  = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
 
-  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+  const gameLogs = (Array.isArray(raw.gameLogs) ? raw.gameLogs : []).map((g: any) => ({
     date:          g.date     ?? '',
     opponent:      g.opponent ?? '',
     venue:         g.venue    ?? '',
@@ -3747,7 +3752,7 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
   if (raw.error) return { error: raw.error } as PredictionResult;
   const bm  = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
-  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+  const gameLogs = (Array.isArray(raw.gameLogs) ? raw.gameLogs : []).map((g: any) => ({
     date:            g.date            ?? '',
     opponent:        g.opponent        ?? '',
     venue:           g.venue           ?? '',
@@ -3887,7 +3892,7 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
   const bm  = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
 
-  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+  const gameLogs = (Array.isArray(raw.gameLogs) ? raw.gameLogs : []).map((g: any) => ({
     date:          g.date     ?? '',
     opponent:      g.opponent ?? '',
     venue:         g.venue    ?? '',
