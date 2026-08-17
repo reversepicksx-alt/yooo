@@ -257,6 +257,16 @@ class TestPressIntensity:
         assert packet["projectionApplied"] is False
         assert "defensive-action" in packet["reasoning"]
 
+    def test_stable_pressure_sample_requires_seven_action_rows(self):
+        row = self._stats()[0]
+        limited = compute_press_intensity_score([dict(row) for _ in range(6)])
+        stable = compute_press_intensity_score([dict(row) for _ in range(7)])
+
+        assert limited["sampleSize"] == 6
+        assert limited["sampleStatus"] == "limited"
+        assert stable["sampleSize"] == 7
+        assert stable["sampleStatus"] == "sufficient"
+
     def test_every_bayesian_call_exposes_press_contract(self):
         logs = [{"targetStat": 30, "minutes": 90}] * 8
         for prop in ("pass_attempts", "passes", "key_passes", "crosses"):

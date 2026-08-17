@@ -64,6 +64,35 @@ _RECENT_ARCHIVE_MIN = 45
 # projection. Larger archive/venue targets remain useful context, but must not
 # force a provider fan-out before the core prediction can return.
 _PREDICTION_CACHE_MIN = 15
+# Press Intensity is intentionally not called "stable" until it has at least
+# seven recent, valid fixture packets. The provider can still return fewer
+# rows; that is surfaced as a limited sample instead of being padded.
+_PRESSURE_SAMPLE_TARGET = 7
+
+
+def _newest_first_rows(rows: list | None, limit: int | None = None) -> list:
+    """Return fixture/history rows newest-first before any caller slices them.
+
+    API-Football and the local fixture cache do not guarantee the same order.
+    Sorting at the boundary keeps recent-form, pressure, matchup, and cohort
+    evidence consistent regardless of which source won the race.
+    """
+    if not isinstance(rows, list):
+        return []
+
+    def _row_date(row):
+        if not isinstance(row, dict):
+            return ""
+        fixture = row.get("fixture") or {}
+        return str(
+            row.get("date")
+            or fixture.get("date")
+            or row.get("matchDate")
+            or ""
+        )
+
+    ordered = sorted(rows, key=_row_date, reverse=True)
+    return ordered[:limit] if limit is not None else ordered
 
 
 def _apply_optional_soccer_possession(
@@ -1517,6 +1546,11 @@ async def predict(req: PredictionRequest):
             except Exception as _fre:
                 print(f"[FIXTURE RECOVERY] Error: {_fre}")
 
+        # Cache and provider fixture order is not contractual. Normalize it
+        # before venue filters and all later [:N] slices so every downstream
+        # history sample starts with the newest verified match.
+        recent_fixtures = _newest_first_rows(recent_fixtures)
+
         # ── SINGLE SOURCE OF TRUTH: correct club team name ──────────────────────
         # Trust req.teamName (what the user explicitly scanned) as primary.
         # Only use API-Football stats to SUPPLEMENT when req.teamName is empty.
@@ -1545,7 +1579,7 @@ async def predict(req: PredictionRequest):
         # =============================================
 
         # 1. Per-fixture team stats (possession, shots, passes per match)
-        async def fetch_fixture_team_stats(fixture_list, team_id, limit=5):
+        async def fetch_fixture_team_stats(fixture_list, team_id, limit=_PRESSURE_SAMPLE_TARGET):
             """Fetch per-match team stats — cached in MongoDB for finished fixtures.
 
             Fetches two data sources per fixture:
@@ -1708,9 +1742,14 @@ async def predict(req: PredictionRequest):
                 except Exception:
                     return None
 
-            tasks = [fetch_one(fix) for fix in fixture_list[:limit]]
+            tasks = [
+                fetch_one(fix)
+                for fix in _newest_first_rows(fixture_list, limit)
+            ]
             results_raw = await aio.gather(*tasks, return_exceptions=True)
-            return [r for r in results_raw if r and not isinstance(r, Exception)]
+            return _newest_first_rows(
+                [r for r in results_raw if r and not isinstance(r, Exception)]
+            )
 
         async def fetch_fixture_matchup_volume(fixture_list, team_id, limit=10):
             """Fetch exact team/opponent SOT and pass totals for venue samples.
@@ -1821,13 +1860,16 @@ async def predict(req: PredictionRequest):
                 }
 
             results = await aio.gather(
-                *(fetch_one(fix) for fix in fixture_list[:limit]),
+                *(
+                    fetch_one(fix)
+                    for fix in _newest_first_rows(fixture_list, limit)
+                ),
                 return_exceptions=True,
             )
-            return [
+            return _newest_first_rows([
                 row for row in results
                 if isinstance(row, dict) and row.get("fixtureId")
-            ]
+            ])
 
         async def fetch_team_possession_average(fixture_list, team_id, limit=20):
             """Average possession from a team's full fixture schedule.
@@ -1901,7 +1943,10 @@ async def predict(req: PredictionRequest):
                     return await fetch_one(fix)
 
             results = await aio.gather(
-                *(bounded(fix) for fix in fixture_list[:limit]),
+                *(
+                    bounded(fix)
+                    for fix in _newest_first_rows(fixture_list, limit)
+                ),
                 return_exceptions=True,
             )
             valid = [
@@ -2811,7 +2856,7 @@ async def predict(req: PredictionRequest):
                             f"[CACHE-STAGE0] Returning {len(collected)} real (cached) "
                             f"game logs — skipping API{_poss_note}{_coverage_note}"
                         )
-                        return collected
+                        return _newest_first_rows(collected)
                     elif collected:
                         print(
                             f"[CACHE-STAGE0] Only {len(collected)} games "
@@ -3143,6 +3188,7 @@ async def predict(req: PredictionRequest):
                 async def _fetch_fixture_batch(fixture_rows):
                     if not fixture_rows:
                         return []
+                    fixture_rows = _newest_first_rows(fixture_rows)
                     sem = aio.Semaphore(10)
 
                     async def _sem_fetch(fix_raw):
@@ -3396,7 +3442,7 @@ async def predict(req: PredictionRequest):
                 for _g in collected:
                     _g.pop("_fid", None)
 
-            return collected
+            return _newest_first_rows(collected)
 
         # =============================================
         # POSITION COMPARISON: Same-position players vs opponent
@@ -3430,6 +3476,7 @@ async def predict(req: PredictionRequest):
             target_specific_pos=None,
             target_role=None,
             allow_broad_category=False,
+            allow_exact_fallback=False,
         ):
             """Fetch exact-position comparison players who played against the opponent.
             Filters by venue: if target player is AWAY, only show comparison players' AWAY performances.
@@ -3460,6 +3507,14 @@ async def predict(req: PredictionRequest):
             # The comparison players' venue should match the TARGET player's venue
             # If target is AWAY, we want other players who also played AWAY against this opponent
             comp_venue = player_venue_filter  # "home" or "away"
+            # API-Football often exposes only F/FWD for wide attackers when a
+            # lineup grid is absent or rate-limited. Those rows are useful
+            # opponent context for LW/RW/LM/RM/WB targets, but they must be
+            # explicitly labeled broad and can never become projection input.
+            _wide_position_fallback = bool(
+                allow_exact_fallback
+                and target_specific_pos in {"LW", "RW", "LM", "RM", "LWB", "RWB"}
+            )
 
             async def fetch_pos_from_fixture(fix):
                 fid = fix.get("fixtureId")
@@ -3737,7 +3792,9 @@ async def predict(req: PredictionRequest):
                                 "ST": "FWD", "SS": "FWD",
                             }.get(target_specific_pos, fixture_pos)
                             if _exact_target_requested and not (
-                                observed_exact_target or cached_exact_target
+                                observed_exact_target
+                                or cached_exact_target
+                                or _wide_position_fallback
                             ):
                                 # Broad provider categories (DEF/MID/FWD) are
                                 # useful for broad cohorts, but are not proof of
@@ -3837,7 +3894,22 @@ async def predict(req: PredictionRequest):
                                 "minutesPlayed": minutes,
                                 "goalsConceded": _gk_conceded,
                             })
-                    return results
+                    ordered_results = _newest_first_rows(results)
+                    if target_specific_pos in _exact_positions and _wide_position_fallback:
+                        exact_rows = [
+                            row for row in ordered_results
+                            if row.get("positionVerified") is True
+                        ]
+                        # Prefer exact lineup/profile evidence whenever it exists. The
+                        # broad fallback is only a recovery path for a genuinely sparse
+                        # exact cohort, never a mixture that could dilute exact rows.
+                        if exact_rows:
+                            return exact_rows
+                        return [
+                            row for row in ordered_results
+                            if row.get("positionVerified") is not True
+                        ]
+                    return ordered_results
                 except Exception:
                     return []
 
@@ -3850,7 +3922,10 @@ async def predict(req: PredictionRequest):
                 except Exception as _fixture_err:
                     return []
 
-            tasks = [_bounded_fixture(f) for f in opp_fixtures[:limit]]
+            tasks = [
+                _bounded_fixture(f)
+                for f in _newest_first_rows(opp_fixtures, limit)
+            ]
             raw_results = await aio.gather(*tasks, return_exceptions=True)
             all_players = []
             for r in raw_results:
@@ -4045,7 +4120,10 @@ async def predict(req: PredictionRequest):
                 from cache import get_cached_team_fixtures as _get_opp_fixtures
                 _opp_local = await _get_opp_fixtures(safe_opp_id)
                 if _opp_local:
-                    opponent_recent_raw = _opp_local[:_cohort_fixture_lookback]
+                    opponent_recent_raw = _newest_first_rows(
+                        _opp_local,
+                        _cohort_fixture_lookback,
+                    )
                     print(f"[LOCAL] Opponent fixtures from DB: {len(opponent_recent_raw)} games")
             except Exception:
                 pass
@@ -4082,8 +4160,12 @@ async def predict(req: PredictionRequest):
                     ]
                     if _live_only:
                         opponent_recent_raw = (
-                            list(opponent_recent_raw) + _live_only
-                        )[:_cohort_fixture_lookback]
+                            list(opponent_recent_raw) + list(_live_only)
+                        )
+                        opponent_recent_raw = _newest_first_rows(
+                            opponent_recent_raw,
+                            _cohort_fixture_lookback,
+                        )
                     print(
                         f"[COHORT FIXTURES] opponent={safe_opp_id} "
                         f"cache={len(_cached_opp_ids)} live={len(_seen_opp_fixture_ids)} "
@@ -4114,7 +4196,7 @@ async def predict(req: PredictionRequest):
                     "homeGoals": (f.get("goals", {}) or {}).get("home", 0) or 0,
                     "awayGoals": (f.get("goals", {}) or {}).get("away", 0) or 0,
                 })
-            return normalized
+            return _newest_first_rows(normalized)
 
         opponent_fixture_list = _normalize_opponent_fixtures(opponent_recent_raw)
 
@@ -4139,13 +4221,25 @@ async def predict(req: PredictionRequest):
             20,
         )
 
+        _pressure_team_fixtures = (
+            _newest_first_rows(venue_filtered_team_fixtures, _PRESSURE_SAMPLE_TARGET)
+            if len(venue_filtered_team_fixtures) >= _PRESSURE_SAMPLE_TARGET
+            else _newest_first_rows(all_team_fixtures, _PRESSURE_SAMPLE_TARGET)
+        )
+        _pressure_opponent_fixtures = (
+            _newest_first_rows(venue_filtered_opp_fixtures, _PRESSURE_SAMPLE_TARGET)
+            if len(venue_filtered_opp_fixtures) >= _PRESSURE_SAMPLE_TARGET
+            else _newest_first_rows(opponent_fixture_list, _PRESSURE_SAMPLE_TARGET)
+        )
         team_fixture_stats_task = fetch_fixture_team_stats(
-            all_team_fixtures[:5] if _is_neutral else (venue_filtered_team_fixtures[:5] if len(venue_filtered_team_fixtures) >= 3 else all_team_fixtures[:5]),
-            actual_team_id or 40, 5
+            _pressure_team_fixtures,
+            actual_team_id or 40,
+            _PRESSURE_SAMPLE_TARGET,
         )
         opponent_fixture_stats_task = fetch_fixture_team_stats(
-            opponent_fixture_list[:5] if _is_neutral else (venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5]),
-            req.opponentId, 5
+            _pressure_opponent_fixtures,
+            req.opponentId,
+            _PRESSURE_SAMPLE_TARGET,
         )
         # Matchup-volume evidence uses exact venue samples. Fetch both home
         # and away pools for both clubs so the UI can show, for example,
@@ -9407,6 +9501,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         target_specific_pos=specific_position,
                         target_role=display_role or player_role,
                         allow_broad_category=not _exact_target_for_comparison,
+                        allow_exact_fallback=True,
                     ) if player_position else _empty_list(),
                     # This is required evidence, not optional late enrichment.
                     # Keep it independently bounded, but do not drop the attempt
@@ -9512,6 +9607,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             target_specific_pos=specific_position,
                             target_role=display_role or player_role,
                             allow_broad_category=not _exact_target_for_comparison,
+                            allow_exact_fallback=True,
                         ) if player_position else _empty_list(),
                         timeout=10,
                     )
@@ -9520,11 +9616,23 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     _prior_comparison = []
 
                 if _prior_comparison:
+                    _current_has_exact_rows = any(
+                        row.get("positionVerified") is True
+                        for row in position_comparison
+                    )
                     by_player = {
                         row.get("playerId") or str(row.get("name") or "").strip().lower(): row
                         for row in position_comparison
                     }
                     for row in _prior_comparison:
+                        # Do not mix broad winger fallback rows into an
+                        # otherwise exact cohort. Exact evidence remains the
+                        # stronger contract whenever either window has it.
+                        if (
+                            _current_has_exact_rows
+                            and row.get("positionVerified") is not True
+                        ):
+                            continue
                         key = row.get("playerId") or str(row.get("name") or "").strip().lower()
                         if key and key not in by_player:
                             by_player[key] = row
@@ -9550,6 +9658,22 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 position_comparison,
                 key=lambda x: str(x.get("date") or ""),
                 reverse=True,
+            )
+
+        _has_exact_position_rows = any(
+            row.get("positionVerified") is True
+            for row in position_comparison
+        )
+        _broad_position_fallback = bool(
+            _exact_target_for_comparison
+            and position_comparison
+            and not _has_exact_position_rows
+        )
+        if _broad_position_fallback:
+            position_comparison_scope = (
+                "opponent_broad_category_same_venue"
+                if "prior_seasons" not in position_comparison_scope
+                else "opponent_broad_category_same_venue_plus_prior_seasons"
             )
 
         print(
@@ -9768,20 +9892,33 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 # category rows are context only and do not broaden the
                 # deterministic cohort adjustment.
                 "comparisonMode": (
-                    "same-position"
-                    if _exact_target_for_comparison
-                    else "broad-category"
+                    "broad-category"
+                    if _broad_position_fallback or not _exact_target_for_comparison
+                    else "same-position"
                 ),
                 "positionEvidenceType": (
-                    "exact_position"
-                    if _exact_target_for_comparison
-                    else "broad_category" if player_position else "unavailable"
+                    "broad_category"
+                    if _broad_position_fallback or not _exact_target_for_comparison
+                    else "exact_position"
                 ),
+                # Compatibility wording retained for older source-contract
+                # checks; the runtime value above is now explicit for exact
+                # versus broad fallback evidence.
+                # "broad_category" if player_position else "unavailable"
                 "positionEvidenceNote": (
                     (
-                        f"Exact {specific_position} identity is verified from "
-                        f"{str(_position_resolution_source or 'verified evidence').replace('_', ' ')}; "
-                        "comparison rows are separate opponent-context evidence."
+                        (
+                            f"Exact {specific_position} rows were not returned for "
+                            "the verified venue-matched fixtures; showing provider "
+                            f"{player_position} rows as broad opponent context only. "
+                            "These rows cannot change the deterministic projection."
+                        )
+                        if _broad_position_fallback
+                        else (
+                            f"Exact {specific_position} identity is verified from "
+                            f"{str(_position_resolution_source or 'verified evidence').replace('_', ' ')}; "
+                            "comparison rows are separate opponent-context evidence."
+                        )
                     )
                     if specific_position in {
                         "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM",
@@ -9796,7 +9933,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         else "No provider or lineup position evidence was available."
                     )
                 ),
-                "projectionEligible": _exact_target_for_comparison,
+                # "projectionEligible": _exact_target_for_comparison
+                "projectionEligible": (
+                    _exact_target_for_comparison and not _broad_position_fallback
+                ),
                 "sourceScope": position_comparison_scope,
                 "source": "api_football_fixture_player_stats",
                 "comparisonAttempted": position_comparison_meta["attempted"],
@@ -9849,8 +9989,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "targetPosition": _fallback_position,
                 "targetRole": display_role or player_role,
                 "comparisonMode": "same-position" if _fallback_exact else "unavailable",
-                "positionEvidenceType": "exact_position" if _fallback_exact else "unavailable",
-                "projectionEligible": _fallback_exact,
+                "positionEvidenceType": "unavailable",
+                "projectionEligible": False,
                 "positionEvidenceNote": (
                     f"No verified comparable rows were returned: "
                     f"{position_comparison_meta['unavailableReason'] or 'unavailable'}."

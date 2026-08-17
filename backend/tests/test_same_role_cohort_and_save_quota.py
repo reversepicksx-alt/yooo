@@ -3,6 +3,7 @@ from pathlib import Path
 from routes.predict import (
     _apply_optional_soccer_possession,
     _filter_usable_soccer_history_logs,
+    _newest_first_rows,
 )
 
 
@@ -37,9 +38,24 @@ def test_position_cohort_attempt_is_not_dropped_by_elapsed_time_gates():
     assert '"comparisonUnavailableReason": position_comparison_meta["unavailableReason"]' in PREDICT_SOURCE
 
 
+def test_history_boundaries_sort_newest_before_truncating():
+    rows = [
+        {"date": "2025-01-02"},
+        {"date": "2025-03-20"},
+        {"date": "2025-02-11"},
+    ]
+
+    assert [row["date"] for row in _newest_first_rows(rows, 2)] == [
+        "2025-03-20",
+        "2025-02-11",
+    ]
+
+
 def test_broad_provider_category_can_show_similar_players_without_projection_influence():
     assert "allow_broad_category=False" in PREDICT_SOURCE
     assert "allow_broad_category=not _exact_target_for_comparison" in PREDICT_SOURCE
+    assert "allow_exact_fallback=True" in PREDICT_SOURCE
+    assert "positionVerified" in PREDICT_SOURCE
     assert '"positionEvidenceType": (' in PREDICT_SOURCE
     assert '"broad_category" if player_position else "unavailable"' in PREDICT_SOURCE
     assert '"projectionEligible": _exact_target_for_comparison' in PREDICT_SOURCE

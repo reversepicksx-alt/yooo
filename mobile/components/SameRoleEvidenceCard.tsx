@@ -54,6 +54,7 @@ export type SameRoleEvidence = {
   comparisonMode?: 'same-position' | 'same-role' | string;
   positionEvidenceType?: 'exact_position' | 'broad_category' | 'unavailable' | string;
   positionEvidenceNote?: string;
+  comparisonUnavailableReason?: string | null;
   verdict?: {
     verdict?: 'verifies' | 'contradicts' | 'neutral' | 'unavailable' | string;
     reason?: string;
@@ -226,6 +227,11 @@ export default function SameRoleEvidenceCard({
     data.positionEvidenceType === 'unavailable'
       || data.comparisonMode === 'unavailable'
   );
+  const unavailableReason = String(
+    data.positionEvidenceNote
+      || data.comparisonUnavailableReason
+      || '',
+  ).trim();
   const role = isSamePosition ? '' : (data.targetRole || 'same role');
   const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
   const limited = sample < minimum;
@@ -290,7 +296,8 @@ export default function SameRoleEvidenceCard({
           Exact {targetLabel.toLowerCase()} evidence was not verified for this fixture.
         </Text>
         <Text style={{ fontSize: 9.5, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
-          Broad-category rows are excluded rather than relabeled. This is context only and does not change the projection.
+          {unavailableReason
+            || 'No eligible exact-position rows were returned. This evidence does not change the projection.'}
         </Text>
       </View>
     );

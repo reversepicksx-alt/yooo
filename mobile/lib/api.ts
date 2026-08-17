@@ -1046,7 +1046,7 @@ export interface PredictionResult {
     targetPosition?: string;
     targetRole?: string;
     comparisonMode?: 'same-position' | 'same-role' | string;
-    positionEvidenceType?: 'exact_position' | 'unavailable' | string;
+    positionEvidenceType?: 'exact_position' | 'broad_category' | 'unavailable' | string;
     positionEvidenceNote?: string;
     positionShort?: string;
     opponent?: string;

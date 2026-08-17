@@ -30,6 +30,9 @@ from sample_quality import magnitude_outlier_weights, magnitude_outlier_notes
 # Hard cap: Covariate can be at most this ratio of (Prior + Momentum)
 # ratio=0.33 guarantees Covariate weight <= 25% of total
 MAX_COVARIATE_RATIO = 0.33
+# A pressure packet is labeled stable only after seven valid defensive-action
+# rows. Fewer rows remain usable but are disclosed as limited evidence.
+PRESS_INTENSITY_MIN_SAMPLE = 7
 
 # ── Position-aware momentum decay tables ─────────────────────────────────────
 # Research (Frontiers 2024-25) shows attackers have shorter form cycles (3-4 games)
@@ -2779,7 +2782,10 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     else:
         label = "Elite"
 
-    sample_size = max(len(action_rows), len(opponent_passes))
+    # Defensive actions are the required pressure evidence. Opponent pass
+    # volume is an optional numerator, so it must not inflate the sample count
+    # when fewer action packets were actually observed.
+    sample_size = len(action_rows)
     result = {
         "available": True,
         "status": "available",
@@ -2798,7 +2804,11 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
             "more intense pressure. Possession is context only."
         ),
         "sampleSize": sample_size,
-        "sampleStatus": "sufficient" if sample_size >= 5 else "limited",
+        "sampleStatus": (
+            "sufficient"
+            if sample_size >= PRESS_INTENSITY_MIN_SAMPLE
+            else "limited"
+        ),
         "featureCoverage": round(avg_coverage, 2),
         "avg_defensive_actions": round(avg_effective, 1) if avg_effective is not None else None,
         "avg_effective_defensive_actions": round(avg_effective, 1) if avg_effective is not None else None,
