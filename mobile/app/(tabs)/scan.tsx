@@ -2287,6 +2287,12 @@ export default function ScanScreen() {
     ? Number(recommendationProbability)
     : null;
   const modelProbPct = baseModelProbPct != null ? Number(baseModelProbPct) : null;
+  const hasSelectedPlayer = sport === 'mlb'
+    ? Boolean(mlbResolvedPlayer)
+    : sport === 'nfl'
+      ? Boolean(nflResolvedPlayer)
+      : Boolean(resolvedPlayer);
+  const showDetectedSportBanner = phase !== 'idle' || hasSelectedPlayer;
 
   return (
     <KeyboardAvoidingView
@@ -2308,45 +2314,19 @@ export default function ScanScreen() {
         </View>
         <NotificationBell />
       </View>
-      <View style={styles.detectedSportBanner}>
-        <Ionicons
-          name={sport === 'mlb' ? 'baseball-outline' : sport === 'nfl' ? 'american-football-outline' : 'football-outline'}
-          size={15}
-          color={Colors.primary}
-        />
-        <Text style={styles.detectedSportBannerText}>
-          {sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'}
-        </Text>
-        <Text style={styles.detectedSportBannerHint}>{mode === 'scan' ? 'AUTO-DETECTED' : 'SELECTED'}</Text>
-      </View>
-      <View style={styles.sportPicker}>
-        <Text style={styles.sportPickerLabel}>SEARCH SPORT</Text>
-        <View style={styles.sportPickerOptions}>
-          {([
-            { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline' },
-            { key: 'mlb' as const, label: 'MLB', icon: 'baseball-outline' },
-            { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline' },
-          ]).map(option => {
-            const active = sport === option.key;
-            return (
-              <TouchableOpacity
-                key={option.key}
-                style={[styles.sportPickerOption, active && styles.sportPickerOptionActive]}
-                onPress={() => selectSport(option.key)}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={`Search ${option.label} players`}
-              >
-                <Ionicons name={option.icon as any} size={13} color={active ? '#000' : Colors.textSecondary} />
-                <Text style={[styles.sportPickerOptionText, active && styles.sportPickerOptionTextActive]}>
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+      {showDetectedSportBanner && (
+        <View style={styles.detectedSportBanner}>
+          <Ionicons
+            name={sport === 'mlb' ? 'baseball-outline' : sport === 'nfl' ? 'american-football-outline' : 'football-outline'}
+            size={15}
+            color={Colors.primary}
+          />
+          <Text style={styles.detectedSportBannerText}>
+            {sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'}
+          </Text>
+          <Text style={styles.detectedSportBannerHint}>{mode === 'scan' ? 'AUTO-DETECTED' : 'SELECTED'}</Text>
         </View>
-      </View>
+      )}
 
       <ScrollView
         contentContainerStyle={styles.body}
@@ -2490,8 +2470,7 @@ export default function ScanScreen() {
                 }
               }}
               searchType="all_players"
-              sportFilter={sport === 'mlb' || sport === 'nfl' ? sport : 'soccer'}
-              placeholder={`Search ${sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'} player`}
+              placeholder="Search player"
                ownerSession={session?.email && session?.token ? { email: session.email, token: session.token } : undefined}
                confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
               style={{ marginBottom: 2 }}
@@ -7933,50 +7912,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     marginLeft: 3,
-  },
-  sportPicker: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.background,
-  },
-  sportPickerLabel: {
-    color: Colors.textTertiary,
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    marginBottom: 7,
-  },
-  sportPickerOptions: {
-    flexDirection: 'row',
-    gap: 7,
-  },
-  sportPickerOption: {
-    flex: 1,
-    minHeight: 34,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.cardSecondary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 6,
-  },
-  sportPickerOptionActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  sportPickerOptionText: {
-    color: Colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  sportPickerOptionTextActive: {
-    color: '#000',
   },
   universalPlayerSection: {
     marginBottom: 4,
