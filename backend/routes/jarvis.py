@@ -232,14 +232,7 @@ async def jarvis_openapi():
                 "get": {
                     "operationId": "getMatchContext",
                     "summary": "Full match brief from a single fixture ID",
-                    "description": (
-                        "The primary JARVIS tool. From one fixture ID it automatically "
-                        "resolves teams, league, and season, then gathers fixture details, "
-                        "team season stats (both sides), head-to-head history, starting "
-                        "lineups, injuries, pre-match odds, live match statistics, and "
-                        "match events — all in one clean JSON package designed for AI "
-                        "analysis. Unavailable data sections are null rather than errors."
-                    ),
+                    "description": "One fixture ID returns a complete match brief: teams, season stats, H2H, lineups, injuries, odds, and live events bundled for AI analysis. Null sections mean data is unavailable.",
                     "parameters": [fixture_param],
                     "responses": {
                         "200": {"description": "Full match context bundle"},
