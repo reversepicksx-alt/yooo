@@ -13,7 +13,7 @@ try { LocalAuthentication = require('expo-local-authentication'); } catch { Loca
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
-import { apiCall } from '@/lib/api';
+import { apiCall, syncAppleAccess } from '@/lib/api';
 import Purchases from 'react-native-purchases';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -317,17 +317,13 @@ export default function AuthScreen() {
             const hasEnt = rcInfo?.entitlements?.active?.['pro'] !== undefined;
             if (hasEnt) {
               const revenueCatCustomerId = await Purchases.getAppUserID();
-              const grantResponse = await fetch('/api/auth/iap-grant', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  email: result.email,
-                  session_token: result.session_token,
-                  revenuecat_customer_id: revenueCatCustomerId,
-                }),
-              });
-              if (grantResponse.ok) {
-                result.access_type = 'Premium (Apple)';
+              const grantResponse = await syncAppleAccess(
+                result.email,
+                result.session_token,
+                revenueCatCustomerId,
+              );
+              if (grantResponse.access_type) {
+                result.access_type = grantResponse.access_type;
                 result.has_access = true;
               } else {
                 console.warn('[IAP] Server rejected RevenueCat entitlement grant');

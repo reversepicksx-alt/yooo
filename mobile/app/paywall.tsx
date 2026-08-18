@@ -11,7 +11,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
-import { iapSignup } from '@/lib/api';
+import { iapSignup, syncAppleAccess } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
 const FEATURES = [
@@ -89,24 +89,19 @@ export default function PaywallScreen() {
 
   const syncBackendAndEnter = useCallback(async (revenueCatCustomerId: string) => {
     if (!session?.email || !session?.token) return;
-    const response = await fetch('/api/auth/iap-grant', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: session.email,
-        session_token: session.token,
-        revenuecat_customer_id: revenueCatCustomerId,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      throw new Error(body?.detail || 'Apple subscription verification failed. Please try again.');
+    const response = await syncAppleAccess(
+      session.email,
+      session.token,
+      revenueCatCustomerId,
+    );
+    if (!response?.access_type) {
+      throw new Error('Apple subscription verification failed. Please try again.');
     }
     // Update local session so future gate checks pass
     await loginWithResponse({
       email: session.email,
       session_token: session.token,
-      access_type: 'Premium (Apple)',
+      access_type: response.access_type,
     });
   }, [session, loginWithResponse]);
 

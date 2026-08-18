@@ -1289,6 +1289,12 @@ async def search_players(req: PlayerSearchRequest):
     # leaving users staring at a spinner for 7–40 seconds. One targeted lookup
     # is enough for the dropdown; full club/context enrichment happens after
     # the user selects the player.
+    # API-Football rejects searches shorter than four characters. Do not send
+    # those partial keystrokes upstream after the cache/durable fast paths have
+    # already had a chance to answer; this keeps typing responsive and avoids
+    # turning every two- or three-letter prefix into a provider error.
+    if len(re.sub(r"[^A-Za-z0-9]", "", provider_query)) < 4:
+        return {"players": []}
     fast_params = {"search": provider_query}
     # Profile search is the provider's fastest identity lookup and works for
     # both global and league-scoped typing. The old league/season request

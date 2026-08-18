@@ -646,7 +646,7 @@ export default function FuzzySearchInput({
             keyboardShouldPersistTaps="always"
             nestedScrollEnabled
           >
-            {searchError ? (
+            {searchError && results.length === 0 ? (
               <TouchableOpacity
                 style={[styles.emptyRow, { paddingVertical: 12 }]}
                 onPress={() => doSearch(value)}

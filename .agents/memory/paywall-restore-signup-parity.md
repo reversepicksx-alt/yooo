@@ -21,6 +21,12 @@ Analyze-time access must revalidate the current native entitlement and refresh t
 
 **How to apply:** Keep RevenueCat as evidence only, send its current customer identity to the server for verification, persist the refreshed access type, and fail closed when RevenueCat is unavailable.
 
+Native IAP grant calls must use the shared API client, not a relative browser URL. Relative `/api/...` fetches are routed by the web proxy but are not a valid transport for an iOS build.
+
+**Why:** The auth and paywall recovery paths could detect an active StoreKit entitlement, then fail to sync it because the native request used `fetch('/api/...')`; the user was sent to the paywall despite already having access.
+
+**How to apply:** Route every authenticated RevenueCat grant through `syncAppleAccess` (or `apiCall`) and use the server-returned access type to update the local session.
+
 RevenueCat V2 `active_entitlements.items[].entitlement_id` is the entitlement resource ID, not necessarily the mobile SDK identifier; production currently returns `entl9515aab63f` for Pro.
 
 **Why:** Checking only the SDK-facing identifier (`pro`) caused verified active Apple subscribers to appear unsubscribed to the backend and receive 403 prediction responses.

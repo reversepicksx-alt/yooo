@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSubscription } from '@/lib/revenuecat';
 import { useEffect, useRef } from 'react';
 
 function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focused: boolean }) {
@@ -15,6 +16,7 @@ function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focu
 
 export default function TabLayout() {
   const { session, isLoading } = useAuth();
+  const { isSubscribed, isLoading: isSubscriptionLoading } = useSubscription();
   const redirectedRef = useRef(false);
 
   useEffect(() => {
@@ -23,7 +25,13 @@ export default function TabLayout() {
       redirectedRef.current = true;
       router.replace('/auth');
     }
-    if (!isLoading && session && session.accessType === 'NoSubscription') {
+    // StoreKit can report an active entitlement a moment after the authenticated
+    // session is restored. Do not route a native customer to the paywall during
+    // that window; ScanScreen and RevenueCatSync will reconcile the server
+    // session once the entitlement is available.
+    const nativeEntitlementPending = Platform.OS === 'ios'
+      && (isSubscriptionLoading || isSubscribed);
+    if (!isLoading && session && session.accessType === 'NoSubscription' && !nativeEntitlementPending) {
       redirectedRef.current = true;
       if (Platform.OS === 'web') {
         router.replace('/(tabs)/account');
@@ -31,7 +39,7 @@ export default function TabLayout() {
         router.replace('/paywall');
       }
     }
-  }, [session, isLoading]);
+  }, [session, isLoading, isSubscribed, isSubscriptionLoading]);
 
   if (isLoading) return <View style={{ flex: 1, backgroundColor: '#050505' }} />;
   if (!session) return <Redirect href="/auth" />;
