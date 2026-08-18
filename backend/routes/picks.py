@@ -743,6 +743,12 @@ async def save_pick(req: SavePickRequest):
         # by team name, but any future pick with this field is bulletproof.
         "fixtureId": pick.get("fixtureId") or None,
         "fixtureDate": pick.get("fixtureDate") or pick.get("matchDate") or None,
+        # NBA uses BallDontLie game identity rather than soccer fixture
+        # identity. Keep both the game and season on the durable pick so the
+        # settler can fetch the same season and exact game later.
+        "gameId": pick.get("gameId") or pick.get("_request", {}).get("gameId") or None,
+        "gameDate": pick.get("gameDate") or pick.get("_request", {}).get("gameDate") or None,
+        "season": pick.get("season") or pick.get("_request", {}).get("season") or None,
         "propType": normalized_prop,
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),

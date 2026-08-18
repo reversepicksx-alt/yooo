@@ -310,16 +310,21 @@ async def _try_settle_bdl(pick: dict, sport: str) -> bool:
         if hours_old < min_hours:
             return False
 
-    # Fetch game logs
+    # Fetch game logs from the season and exact game identity stored with the
+    # prediction. New NBA picks must not be settled against the newest row from
+    # a different season or game.
     current_year = datetime.now(timezone.utc).year
+    stored_game_id = pick.get("gameId") or pick.get("fixtureId")
+    stored_season = pick.get("season")
     try:
         if sport == "nhl":
             season = f"{current_year - 1}{current_year}"
             logs = await bdl_client.get_player_game_logs(int(player_id), season)
         elif sport == "wnba":
-            logs = await bdl_client.get_player_game_logs(int(player_id), current_year)
+            logs = await bdl_client.get_player_game_logs(int(player_id), stored_season or current_year)
         else:
-            logs = await bdl_client.get_player_game_logs(int(player_id), current_year)
+            season = stored_season or getattr(bdl_client, "CURRENT_NBA_SEASON", current_year)
+            logs = await bdl_client.get_player_game_logs(int(player_id), season)
     except Exception as e:
         print(f"[{sport.upper()} SETTLE] Log fetch failed player={player_id}: {e}")
         return False
@@ -327,9 +332,19 @@ async def _try_settle_bdl(pick: dict, sport: str) -> bool:
     if not logs:
         return False
 
-    # Match game by date
+    # Match the exact game whenever a prediction stored one. For NBA, refusing
+    # an identity-less settlement is safer than guessing from a date window.
     target_log = None
-    if pick_created:
+    if sport == "nba":
+        if stored_game_id is None:
+            return False
+        target_log = next(
+            (log for log in logs if str(log.get("game_id")) == str(stored_game_id)),
+            None,
+        )
+        if not target_log:
+            return False
+    elif pick_created:
         from datetime import date as _date, timedelta as _td
         target_date = pick_created.date()
         window_end  = target_date + _td(days=2)

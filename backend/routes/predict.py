@@ -4719,12 +4719,317 @@ async def predict(req: PredictionRequest):
                 allow_exact_fallback
                 and target_specific_pos in {"LW", "RW", "LM", "RM", "LWB", "RWB"}
             )
+            # A durable fixture-player cache row contains the exact fixture
+            # statistics even when the optional lineup enrichment is gone.
+            # For an exact target such as CB, a cached provider DEF row is
+            # useful broad opponent context, but it must stay explicitly
+            # unverified unless a trusted player-position record identifies
+            # the player's exact position.
+            _cache_broad_fallback = bool(
+                allow_exact_fallback and target_specific_pos in _exact_positions
+            )
+
+            _cached_stat_keys = {
+                ("passes", "total"): "passes_total",
+                ("passes", "key"): "passes_key",
+                ("passes", "cross"): "passes_crosses",
+                ("shots", "total"): "shots_total",
+                ("shots", "on"): "shots_on",
+                ("tackles", "total"): "tackles_total",
+                ("tackles", "interceptions"): "tackles_interceptions",
+                ("tackles", "blocks"): "tackles_blocks",
+                ("tackles", "clearances"): "tackles_clearances",
+                ("dribbles", "attempts"): "dribbles_attempts",
+                ("fouls", "drawn"): "fouls_drawn",
+                ("fouls", "committed"): "fouls_committed",
+                ("duels", "won"): "duels_won",
+                ("goals", "total"): "goals_total",
+                ("goals", "assists"): "goals_assists",
+                ("goals", "saves"): "goals_saves",
+                ("cards", "yellow"): "cards_yellow",
+            }
+
+            async def fetch_cached_pos_from_fixture(fix):
+                """Read exact fixture stats before spending a provider request.
+
+                ``fxp_{fixture}_{player}`` rows intentionally keep the compact
+                stat payload separate from player identity. Join them to the
+                durable squad and position caches, then keep the same venue,
+                minutes, and exact-position admission rules as the live path.
+                """
+                fid = fix.get("fixtureId")
+                if not fid:
+                    return []
+                try:
+                    meta_doc = await db.fixture_player_cache.find_one(
+                        {"_k": f"fxm_{fid}"},
+                        {"_id": 0, "d": 1},
+                    )
+                    meta = (meta_doc or {}).get("d") or {}
+                    home_id = meta.get("home_id")
+                    away_id = meta.get("away_id")
+                    if home_id is None or away_id is None:
+                        return []
+                    if opponent_id == home_id:
+                        comparison_team_id = away_id
+                        comparison_venue = "away"
+                    elif opponent_id == away_id:
+                        comparison_team_id = home_id
+                        comparison_venue = "home"
+                    else:
+                        return []
+                    if (
+                        comp_venue != "any"
+                        and comparison_venue != comp_venue
+                    ):
+                        return []
+
+                    cached_docs = await db.fixture_player_cache.find(
+                        {"_k": {"$regex": f"^fxp_{int(fid)}_"}},
+                        {"_id": 0, "_k": 1, "d": 1},
+                    ).to_list(100)
+                    if not cached_docs:
+                        return []
+                    player_ids = []
+                    for cached_doc in cached_docs:
+                        parts = str(cached_doc.get("_k") or "").split("_")
+                        if len(parts) == 3 and parts[2].isdigit():
+                            player_ids.append(int(parts[2]))
+                    if not player_ids:
+                        return []
+
+                    cached_players = await db.cache_players.find(
+                        {"playerId": {"$in": player_ids}},
+                        {
+                            "_id": 0,
+                            "playerId": 1,
+                            "name": 1,
+                            "fullName": 1,
+                            "position": 1,
+                            "teamId": 1,
+                            "teamName": 1,
+                        },
+                    ).to_list(200)
+                    players_by_id = {
+                        item.get("playerId"): item
+                        for item in cached_players
+                        if item.get("playerId") is not None
+                    }
+                    position_docs = await db.player_positions.find(
+                        {"playerId": {"$in": player_ids}},
+                        {
+                            "_id": 0,
+                            "playerId": 1,
+                            "specificPosition": 1,
+                            "role": 1,
+                            "source": 1,
+                            "roleSource": 1,
+                        },
+                    ).to_list(200)
+                    positions_by_id = {
+                        item.get("playerId"): item
+                        for item in position_docs
+                        if item.get("playerId") is not None
+                    }
+
+                    exact_positions = {
+                        "GK", "CB", "LB", "RB", "LWB", "RWB",
+                        "CDM", "CM", "CAM", "LM", "RM", "LW",
+                        "RW", "CF", "ST", "SS",
+                    }
+                    trusted_sources = {
+                        "gemini_web_grounded",
+                        "manual_override",
+                        "api_sports_lineup_history",
+                    }
+                    target_categories = {
+                        "GK": {"GK"},
+                        "CB": {"DEF"},
+                        "LB": {"DEF"},
+                        "RB": {"DEF"},
+                        "LWB": {"DEF", "MID"},
+                        "RWB": {"DEF", "MID"},
+                        "CDM": {"MID"},
+                        "CM": {"MID"},
+                        "CAM": {"MID"},
+                        "LM": {"MID"},
+                        "RM": {"MID"},
+                        "LW": {"FWD", "MID"},
+                        "RW": {"FWD", "MID"},
+                        "CF": {"FWD"},
+                        "ST": {"FWD"},
+                        "SS": {"FWD", "MID"},
+                    }
+
+                    def cached_position(value):
+                        normalized = normalize_observed_position(value)
+                        return {
+                            "G": "GK",
+                            "GK": "GK",
+                            "DEF": "DEF",
+                            "D": "DEF",
+                            "MID": "MID",
+                            "M": "MID",
+                            "FWD": "FWD",
+                            "F": "FWD",
+                        }.get(str(normalized or value or "").strip().upper(), "")
+
+                    def cached_value(payload, category, subcategory):
+                        key = _cached_stat_keys.get((category, subcategory))
+                        value = payload.get(key) if key else None
+                        try:
+                            return float(value) if value is not None else None
+                        except (TypeError, ValueError):
+                            return None
+
+                    results = []
+                    for cached_doc in cached_docs:
+                        parts = str(cached_doc.get("_k") or "").split("_")
+                        if len(parts) != 3 or not parts[2].isdigit():
+                            continue
+                        player_id = int(parts[2])
+                        player_doc = players_by_id.get(player_id) or {}
+                        # The fixture metadata identifies the comparison side.
+                        # A current squad mapping is a useful consistency check;
+                        # unknown/legacy mappings remain eligible because
+                        # transfers can make the present squad cache stale.
+                        mapped_team = player_doc.get("teamId")
+                        if mapped_team in {home_id, away_id, opponent_id}:
+                            if mapped_team != comparison_team_id:
+                                continue
+                        elif mapped_team not in (None, "", 0, "0"):
+                            continue
+
+                        payload = cached_doc.get("d") or {}
+                        minutes = payload.get("minutes") or 0
+                        try:
+                            minutes = float(minutes)
+                        except (TypeError, ValueError):
+                            continue
+                        if minutes < 30:
+                            continue
+                        stat_value = cached_value(payload, stat_cat, stat_sub)
+                        if stat_value is None:
+                            continue
+
+                        provider_position = cached_position(
+                            player_doc.get("position")
+                        )
+                        if provider_position not in target_categories.get(
+                            target_specific_pos, {fixture_pos}
+                        ):
+                            continue
+                        position_doc = positions_by_id.get(player_id) or {}
+                        specific = str(
+                            position_doc.get("specificPosition") or ""
+                        ).strip().upper()
+                        source = str(
+                            position_doc.get("source")
+                            or position_doc.get("roleSource")
+                            or ""
+                        ).strip()
+                        trusted_exact = (
+                            specific in exact_positions
+                            and source in trusted_sources
+                            and specific == target_specific_pos
+                        )
+                        # GK is unambiguous even when it comes only from the
+                        # provider category. DEF/MID/FWD remain broad.
+                        category_exact = (
+                            target_specific_pos == "GK"
+                            and provider_position == "GK"
+                        )
+                        if (
+                            target_specific_pos in exact_positions
+                            and not trusted_exact
+                            and not category_exact
+                            and not _cache_broad_fallback
+                        ):
+                            continue
+
+                        cross_prop_stats = {}
+                        for cross_prop, (cross_cat, cross_sub) in PROP_STAT_KEYS.items():
+                            cross_value = cached_value(payload, cross_cat, cross_sub)
+                            if cross_value is not None:
+                                cross_prop_stats[cross_prop] = cross_value
+                        displayed_position = (
+                            specific
+                            if trusted_exact
+                            else provider_position
+                        )
+                        candidate_role = (
+                            str(position_doc.get("role") or "").strip()
+                            if trusted_exact
+                            else ""
+                        )
+                        position_verified = bool(trusted_exact or category_exact)
+                        results.append({
+                            "name": (
+                                player_doc.get("fullName")
+                                or player_doc.get("name")
+                                or f"Player {player_id}"
+                            ),
+                            "playerId": player_id,
+                            "teamId": comparison_team_id,
+                            "team": (
+                                player_doc.get("teamName")
+                                or meta.get(
+                                    "home_name"
+                                    if comparison_team_id == home_id
+                                    else "away_name"
+                                )
+                                or ""
+                            ),
+                            "minutes": minutes,
+                            "statValue": stat_value,
+                            "passAttempts": payload.get("passes_total"),
+                            "crossPropStats": cross_prop_stats,
+                            "rating": None,
+                            "date": str(fix.get("date") or "")[:10],
+                            "per90": round((stat_value / minutes) * 90, 2),
+                            "venue": comparison_venue,
+                            "position": displayed_position,
+                            "matchPosition": provider_position or None,
+                            "exactPosition": specific if trusted_exact else None,
+                            "gridPosition": None,
+                            "lineupFormation": None,
+                            "positionMatch": (
+                                "specific" if position_verified else "provider_category"
+                            ),
+                            "positionVerified": position_verified,
+                            "positionSource": (
+                                "player_position_cache"
+                                if trusted_exact
+                                else "fixture_player_cache"
+                            ),
+                            "observedPosition": displayed_position or None,
+                            "role": candidate_role or None,
+                            "roleMatchApplied": False,
+                            "roleSource": source if trusted_exact else None,
+                            "roleInferred": False,
+                            "teamPossession": None,
+                            "oppPossession": None,
+                            "tp": None,
+                            "possessionStatus": "unavailable",
+                            "minutesPlayed": minutes,
+                            "goalsConceded": payload.get("goals_conceded"),
+                        })
+                    return results
+                except Exception as cache_error:
+                    print(
+                        f"[POS COMP CACHE] fixture={fid} skipped: "
+                        f"{type(cache_error).__name__}"
+                    )
+                    return []
 
             async def fetch_pos_from_fixture(fix):
                 fid = fix.get("fixtureId")
                 if not fid:
                     return []
                 try:
+                    cached_results = await fetch_cached_pos_from_fixture(fix)
+                    if cached_results:
+                        return cached_results
                     # Fetch players, fixture statistics, and the lineup grid
                     # together.  The player-stat endpoint often reports only
                     # D/M/F; the confirmed lineup grid is what identifies
@@ -10298,6 +10603,53 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             "F": "Attacker",
         }.get(str(player_position or "").strip().upper(), player_position)
 
+        # API-Football player-season rows are optional and are commonly the
+        # first source to disappear when the daily quota is exhausted. The
+        # durable squad cache still has the provider category for searched
+        # players, so use it before treating identity as unknown.
+        if not player_position:
+            try:
+                # This is a local identity read, not optional provider
+                # enrichment. It must still run after the model's historical
+                # budget is consumed; otherwise a known cached goalkeeper
+                # regresses to Unknown on a slow prediction.
+                _cached_player = await aio.wait_for(
+                    db.cache_players.find_one(
+                        {"playerId": req.playerId},
+                        {
+                            "_id": 0,
+                            "name": 1,
+                            "position": 1,
+                            "teamId": 1,
+                            "teamName": 1,
+                        },
+                    ),
+                    timeout=0.35,
+                )
+                _cached_category = str(
+                    (_cached_player or {}).get("position") or ""
+                ).strip()
+                if _cached_category:
+                    player_position = {
+                        "G": "Goalkeeper",
+                        "GK": "Goalkeeper",
+                        "DEF": "Defender",
+                        "D": "Defender",
+                        "MID": "Midfielder",
+                        "M": "Midfielder",
+                        "FWD": "Attacker",
+                        "F": "Attacker",
+                    }.get(_cached_category.upper(), _cached_category)
+                    print(
+                        f"[POS RESOLVE] Cached provider category: "
+                        f"{req.playerName} → {player_position}"
+                    )
+            except Exception as _cached_identity_err:
+                print(
+                    f"[POS RESOLVE] cached player category skipped: "
+                    f"{type(_cached_identity_err).__name__}"
+                )
+
         # =============================================
         # GROUNDED POSITION RESOLVER: confirm identity only
         # Gemini is used here solely for web-grounded position/role verification.
@@ -10352,6 +10704,23 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             "Midfielder": {"CDM", "CM", "CAM", "LM", "RM", "LW", "RW"},
             "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
         }
+        # Identity-keyed/manual and unambiguous provider profiles are local
+        # deterministic evidence. Resolve them before the optional Gemini
+        # branch so a late response-budget cutoff cannot erase a known role.
+        from ai_positions import _MANUAL_EXACT_PROFILES
+        _fast_profile = _MANUAL_EXACT_PROFILES.get(int(req.playerId or 0))
+        _fast_profile_allowed = bool(
+            _fast_profile
+            and (
+                not player_position
+                or _fast_profile.get("specificPosition")
+                in GENERIC_TO_SPECIFIC.get(player_position, set())
+            )
+        )
+        _fast_provider_exact = (
+            not req.positionOverride
+            and player_position == "Goalkeeper"
+        )
         # Conservative fallback used only when the grounded resolver cannot
         # return a specific position. Keep the provider category broad:
         # generic M/MID is not proof of CM, CDM, or CAM.
@@ -10360,6 +10729,27 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             player_role = req.roleOverride or ""
             _position_resolution_source = "manual_override"
             print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
+        elif _fast_profile_allowed or _fast_provider_exact:
+            if _fast_profile_allowed:
+                specific_position = _fast_profile["specificPosition"]
+                player_role = _fast_profile.get("role") or ""
+                _position_resolution_source = _fast_profile.get(
+                    "source",
+                    "manual_override",
+                )
+                _selection_role_evidence = list(_fast_profile.get("evidence") or [])
+            else:
+                specific_position = "GK"
+                player_role = "Shot-Stopper"
+                _position_resolution_source = "provider_category_exact"
+                _selection_role_evidence = [
+                    "provider player profile identifies Goalkeeper",
+                    "Goalkeeper is an unambiguous field position",
+                ]
+            print(
+                f"[POS RESOLVE] Fast identity profile: {req.playerName} → "
+                f"{specific_position} ({player_role or 'role unavailable'})"
+            )
         elif req.positionOverride:
             specific_position = req.positionOverride
             player_role = req.roleOverride or ""
@@ -10535,19 +10925,45 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             )
             _observed_role = resolve_observed_role(_observed_position, _role_stats)
             if _observed_position == "DEF":
-                # A confirmed generic D row is stronger than a stale cached
-                # exact position, but it is still only broad defender evidence.
-                # Preserve that uncertainty instead of displaying a guessed
-                # CB/fullback role.
-                specific_position = "DEF"
-                player_role = ""
-                display_position = "DEF"
-                display_role = ""
-                _position_resolution_source = "fixture_lineup_category"
-                _observed_role["position"] = "DEF"
-                _observed_role["role"] = None
-                _observed_role["source"] = "fixture_lineup_category"
-                _observed_role["confidence"] = "low"
+                # A generic D row cannot distinguish CB/LB/RB, but it also
+                # cannot erase a stronger identity-keyed profile. This is
+                # especially important when the current provider lineup
+                # exposes only "D" during quota-exhausted/predicted states.
+                _trusted_exact_identity = (
+                    specific_position in {
+                        "CB", "LB", "RB", "LWB", "RWB",
+                    }
+                    and _position_resolution_source in {
+                        "manual_override",
+                        "gemini_web_grounded",
+                        "cache",
+                        "api_sports_lineup_history",
+                        "provider_category_exact",
+                    }
+                )
+                if _trusted_exact_identity:
+                    _observed_role = {
+                        "position": specific_position,
+                        "role": player_role or None,
+                        "source": _position_resolution_source,
+                        "confidence": "medium",
+                        "evidence": (
+                            _selection_role_evidence
+                            + ["current fixture reports generic DEF; exact identity retained"]
+                        ),
+                    }
+                else:
+                    # Preserve uncertainty when no stronger exact identity
+                    # exists instead of guessing a centre-back/fullback role.
+                    specific_position = "DEF"
+                    player_role = ""
+                    display_position = "DEF"
+                    display_role = ""
+                    _position_resolution_source = "fixture_lineup_category"
+                    _observed_role["position"] = "DEF"
+                    _observed_role["role"] = None
+                    _observed_role["source"] = "fixture_lineup_category"
+                    _observed_role["confidence"] = "low"
             elif _observed_position in {
                 "GK", "CB", "LB", "RB", "LWB", "RWB", "CDM", "CM", "CAM",
                 "LM", "RM", "LW", "RW", "CF", "ST", "SS",
@@ -10564,6 +10980,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         or _position_resolution_source in {
                             "manual_override",
                             "gemini_web_grounded",
+                            "provider_category_exact",
                         }
                     )
                     and _lineup_status != "confirmed"
@@ -10758,9 +11175,35 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             _observed_role = {
                 "position": display_position or None,
                 "role": display_role or None,
-                "source": "cached_role_resolver" if display_role else "unavailable",
-                "confidence": "low",
-                "evidence": ["no confirmed lineup or positive-minutes position history"],
+                "source": (
+                    _position_resolution_source
+                    if display_role and _position_resolution_source not in {
+                        "", "fallback", "category_fallback"
+                    }
+                    else "unavailable"
+                ),
+                "confidence": (
+                    "medium"
+                    if display_role and _position_resolution_source in {
+                        "manual_override",
+                        "gemini_web_grounded",
+                        "cache",
+                        "api_sports_lineup_history",
+                        "provider_category_exact",
+                    }
+                    else "low"
+                ),
+                "evidence": (
+                    list(_selection_role_evidence)
+                    if display_role and _selection_role_evidence
+                    else (
+                        ["no confirmed lineup or positive-minutes position history"]
+                        if not display_role
+                        else [
+                            "trusted player identity resolved from durable provider/profile evidence"
+                        ]
+                    )
+                ),
             }
 
         # Keep the selection-time grounded identity as the final customer
@@ -11267,7 +11710,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 position_comparison_meta["status"] = "unavailable"
                 position_comparison_meta["unavailableReason"] = "opponent_fixture_history_unavailable"
             try:
-                position_comparison = await _bounded_prediction_source(
+                # Comparison has a durable cache-first path. Do not let the
+                # global optional-enrichment budget turn cached Lyon fixtures
+                # into "no comparable players" after the core model spent its
+                # time on provider retries. The local path remains bounded.
+                position_comparison = await aio.wait_for(
                     fetch_position_comparison(
                         opponent_fixture_list,
                         player_position,
@@ -11280,9 +11727,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         allow_broad_category=not _exact_target_for_comparison,
                         allow_exact_fallback=True,
                     ) if player_position else _empty_list(),
-                    "position comparison",
-                    7.0,
-                    [],
+                    timeout=6.0,
                 )
                 if position_comparison:
                     position_comparison_meta["status"] = "available"

@@ -23,7 +23,7 @@ _DEFAULTS = [
     {"sport": "soccer", "displayName": "Soccer",     "icon": "football",          "label": None,         "available": True,  "hidden": False},
     {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",          "label": None,         "available": True,  "hidden": False},
     {"sport": "nfl",    "displayName": "NFL",         "icon": "american-football", "label": None,         "available": True,  "hidden": False},
-    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",        "label": "Off Season", "available": False, "hidden": True},  # hidden: budget
+    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",        "label": None,         "available": True,  "hidden": False},
     {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",              "label": "Off Season", "available": False, "hidden": False},
     # CS2 hidden entirely from the sport picker — engine data source (BDL /cs/v1)
     # lost its map-stats endpoints, so predictions can't be graded reliably.

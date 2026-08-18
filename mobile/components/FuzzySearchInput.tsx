@@ -38,7 +38,7 @@ export interface FuzzyPlayerResult {
 }
 
 export interface UniversalPlayerResult extends FuzzyPlayerResult {
-  sport: 'soccer' | 'mlb' | 'nfl';
+  sport: 'soccer' | 'mlb' | 'nfl' | 'nba';
   raw?: any;
 }
 
@@ -60,7 +60,7 @@ interface FuzzySearchInputProps {
   onChangeText: (text: string) => void;
   searchType: SearchType;
   /** Restrict the universal player search to the currently selected sport. */
-  sportFilter?: 'soccer' | 'mlb' | 'nfl';
+  sportFilter?: 'soccer' | 'mlb' | 'nfl' | 'nba';
   leagueId?: number;
   placeholder?: string;
   style?: object;
@@ -241,18 +241,18 @@ export default function FuzzySearchInput({
         // for the slowest MLB/NFL provider before showing a fast soccer hit.
         // The abort signal also stops stale requests when the user types again.
         const universalRows: any[] = [];
-        const addUniversalRows = (sport: 'soccer' | 'mlb' | 'nfl', rows: any[]) => {
+        const addUniversalRows = (sport: 'soccer' | 'mlb' | 'nfl' | 'nba', rows: any[]) => {
           const mapped = rows.map((p: any) => ({
             sport,
             playerId: sport === 'soccer' ? (p.id || p.playerId || 0) : (p.id || 0),
-            playerName: sport === 'soccer'
+             playerName: sport === 'soccer'
               ? (p.fullName || p.name || p.playerName || '')
               : (p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()),
             fullName: sport === 'soccer'
               ? (p.fullName || p.name || p.playerName || '')
               : (p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()),
-            teamId: sport === 'soccer' ? (p.teamId || 0) : (p.team?.id || 0),
-            teamName: sport === 'soccer' ? (p.teamName || p.team || '') : (p.team?.full_name || ''),
+             teamId: sport === 'soccer' ? (p.teamId || 0) : (p.team?.id || 0),
+             teamName: sport === 'soccer' ? (p.teamName || p.team || '') : (p.team?.full_name || ''),
             leagueId: sport === 'soccer' ? (p.leagueId || 0) : 0,
             position: p.position || '',
             ownerPlayerPhoto: p.ownerPlayerPhoto || '',
@@ -289,6 +289,13 @@ export default function FuzzySearchInput({
           providerPromises.push(
             searchNflPlayers(normalizedQuery, signal)
               .then(rows => addUniversalRows('nfl', rows))
+              .catch(() => {}),
+          );
+        }
+        if (!sportFilter || sportFilter === 'nba') {
+          providerPromises.push(
+            searchNbaPlayers(normalizedQuery, signal)
+              .then(rows => addUniversalRows('nba', rows))
               .catch(() => {}),
           );
         }
@@ -507,12 +514,20 @@ export default function FuzzySearchInput({
       );
     }
     if (searchType === 'all_players') {
-      const sportLabel = item.sport === 'mlb' ? 'MLB' : item.sport === 'nfl' ? 'NFL' : 'Soccer';
+       const sportLabel = item.sport === 'mlb'
+         ? 'MLB'
+         : item.sport === 'nfl'
+           ? 'NFL'
+           : item.sport === 'nba'
+             ? 'NBA'
+             : 'Soccer';
       const icon = item.sport === 'mlb'
         ? 'baseball-outline'
-        : item.sport === 'nfl'
+         : item.sport === 'nfl'
           ? 'american-football-outline'
-          : 'football-outline';
+           : item.sport === 'nba'
+             ? 'basketball-outline'
+             : 'football-outline';
       const sub = [sportLabel, item.teamName, item.position].filter(Boolean).join(' · ');
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectAllPlayer(item)} activeOpacity={0.7}>

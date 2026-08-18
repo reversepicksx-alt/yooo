@@ -32,6 +32,7 @@ CACHE_TTL = {
 }
 
 CURRENT_NBA_SEASON = 2025  # 2025-26 season
+LAST_ERROR: str = ""
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -183,6 +184,8 @@ async def get_teams() -> list:
 
 async def get_player_game_logs(player_id: int, season: int = CURRENT_NBA_SEASON) -> list:
     """Fetch per-game stats for a player in a given season, newest-first."""
+    global LAST_ERROR
+    LAST_ERROR = ""
     cache_key = f"stats:{player_id}:{season}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["stats"]):
@@ -197,6 +200,7 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NBA_SEASON)
         try:
             data = await _get("/stats", params)
         except Exception as e:
+            LAST_ERROR = str(e)
             log.warning(f"[NBA STATS] player={player_id} season={season}: {e}")
             break
         rows = data.get("data", [])
@@ -259,6 +263,8 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NBA_SEASON)
             "venue":           venue,
             "opponent":        opp_abbr,
             "won":             won,
+            "home_score":      home_sc,
+            "away_score":      vis_sc,
             "minutes":         round(minutes, 1),
             # Core counting stats
             "pts":             pts,
@@ -290,6 +296,7 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NBA_SEASON)
     logs.sort(key=lambda x: x.get("date", ""), reverse=True)
     # Only cache non-empty results — a transient 429 must not poison the cache
     if logs:
+        LAST_ERROR = ""
         await _cache_set(cache_key, logs)
     return logs
 
@@ -367,6 +374,7 @@ async def get_player_next_match(player_id: int, season: int = CURRENT_NBA_SEASON
         "found":    True,
         "gameId":   g.get("id"),
         "date":     (g.get("date") or "")[:10],
+        "season":   season,
         "venue":    "home" if is_home else "away",
         "opponent": {
             "id":           opp.get("id"),

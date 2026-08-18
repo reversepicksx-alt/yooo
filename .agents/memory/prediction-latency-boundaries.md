@@ -56,3 +56,18 @@ instead of using the evidence already available.
 the bounded core projection. Cancel optional history cleanly and preserve the
 sample; only authentication, validation, and contradictory fixture identity
 should remain hard errors.
+
+Deterministic identity reads and durable comparison-cache reads are a separate
+class from optional enrichment: they must remain available even when the
+prediction response budget is exhausted. A generic current provider category
+such as `DEF` is incomplete evidence and must not erase a stronger identity-keyed
+exact profile.
+
+**Why:** Late position resolution previously turned known players into
+`Unknown`/role-unavailable cards, and a generic current lineup could replace a
+trusted centre-back profile before cached same-position rows were assembled.
+
+**How to apply:** Use a short local timeout that is independent of the
+optional-enrichment clock for cached player identity and cached cohort reads.
+Preserve manual, grounded, lineup-history, or unambiguous provider-category
+profiles across generic `DEF`/`MID`/`FWD` observations.

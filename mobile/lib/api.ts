@@ -3806,19 +3806,19 @@ export async function cs2Predict(request: Record<string, unknown>, signal?: Abor
 // ─── NBA ────────────────────────────────────────────────────────────────────
 
 export const NBA_PROP_TYPES = [
-  { value: 'pts',           label: 'Points' },
-  { value: 'reb',           label: 'Rebounds' },
-  { value: 'ast',           label: 'Assists' },
-  { value: 'stl',           label: 'Steals' },
-  { value: 'blk',           label: 'Blocks' },
-  { value: 'fg3m',          label: '3-Pointers Made' },
-  { value: 'tov',           label: 'Turnovers' },
+  { value: 'points',        label: 'Points' },
+  { value: 'rebounds',      label: 'Rebounds' },
+  { value: 'assists',       label: 'Assists' },
+  { value: 'steals',        label: 'Steals' },
+  { value: 'blocks',        label: 'Blocks' },
+  { value: 'three_pointers', label: '3-Pointers Made' },
+  { value: 'turnovers',     label: 'Turnovers' },
   { value: 'pts_reb_ast',   label: 'Pts + Reb + Ast' },
   { value: 'pts_reb',       label: 'Pts + Reb' },
   { value: 'pts_ast',       label: 'Pts + Ast' },
   { value: 'reb_ast',       label: 'Reb + Ast' },
   { value: 'stl_blk',       label: 'Stl + Blk' },
-  { value: 'fantasy_pts',   label: 'Fantasy Points' },
+  { value: 'fantasy_points', label: 'Fantasy Points' },
 ];
 
 export interface NbaPlayer {
@@ -3836,9 +3836,10 @@ export async function searchNbaPlayers(query: string, signal?: AbortSignal): Pro
   const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
   return rows.map((p: any) => ({
     id:        p.id ?? p.player_id ?? 0,
-    firstName: p.first_name ?? '',
-    lastName:  p.last_name  ?? '',
-    fullName:  p.full_name  ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
+    firstName: p.first_name ?? p.firstName ?? '',
+    lastName:  p.last_name  ?? p.lastName ?? '',
+    fullName:  p.full_name ?? p.fullName
+      ?? `${p.first_name ?? p.firstName ?? ''} ${p.last_name ?? p.lastName ?? ''}`.trim(),
     position:  p.position   ?? '',
     team:      p.team       ?? null,
   }));
@@ -3847,6 +3848,7 @@ export async function searchNbaPlayers(query: string, signal?: AbortSignal): Pro
 export interface NbaNextMatch {
   found:     boolean;
   gameId?:   number | null;
+  season?:   number | null;
   date?:     string;
   venue?:    'home' | 'away';
   opponent?: { id: number | null; name: string; abbreviation?: string } | null;
@@ -3872,9 +3874,10 @@ export async function nbaPredict(request: Record<string, unknown>, signal?: Abor
 
   const gameLogs = (Array.isArray(raw.gameLogs) ? raw.gameLogs : []).map((g: any) => ({
     date:       g.date     ?? '',
+    gameId:     g.gameId   ?? g.game_id ?? null,
     opponent:   g.opponent ?? '',
     venue:      g.venue    ?? '',
-    value:      g[raw.propType] ?? g.value ?? null,
+    value:      g.value ?? g[raw.propType] ?? null,
     minutes:    g.min ?? g.minutes ?? 0,
     sport:      'nba',
     pts:        g.pts    ?? null,
@@ -3907,6 +3910,17 @@ export async function nbaPredict(request: Record<string, unknown>, signal?: Abor
     sharpSummary:       raw.sharpSummary       || undefined,
     reasoning:          raw.reasoning          || undefined,
     tacticalBreakdown:  raw.tacticalBreakdown  || undefined,
+     matchupOverview:    raw.matchupOverview ?? undefined,
+     riskSignals:        raw.riskSignals ?? undefined,
+     projectedValue:     raw.projectedValue ?? raw.projection ?? null,
+     season:             raw.season ?? null,
+     gameId:             raw.gameId ?? raw.fixtureId ?? null,
+     fixtureId:          raw.fixtureId ?? raw.gameId ?? null,
+     fixtureDate:        raw.fixtureDate ?? raw.gameDate ?? null,
+     playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
+     playerIsHome:       raw.playerIsHome ?? raw.matchupOverview?.playerIsHome,
+     homeTeam:           raw.homeTeam ?? raw.matchupOverview?.homeTeam,
+     awayTeam:           raw.awayTeam ?? raw.matchupOverview?.awayTeam,
     keyFactors:         raw.keyFactors         ?? [],
     streakFlag:         raw.streakFlag         ?? '',
     priorSamples:       raw.sampleSize         ?? bm.sampleSize,

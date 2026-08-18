@@ -44,6 +44,15 @@ _MANUAL_EXACT_PROFILES = {
             "Player identity is keyed to API-Football player ID 161965",
         ],
     },
+    198: {
+        "specificPosition": "CB",
+        "role": "Ball-Playing CB",
+        "source": "manual_override",
+        "evidence": [
+            "Milan Škriniar is a centre-back in the API-Football player profile",
+            "Player identity is keyed to API-Football player ID 198",
+        ],
+    },
 }
 
 
@@ -484,9 +493,19 @@ async def resolve_player_role(
         )
         return verified["specificPosition"], verified["role"], "gemini_web_grounded"
 
-    # Provider category is the only non-web fallback. It supplies only the
-    # broad observed category and never manufactures an exact position or
-    # tactical role.  A generic M/MID row is not evidence for CM/CDM/CAM.
+    # Goalkeeper is the one provider category that is already an exact
+    # positional identity. Keep the fail-open path useful when the optional
+    # grounded lookup is unavailable; unlike DEF/MID/FWD, it does not guess
+    # among multiple field positions.
+    if category == "Goalkeeper":
+        print(
+            f"[ROLE RESOLVE] {player_name} → GK / Shot-Stopper "
+            "(provider category exact; Gemini unavailable)"
+        )
+        return "GK", "Shot-Stopper", "provider_category_exact"
+
+    # Provider category is otherwise only a broad fallback. It must not
+    # manufacture CB/LB/RB or CM/CDM/CAM from a generic DEF/MID/FWD row.
     if category:
         print(
             f"[ROLE RESOLVE] {player_name} → {category} "

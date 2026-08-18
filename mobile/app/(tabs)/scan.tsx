@@ -875,7 +875,7 @@ export default function ScanScreen() {
   const [nbaPlayerQuery, setNbaPlayerQuery] = useState('');
   const [nbaResolvedPlayer, setNbaResolvedPlayer] = useState<NbaPlayer | null>(null);
   const [nbaOpponentQuery, setNbaOpponentQuery] = useState('');
-  const [nbaPropType, setNbaPropType] = useState('pts');
+  const [nbaPropType, setNbaPropType] = useState('points');
   const [nbaShowPropPicker, setNbaShowPropPicker] = useState(false);
   const [nbaVenue, setNbaVenue] = useState<'home' | 'away'>('home');
   const [nbaNextMatch, setNbaNextMatch] = useState<NbaNextMatch | null>(null);
@@ -914,9 +914,6 @@ export default function ScanScreen() {
   const [mlbNextMatchLoading, setMlbNextMatchLoading] = useState(false);
 
   const selectSport = (next: Sport) => {
-    // MLB remains supported by dormant compatibility code, but it is no
-    // longer an active prediction option for new picks.
-    if (next === 'mlb') return;
     cancelAbortRef.current?.abort();
     setSport(next);
     setMode('manual');
@@ -948,6 +945,11 @@ export default function ScanScreen() {
     setNflResolvedPlayer(null);
     setNflNextMatch(null);
     setNflOpponentQuery('');
+    setNbaPlayerQuery('');
+    setNbaResolvedPlayer(null);
+    setNbaNextMatch(null);
+    setNbaOpponentQuery('');
+    setNbaVenue('home');
   };
 
   const handleSoccerPlayerSelect = async (p: FuzzyPlayerResult | UniversalPlayerResult) => {
@@ -1116,6 +1118,27 @@ export default function ScanScreen() {
       await confirmMlbPlayer(player);
       return;
     }
+    if (p.sport === 'nba') {
+      const player = p.raw as NbaPlayer;
+      setNbaPlayerQuery(p.playerName);
+      setNbaResolvedPlayer(player);
+      setNbaNextMatch(null);
+      setNbaOpponentQuery('');
+      setNbaVenue('home');
+      if (player?.id) {
+        setNbaNextMatchLoading(true);
+        try {
+          const nm = await getNbaNextMatch(player.id);
+          setNbaNextMatch(nm);
+          if (nm.found) {
+            if (nm.opponent?.name) setNbaOpponentQuery(nm.opponent.name);
+            if (nm.venue) setNbaVenue(nm.venue);
+          }
+        } catch {}
+        setNbaNextMatchLoading(false);
+      }
+      return;
+    }
     const player = p.raw as NflPlayer;
     setNflPlayerQuery(p.playerName);
     // Same immediate commit for NFL so the existing next-match lookup starts
@@ -1245,7 +1268,7 @@ export default function ScanScreen() {
     setNbaPlayerQuery('');
     setNbaResolvedPlayer(null);
     setNbaOpponentQuery('');
-    setNbaPropType('pts');
+    setNbaPropType('points');
     setNbaVenue('home');
     setNbaNextMatch(null);
     setNbaNextMatchLoading(false);
@@ -1849,6 +1872,9 @@ export default function ScanScreen() {
         venue:       nbaNextMatch?.venue || nbaVenue,
         opponentName: nbaNextMatch?.opponent?.name || nbaOpponentQuery.trim() || '',
         opponentId:  nbaNextMatch?.opponent?.id || null,
+        gameId:      nbaNextMatch?.gameId || null,
+        gameDate:    nbaNextMatch?.date || null,
+        season:      nbaNextMatch?.season || undefined,
       }, cancelAbortRef.current.signal);
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
       setScanResult({ playerName, propType: nbaPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: nbaNextMatch?.opponent?.name || nbaOpponentQuery.trim() || '', leagueId: 0 });
@@ -2077,6 +2103,9 @@ export default function ScanScreen() {
         // for which match this pick belongs to.
         fixtureId: (prediction as any).fixtureId || undefined,
         fixtureDate: (prediction as any).fixtureDate || undefined,
+        gameId: (prediction as any).gameId || undefined,
+        gameDate: (prediction as any).gameDate || undefined,
+        season: (prediction as any).season || undefined,
         leagueId: (prediction as any).leagueId || scanResult?.leagueId || leagueId || 0,
         venue: typeof (prediction as any).isHome === 'boolean'
           ? ((prediction as any).isHome ? 'home' : 'away')
@@ -2184,6 +2213,8 @@ export default function ScanScreen() {
             ? ((prediction as any).isHome ? 'home' : 'away')
             : (venueOverride || 'home'),
           fixtureId: (prediction as any).fixtureId || predictionRequest?.fixtureId,
+          gameId: (prediction as any).gameId || predictionRequest?.gameId,
+          season: (prediction as any).season || predictionRequest?.season,
         },
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -2218,6 +2249,8 @@ export default function ScanScreen() {
     ? Boolean(mlbResolvedPlayer)
     : sport === 'nfl'
       ? Boolean(nflResolvedPlayer)
+      : sport === 'nba'
+        ? Boolean(nbaResolvedPlayer)
       : Boolean(resolvedPlayer);
   const showDetectedSportBanner = phase !== 'idle' || hasSelectedPlayer;
 
@@ -2244,12 +2277,18 @@ export default function ScanScreen() {
       {showDetectedSportBanner && (
         <View style={styles.detectedSportBanner}>
           <Ionicons
-            name={sport === 'mlb' ? 'baseball-outline' : sport === 'nfl' ? 'american-football-outline' : 'football-outline'}
+             name={sport === 'mlb'
+               ? 'baseball-outline'
+               : sport === 'nfl'
+                 ? 'american-football-outline'
+                 : sport === 'nba'
+                   ? 'basketball-outline'
+                   : 'football-outline'}
             size={15}
             color={Colors.primary}
           />
           <Text style={styles.detectedSportBannerText}>
-            {sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'}
+             {sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : sport === 'nba' ? 'NBA' : 'Soccer'}
           </Text>
           <Text style={styles.detectedSportBannerHint}>{mode === 'scan' ? 'AUTO-DETECTED' : 'SELECTED'}</Text>
         </View>
@@ -2260,6 +2299,7 @@ export default function ScanScreen() {
           <View style={styles.sportPickerOptions}>
             {([
               { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline', color: '#39FF14' },
+              { key: 'nba' as const, label: 'NBA', icon: 'basketball-outline', color: '#FF6B35' },
               { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline', color: '#FF9500' },
             ]).map(option => {
               const active = sport === option.key;
@@ -2405,8 +2445,9 @@ export default function ScanScreen() {
              <Text style={styles.playerFieldLabel}>PLAYER</Text>
             <FuzzySearchInput
               value={
-                sport === 'mlb' ? mlbPlayerQuery
-                  : sport === 'nfl' ? nflPlayerQuery
+                 sport === 'mlb' ? mlbPlayerQuery
+                   : sport === 'nfl' ? nflPlayerQuery
+                     : sport === 'nba' ? nbaPlayerQuery
                     : playerQuery
               }
               onChangeText={(text) => {
@@ -2422,6 +2463,12 @@ export default function ScanScreen() {
                     setNflPendingPlayer(null); setNflResolvedPlayer(null);
                     setNflNextMatch(null); setNflOpponentQuery('');
                   }
+                } else if (sport === 'nba') {
+                  setNbaPlayerQuery(text);
+                  if (!text) {
+                    setNbaResolvedPlayer(null); setNbaNextMatch(null); setNbaOpponentQuery('');
+                    setNbaVenue('home'); setNbaNextMatchLoading(false);
+                  }
                 } else {
                   setPlayerQuery(text);
                   if (!text) {
@@ -2433,10 +2480,16 @@ export default function ScanScreen() {
                 }
               }}
               searchType="all_players"
-              sportFilter={sport === 'mlb' || sport === 'nfl' ? sport : 'soccer'}
-              placeholder={`Search ${sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'} player`}
+               sportFilter={sport === 'mlb' || sport === 'nfl' || sport === 'nba' ? sport : 'soccer'}
+               placeholder={`Search ${sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : sport === 'nba' ? 'NBA' : 'Soccer'} player`}
                ownerSession={session?.email && session?.token ? { email: session.email, token: session.token } : undefined}
-               confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
+               confirmed={sport === 'mlb'
+                 ? !!mlbResolvedPlayer
+                 : sport === 'nfl'
+                   ? !!nflResolvedPlayer
+                   : sport === 'nba'
+                     ? !!nbaResolvedPlayer
+                     : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
                strongAccent
               style={{ marginBottom: 2 }}
               onSelectAllPlayer={handleUniversalPlayerSelect}

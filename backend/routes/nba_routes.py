@@ -2,7 +2,7 @@
 NBA prediction routes — /api/nba/*
 """
 import logging
-from datetime import datetime, timezone
+import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
@@ -10,6 +10,7 @@ from typing import Optional
 from config import db
 import nba_client
 import nba_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("nba_routes")
 router = APIRouter(prefix="/api/nba", tags=["nba"])
@@ -77,6 +78,9 @@ async def get_nba_teams():
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class NbaPredictRequest(BaseModel):
+    # Session credentials are sent in the JSON body by the mobile client.
+    email:          str = ""
+    token:          str = ""
     playerName:    str
     playerId:      Optional[int]   = None
     teamName:      Optional[str]   = ""
@@ -86,6 +90,9 @@ class NbaPredictRequest(BaseModel):
     opponentName:  Optional[str]   = ""
     venue:         Optional[str]   = "home"
     season:        Optional[int]   = CURRENT_NBA_SEASON
+    gameId:        Optional[int]   = None
+    gameDate:      Optional[str]   = None
+    opponentId:    Optional[int]   = None
     oppDefRating:  Optional[float] = None   # opponent pts per 100 possessions
     restDays:      Optional[int]   = None   # days since last game
 
@@ -143,7 +150,9 @@ async def nba_predict(req: NbaPredictRequest):
     log.info(f"[NBA PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
     game_logs = []
     season_avg = {}
-    for try_season in [req.season, req.season - 1]:
+    requested_season = req.season or CURRENT_NBA_SEASON
+    used_season = requested_season
+    for try_season in [requested_season, requested_season - 1]:
         try:
             logs_r, avg_r = await asyncio.gather(
                 nba_client.get_player_game_logs(player_id, try_season),
@@ -154,14 +163,26 @@ async def nba_predict(req: NbaPredictRequest):
         if logs_r:
             game_logs = logs_r
             season_avg = avg_r or {}
+            used_season = try_season
             break
         if avg_r:
             season_avg = avg_r
 
     if not game_logs:
+        provider_error = getattr(nba_client, "LAST_ERROR", "")
+        if provider_error:
+            log.error(
+                "[NBA PREDICT] BallDontLie data request failed for player=%s: %s",
+                player_id,
+                provider_error,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="NBA data is temporarily unavailable. Please try again shortly.",
+            )
         raise HTTPException(
             status_code=404,
-            detail=f"No stats found for {req.playerName} in the {req.season} or {req.season - 1} season."
+            detail=f"No stats found for {req.playerName} in the {requested_season} or {requested_season - 1} season."
         )
 
     # ── Run engine ────────────────────────────────────────────────────────────
@@ -178,24 +199,21 @@ async def nba_predict(req: NbaPredictRequest):
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
-    # ── [BAYESIAN TRUTH] override ─────────────────────────────────────────────
+    # ── [BAYESIAN TRUTH] expose the engine's probability direction ────────────
+    # The projection is a model output, not a display value. Never move it
+    # across the requested line just to make the card look consistent.
     p_over  = result["pOver"]
     p_under = result["pUnder"]
     result["recommendation"]  = "over" if p_over >= p_under else "under"
     result["confidenceScore"] = round(max(p_over, p_under))
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
-    # Visual consistency: if direction contradicts projection vs line, align projection
-    if result["recommendation"] == "under" and result["projection"] > req.line:
-        result["projection"] = round(req.line - 0.5, 1)
-    elif result["recommendation"] == "over" and result["projection"] < req.line:
-        result["projection"] = round(req.line + 0.5, 1)
-
     prop_field = nba_engine.NBA_PROPS.get(prop_type, prop_type)
     game_log_tiles = []
     for g in game_logs[:10]:
         game_log_tiles.append({
             "date":     g.get("date", ""),
+            "gameId":   g.get("game_id"),
             "value":    g.get(prop_field),
             "minutes":  g.get("minutes"),
             "pts":      g.get("pts"),
@@ -204,13 +222,21 @@ async def nba_predict(req: NbaPredictRequest):
             "venue":    g.get("venue", ""),
             "opponent": g.get("opponent", ""),
             "won":      g.get("won"),
+            "score": (
+                f"{g.get('home_score')}-{g.get('away_score')}"
+                if g.get("home_score") is not None and g.get("away_score") is not None
+                else None
+            ),
         })
 
     from deterministic_explanations import build_sport_deterministic_explanation
 
     response = {
         "sport":            "nba",
-        "playerName":       req.playerName,
+        "playerName":       (
+            f"{player_data.get('first_name', '')} {player_data.get('last_name', '')}".strip()
+            if player_data else req.playerName
+        ),
         "playerId":         player_id,
         "teamName":         team_name,
         "position":         position,
@@ -220,7 +246,16 @@ async def nba_predict(req: NbaPredictRequest):
         "opponentName":     req.opponentName or "",
         "oppDefRating":     req.oppDefRating,
         "restDays":         req.restDays,
+        "season":           used_season,
+        "gameId":           req.gameId,
+        "gameDate":         req.gameDate,
+        "fixtureId":        req.gameId,
+        "fixtureDate":      req.gameDate,
+        "teamId":           (player_data.get("team") or {}).get("id") if player_data else None,
+        "opponentId":       req.opponentId,
+        "playerIsHome":     venue == "home",
         "projection":       result["projection"],
+        "projectedValue":   result["projection"],
         "pOver":            result["pOver"],
         "pUnder":           result["pUnder"],
         "recommendation":   result["recommendation"],
@@ -237,6 +272,30 @@ async def nba_predict(req: NbaPredictRequest):
         "reasoning":        "",
         "keyFactors":       [],
         "rawConfidence":    result["confidenceScore"],
+        "bayesianMetrics": {
+            "priorMean": result["priorMean"],
+            "momentumMean": result["momentum"],
+            "sampleSize": result["sampleSize"],
+            "pOver": result["pOver"],
+            "pUnder": result["pUnder"],
+        },
+        "matchupOverview": {
+            "homeTeam": team_name if venue == "home" else req.opponentName or "",
+            "awayTeam": req.opponentName or "" if venue == "home" else team_name,
+            "playerIsHome": venue == "home",
+            "expectedGameType": "regular season",
+            "keyMatchupFactor": (
+                f"{team_name or 'The player’s team'} is at home"
+                if venue == "home"
+                else f"{team_name or 'The player’s team'} is on the road"
+            ),
+        },
+        "riskSignals": {
+            "note": (
+                "BallDontLie game logs are the verified base. Opponent defense, rest, "
+                "and minutes trend are applied only when their inputs are available."
+            ),
+        },
     }
     build_sport_deterministic_explanation(response, "nba")
-    return response
+    return normalize_response(response)

@@ -151,3 +151,4 @@
 - [Lissa voice lifecycle](lissa-voice-lifecycle.md) — supervise segmented recognition and wait for speech completion before restarting so Lissa does not freeze or hear her own answer.
 - [Sport selector visibility](sport-selector-visibility.md) — keep sport selection for setup, but hide the selector once a player prediction enters analysis/results.
 - [Retired integration secrets](retired-integration-secrets.md) — removing an integration from code does not remove its secret inventory entry; verify no runtime reads and handle secret deletion separately.
+- [Live NBA provider authorization](bdl-nba-auth.md) — cached player identities can mask BallDontLie stats authorization failures; validate `/stats` before claiming live NBA predictions.
