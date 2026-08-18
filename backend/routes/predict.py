@@ -115,6 +115,61 @@ def _newest_first_rows(rows: list | None, limit: int | None = None) -> list:
     return ordered[:limit] if limit is not None else ordered
 
 
+def _coerce_history_fixture_row(row: dict | None) -> dict | None:
+    """Normalize raw and compact fixture rows for player-history hydration.
+
+    ``team_fixture_history`` stores raw API-Football rows, while the recent
+    fixture wave intentionally stores a compact row.  The history loader must
+    be able to merge both so a recently refreshed schedule can repair a large
+    but season-stale archive.
+    """
+    if not isinstance(row, dict):
+        return None
+    raw_fixture = row.get("fixture")
+    raw_teams = row.get("teams")
+    if isinstance(raw_fixture, dict) and isinstance(raw_teams, dict):
+        return row
+
+    fixture_id = row.get("fixtureId")
+    home_id = row.get("homeTeamId")
+    away_id = row.get("awayTeamId")
+    if fixture_id is None or home_id is None or away_id is None:
+        return None
+
+    venue = str(row.get("venue") or "").lower()
+    if venue not in {"home", "away"}:
+        return None
+    # The compact schedule normally carries IDs but not both team names.  The
+    # player-stat endpoint only needs the IDs; names are retained where known.
+    if venue == "home":
+        home_name = row.get("teamName") or ""
+        away_name = row.get("opponent") or ""
+    else:
+        home_name = row.get("opponent") or ""
+        away_name = row.get("teamName") or ""
+
+    return {
+        "fixture": {
+            "id": fixture_id,
+            "date": row.get("date") or "",
+            "status": {"short": "FT"},
+        },
+        "teams": {
+            "home": {"id": home_id, "name": home_name},
+            "away": {"id": away_id, "name": away_name},
+        },
+        "goals": {
+            "home": row.get("homeGoals"),
+            "away": row.get("awayGoals"),
+        },
+        "league": {
+            "id": row.get("leagueId") or row.get("competitionId"),
+            "name": row.get("league") or row.get("competitionName") or "",
+            "round": row.get("round") or "",
+        },
+    }
+
+
 def _apply_optional_soccer_possession(
     game_log: dict,
     venue: str | None,
@@ -1743,6 +1798,9 @@ async def predict(req: PredictionRequest):
         team_stats = team_stats if not isinstance(team_stats, Exception) else None
         opponent_stats = opponent_stats if not isinstance(opponent_stats, Exception) else None
         h2h_data = h2h_data if not isinstance(h2h_data, Exception) else []
+        # H2H provider/cache order is not contractual. Sort the complete
+        # six-season result before any player-stat, meeting, or trend slice.
+        h2h_data = _newest_first_rows(h2h_data, H2H_FIXTURE_LIMIT)
         standings_raw = standings_raw if not isinstance(standings_raw, Exception) else None
         recent_fixtures = recent_fixtures if not isinstance(recent_fixtures, Exception) else []
         match_odds = match_odds if not isinstance(match_odds, Exception) else match_odds_prefetched
@@ -3946,17 +4004,76 @@ async def predict(req: PredictionRequest):
                         except Exception as _ce:
                             pass  # non-fatal — prediction continues
 
+                # The durable team archive can be large and recently written
+                # while still ending at a prior season. The recent fixture
+                # wave has already performed the season-staleness check, so
+                # merge its verified rows before selecting the player-history
+                # fetch window. Without this, an 11-row player cache can be
+                # paired with a 349-row archive that has no current-season
+                # fixtures.
+                _recent_history_rows = [
+                    _coerced
+                    for _fixture in (fixture_list or [])
+                    if (_coerced := _coerce_history_fixture_row(_fixture))
+                ]
+                _history_sources = list(_recent_history_rows) + [
+                    _coerced
+                    for _fixture in (team_fixtures_raw or [])
+                    if (_coerced := _coerce_history_fixture_row(_fixture))
+                ]
+                _fixture_by_id = {}
+                for _fixture in _history_sources:
+                    _fid = (_fixture.get("fixture") or {}).get("id")
+                    if _fid is not None and _fid not in _fixture_by_id:
+                        # Recent rows intentionally win duplicate IDs because
+                        # they passed the live/current-season freshness gate.
+                        _fixture_by_id[_fid] = _fixture
+                team_fixtures_raw = _newest_first_rows(
+                    list(_fixture_by_id.values())
+                )
+                if _recent_history_rows:
+                    print(
+                        f"[API-DIRECT] {req.playerName}: merged "
+                        f"{len(_recent_history_rows)} recent schedule rows into "
+                        f"player-history pool ({len(team_fixtures_raw)} total)"
+                    )
+                    # Keep the repaired archive reusable for later predictions.
+                    # Atlas quota/write failures are non-fatal; the in-memory
+                    # merged pool is already sufficient for this request.
+                    try:
+                        await db.team_fixture_history.update_one(
+                            {"teamId": actual_team_id},
+                            {"$set": {
+                                "teamId": actual_team_id,
+                                "fixtures": team_fixtures_raw,
+                                "_ts": __import__("time").time(),
+                                "_dt": datetime.now(timezone.utc),
+                            }},
+                            upsert=True,
+                        )
+                    except Exception as _merged_cache_err:
+                        print(
+                            f"[API-DIRECT] repaired fixture archive cache skipped: "
+                            f"{type(_merged_cache_err).__name__}"
+                        )
+
                 # A knockout prediction needs enough equivalent knockout history
                 # to be useful across seasons. The normal "last 40" team feed is
                 # often dominated by one current season, so append the explicitly
                 # selected historical fixtures while keeping the current feed.
                 if extra_fixture_list:
                     _fixture_by_id = {}
-                    for _fixture in (team_fixtures_raw or []) + list(extra_fixture_list):
+                    for _fixture in (team_fixtures_raw or []) + [
+                        _coerced
+                        for _fixture in (extra_fixture_list or [])
+                        if (_coerced := _coerce_history_fixture_row(_fixture))
+                    ]:
                         _fid = (_fixture.get("fixture") or {}).get("id")
-                        if _fid:
+                        if _fid is not None:
                             _fixture_by_id[_fid] = _fixture
-                    team_fixtures_raw = list(_fixture_by_id.values())
+                    team_fixtures_raw = _newest_first_rows(
+                        list(_fixture_by_id.values())
+                    )
                     print(
                         f"[API-DIRECT] {req.playerName}: expanded player-history pool "
                         f"to {len(team_fixtures_raw)} fixtures with "
@@ -9686,9 +9803,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # the core prediction is late.
         if h2h_data:
             h2h_fixture_ids = []
-            # Player-vs-opponent rows are explanatory only. Keep a small
-            # verified sample so deep replay cannot consume the response budget.
-            for h in h2h_data[:min(H2H_PLAYER_SCAN_LIMIT, 6)]:
+            # Player-vs-opponent rows are explanatory only, but scan the full
+            # bounded six-season window before limiting returned appearances.
+            for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
                 fid = h.get("fixture", {}).get("id")
                 if fid:
                     h2h_fixture_ids.append((fid, h))
@@ -9837,7 +9954,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 h2h_player_stats = [
                     r for r in h2h_results
                     if isinstance(r, dict) and r
-                ][:H2H_PLAYER_RESULT_LIMIT]
+                ]
+                h2h_player_stats = _newest_first_rows(
+                    h2h_player_stats,
+                    H2H_PLAYER_RESULT_LIMIT,
+                )
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
         # Team meetings are useful even when the player did not appear in any
@@ -9967,7 +10088,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 _meeting_rows = await _bounded_prediction_source(
                     aio.gather(*[
                         _build_team_meeting_row(item)
-                        for item in h2h_data[:min(H2H_FIXTURE_LIMIT, 6)]
+                        for item in h2h_data[:H2H_FIXTURE_LIMIT]
                     ], return_exceptions=True),
                     "H2H meeting context",
                     3.0,
@@ -9978,6 +10099,10 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     if _meeting and not isinstance(_meeting, Exception):
                         _venue_key, _row = _meeting
                         _meetings_by_venue[_venue_key].append(_row)
+                for _venue_key in ("home", "away"):
+                    _meetings_by_venue[_venue_key] = _newest_first_rows(
+                        _meetings_by_venue[_venue_key]
+                    )
             except Exception:
                 _meetings_by_venue = {"home": [], "away": []}
         else:
@@ -11291,9 +11416,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         key = _cohort_team_key(row)
                         if key and key not in by_team:
                             by_team[key] = row
-                    position_comparison = list(by_team.values())
-                    if len(position_comparison) > 15:
-                        position_comparison = position_comparison[:15]
+                    # Prior-season rows arrive concurrently with current
+                    # rows. Sort the merged cohort before the customer-facing
+                    # 15-row cap, otherwise an older current row can consume a
+                    # slot ahead of a newer prior-season observation.
+                    position_comparison = _newest_first_rows(
+                        list(by_team.values()),
+                        15,
+                    )
                     if len(position_comparison) > 3:
                         position_comparison_scope = (
                             (

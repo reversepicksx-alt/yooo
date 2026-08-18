@@ -2,6 +2,7 @@ from pathlib import Path
 
 from routes.predict import (
     _apply_optional_soccer_possession,
+    _coerce_history_fixture_row,
     _filter_usable_soccer_history_logs,
     _newest_first_rows,
 )
@@ -49,6 +50,49 @@ def test_history_boundaries_sort_newest_before_truncating():
         "2025-03-20",
         "2025-02-11",
     ]
+
+
+def test_compact_recent_fixture_rows_can_hydrate_a_stale_archive():
+    row = _coerce_history_fixture_row(
+        {
+            "fixtureId": 9001,
+            "date": "2026-05-17T19:00:00+00:00",
+            "venue": "away",
+            "opponent": "Angers",
+            "opponentId": 77,
+            "homeTeamId": 77,
+            "awayTeamId": 80,
+            "homeGoals": 0,
+            "awayGoals": 2,
+            "league": "Ligue 1",
+        }
+    )
+
+    assert row["fixture"]["id"] == 9001
+    assert row["fixture"]["date"].startswith("2026-05-17")
+    assert row["teams"]["home"]["id"] == 77
+    assert row["teams"]["away"]["id"] == 80
+    assert row["league"]["name"] == "Ligue 1"
+
+
+def test_nested_h2h_fixture_rows_sort_newest_before_limiting():
+    rows = [
+        {"fixture": {"id": 1, "date": "2022-02-01T20:00:00+00:00"}},
+        {"fixture": {"id": 3, "date": "2025-02-01T20:00:00+00:00"}},
+        {"fixture": {"id": 2, "date": "2024-02-01T20:00:00+00:00"}},
+    ]
+
+    assert [row["fixture"]["id"] for row in _newest_first_rows(rows, 2)] == [3, 2]
+
+
+def test_history_archive_and_h2h_use_complete_bounded_windows_before_slicing():
+    assert "_coerce_history_fixture_row(_fixture)" in PREDICT_SOURCE
+    assert "recent schedule" in PREDICT_SOURCE
+    assert "player-history pool" in PREDICT_SOURCE
+    assert "for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]" in PREDICT_SOURCE
+    assert "for item in h2h_data[:H2H_FIXTURE_LIMIT]" in PREDICT_SOURCE
+    assert "h2h_player_stats = _newest_first_rows(" in PREDICT_SOURCE
+    assert "_meetings_by_venue[_venue_key] = _newest_first_rows(" in PREDICT_SOURCE
 
 
 def test_broad_provider_category_can_show_similar_players_without_projection_influence():

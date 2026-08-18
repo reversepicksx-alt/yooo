@@ -138,6 +138,7 @@
 - [Provider branding removal](provider-branding-removal.md) — external sports-provider quota and dashboard details stay out of user-facing app surfaces; internal safeguards may remain.
 - [MLB next-game date boundary](mlb-next-game-date-boundary.md) — reject cached or provider-returned games before today at both API and mobile boundaries.
 - [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.
+- [Season-stale team fixture archive](season-stale-team-archive.md) — archive size/age does not prove current-season coverage; merge the freshness-checked recent schedule before hydrating history.
 - [Trust-oriented evidence display](trust-oriented-evidence-display.md) — users trust predictions more when provenance, sample context, and unavailable data are visible instead of hidden or estimated.
 - [Season-boundary evidence handling](season-boundary-evidence.md) — new fixtures can belong to the next competition season while valid history remains in the completed prior season; filter incomplete rows, do not weaken provenance.
 - [Team-schedule possession context](team-schedule-possession.md) — possession context must average independent club schedules; player minutes and exact-position cohort rows must not determine the sample.
