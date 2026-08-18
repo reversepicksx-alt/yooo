@@ -22,7 +22,10 @@ const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
-const CORE_PREDICTION_TIMEOUT_MS = 120_000;
+// The backend returns a deterministic result or neutral fallback before this
+// deadline. Keep the client ceiling below 30 seconds so a stuck transport
+// cannot leave the prediction screen spinning indefinitely.
+const CORE_PREDICTION_TIMEOUT_MS = 29_000;
 const isPredictionPath = (endpoint: string) =>
   endpoint === '/api/scan-prop' || (endpoint.startsWith('/api/') && endpoint.endsWith('/predict'));
 const isCorePrediction = (endpoint: string) => endpoint === '/api/predict';
@@ -250,7 +253,7 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
       }
       throw new Error(
         isCorePrediction(endpoint)
-          ? 'Prediction timed out after 120 seconds. No result was lost — please try again.'
+           ? 'Prediction timed out after 30 seconds. A neutral fallback will be used on the next request.'
           : 'Request timed out. The server is taking too long — please try again.',
       );
     }
@@ -1926,12 +1929,54 @@ function customerRole(position: unknown, role: unknown): string | undefined {
   return value || undefined;
 }
 
+function clientPredictionFallback(
+  request: Record<string, unknown>,
+  reason: string,
+): PredictionResult {
+  const parsedLine = Number(request.line);
+  const line = Number.isFinite(parsedLine) ? parsedLine : 0;
+  return {
+    playerName: String(request.playerName || ''),
+    teamName: String(request.teamName || ''),
+    opponentName: String(request.opponentName || ''),
+    propType: String(request.propType || ''),
+    line,
+    projection: line,
+    confidence: 50,
+    confidenceScore: 50,
+    recommendation: 'PASS',
+    passReason: 'Verified provider data did not complete within the 30-second safety limit.',
+    skipReason: 'prediction_fallback',
+    reasoning: 'Neutral fallback returned without waiting for unavailable provider data.',
+    evidenceQuality: {
+      status: 'fallback',
+      reason,
+      providerDataUnavailable: true,
+    },
+  };
+}
+
 export async function predict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
-  const raw = await apiCall<RawPrediction>('/api/predict', {
-    method: 'POST',
-    body: JSON.stringify(request),
-    signal,
-  });
+  let raw: RawPrediction;
+  try {
+    raw = await apiCall<RawPrediction>('/api/predict', {
+      method: 'POST',
+      body: JSON.stringify(request),
+      signal,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (signal?.aborted || message === '__CANCELLED__') throw error;
+    if (
+      /timed out|cannot reach server|server is unreachable|temporarily unavailable/i.test(
+        message,
+      )
+    ) {
+      console.warn('[predict] returning client safety fallback', { reason: message });
+      return clientPredictionFallback(request, message);
+    }
+    throw error;
+  }
   if (raw.error) return { error: raw.error };
   const rec = raw.recommendation?.toUpperCase() as 'OVER' | 'UNDER' | 'PASS' | undefined;
   const bm = raw.bayesianMetrics || {};

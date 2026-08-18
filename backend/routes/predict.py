@@ -71,6 +71,10 @@ _RECENT_ARCHIVE_MIN = 45
 # projection. Larger archive/venue targets remain useful context, but must not
 # force a provider fan-out before the core prediction can return.
 _PREDICTION_CACHE_MIN = 15
+# A smaller verified cache is enough to produce a bounded deterministic result.
+# Do not expand a usable 8+ appearance sample into a multi-season provider
+# fan-out on the response path; the deeper archive is optional evidence.
+_PREDICTION_FAST_CACHE_MIN = 8
 # Press Intensity is intentionally not called "stable" until it has at least
 # seven recent, valid fixture packets. The provider can still return fewer
 # rows; that is surfaced as a limited sample instead of being padded.
@@ -883,7 +887,9 @@ async def predict(req: PredictionRequest):
     # verification.  Those checks are part of the user-visible request and
     # must not sit outside the advertised prediction budget.
     _prediction_started = aio.get_running_loop().time()
-    _PREDICTION_RESPONSE_BUDGET = 37.0
+    # Keep server work below the 30-second product ceiling so the proxy and
+    # mobile client retain transport/serialization headroom.
+    _PREDICTION_RESPONSE_BUDGET = 27.0
 
     def _prediction_elapsed() -> float:
         return aio.get_running_loop().time() - _prediction_started
@@ -897,6 +903,45 @@ async def predict(req: PredictionRequest):
             fallback=fallback,
             label=label,
         )
+
+    def _safe_prediction_fallback(reason: str) -> dict:
+        """Return a neutral, renderable result when enrichment is unavailable."""
+        return {
+            "player": {
+                "id": req.playerId,
+                "name": req.playerName,
+                "team": req.teamName,
+                "position": "Unknown",
+            },
+            "opponent": req.opponentName,
+            "propType": req.propType,
+            "line": req.line,
+            "projectedValue": req.line,
+            "recommendation": "PASS",
+            "confidenceScore": 50,
+            "confidenceLevel": "Medium",
+            "confidenceInterval": None,
+            "probabilityCurve": [],
+            "bayesianMetrics": {
+                "priorMean": req.line,
+                "posteriorMean": req.line,
+                "momentumEffect": 0,
+                "covariateAdjustment": 0,
+                "reversalFlag": "stable",
+            },
+            "recentSamples": [],
+            "gameLogs": {"home": [], "away": []},
+            "matchupOverview": {},
+            "sharpSummary": "PASS — verified evidence was temporarily unavailable.",
+            "reasoning": "No verified player-stat sample completed within the response budget.",
+            "tacticalBreakdown": "",
+            "explanation": "Neutral fallback returned without waiting for unavailable provider data.",
+            "dataQuality": {
+                "status": "fallback",
+                "reason": reason,
+                "providerDataUnavailable": True,
+            },
+        }
 
     # Keep the display name defined before any optional enrichment or
     # fail-open branch can run. Older deployed builds referenced this local
@@ -3722,8 +3767,24 @@ async def predict(req: PredictionRequest):
                         or not player_venue
                         or _selected_venue_count >= _VENUE_HISTORY_TARGET
                     )
+                    _target_evidence_count = sum(
+                        1
+                        for _g in collected
+                        if _g.get(target_field) is not None
+                    )
+                    _fast_cache_ready = (
+                        len(collected) >= _PREDICTION_FAST_CACHE_MIN
+                        and _target_evidence_count >= 3
+                        and len(good) >= len(collected) // 2
+                        and _saves_ok
+                        and _competition_meta_complete
+                        and not extra_fixture_list
+                    )
                     if (
-                        len(collected) >= _PREDICTION_CACHE_MIN
+                        (
+                            len(collected) >= _PREDICTION_CACHE_MIN
+                            or _fast_cache_ready
+                        )
                         and len(good) >= len(collected) // 2
                         and _saves_ok
                         and _competition_meta_complete
@@ -5494,19 +5555,29 @@ async def predict(req: PredictionRequest):
             # If the cache already contains a usable core sample, cancel the
             # optional search and return the verified rows immediately.
             _history_task = aio.create_task(historical_knockout_fixtures_task)
+
+            async def _stop_history_task():
+                if not _history_task.done():
+                    _history_task.cancel()
+                try:
+                    await _history_task
+                except (aio.CancelledError, Exception):
+                    pass
+
             _initial_logs = await fetch_player_game_logs(
                 venue_first_fixtures,
                 req.playerId,
                 100,
                 extra_fixture_list=None,
             )
-            if len(_initial_logs or []) >= _PREDICTION_CACHE_MIN:
-                if not _history_task.done():
-                    _history_task.cancel()
-                try:
-                    await _history_task
-                except aio.CancelledError:
-                    pass
+            # The cache-first loader may preserve a partial verified sample
+            # after its optional provider work is cancelled. Never resume
+            # waiting on the multi-season task in that case.
+            if (
+                len(_initial_logs or []) >= _PREDICTION_FAST_CACHE_MIN
+                or _prediction_elapsed() >= 7.0
+            ):
+                await _stop_history_task()
                 return _initial_logs
 
             try:
@@ -6502,13 +6573,13 @@ async def predict(req: PredictionRequest):
                 )
             player_game_logs = _verified_player_logs
             if not player_game_logs:
-                raise HTTPException(
-                    status_code=424,
-                    detail=(
-                        "Verified player game data is unavailable: no soccer "
-                        "appearance currently has positive minutes and usable "
-                        "target-stat evidence. Please retry shortly."
-                    ),
+                # Provider/stat history is evidence quality, not a transport
+                # prerequisite. Continue through the deterministic line prior
+                # and return a neutral result if no season aggregate exists;
+                # never turn a slow or empty provider into a 424 for the user.
+                print(
+                    f"[PLAYER HISTORY QUALITY] {req.playerName}: no usable "
+                    "verified rows; continuing with bounded fallback/prior"
                 )
 
             for _game in player_game_logs:
@@ -16478,29 +16549,21 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 
         return safe_prediction
     except (json.JSONDecodeError, aio.TimeoutError):
-        # Return a safe fallback deterministic model prediction
-        return {
-            "player": {"id": req.playerId, "name": req.playerName, "team": req.teamName, "position": "Unknown"},
-            "opponent": req.opponentName,
-            "propType": req.propType,
-            "line": req.line,
-            "projectedValue": req.line,
-            "recommendation": "over",
-            "confidenceScore": 50,
-            "confidenceLevel": "Medium",
-            "confidenceInterval": None,
-            "recentSamples": [],
-            "bayesianMetrics": {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"},
-            "probabilityCurve": [],
-            "reasoning": "Deterministic model returned an invalid format. Displaying fallback prediction.",
-            "tacticalInsights": "",
-            "explanation": "Fallback prediction due to deterministic model parsing error."
-        }
+        print(
+            f"[PREDICTION FALLBACK] {req.playerName}/{req.propType}: "
+            "deterministic timeout or invalid format"
+        )
+        return _safe_prediction_fallback("deterministic_timeout_or_invalid_format")
     except HTTPException:
         raise  # Re-raise HTTPException directly (e.g., 400 for teamId=0)
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+        # A provider/cache defect must not surface as a failed prediction.
+        # Preserve auth, validation, and fixture-integrity HTTPExceptions above,
+        # but return a renderable neutral result for unexpected runtime errors.
+        return _safe_prediction_fallback(
+            f"unexpected_runtime_error:{type(e).__name__}"
+        )
     finally:
         reset_api_request_priority(_priority_token)
 

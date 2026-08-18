@@ -42,3 +42,17 @@ nominal timeout.
 **How to apply:** Use the shared remaining-budget helper for every response
 path await after the initial request setup. Test both a hanging source at
 request start and one invoked near the deadline.
+
+When a verified player cache has a usable target-stat sample, return it before
+multi-season history expansion; missing history is evidence-unavailable, not a
+request failure. Keep a neutral PASS fallback at both server and client
+boundaries for provider/runtime failures.
+
+**Why:** A valid 11-game cached goalkeeper sample was expanded into hundreds of
+fixture/stat calls, producing a failed or effectively unbounded prediction
+instead of using the evidence already available.
+
+**How to apply:** Treat 8+ verified target-stat appearances as sufficient for
+the bounded core projection. Cancel optional history cleanly and preserve the
+sample; only authentication, validation, and contradictory fixture identity
+should remain hard errors.
