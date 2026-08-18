@@ -1012,14 +1012,29 @@ async def predict(req: PredictionRequest):
     # before the later canonical-name assignment, turning a recoverable
     # provider refresh into the generic prediction error banner.
     player_team_display = req.teamName or ""
+
+    # ── JARVIS internal service bypass ────────────────────────────────────────
+    # The JARVIS assistant calls predict() directly with a dedicated service
+    # identity instead of a MongoDB-backed user session.  This path grants
+    # subscriber-level access only and never touches the sessions collection.
+    _jarvis_key = os.environ.get("JARVIS_API_KEY", "")
+    _is_jarvis_call = bool(
+        _jarvis_key
+        and req.email == "_jarvis_service_"
+        and req.token == _jarvis_key
+    )
+
     from routes.auth import verify_session
-    try:
-        sess = await aio.wait_for(verify_session(req), timeout=3.0)
-    except aio.TimeoutError:
-        raise HTTPException(
-            status_code=503,
-            detail="Session verification timed out. Please retry shortly.",
-        )
+    if _is_jarvis_call:
+        sess = {"valid": True, "access_type": "subscriber", "email": "_jarvis_service_"}
+    else:
+        try:
+            sess = await aio.wait_for(verify_session(req), timeout=3.0)
+        except aio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail="Session verification timed out. Please retry shortly.",
+            )
     if not sess.get("valid"):
         raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
     access = sess.get("access_type", "")

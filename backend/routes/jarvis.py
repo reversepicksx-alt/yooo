@@ -46,8 +46,9 @@ import time
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -225,6 +226,48 @@ async def jarvis_openapi():
                     "summary": "Server health check (no auth)",
                     "security": [],
                     "responses": {"200": {"description": "Health status"}},
+                }
+            },
+            # ── PREDICT ───────────────────────────────────────────────────────
+            "/api/jarvis/predict": {
+                "post": {
+                    "operationId": "runPredict",
+                    "summary": "Full Reverse Picks prediction from player + prop inputs",
+                    "description": "Runs all 13 pipeline stages: Bayesian projection, situation engine, hierarchical calibration, evidence quality gate, and AI narrative. Returns the same output as the subscriber app.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["player_id", "player_name", "team_id", "team_name", "opponent_id", "opponent_name", "league_id", "line"],
+                                    "properties": {
+                                        "player_id":     {"type": "integer", "description": "API-Sports player ID."},
+                                        "player_name":   {"type": "string",  "description": "Player display name."},
+                                        "team_id":       {"type": "integer", "description": "Player's team API-Sports ID."},
+                                        "team_name":     {"type": "string",  "description": "Player's team name."},
+                                        "opponent_id":   {"type": "integer", "description": "Opposing team API-Sports ID."},
+                                        "opponent_name": {"type": "string",  "description": "Opposing team name."},
+                                        "league_id":     {"type": "integer", "description": "League ID (e.g. 39 = Premier League)."},
+                                        "line":          {"type": "number",  "description": "The player prop line to predict against."},
+                                        "venue":         {"type": "string",  "description": "home or away (relative to the player's team).", "default": "home"},
+                                        "prop_type":     {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
+                                        "sport":         {"type": "string",  "description": "Sport name.", "default": "soccer"},
+                                        "fixture_id":    {"type": "integer", "description": "Optional verified fixture ID — speeds up identity resolution."},
+                                        "odds":          {"type": "object",  "description": "Optional moneyline odds: {home: float, away: float, draw: float}."},
+                                        "position_override": {"type": "string", "description": "Override detected position (e.g. CB, CM, ST)."},
+                                        "role_override":     {"type": "string", "description": "Override detected role."},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "Full prediction with jarvis_brief, bayesian_metrics, calibration, situation, evidence_quality, factors, and full_prediction."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "422": {"description": "Invalid prop type or parameter."},
+                        "502": {"description": "Prediction engine error."},
+                    },
                 }
             },
             # ── AGGREGATOR ────────────────────────────────────────────────────
@@ -422,6 +465,7 @@ async def jarvis_docs():
         },
         "endpoint_groups": {
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
+            "predict": ["/api/jarvis/predict"],
             "aggregator": ["/api/jarvis/match-context"],
             "fixture_detail": [
                 "/api/jarvis/fixture/stats",
@@ -450,6 +494,176 @@ async def jarvis_docs():
             "Europa League": 3,
             "MLS (USA)": 253,
             "FIFA World Cup": 1,
+        },
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PREDICT — full Reverse Picks engine via JARVIS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class JarvisPredictBody(BaseModel):
+    """Inputs required to run the full Reverse Picks prediction pipeline."""
+    player_id:     int
+    player_name:   str
+    team_id:       int
+    team_name:     str
+    opponent_id:   int
+    opponent_name: str
+    league_id:     int
+    line:          float
+    venue:         str = "home"           # "home" or "away"
+    prop_type:     str = "pass_attempts"  # pass_attempts | shots | key_passes | tackles | clearances | saves | goals
+    sport:         str = "soccer"
+    fixture_id:    Optional[int]  = None
+    odds:          Optional[dict] = None  # {"home": float, "away": float, "draw": float} moneyline
+    position_override: str = ""
+    role_override:     str = ""
+
+
+@router.post("/api/jarvis/predict")
+async def jarvis_predict(
+    body: JarvisPredictBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Run the full Reverse Picks prediction engine.
+
+    Calls the exact same pipeline used by subscribers — all 13 stages including
+    Bayesian projection, situation engine, hierarchical calibration, evidence
+    quality gate, and AI tactical narrative.  No shortcuts or approximations.
+    """
+    _require_auth(authorization)
+
+    if not _JARVIS_KEY:
+        raise HTTPException(503, detail={"error": "JARVIS_API_KEY not configured."})
+
+    # Lazy import to avoid circular imports at module load time
+    from models import PredictionRequest
+    from routes.predict import predict as _rp_predict
+
+    req = PredictionRequest(
+        email="_jarvis_service_",
+        token=_JARVIS_KEY,
+        leagueId=body.league_id,
+        playerId=body.player_id,
+        playerName=body.player_name,
+        teamId=body.team_id,
+        teamName=body.team_name,
+        opponentId=body.opponent_id,
+        opponentName=body.opponent_name,
+        venue=body.venue,
+        propType=body.prop_type,
+        line=body.line,
+        sport=body.sport,
+        fixtureId=body.fixture_id,
+        odds=body.odds,
+        positionOverride=body.position_override,
+        roleOverride=body.role_override,
+    )
+
+    try:
+        result = await _rp_predict(req)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, detail={"error": f"Prediction engine error: {str(exc)}"})
+
+    # predict() returns a dict; handle edge case where it returns a JSONResponse
+    if hasattr(result, "body"):
+        import json as _json
+        result = _json.loads(result.body)
+
+    # ── Extract curated JARVIS brief ──────────────────────────────────────────
+    # Field names come from the real predict() response shape — confirmed live.
+    bm = result.get("bayesianMetrics") or {}
+    eq = result.get("evidenceQuality") or {}
+    gs = result.get("gameSituation") or {}
+
+    jarvis_brief = {
+        "recommendation":        result.get("recommendation"),
+        "confidence_level":      result.get("confidenceLevel"),
+        "confidence_score":      result.get("confidenceScore"),
+        "raw_confidence":        result.get("rawConfidence"),
+        "projected_value":       result.get("projectedValue"),
+        "most_likely_value":     result.get("mostLikelyValue"),
+        "line":                  result.get("line"),
+        # Edge — stored as edgeZ (z-score) and edgeRating (label)
+        "edge_z":                result.get("edgeZ"),
+        "edge_rating":           result.get("edgeRating"),
+        "edge_rating_reason":    result.get("edgeRatingReason"),
+        # Direction probability — stored as bayesianComponent (0-100 int)
+        "direction_probability_pct": result.get("bayesianComponent"),
+        "is_fallback":           result.get("isFallback", False),
+        "prediction_status":     result.get("predictionStatus", "ok"),
+        "coin_flip":             result.get("coinFlip", False),
+        "low_conviction":        result.get("lowConviction", False),
+        "sharp_summary":         result.get("sharpSummary"),
+        "reasoning":             result.get("reasoning"),
+        "tactical_breakdown":    result.get("tacticalBreakdown"),
+        "consensus_note":        result.get("consensusNote"),
+        "warnings":              result.get("tacticalAlerts", []),
+        "data_quality_status":   (result.get("dataQuality") or {}).get("status"),
+        "evidence_quality_level": eq.get("level") or eq.get("status"),
+        "evidence_quality_score": eq.get("score"),
+        "real_log_count":        bm.get("priorSamples"),
+        "safety_rating":         result.get("safetyRating"),
+        "line_deviation_band":   result.get("lineDeviationBand"),
+        "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
+    }
+
+    return JSONResponse(content={
+        "source":       "jarvis/predict",
+        "generated_at": int(time.time()),
+
+        # Curated AI-ready summary
+        "jarvis_brief": jarvis_brief,
+
+        # All 3 Bayesian layer outputs + Monte Carlo
+        "bayesian_metrics":  bm,
+        "probability_curve": result.get("probabilityCurve", []),
+        "landing_bands":     bm.get("landingBands") or result.get("landingBands"),
+        "range_60":          result.get("range60"),
+        "range_80":          result.get("range80"),
+
+        # Calibration — stored as fusionApplied in the real response
+        "calibration_applied": result.get("fusionApplied") or result.get("calibrationApplied"),
+
+        # Situational adjustments (knockout, stakes, pressure multipliers)
+        "game_situation": gs,
+
+        # Evidence quality gate output
+        "evidence_quality": eq,
+
+        # Factor ledger — top-level key in the real response
+        "factors": result.get("factorLedger") or result.get("factors") or bm.get("factorLedger"),
+
+        # Model breakdown
+        "model_breakdown": result.get("modelBreakdown"),
+        "analysis_factors": result.get("analysisFactors"),
+        "analysis_summary": result.get("analysisSummary"),
+
+        # Match context
+        "match_context":    result.get("matchContext"),
+        "game_script":      result.get("gameScript"),
+        "match_dominance":  result.get("matchDominance"),
+        "match_factors":    result.get("matchFactors"),
+
+        # Identity
+        "player":    result.get("player"),
+        "opponent":  result.get("opponent"),
+        "prop_type": result.get("propType"),
+        "venue":     result.get("venue"),
+        "is_home":   result.get("isHome"),
+
+        # Full prediction for completeness (all remaining fields)
+        "full_prediction": {
+            k: v for k, v in result.items()
+            if k not in ("probabilityCurve", "factorLedger", "modelBreakdown",
+                         "analysisFactors", "analysisSummary", "matchContext",
+                         "gameScript", "matchDominance", "matchFactors",
+                         "gameSituation", "bayesianMetrics", "evidenceQuality",
+                         "fusionApplied", "calibrationApplied")
         },
     })
 

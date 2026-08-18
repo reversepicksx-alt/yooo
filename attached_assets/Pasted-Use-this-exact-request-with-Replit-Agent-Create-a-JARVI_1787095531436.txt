@@ -1,0 +1,75 @@
+Use this exact request with Replit Agent:
+
+Create a JARVIS prediction wrapper around the existing production Reverse Picks soccer prediction pipeline.
+
+Do NOT redesign, simplify, duplicate, or reimplement the prediction algorithm.
+
+Reuse the exact existing production functions and stages already identified in the pipeline report, including identity resolution, data assembly, history processing, tactical evidence, compute_bayesian_projection, positional squeeze, game situation, elite calibration, quality controls, calibration alerts, deterministic confidence reconciliation, and final response assembly.
+
+Add:
+
+POST /api/jarvis/predict/soccer
+
+Accept enough inputs to run the existing prediction request, preferably:
+
+* fixtureId
+* playerId
+* propType
+* line
+* odds optional
+* positionOverride optional
+* roleOverride optional
+
+Automatically resolve all other fields where the existing production pipeline already can.
+
+Return a JARVIS-safe diagnostic response containing:
+
+* final prediction/direction
+* final projection
+* market line
+* final calibrated probability/confidence
+* pre-calibration Bayesian probability
+* Bayesian prior
+* momentum adjustment
+* venue adjustment
+* each covariate contribution
+* posterior mean and uncertainty
+* Monte Carlo probability
+* landing bands / probability curve
+* positional squeeze adjustment
+* match-situation adjustments
+* calibration adjustments
+* evidence-quality score and caps
+* calibration alert status: OK / RISKY / AVOID
+* all warnings
+* missing-data flags
+* model version/fingerprint if available
+* concise factor ledger explaining which factors raised or lowered the projection/confidence
+
+Preserve the exact final production result. The wrapper must never calculate an alternative result.
+
+Never expose secrets, raw auth tokens, email/session data, internal subscription data, or private keys.
+
+Keep the existing app endpoint unchanged.
+
+Add the new endpoint to /api/jarvis/docs and the OpenAPI schema, with ChatGPT-compatible concise descriptions under 300 characters.
+
+Test the wrapper against at least 3 existing production predictions and verify the wrapper returns the same final projection, direction, and calibrated confidence as the app.
+
+The 3-prediction parity test is important. If Jarvis says 67% and the Reverse Picks app says 64% for the same player/line, then the integration is wrong.
+
+After that works, Jarvis becomes useful in a much deeper way. You’ll be able to ask things like:
+
+“Why is this pick only 61%?”
+
+“Which factor hurt this projection the most?”
+
+“Show me the result before calibration.”
+
+“What would the probability be without the venue adjustment?”
+
+“Why did this become AVOID?”
+
+“Compare the Bayesian prior vs Monte Carlo output.”
+
+“Which assumptions are driving most of the uncertainty?”

@@ -148,6 +148,7 @@
 - [Saved analysis log normalization](saved-analysis-log-normalization.md) — saved analysis uses `playerGameLogs.games`; shared history UI must normalize it alongside live `gameLogs`.
 - [Verified venue-history threshold](venue-history-threshold.md) — venue priors require 30 verified player appearances; search older competitions/seasons, then use full history with an explicit fallback.
 - [Passing correlation diagnostics](passing-correlation-diagnostics.md) — same-fixture picks are correlated evidence; exact-time settlement ties need deterministic ordering, not false leakage violations.
+- [JARVIS predict pipeline bypass](jarvis-predict-bypass.md) — internal service bypass uses email="_jarvis_service_" + JARVIS_API_KEY to skip MongoDB session; predict() response field names for correct extraction.
 - [Lissa voice lifecycle](lissa-voice-lifecycle.md) — supervise segmented recognition and wait for speech completion before restarting so Lissa does not freeze or hear her own answer.
 - [Sport selector visibility](sport-selector-visibility.md) — keep sport selection for setup, but hide the selector once a player prediction enters analysis/results.
 - [Retired integration secrets](retired-integration-secrets.md) — removing an integration from code does not remove its secret inventory entry; verify no runtime reads and handle secret deletion separately.
