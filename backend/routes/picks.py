@@ -17,6 +17,7 @@ from utils import api_football_request, priority_api_football_request
 from bayesian_engine import compute_live_gaussian_update
 import cs2_client as _cs2_client
 import wta_client as _wta_client
+import fotmob_client as _fotmob_client
 import httpx as _httpx
 import os as _os
 import time as _time_mod
@@ -2054,6 +2055,42 @@ async def list_picks(req: GetPicksRequest):
     # API to get the true final value. Never run against other users' picks.
     try:
         now_utc = datetime.now(timezone.utc)
+        # Migrate earlier exact-match confirmations into the immutable
+        # settlement state before constructing the refresh queue. This keeps
+        # an already-corrected pick from being overwritten during the first
+        # list reload after this safeguard ships.
+        for p in picks:
+            source = p.get("settlementSource") or {}
+            if (
+                source.get("provider") == "fotmob"
+                and source.get("verified") is True
+                and not p.get("settlementLocked")
+            ):
+                lock_reason = (
+                    "exact_match_cross_provider_correction"
+                    if (source.get("crossProviderCheck") or {}).get("conflict")
+                    else "exact_match_customer_confirmation"
+                )
+                p["settlementLocked"] = True
+                p["settlementLockReason"] = lock_reason
+                try:
+                    await db.picks.update_one(
+                        {
+                            "pickId": p.get("pickId"),
+                            "email": _pick_email(p),
+                        },
+                        {
+                            "$set": {
+                                "settlementLocked": True,
+                                "settlementLockReason": lock_reason,
+                            }
+                        },
+                    )
+                except Exception as _lock_write_err:
+                    print(
+                        f"[SETTLEMENT LOCK WRITE FAIL] "
+                        f"{p.get('playerName', '?')}: {_lock_write_err}"
+                    )
         review_picks = [
             p for p in picks
             if _should_process(p)
@@ -2064,6 +2101,7 @@ async def list_picks(req: GetPicksRequest):
                 or p.get("settlementReview")
             )
             and not p.get("correctedManually")
+            and not p.get("settlementLocked")
             and not p.get("voidReason")
         ]
         recently_settled = [
@@ -2076,6 +2114,7 @@ async def list_picks(req: GetPicksRequest):
                 or p.get("settlementReview")
             )
             and not p.get("correctedManually")
+            and not p.get("settlementLocked")
             and not p.get("voidReason")
             and (
                 p.get("status") == "pending_review"
@@ -2097,6 +2136,7 @@ async def list_picks(req: GetPicksRequest):
             and p.get("sport", "soccer") == "soccer"
             and p.get("status") in {"live", "pending"}
             and not p.get("correctedManually")
+            and not p.get("settlementLocked")
             and not p.get("voidReason")
         ]
         # Review records are the user-visible failure state, so they always
@@ -5428,6 +5468,13 @@ async def refresh_pick_settlement(pick_id: str, payload: dict):
             "settledAt": refreshed_at,
             "settlementRefreshedAt": refreshed_at,
         }
+        if source.get("provider") == "fotmob" and source.get("verified") is True:
+            update_fields["settlementLocked"] = True
+            update_fields["settlementLockReason"] = (
+                "exact_match_cross_provider_correction"
+                if (source.get("crossProviderCheck") or {}).get("conflict")
+                else "exact_match_customer_confirmation"
+            )
         if confirmed.get("passOutcome"):
             update_fields["passOutcome"] = confirmed["passOutcome"]
 
@@ -5477,6 +5524,11 @@ async def _settle_soccer_pick(
     force_refresh: bool = False,
 ):
     """Settle a soccer pick — BDL path for BDL leagues, legacy path otherwise."""
+    # A customer-confirmed exact-match correction is immutable to normal
+    # background/API-Football polls. An explicit user refresh still forces a
+    # fresh corroboration attempt.
+    if pick.get("settlementLocked") and not force_refresh:
+        return None
     import soccer_bdl_client as _sbc
     _api_request = priority_api_football_request if force_refresh else api_football_request
     # API-Football is the authoritative soccer settlement source. Explicit
@@ -5570,6 +5622,7 @@ async def _settle_soccer_pick(
 
     recent = None
     stored_fixture_id = pick.get("fixtureId")
+    api_fixture_unavailable = False
     if stored_fixture_id:
         # A saved fixture ID is authoritative. The stored opponentId can be
         # stale for legacy picks when a provider changes/normalizes team IDs,
@@ -5596,10 +5649,100 @@ async def _settle_soccer_pick(
                     f"(status={exact_status}, teams={exact_home}/{exact_away}, "
                     f"playerTeam={team_id}, storedOpponent={pick.get('opponentId')})"
                 )
-                return None
+                # An explicit customer confirmation may still use the saved
+                # exact fixture identity to query the independent finished-
+                # match stat when API-Football is temporarily unavailable
+                # (quota/empty response). Never invent the fixture: require
+                # the previously saved date and both verified team names.
+                if force_refresh:
+                    fallback_date = pick.get("fixtureDate") or pick.get("matchDate")
+                    fallback_home = pick.get("homeTeam") or ""
+                    fallback_away = pick.get("awayTeam") or ""
+                    if fallback_date and fallback_home and fallback_away:
+                        _fallback_home_id = (
+                            team_id
+                            if (pick.get("venue") or "home").lower() == "home"
+                            else pick.get("opponentId")
+                        )
+                        _fallback_away_id = (
+                            pick.get("opponentId")
+                            if (pick.get("venue") or "home").lower() == "home"
+                            else team_id
+                        )
+                        recent = {
+                            "fixture": {
+                                "id": int(stored_fixture_id),
+                                "date": fallback_date,
+                                "status": {"short": "FT"},
+                            },
+                            "teams": {
+                                "home": {
+                                    "id": _fallback_home_id,
+                                    "name": fallback_home,
+                                },
+                                "away": {
+                                    "id": _fallback_away_id,
+                                    "name": fallback_away,
+                                },
+                            },
+                            "goals": {
+                                "home": pick.get("finalHomeGoals") or 0,
+                                "away": pick.get("finalAwayGoals") or 0,
+                            },
+                        }
+                        api_fixture_unavailable = True
+                        print(
+                            f"[SETTLE-FALLBACK] {pick.get('playerName','')} "
+                            f"using saved exact fixture identity {stored_fixture_id} "
+                            f"for independent confirmation"
+                        )
+                    else:
+                        return None
+                else:
+                    return None
         except Exception as _exact_err:
             print(f"[SETTLE-DEFER] exact fixture lookup failed for {stored_fixture_id}: {_exact_err}")
-            return None
+            if force_refresh:
+                fallback_date = pick.get("fixtureDate") or pick.get("matchDate")
+                fallback_home = pick.get("homeTeam") or ""
+                fallback_away = pick.get("awayTeam") or ""
+                if fallback_date and fallback_home and fallback_away:
+                    _fallback_home_id = (
+                        team_id
+                        if (pick.get("venue") or "home").lower() == "home"
+                        else pick.get("opponentId")
+                    )
+                    _fallback_away_id = (
+                        pick.get("opponentId")
+                        if (pick.get("venue") or "home").lower() == "home"
+                        else team_id
+                    )
+                    recent = {
+                        "fixture": {
+                            "id": int(stored_fixture_id),
+                            "date": fallback_date,
+                            "status": {"short": "FT"},
+                        },
+                        "teams": {
+                            "home": {
+                                "id": _fallback_home_id,
+                                "name": fallback_home,
+                            },
+                            "away": {
+                                "id": _fallback_away_id,
+                                "name": fallback_away,
+                            },
+                        },
+                        "goals": {
+                            "home": pick.get("finalHomeGoals") or 0,
+                            "away": pick.get("finalAwayGoals") or 0,
+                        },
+                    }
+                    api_fixture_unavailable = True
+                else:
+                    return None
+            else:
+                return None
 
     _fixture_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [
         CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1
@@ -5731,12 +5874,74 @@ async def _settle_soccer_pick(
             if actual_value is not None or minutes_played:
                 break
 
-    home_goals = recent.get("goals", {}).get("home", 0) or 0
-    away_goals = recent.get("goals", {}).get("away", 0) or 0
+    # API-Football can return a stale/incomplete finished player row even
+    # after a forced request.  For an authenticated customer confirmation,
+    # corroborate the exact finished match with FotMob's player-level match
+    # packet.  If the two providers disagree, the independent exact-match
+    # packet wins and the disagreement is retained in provenance for audit.
     home_team_name = recent.get("teams", {}).get("home", {}).get("name", "") or ""
     away_team_name = recent.get("teams", {}).get("away", {}).get("name", "") or ""
     home_team_id = recent.get("teams", {}).get("home", {}).get("id")
     away_team_id = recent.get("teams", {}).get("away", {}).get("id")
+    if force_refresh and pick.get("playerName"):
+        source_team_name = (
+            home_team_name
+            if str(team_id) == str(home_team_id)
+            else away_team_name
+        )
+        try:
+            fotmob_stat = await _fotmob_client.fetch_exact_player_stat(
+                fixture_id=fixture_id,
+                fixture_date=fixture_date,
+                home_name=home_team_name,
+                away_name=away_team_name,
+                player_id=player_id,
+                player_name=pick.get("playerName", ""),
+                team_name=source_team_name,
+                prop_type=prop_type,
+            )
+        except Exception as _fotmob_err:
+            print(
+                f"[SETTLE-DEFER] FotMob corroboration failed for "
+                f"{pick.get('playerName', '')} fixture={fixture_id}: {_fotmob_err}"
+            )
+            fotmob_stat = None
+
+        if fotmob_stat and fotmob_stat.get("actualValue") is not None:
+            api_value = actual_value
+            actual_value = fotmob_stat["actualValue"]
+            minutes_played = fotmob_stat.get("minutesPlayed") or minutes_played
+            settlement_source = fotmob_stat.get("settlementSource")
+            if settlement_source:
+                settlement_source["crossProviderCheck"] = {
+                    "apiFootballValue": api_value,
+                    "fotmobValue": actual_value,
+                    "conflict": (
+                        api_value is not None and api_value != actual_value
+                    ),
+                }
+                if api_fixture_unavailable:
+                    settlement_source["crossProviderCheck"][
+                        "apiFootballAvailable"
+                    ] = False
+        elif (
+            prop_type in {"pass_attempts", "passes"}
+            and settlement_source
+            and actual_value is not None
+        ):
+            # Do not tell the subscriber that API-Football is verified for
+            # pass props when the independent exact-match read is unavailable
+            # during this explicit confirmation.  Normal background
+            # settlement remains API-Football-backed; this guard only protects
+            # the customer-triggered correction path.
+            settlement_source = dict(settlement_source)
+            settlement_source["verified"] = False
+            settlement_source["verificationMethod"] = (
+                "api_football_only_no_independent_corroboration"
+            )
+
+    home_goals = recent.get("goals", {}).get("home", 0) or 0
+    away_goals = recent.get("goals", {}).get("away", 0) or 0
     if pick.get("_settlement_repair"):
         home_poss, away_poss = None, None
     else:

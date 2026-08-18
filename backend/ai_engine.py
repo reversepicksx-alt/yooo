@@ -739,6 +739,7 @@ async def _refresh_recent_soccer_settlements(
         "status": "settled",
         "fixtureId": {"$exists": True, "$ne": None},
         "correctedManually": {"$ne": True},
+        "settlementLocked": {"$ne": True},
     }
     if pick_ids:
         query["pickId"] = {"$in": [str(value) for value in pick_ids if value]}
@@ -904,7 +905,11 @@ async def _refresh_recent_soccer_settlements(
                 }
 
             updated = await db.picks.update_one(
-                {"pickId": pick_id, "status": "settled"},
+                {
+                    "pickId": pick_id,
+                    "status": "settled",
+                    "settlementLocked": {"$ne": True},
+                },
                 update_doc,
             )
             if updated.modified_count:
