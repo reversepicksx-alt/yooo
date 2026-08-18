@@ -25,12 +25,10 @@ import NotificationBell from '@/components/NotificationBell';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import StreaksAchievements from '@/components/StreaksAchievements';
 import PicksCalendar from '@/components/PicksCalendar';
-import SocialFeed from '@/components/SocialFeed';
 import CustomAlerts from '@/components/CustomAlerts';
 import {
   listPicks,
   deletePick,
-  sharePickToCommunity,
   fetchPickAnalysis,
   refreshPickAnalysis,
   refreshLivePickStats,
@@ -1154,7 +1152,6 @@ export default function PicksScreen() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [streaksOpen, setStreaksOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [socialOpen, setSocialOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1362,16 +1359,6 @@ export default function PicksScreen() {
       ]);
     }
   }, [deleteMutation]);
-
-  const handleShareCommunity = useCallback(async (pick: Pick, imageData: string) => {
-    if (!session) return;
-    try {
-      await sharePickToCommunity(session.email, pick, imageData);
-      Alert.alert('Shared', 'Your pick is now in Reverse Chat.');
-    } catch (e: any) {
-      Alert.alert('Share failed', e?.message || 'Please try again.');
-    }
-  }, [session]);
 
   const handleRefreshAnalysis = useCallback(async () => {
     if (!session || !analysisModal) return;
@@ -1604,7 +1591,6 @@ export default function PicksScreen() {
                 ownerMediaEnabled={isOwner}
                 compact
                 onDelete={onDeleteForItem}
-                onShareCommunity={(imageData) => handleShareCommunity(item, imageData)}
                 onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
               />
             );
@@ -2044,7 +2030,6 @@ export default function PicksScreen() {
             <Text style={styles.menuTitle}>More</Text>
             <View style={styles.menuGrid}>
               <MenuItem icon="calendar" label="Calendar" onPress={() => { setMenuOpen(false); setCalendarOpen(true); }} />
-              <MenuItem icon="people" label="Social Feed" onPress={() => { setMenuOpen(false); setSocialOpen(true); }} />
               <MenuItem icon="notifications" label="Alerts" onPress={() => { setMenuOpen(false); setAlertsOpen(true); }} />
               <MenuItem icon="trophy" label="Streaks" onPress={() => { setMenuOpen(false); setStreaksOpen(true); }} />
             </View>
@@ -2067,21 +2052,6 @@ export default function PicksScreen() {
 
       {/* ── Calendar ── */}
       <PicksCalendar visible={calendarOpen} picks={picks} onClose={() => setCalendarOpen(false)} />
-
-      {/* ── Social Feed ── */}
-      <Modal visible={socialOpen} animationType="slide" transparent onRequestClose={() => setSocialOpen(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.socialSheet}>
-            <View style={styles.socialHeader}>
-              <Text style={styles.socialTitle}>Social Feed</Text>
-              <TouchableOpacity onPress={() => setSocialOpen(false)} style={styles.closeBtn}>
-                <Ionicons name="close" size={18} color={Colors.text} />
-              </TouchableOpacity>
-            </View>
-            <SocialFeed picks={picks} />
-          </View>
-        </View>
-      </Modal>
 
       {/* ── Custom Alerts ── */}
       <CustomAlerts visible={alertsOpen} onClose={() => setAlertsOpen(false)} />

@@ -139,7 +139,7 @@ export default function DmInboxScreen() {
           <Text style={styles.emptyBody}>
             {isOwner
               ? 'Users will message you here. Tap ✏️ to start a conversation.'
-              : 'Send the owner a message from Reverse Chat or Account settings.'}
+              : 'Contact Reverse from Account settings to send a direct message.'}
           </Text>
         </View>
       ) : (

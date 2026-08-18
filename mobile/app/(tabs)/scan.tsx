@@ -2256,23 +2256,30 @@ export default function ScanScreen() {
           <Text style={styles.sportPickerLabel}>SEARCH SPORT</Text>
           <View style={styles.sportPickerOptions}>
             {([
-              { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline' },
-              { key: 'mlb' as const, label: 'MLB', icon: 'baseball-outline' },
-              { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline' },
-            ]).map(option => {
+              { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline', color: '#39FF14' },
+              { key: 'mlb' as const, label: 'MLB', icon: 'baseball-outline', color: '#C084FC' },
+              { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline', color: '#FF9500' },
+            ]).filter(option => Platform.OS !== 'ios' || option.key !== 'mlb').map(option => {
               const active = sport === option.key;
               return (
                 <TouchableOpacity
                   key={option.key}
-                  style={[styles.sportPickerOption, active && styles.sportPickerOptionActive]}
+                  style={[
+                    styles.sportPickerOption,
+                    { borderColor: `${option.color}55` },
+                    active && {
+                      backgroundColor: `${option.color}18`,
+                      borderColor: option.color,
+                    },
+                  ]}
                   onPress={() => selectSport(option.key)}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   accessibilityLabel={`Search ${option.label} players`}
                 >
-                  <Ionicons name={option.icon as any} size={13} color={active ? '#000' : Colors.textSecondary} />
-                  <Text style={[styles.sportPickerOptionText, active && styles.sportPickerOptionTextActive]}>
+                  <Ionicons name={option.icon as any} size={18} color={option.color} />
+                  <Text style={[styles.sportPickerOptionText, { color: option.color }, active && styles.sportPickerOptionTextActive]}>
                     {option.label}
                   </Text>
                 </TouchableOpacity>
@@ -6551,6 +6558,49 @@ const styles = StyleSheet.create({
   },
   propPickerItemActive: { backgroundColor: 'rgba(57,255,20,0.10)' },
   propPickerText: { color: Colors.textSecondary, fontSize: 14 },
+  sportPicker: {
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 10,
+  },
+  sportPickerLabel: {
+    color: Colors.textTertiary,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    marginBottom: 7,
+  },
+  sportPickerOptions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  sportPickerOption: {
+    flex: 1,
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+  },
+  sportPickerOptionActive: {
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  sportPickerOptionText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  sportPickerOptionTextActive: {
+    fontWeight: '900',
+  },
   sportPickerHeader: {
     flexDirection: 'row',
     alignItems: 'center',

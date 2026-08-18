@@ -20,7 +20,7 @@ const getApiBase = (): string => {
 const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview', '/api/prediction-explanation'];
 const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
 const PLAYER_SEARCH_PATH   = '/api/players/search';
-const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script', '/api/community/messages'];  // match-script hits a structured press-intensity call
+const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
 const CORE_PREDICTION_TIMEOUT_MS = 120_000;
 const isPredictionPath = (endpoint: string) =>
@@ -2622,18 +2622,6 @@ export async function savePick(email: string, token: string, pick: Record<string
   return result;
 }
 
-export async function autoPostPickToCommunity(
-  email: string,
-  token: string,
-  pickId: string,
-  imageData: string,
-) {
-  return apiCall('/api/community/auto-post-pick', {
-    method: 'POST',
-    body: JSON.stringify({ email, token, pickId, imageData }),
-  });
-}
-
 export async function deletePick(email: string, token: string, pickId: string) {
   return apiCall('/api/picks/delete', {
     method: 'POST',
@@ -4278,90 +4266,6 @@ export async function contactSupport(name: string, email: string, message: strin
   return apiCall('/api/support/contact', {
     method: 'POST',
     body: JSON.stringify({ name, email, message }),
-  });
-}
-
-// ─── Community Chat ────────────────────────────────────────────────────────────
-
-export interface CommunityMessage {
-  id: string;
-  senderId: string;
-  name: string;
-  text: string;
-  imageData?: string | null;
-  mentions: string[];
-  reactions: Record<string, string[]>;
-  createdAt: string;
-  pending?: boolean;
-}
-
-export async function fetchCommunityMessages(params?: {
-  since?: string;
-  before?: string;
-  limit?: number;
-  includeImages?: boolean;
-}): Promise<CommunityMessage[]> {
-  const qs = new URLSearchParams();
-  if (params?.since) qs.set('since', params.since);
-  if (params?.before) qs.set('before', params.before);
-  if (params?.limit) qs.set('limit', String(params.limit));
-  if (params?.includeImages !== undefined) qs.set('include_images', String(params.includeImages));
-  const q = qs.toString();
-  return apiCall(`/api/community/messages${q ? `?${q}` : ''}`);
-}
-
-export async function sendCommunityMessage(payload: {
-  email: string;
-  text: string;
-  imageData?: string | null;
-  mentions?: string[];
-}): Promise<CommunityMessage> {
-  return apiCall('/api/community/messages', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function sharePickToCommunity(
-  email: string, pick: Pick, imageData?: string,
-): Promise<CommunityMessage> {
-  return apiCall('/api/community/share-pick', {
-    method: 'POST',
-    body: JSON.stringify({ email, pick, imageData: imageData || null }),
-  });
-}
-
-export async function reactToCommunityMessage(
-  messageId: string,
-  email: string,
-  emoji: string,
-): Promise<{ reactions: Record<string, string[]> }> {
-  return apiCall(`/api/community/messages/${messageId}/react`, {
-    method: 'POST',
-    body: JSON.stringify({ email, emoji }),
-  });
-}
-
-export async function deleteCommunityMessage(messageId: string, email: string): Promise<void> {
-  return apiCall(
-    `/api/community/messages/${messageId}?email=${encodeURIComponent(email)}`,
-    { method: 'DELETE' },
-  );
-}
-
-export async function fetchCommunityParticipants(): Promise<
-  Array<{ id: string; name: string }>
-> {
-  return apiCall('/api/community/participants');
-}
-
-export async function fetchCommunityOnlineCount(
-  email: string,
-  token: string,
-): Promise<{ count: number }> {
-  return apiCall('/api/community/online', {
-    method: 'POST',
-    body: JSON.stringify({ email, token }),
   });
 }
 

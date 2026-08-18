@@ -87,8 +87,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Keep authenticated presence current for the community online indicator.
-  // The endpoint is deliberately cheap and does not re-run entitlement checks.
+  // Keep authenticated presence current for lightweight server-side activity
+  // tracking. The endpoint is deliberately cheap and does not re-run
+  // entitlement checks.
   useEffect(() => {
     if (!session) return;
     const beat = () => {

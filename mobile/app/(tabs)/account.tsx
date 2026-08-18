@@ -828,12 +828,12 @@ export default function AccountScreen() {
           <MenuRow icon="shield-outline" label="Access Level" value={accessLabel} />
           {!isOwner && (
             <MenuRow
-              icon="chatbubble-outline"
-              label="Message Owner"
-              value="Get help & support"
+              icon="mail-outline"
+              label="Contact Reverse"
+              value="Send a direct message to Reverse"
               onPress={() => {
                 const ownerEmail = 'reversepicksx@gmail.com';
-                router.push(`/dm-thread?email=${encodeURIComponent(ownerEmail)}&name=Reverse%20Picks%20Support&image=`);
+                router.push(`/dm-thread?otherId=${encodeURIComponent(ownerEmail)}&name=Reverse%20Picks%20Support&image=`);
               }}
             />
           )}

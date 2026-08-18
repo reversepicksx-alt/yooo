@@ -214,12 +214,11 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onDelete, onShareCommunity, onManagerBadgePress,
+  pick, onDelete, onManagerBadgePress,
   ownerMediaEnabled = false, compact = false,
 }: {
   pick: Pick;
   onDelete?: () => void;
-  onShareCommunity?: (imageData: string) => void | Promise<void>;
   onManagerBadgePress?: () => void;
   ownerMediaEnabled?: boolean;
   compact?: boolean;
@@ -354,42 +353,6 @@ export default function OwnerPickCard({
       await Share.share({ message: nativeShareText, title: `${pick.playerName} pick` });
     } finally {
       setCaptureMode(false);
-    }
-  };
-
-  const handleShareCommunity = async () => {
-    if (!onShareCommunity) return;
-    setSharing(true);
-    try {
-      let imageData = '';
-      if (Platform.OS === 'web') {
-        await generateShareImage();
-        const blob = pendingBlobRef.current;
-        if (blob) {
-          imageData = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const result = String(reader.result || '');
-              resolve(result.includes(',') ? result.split(',')[1] : result);
-            };
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
-        }
-      } else {
-        setCaptureMode(true);
-        await new Promise(r => setTimeout(r, 80));
-        // JPEG keeps the payload small and matches Community's existing
-        // base64 image renderer.
-        imageData = await captureRef(cardRef, {
-          format: 'jpg', quality: 0.92, result: 'base64',
-        } as any);
-      }
-      if (!imageData) throw new Error('Could not capture the pick card');
-      await onShareCommunity(imageData);
-    } finally {
-      setCaptureMode(false);
-      setSharing(false);
     }
   };
 
@@ -533,16 +496,6 @@ export default function OwnerPickCard({
                     {sharing
                       ? <ActivityIndicator size="small" color={Colors.primary} />
                       : <Ionicons name="arrow-up-circle-outline" size={16} color={Colors.primary} />}
-                  </TouchableOpacity>
-                )}
-                {onShareCommunity && !captureMode && (
-                  <TouchableOpacity
-                    onPress={handleShareCommunity}
-                    style={styles.compactShareBtn}
-                    activeOpacity={0.7}
-                    accessibilityLabel="Share pick with community"
-                  >
-                    <Ionicons name="people-outline" size={14} color={Colors.primary} />
                   </TouchableOpacity>
                 )}
                 <StatusPill
@@ -747,12 +700,6 @@ export default function OwnerPickCard({
             </Text>
           )}
         </View>
-        {onShareCommunity && !captureMode && (
-          <TouchableOpacity onPress={handleShareCommunity} style={styles.communityBtn} activeOpacity={0.7}>
-            <Ionicons name="people-outline" size={12} color={Colors.primary} />
-            <Text style={styles.liveBtnText}>Share with Community</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {shareSheet}
@@ -998,13 +945,6 @@ const styles = StyleSheet.create({
   matchId: { color: Colors.primary, fontSize: 9, fontWeight: '800', letterSpacing: 0.25, marginLeft: 8 },
   footScore: { color: 'rgba(255,255,255,0.25)', fontSize: 8.5, fontWeight: '500' },
   liveBtnText: { color: Colors.primary, fontSize: 9, fontWeight: '800' },
-  communityBtn: {
-    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
-    marginTop: 5, paddingHorizontal: 8, paddingVertical: 4,
-    borderRadius: 5, gap: 4,
-    backgroundColor: 'rgba(57,255,20,0.05)',
-    borderWidth: 1, borderColor: 'rgba(57,255,20,0.18)',
-  },
   // Share sheet
   ssOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   ssSheet: {

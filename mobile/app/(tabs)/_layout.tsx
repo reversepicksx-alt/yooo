@@ -88,13 +88,6 @@ export default function TabLayout() {
             href: null,
           }}
         />
-        <Tabs.Screen
-          name="community"
-          options={{
-            title: 'Community',
-            tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
-          }}
-        />
         <Tabs.Screen name="chat" options={{ href: null }} />
         <Tabs.Screen
           name="account"

@@ -90,6 +90,7 @@ interface FuzzySearchInputProps {
 const IS_WEB = Platform.OS === 'web';
 const INPUT_STYLE = IS_WEB ? { outlineWidth: 0 } as object : {};
 const DEBOUNCE_MS = 150;
+const PLAYER_SEARCH_DEBOUNCE_MS = 40;
 
 function leagueName(id: number): string {
   return LEAGUES.find(l => l.id === id)?.name || '';
@@ -157,6 +158,7 @@ export default function FuzzySearchInput({
   const requestAbortRef = useRef<AbortController | null>(null);
   const lastQueryRef = useRef('');
   const searchIdRef = useRef(0);
+  const explicitDismissRef = useRef(false);
 
   const invalidatePendingSearch = () => {
     searchIdRef.current += 1;
@@ -174,10 +176,11 @@ export default function FuzzySearchInput({
   };
 
   const doSearch = useCallback(async (q: string) => {
-    if (q.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return; }
+    const normalizedQuery = q.trim().replace(/\s+/g, ' ');
+    if (normalizedQuery.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return; }
 
     if (staticItems) {
-      const filtered = localFuzzy(staticItems, q);
+      const filtered = localFuzzy(staticItems, normalizedQuery);
       setResults(filtered);
       setShowDropdown(true);
       setHasSearched(true);
@@ -212,13 +215,13 @@ export default function FuzzySearchInput({
     try {
       let r: any[] = [];
       if (searchType === 'teams') {
-        const data = await searchTeams(q, leagueId, signal);
+        const data = await searchTeams(normalizedQuery, leagueId, signal);
         r = data.results || [];
       } else if (searchType === 'leagues') {
-        const data = await searchLeagues(q, signal);
+        const data = await searchLeagues(normalizedQuery, signal);
         r = data.leagues || [];
       } else if (searchType === 'players') {
-        const data = await searchPlayersQuick(q, leagueId, ownerSession, signal);
+        const data = await searchPlayersQuick(normalizedQuery, leagueId, ownerSession, signal);
         r = (data.players || []).map((p: any) => ({
           playerId: (p.id as number) || 0,
           playerName: (p.fullName as string) || (p.name as string) || '',
@@ -253,7 +256,7 @@ export default function FuzzySearchInput({
             ownerTeamLogo: p.ownerTeamLogo || '',
             raw: p,
           }));
-          const qWords = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+          const qWords = normalizedQuery.toLowerCase().split(/\s+/).filter(Boolean);
           universalRows.push(...mapped.filter(p => p.playerName).filter(p => {
             if (sport === 'soccer' || qWords.length < 2) return true;
             return qWords.every(w => p.playerName.toLowerCase().includes(w));
@@ -267,21 +270,21 @@ export default function FuzzySearchInput({
         const providerPromises: Promise<unknown>[] = [];
         if (!sportFilter || sportFilter === 'soccer') {
           providerPromises.push(
-            searchPlayersQuick(q, leagueId, ownerSession, signal)
+            searchPlayersQuick(normalizedQuery, leagueId, ownerSession, signal)
               .then(data => addUniversalRows('soccer', data.players || []))
               .catch(() => {}),
           );
         }
         if (!sportFilter || sportFilter === 'mlb') {
           providerPromises.push(
-            searchMlbPlayers(q, signal)
+            searchMlbPlayers(normalizedQuery, signal)
               .then(rows => addUniversalRows('mlb', rows))
               .catch(() => {}),
           );
         }
         if (!sportFilter || sportFilter === 'nfl') {
           providerPromises.push(
-            searchNflPlayers(q, signal)
+            searchNflPlayers(normalizedQuery, signal)
               .then(rows => addUniversalRows('nfl', rows))
               .catch(() => {}),
           );
@@ -289,19 +292,19 @@ export default function FuzzySearchInput({
         await Promise.allSettled(providerPromises);
         r = universalRows;
       } else if (searchType === 'cs2_players') {
-        r = (await searchCs2Players(q, signal)).filter((p: Cs2Player) => p.isActive !== false);
+        r = (await searchCs2Players(normalizedQuery, signal)).filter((p: Cs2Player) => p.isActive !== false);
       } else if (searchType === 'cs2_teams') {
-        r = await searchCs2Teams(q, signal);
+        r = await searchCs2Teams(normalizedQuery, signal);
       } else if (searchType === 'wta_players') {
-        r = await searchWtaPlayers(q, signal);
+        r = await searchWtaPlayers(normalizedQuery, signal);
       } else if (searchType === 'nba_players') {
-        r = await searchNbaPlayers(q, signal);
+        r = await searchNbaPlayers(normalizedQuery, signal);
       } else if (searchType === 'nhl_players') {
-        r = await searchNhlPlayers(q, signal);
+        r = await searchNhlPlayers(normalizedQuery, signal);
       } else if (searchType === 'mlb_players') {
-        r = await searchMlbPlayers(q, signal);
+        r = await searchMlbPlayers(normalizedQuery, signal);
       } else if (searchType === 'nfl_players') {
-        r = await searchNflPlayers(q, signal);
+        r = await searchNflPlayers(normalizedQuery, signal);
       }
       // A response must still belong to the exact text currently in the
       // control. Selection and clear actions can update the parent value
@@ -356,9 +359,16 @@ export default function FuzzySearchInput({
     // so the user gets instant feedback that something is happening.
     if (!staticItems) setLoading(true);
     const isRateLimitedPlayerSearch = searchType === 'mlb_players' || searchType === 'nfl_players';
+    const isInteractivePlayerSearch = searchType === 'players' || searchType === 'all_players';
     // Give the user time to finish a name before hitting the provider. The
     // API layer also filters recent results locally for subsequent letters.
-    const delay = staticItems ? 60 : isRateLimitedPlayerSearch ? 400 : DEBOUNCE_MS;
+    const delay = staticItems
+      ? 60
+      : isRateLimitedPlayerSearch
+        ? 400
+        : isInteractivePlayerSearch
+          ? PLAYER_SEARCH_DEBOUNCE_MS
+          : DEBOUNCE_MS;
     debounceRef.current = setTimeout(() => {
       if (lastQueryRef.current === text) doSearch(text);
     }, delay);
@@ -370,7 +380,10 @@ export default function FuzzySearchInput({
     requestAbortRef.current?.abort();
   }, []);
 
-  const dismiss = () => { setShowDropdown(false); };
+  const dismiss = () => {
+    explicitDismissRef.current = true;
+    setShowDropdown(false);
+  };
 
   const handleSelectTeam = (item: TeamSearchResult) => {
     onChangeText(item.teamName); dismiss(); setResults([]);
@@ -628,7 +641,21 @@ export default function FuzzySearchInput({
           autoCapitalize={autoCapitalize}
           returnKeyType={returnKeyType}
           onSubmitEditing={() => { dismiss(); onSubmitEditing?.(); }}
-          onFocus={() => { if (!confirmed && value.length >= 2 && results.length > 0) setShowDropdown(true); }}
+          onFocus={() => {
+            explicitDismissRef.current = false;
+            if (!confirmed && value.length >= 2 && (results.length > 0 || hasSearched || searchError)) {
+              setShowDropdown(true);
+            }
+          }}
+          onBlur={() => {
+            // Keyboard dismissal and list scrolling blur the input on iOS.
+            // Neither action means the user wants to lose the names already
+            // loaded, so keep the dropdown open until they select, clear, or
+            // submit explicitly.
+            if (!explicitDismissRef.current && !confirmed && value.length >= 2 && (results.length > 0 || hasSearched || searchError)) {
+              setShowDropdown(true);
+            }
+          }}
           editable={!confirmed}
         />
         {!loading && value.length > 0 && (

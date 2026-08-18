@@ -10,6 +10,103 @@ from utils import api_football_request, priority_api_football_request, is_quota_
 
 router = APIRouter(prefix="/api", tags=["players"])
 
+_SEARCH_HOT_PLAYERS: dict[int, dict] = {}
+_SEARCH_HOT_PLAYER_TIMES: dict[int, float] = {}
+_SEARCH_HOT_QUERIES: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
+_SEARCH_HOT_TTL_SECONDS = 15 * 60
+_SEARCH_HOT_MAX_PLAYERS = 5000
+
+
+def _hot_query_key(query: str, league_id: int | None) -> tuple[str, int | None]:
+    clean = unicodedata.normalize("NFD", query.lower().strip())
+    clean = "".join(
+        char for char in clean
+        if unicodedata.category(char) != "Mn"
+    )
+    clean = re.sub(r"[^a-z0-9 ]+", " ", clean)
+    return (" ".join(clean.split()), league_id)
+
+
+def _remember_hot_players(players: list[dict]) -> None:
+    """Keep recently resolved identities available without another Atlas read."""
+    now = time.monotonic()
+    for player in players:
+        pid = player.get("id") or player.get("playerId")
+        if not pid or not (player.get("name") or player.get("fullName")):
+            continue
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            continue
+        _SEARCH_HOT_PLAYERS[pid] = dict(player)
+        _SEARCH_HOT_PLAYER_TIMES[pid] = now
+
+    if len(_SEARCH_HOT_PLAYERS) > _SEARCH_HOT_MAX_PLAYERS:
+        expired = sorted(
+            _SEARCH_HOT_PLAYER_TIMES,
+            key=_SEARCH_HOT_PLAYER_TIMES.get,
+        )[: len(_SEARCH_HOT_PLAYERS) - _SEARCH_HOT_MAX_PLAYERS]
+        for pid in expired:
+            _SEARCH_HOT_PLAYERS.pop(pid, None)
+            _SEARCH_HOT_PLAYER_TIMES.pop(pid, None)
+
+
+def _remember_hot_query(query: str, league_id: int | None, players: list[dict]) -> None:
+    if players:
+        _SEARCH_HOT_QUERIES[_hot_query_key(query, league_id)] = (
+            time.monotonic(),
+            [dict(player) for player in players],
+        )
+
+
+def _hot_exact_query(query: str, league_id: int | None) -> list[dict]:
+    key = _hot_query_key(query, league_id)
+    cached = _SEARCH_HOT_QUERIES.get(key)
+    if not cached:
+        return []
+    updated, players = cached
+    if time.monotonic() - updated > _SEARCH_HOT_TTL_SECONDS:
+        _SEARCH_HOT_QUERIES.pop(key, None)
+        return []
+    return [dict(player) for player in players]
+
+
+def _hot_player_matches(query: str, league_id: int | None) -> list[dict]:
+    """Return local identity matches for a previously resolved search."""
+    clean_query = unicodedata.normalize("NFD", query.lower().strip())
+    clean_query = "".join(
+        char for char in clean_query
+        if unicodedata.category(char) != "Mn"
+    )
+    words = [word for word in re.sub(r"[^a-z0-9 ]+", " ", clean_query).split() if word]
+    if not words:
+        return []
+
+    now = time.monotonic()
+    matches: list[dict] = []
+    for pid, player in list(_SEARCH_HOT_PLAYERS.items()):
+        updated = _SEARCH_HOT_PLAYER_TIMES.get(pid, 0)
+        if now - updated > _SEARCH_HOT_TTL_SECONDS:
+            _SEARCH_HOT_PLAYERS.pop(pid, None)
+            _SEARCH_HOT_PLAYER_TIMES.pop(pid, None)
+            continue
+        if league_id and player.get("leagueId") not in {league_id, 0, None}:
+            continue
+        name = player.get("name") or player.get("fullName") or ""
+        name_clean = unicodedata.normalize("NFD", str(name).lower())
+        name_clean = "".join(
+            char for char in name_clean
+            if unicodedata.category(char) != "Mn"
+        )
+        name_clean = re.sub(r"[^a-z0-9 ]+", " ", name_clean)
+        if all(
+            word in name_clean or (len(word) >= 6 and word[:-1] in name_clean)
+            for word in words
+        ):
+            matches.append(dict(player))
+    return matches
+
+
 # Tournament / cup leagues — players aren't stored in cache under these IDs
 # (e.g. Messi is cached under his club league, not under World Cup league 1)
 _TOURNAMENT_LEAGUES = {1, 9, 10, 11, 13, 15, 16, 17, 18}
@@ -84,6 +181,28 @@ async def _search_players_cache(
         name_filt: dict = {"nameClean": {"$regex": _flex_regex(parts[0])}}
     else:
         name_filt = {"$and": [{"nameClean": {"$regex": _flex_regex(w)}} for w in parts]}
+
+    # The normal cache query supports arbitrary substrings, but that forces
+    # MongoDB to scan the collection. The typing path only needs token-prefix
+    # identity matching; anchoring the first token lets the nameClean index
+    # answer common first-name and surname searches without a collection scan.
+    if fast:
+        if len(parts) == 1:
+            name_filt = {
+                "nameClean": {
+                    "$regex": rf"(^| ){_flex_regex(parts[0])}"
+                }
+            }
+        elif parts:
+            name_filt = {
+                "$and": [
+                    {"nameClean": {"$regex": rf"^{_flex_regex(parts[0])}"}},
+                    *[
+                        {"nameClean": {"$regex": _flex_regex(word)}}
+                        for word in parts[1:]
+                    ],
+                ]
+            }
 
     # Don't filter cache by tournament/cup league IDs — players are stored
     # under their club leagues, not the competition they appeared in.
@@ -723,6 +842,17 @@ async def search_players(req: PlayerSearchRequest):
             player_list = [p for p in player_list if sort_key(p)[0] == 0]
         return player_list[:15]
 
+    hot_league_id = None if req.league_id in _TOURNAMENT_LEAGUES else req.league_id
+    hot_results = _hot_exact_query(req.query, hot_league_id)
+    if hot_results:
+        return {"players": await _attach_owner_media(hot_results)}
+
+    hot_results = _hot_player_matches(req.query, hot_league_id)
+    if hot_results:
+        hot_results = _apply_sort_and_quality(hot_results)
+        if hot_results:
+            return {"players": await _attach_owner_media(hot_results)}
+
     async def _durable_identity_fallback() -> list[dict]:
         """Recover known player identities when provider/cache search is empty.
 
@@ -924,7 +1054,10 @@ async def search_players(req: PlayerSearchRequest):
     # fields masked, and returning them first made a valid player such as
     # Vitinha look like an unverified, context-free result even when a live
     # profile could resolve the current club.
-    durable_players = await _durable_identity_fallback()
+    # Durable identity recovery is a last-resort fallback, not part of the
+    # keystroke path. Its Atlas lookup can take hundreds of milliseconds even
+    # when the warm identity index already has the answer.
+    durable_players: list[dict] = []
 
     async def _resolve_club_for_intl_player(p: dict) -> dict:
         """If a cache hit shows a national team, fetch the player's actual club
@@ -1114,7 +1247,16 @@ async def search_players(req: PlayerSearchRequest):
             ),
             timeout=0.85,
         )
-        if cache_results:
+        # A single-word cache prefix is not sufficient to stop the provider
+        # lookup. For example, "Cristiano" can hit cached "Cristian ..." rows
+        # before the exact Cristiano Ronaldo row is available in the cache.
+        # Let the bounded provider path resolve the literal name instead of
+        # returning a misleading partial list.
+        cache_has_exact_single_word = (
+            len(query_parts) != 1
+            or any(sort_key(player)[0] == 0 for player in cache_results)
+        )
+        if cache_results and cache_has_exact_single_word:
             # Cache-first results can be abbreviated squad records. Resolve a
             # small bounded set after the response so profile enrichment never
             # makes the name dropdown wait on several API calls.
@@ -1144,79 +1286,10 @@ async def search_players(req: PlayerSearchRequest):
                             pass
                     aio.ensure_future(_background_abbrev_enrichment(abbreviated))
             sorted_results = _apply_sort_and_quality(cache_results)
-            # Older squad-cache rows may have the right club/photo but no
-            # nationality. Fill that metadata with one bounded profiles
-            # request, then persist it so this is not repeated on every
-            # keystroke. The lookup is optional and never blocks the search
-            # longer than the interactive budget.
-            missing_nationality = [
-                p for p in sorted_results[:15] if not p.get("nationality")
-            ]
-            if missing_nationality and not quota_gone:
-                try:
-                    profile_data = await aio.wait_for(
-                        search_api_request("players/profiles", {"search": req.query}),
-                        timeout=0.65,
-                    )
-                    profile_by_id = {}
-                    for item in profile_data or []:
-                        profile = extract_player(item)
-                        if profile.get("id"):
-                            profile_by_id[profile["id"]] = profile
-                    metadata_updates = []
-                    for player in missing_nationality:
-                        profile = profile_by_id.get(player.get("id"))
-                        if not profile:
-                            continue
-                        provider_name = (
-                            profile.get("fullName")
-                            or profile.get("name")
-                            or ""
-                        ).strip()
-                        if provider_name:
-                            player["name"] = provider_name
-                            player["fullName"] = provider_name
-                            player["firstname"] = provider_name.split()[0]
-                            player["lastname"] = provider_name.split()[-1]
-                        player["nationality"] = profile.get("nationality") or ""
-                        player["photo"] = player.get("photo") or profile.get("photo") or ""
-                        if provider_name or player["nationality"] or player["photo"]:
-                            metadata_updates.append((
-                                player["id"],
-                                player["nationality"],
-                                player["photo"],
-                                provider_name,
-                            ))
-                    if metadata_updates:
-                        async def _persist_search_metadata(updates):
-                            try:
-                                from cache import COL_PLAYERS
-                                for pid, nationality, photo, provider_name in updates:
-                                    fields = {"nationality": nationality}
-                                    if photo:
-                                        fields["photo"] = photo
-                                    if provider_name:
-                                        from utils import strip_accents
-                                        fields.update({
-                                            "name": provider_name,
-                                            "fullName": provider_name,
-                                            "nameLower": provider_name.lower(),
-                                            "nameClean": strip_accents(provider_name.lower()),
-                                            "firstNameClean": strip_accents(
-                                                provider_name.split()[0].lower()
-                                            ),
-                                        })
-                                    await db[COL_PLAYERS].update_many(
-                                        {"playerId": pid},
-                                        {"$set": fields},
-                                    )
-                            except Exception as exc:
-                                print(f"[PLAYER SEARCH] metadata cache write skipped: {exc}")
-                        aio.ensure_future(_persist_search_metadata(metadata_updates))
-                except (aio.TimeoutError, TimeoutError):
-                    print(f"[PLAYER SEARCH] metadata lookup exceeded 650ms for {req.query!r}")
-                except Exception as exc:
-                    print(f"[PLAYER SEARCH] metadata lookup failed for {req.query!r}: {exc}")
+            # Do not enrich nationality/photo on the typing path. Identity,
+            # club, and position are already available from the warm index;
+            # optional provider metadata belongs after selection, never before
+            # the dropdown can render.
             # Background enrichment: if any top result still shows a national/intl
             # league entry (meaning no club entry won the dedup), fire club resolution
             # off the hot path — this request still returns quickly, but the NEXT
@@ -1251,6 +1324,8 @@ async def search_players(req: PlayerSearchRequest):
                                 print(f"[BG-CLUB-STALE] pid={p.get('id')} err={_e}")
                     aio.ensure_future(_bg_refresh_stale(stale_club_hits))
 
+            _remember_hot_players(sorted_results)
+            _remember_hot_query(req.query, hot_league_id, sorted_results)
             return {"players": await _attach_owner_media(sorted_results)}
     except (aio.TimeoutError, TimeoutError):
         print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")
@@ -1260,6 +1335,7 @@ async def search_players(req: PlayerSearchRequest):
     # If quota is gone, try last-name cache fallback then BDL search before giving up.
     # Handles abbreviated cached names like "R. Jiménez" when user types "Raul Jimenez".
     if quota_gone:
+        durable_players = await _durable_identity_fallback()
         if " " in req.query.strip():
             last_word = req.query.strip().split()[-1]
             if len(last_word) >= 3:
@@ -1281,6 +1357,8 @@ async def search_players(req: PlayerSearchRequest):
             bdl_hits = await aio.wait_for(search_bdl_players(req.query), timeout=1.25)
             if bdl_hits:
                 bdl_players = _apply_sort_and_quality(bdl_hits)
+                _remember_hot_players(bdl_players)
+                _remember_hot_query(req.query, hot_league_id, bdl_players)
                 return {"players": _mask_unverified_team(await _attach_owner_media(bdl_players))}
         except (aio.TimeoutError, TimeoutError):
             print(f"[PLAYER SEARCH] BDL lookup exceeded 1250ms for {req.query!r}")
@@ -1327,6 +1405,8 @@ async def search_players(req: PlayerSearchRequest):
     # identity match. That extra lookup was invisible in the response but put
     # the legacy iOS client's five-second typing timeout on the edge.
     if _apply_sort_and_quality(list(live_players)):
+        _remember_hot_players(live_players)
+        _remember_hot_query(req.query, hot_league_id, live_players)
         return {"players": _mask_unverified_team(await _attach_owner_media(live_players))}
 
     # API-Football's profile search does not reliably understand a full
@@ -1563,6 +1643,8 @@ async def search_players(req: PlayerSearchRequest):
             print(f"[PLAYER SEARCH] exact context lookup failed for {req.query!r}: {exc}")
 
     live_players = _apply_sort_and_quality(live_players)
+    _remember_hot_players(live_players)
+    _remember_hot_query(req.query, hot_league_id, live_players)
     return {"players": _mask_unverified_team(await _attach_owner_media(live_players))}
 
     all_players = []
