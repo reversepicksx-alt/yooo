@@ -120,7 +120,6 @@
 - [Live projection display](live-projection-display.md) — keep saved PROJ visible; NOW and PACE are separate live context, never a replacement.
 - [Tactical evidence provenance](tactical-evidence-provenance.md) — provider-observed roles and exact sample-labeled opponent/cohort evidence prevent generic or overstated tactical explanations.
 - [Prediction synthesis scope](prediction-synthesis-scope.md) — evidence assembly precedes prediction creation; final-direction metadata must wait until deterministic synthesis completes.
-- [Bzzoiro enrichment boundary](bzzoiro-enrichment-boundary.md) — optional lineup/position/stat enrichment uses name-bridged exact fixtures; its defensive-actions proxy is not true PPDA and stays shadow-only.
 - [Press Intensity](press-intensity.md) — API-Football synthetic pressure uses cached per-opponent recent-match profiles; missing evidence stays unavailable and projection influence remains bounded.
 - [Historical evidence replay limits](historical-evidence-replay.md) — separate prediction reruns from evidence coverage; preserve provider date-coverage and rate-limit reasons.
 - [Prediction response identity](prediction-response-identity.md) — normalize explicit null identity fields at the final response boundary, not only missing keys.
@@ -151,3 +150,4 @@
 - [Passing correlation diagnostics](passing-correlation-diagnostics.md) — same-fixture picks are correlated evidence; exact-time settlement ties need deterministic ordering, not false leakage violations.
 - [Lissa voice lifecycle](lissa-voice-lifecycle.md) — supervise segmented recognition and wait for speech completion before restarting so Lissa does not freeze or hear her own answer.
 - [Sport selector visibility](sport-selector-visibility.md) — keep sport selection for setup, but hide the selector once a player prediction enters analysis/results.
+- [Retired integration secrets](retired-integration-secrets.md) — removing an integration from code does not remove its secret inventory entry; verify no runtime reads and handle secret deletion separately.

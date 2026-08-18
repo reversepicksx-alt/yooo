@@ -31,7 +31,6 @@ Current deterministic test modules (all pass, no network needed):
 | Module | What it checks |
 |--------|---------------|
 | `test_bayesian_engine.py` | Covariate caps, momentum, streak detection, variance, edge cases |
-| `test_bzzoiro_client.py` | Bzzoiro press-proxy calculation and event matching |
 | `test_calibration_alerts.py` | Calibration alert thresholds |
 | `test_fusion.py` | Tactical route deterministic-policy contract |
 | `test_lineup_response_shape.py` | Lineup API response shape |
