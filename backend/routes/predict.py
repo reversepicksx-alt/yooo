@@ -63,10 +63,10 @@ router = APIRouter(prefix="/api", tags=["predict"])
 _VENUE_HISTORY_TARGET = 30
 # Customer-facing Recent Matches is a complete archive, not the model's
 # venue-scoped prior. Keep enough rows to make the archive useful on mobile;
-# provider gaps may make 35 the honest floor, but never intentionally stop at
-# the old 10/15/25-row samples.
+# provider gaps may make a shorter result unavoidable, but never intentionally
+# stop at the old 10/15/25-row samples.
 _RECENT_ARCHIVE_TARGET = 50
-_RECENT_ARCHIVE_MIN = 45
+_RECENT_ARCHIVE_MIN = 35
 # A verified cache sample at this size is sufficient for the deterministic
 # projection. Larger archive/venue targets remain useful context, but must not
 # force a provider fan-out before the core prediction can return.
@@ -5644,9 +5644,9 @@ async def predict(req: PredictionRequest):
                     key=lambda fixture: (fixture.get("fixture") or {}).get("date", ""),
                     reverse=True,
                 )
-                # Keep the request bounded while leaving enough room to
-                # produce a 15+ player-appearance sample after DNPs.
-                return candidates[:28]
+                # Keep the optional knockout search bounded, but leave enough
+                # room to contribute to the 35-appearance customer archive.
+                return candidates[:50]
             except Exception as _history_fixture_err:
                 print(
                     f"[HISTORY FIXTURES] {team_id} lookup failed: "
@@ -5694,14 +5694,12 @@ async def predict(req: PredictionRequest):
                 extra_fixture_list=None,
             )
             # A usable cache is enough for the deterministic core, but it is
-            # not enough for the customer-facing archive.  Expand the archive
-            # in a separate bounded pass so 8-11 cached appearances do not
-            # silently become the entire history card.  If the provider is
-            # slow, preserve the real cached core rather than replacing it with
-            # a synthetic or partial result.
-            if len(_initial_logs or []) >= _PREDICTION_FAST_CACHE_MIN:
+            # not enough for the customer-facing archive. Always expand below
+            # the 35-appearance floor so 8-11 cached rows do not silently
+            # become the entire history card.
+            if len(_initial_logs or []) < _RECENT_ARCHIVE_MIN:
                 _archive_timeout = min(
-                    11.0,
+                    14.0,
                     max(2.0, _PREDICTION_RESPONSE_BUDGET - _prediction_elapsed()),
                 )
                 try:
@@ -5715,7 +5713,7 @@ async def predict(req: PredictionRequest):
                         ),
                         timeout=_archive_timeout,
                     )
-                    if len(_expanded_logs or []) > len(_initial_logs or []):
+                    if len(_expanded_logs or []) >= _RECENT_ARCHIVE_MIN or len(_expanded_logs or []) > len(_initial_logs or []):
                         print(
                             f"[PLAYER HISTORY] archive expanded "
                             f"{len(_initial_logs or [])}→{len(_expanded_logs or [])} "
@@ -5729,13 +5727,6 @@ async def predict(req: PredictionRequest):
                         f"{len(_initial_logs or [])} cached rows: "
                         f"{type(_archive_err).__name__}"
                     )
-                await _stop_history_task()
-                return _initial_logs
-
-            # The cache-first loader may preserve a partial verified sample
-            # after its optional provider work is cancelled. Never resume
-            # waiting on the multi-season task in that case.
-            if _prediction_elapsed() >= 7.0:
                 await _stop_history_task()
                 return _initial_logs
 
@@ -5952,7 +5943,10 @@ async def predict(req: PredictionRequest):
         required_wave2 = aio.gather(
             _bounded_required(team_fixture_stats_task, "team fixture stats", 5),
             _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 5),
-            _bounded_required(player_game_logs_task, "player game logs", 8),
+            # A short cache is enough for the model, but the customer archive
+            # has a 35-appearance floor. Give this one source enough of the
+            # response budget to complete its bounded archive pass.
+            _bounded_required(player_game_logs_task, "player game logs", 18),
             _bounded_required(situation_task, "match situation", 5),
             _bounded_required(
                 team_schedule_possession_task,
@@ -6438,7 +6432,12 @@ async def predict(req: PredictionRequest):
                             _sval = _g.get(_bdl_gl_key)
                             if _sval is not None and _mins > 0:
                                 _g["targetStatPer90"] = round((_sval / _mins) * 90, 2)
-                        player_game_logs = _bdl_logs
+                        # Do not replace a larger exact API-Football archive
+                        # with a shorter BDL sample. BDL remains useful when
+                        # it is the larger verified source or the API archive
+                        # is empty.
+                        if len(_bdl_logs) >= len(player_game_logs or []):
+                            player_game_logs = _bdl_logs
                         print(f"[BDL-SOCCER] {req.playerName}/{req.propType}: "
                               f"{len(_bdl_logs)} logs, {_useful} with {_bdl_gl_key} "
                               f"(league {league_id})")
@@ -6455,7 +6454,11 @@ async def predict(req: PredictionRequest):
         # recent fixtures directly from the API by player ID — no team cache needed.
         # Skipped for BDL leagues — BDL is the sole source, no API-Football fallback.
         # =============================================
-        if not player_game_logs and req.playerId and not _is_bdl_league:
+        if (
+            len(player_game_logs or []) < _RECENT_ARCHIVE_MIN
+            and req.playerId
+            and not _is_bdl_league
+        ):
             _gl_field_map2 = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
@@ -6689,6 +6692,8 @@ async def predict(req: PredictionRequest):
                             if not minutes or minutes == 0:
                                 return None
                             gl["date"] = fix_date
+                            gl["fixtureId"] = fid
+                            gl["_fid"] = str(fid)
                             gl["opponent"] = fix_opponent
                             gl["venue"] = player_fix_venue
                             gl["score"] = f"{home_goals}-{away_goals}"
@@ -6715,13 +6720,13 @@ async def predict(req: PredictionRequest):
                     # This is a recovery path after the primary history loader
                     # missed. Keep it bounded so provider throttling cannot
                     # turn one prediction into 40 player/stat/possession calls.
-                    _pf_rows = list(_player_fixtures_raw)[:16]
+                    _pf_rows = list(_player_fixtures_raw)[:50]
                     _pf_tasks = [_fetch_player_fix_stats(fx) for fx in _pf_rows]
                     try:
                         _pf_results = await aio.wait_for(
                             aio.gather(*_pf_tasks, return_exceptions=True),
                             timeout=min(
-                                5.0,
+                                10.0,
                                 max(0.5, _PREDICTION_RESPONSE_BUDGET - _prediction_elapsed()),
                             ),
                         )
@@ -6731,9 +6736,20 @@ async def predict(req: PredictionRequest):
                             "fixture-stat recovery timed out after 8s"
                         )
                         _pf_results = []
+                    _existing_history_ids = {
+                        str(_row.get("_fid") or _row.get("fixtureId"))
+                        for _row in (player_game_logs or [])
+                        if isinstance(_row, dict)
+                        and (_row.get("_fid") or _row.get("fixtureId"))
+                    }
                     for r in _pf_results:
                         if r and not isinstance(r, Exception):
+                            _row_id = str(r.get("_fid") or r.get("fixtureId") or "")
+                            if _row_id and _row_id in _existing_history_ids:
+                                continue
                             player_game_logs.append(r)
+                            if _row_id:
+                                _existing_history_ids.add(_row_id)
 
                     if player_game_logs:
                         print(f"[PLAYER-DIRECT] {req.playerName}/{req.propType}: fetched {len(player_game_logs)} real game logs via player API")
@@ -7887,6 +7903,22 @@ async def predict(req: PredictionRequest):
                     )[:_RECENT_ARCHIVE_TARGET],
                 "targetProp": req.propType,
                 "sampleSize": len(values),
+                "appearanceCount": len(player_game_logs),
+                "archiveTarget": _RECENT_ARCHIVE_TARGET,
+                "archiveMinimum": _RECENT_ARCHIVE_MIN,
+                "archiveStatus": (
+                    "sufficient"
+                    if len(player_game_logs) >= _RECENT_ARCHIVE_MIN
+                    else "insufficient_provider_data"
+                ),
+                "archiveReason": (
+                    None
+                    if len(player_game_logs) >= _RECENT_ARCHIVE_MIN
+                    else (
+                        "The provider returned fewer than 35 completed "
+                        "player appearances; no rows were fabricated."
+                    )
+                ),
                 "last10Count": len(_last10_logs),
                 "tpHomeAvg": round(sum(_tp_home) / len(_tp_home), 1) if _tp_home else None,
                 "tpAwayAvg": round(sum(_tp_away) / len(_tp_away), 1) if _tp_away else None,

@@ -297,10 +297,21 @@ _wta_settle_last_attempt: dict[str, float] = {}
 _wta_settle_locks:        dict[str, aio.Lock] = {}
 WTA_SETTLE_COOLDOWN_SEC = 300
 
+# User-triggered soccer settlement confirmation may run at the same time as
+# the pull-based list settler. Keep the exact-fixture/provider refresh
+# serialized per saved pick so the two writes cannot overwrite each other.
+_soccer_settle_locks: dict[str, aio.Lock] = {}
+
 def _wta_settle_lock(pick_id: str) -> aio.Lock:
     if pick_id not in _wta_settle_locks:
         _wta_settle_locks[pick_id] = aio.Lock()
     return _wta_settle_locks[pick_id]
+
+
+def _soccer_settle_lock(pick_id: str) -> aio.Lock:
+    if pick_id not in _soccer_settle_locks:
+        _soccer_settle_locks[pick_id] = aio.Lock()
+    return _soccer_settle_locks[pick_id]
 
 
 @router.post("/picks/cs2/admin-manual-settle")
@@ -5280,9 +5291,194 @@ async def settle_picks(req: SettlePicksRequest):
     return {"settled": settled}
 
 
-async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, league_id):
+@router.post("/picks/{pick_id}/refresh-settlement")
+async def refresh_pick_settlement(pick_id: str, payload: dict):
+    """Re-confirm one saved soccer pick from a fresh exact provider snapshot.
+
+    This is deliberately separate from refresh-analysis: it re-reads the
+    saved fixture and player IDs, bypasses API-Football's response cache, and
+    persists the provider-confirmed value/outcome. The client can never supply
+    the actual stat or result.
+    """
+    email = str(payload.get("email") or "").lower().strip()
+    token = payload.get("token") or ""
+    requested_id = str(payload.get("pickId") or pick_id)
+    if not email or not token or requested_id != str(pick_id):
+        raise HTTPException(status_code=400, detail="email, token and matching pickId required")
+
+    session = await db.sessions.find_one(
+        {"email": email, "session_token": token},
+        {"_id": 0},
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    pick = await db.picks.find_one(
+        {"email": email, "pickId": str(pick_id)},
+        {"_id": 0},
+    )
+    if not pick:
+        raise HTTPException(status_code=404, detail="pick not found")
+    if str(pick.get("sport") or "").lower() != "soccer":
+        raise HTTPException(
+            status_code=400,
+            detail="Settlement confirmation is only available for soccer picks",
+        )
+
+    fixture_id = pick.get("fixtureId")
+    player_id = pick.get("playerId")
+    if fixture_id is None or player_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This saved pick is missing its exact fixture or player identity",
+        )
+
+    try:
+        fixture_id = int(fixture_id)
+        player_id = int(player_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=409,
+            detail="This saved pick has an invalid fixture or player identity",
+        )
+
+    try:
+        team_id = int(pick.get("teamId")) if pick.get("teamId") is not None else None
+    except (TypeError, ValueError):
+        team_id = None
+    try:
+        league_id = int(pick.get("leagueId")) if pick.get("leagueId") is not None else 0
+    except (TypeError, ValueError):
+        league_id = 0
+
+    lock = _soccer_settle_lock(str(pick_id))
+    async with lock:
+        current = await db.picks.find_one(
+            {"email": email, "pickId": str(pick_id)},
+            {"_id": 0},
+        )
+        if not current:
+            raise HTTPException(status_code=404, detail="pick not found")
+
+        before = {
+            "status": current.get("status"),
+            "result": current.get("result"),
+            "actualValue": current.get("actualValue"),
+            "settlementSource": current.get("settlementSource"),
+        }
+        settlement_pick = dict(current)
+        settlement_pick["id"] = str(pick_id)
+        settlement_pick["fixtureId"] = fixture_id
+        settlement_pick["playerId"] = player_id
+
+        confirmed = await _settle_soccer_pick(
+            settlement_pick,
+            team_id,
+            player_id,
+            current.get("opponentName") or current.get("opponent") or "",
+            current.get("propType") or "",
+            league_id,
+            force_refresh=True,
+        )
+        source = (confirmed or {}).get("settlementSource") or {}
+        if (
+            not confirmed
+            or confirmed.get("actualValue") is None
+            or source.get("verified") is not True
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Fresh provider data did not contain a verified finished "
+                    "fixture/player stat. The saved result was not changed."
+                ),
+            )
+
+        refreshed_at = datetime.now(timezone.utc).isoformat()
+        after = {
+            "status": "settled",
+            "result": confirmed.get("result"),
+            "actualValue": confirmed.get("actualValue"),
+            "minutesPlayed": confirmed.get("minutesPlayed"),
+            "fixtureId": confirmed.get("fixtureId") or fixture_id,
+            "settlementSource": source,
+        }
+        repair_entry = {
+            "confirmedAt": refreshed_at,
+            "forcedProviderRefresh": True,
+            "before": before,
+            "after": after,
+        }
+        update_fields = {
+            "status": "settled",
+            "result": confirmed.get("result"),
+            "actualValue": confirmed.get("actualValue"),
+            "minutesPlayed": confirmed.get("minutesPlayed"),
+            "fixtureId": confirmed.get("fixtureId") or fixture_id,
+            "fixtureDate": confirmed.get("fixtureDate") or current.get("fixtureDate"),
+            "matchScore": confirmed.get("matchScore"),
+            "homeTeam": confirmed.get("homeTeam"),
+            "awayTeam": confirmed.get("awayTeam"),
+            "finalHomeGoals": confirmed.get("finalHomeGoals"),
+            "finalAwayGoals": confirmed.get("finalAwayGoals"),
+            "homePoss": confirmed.get("homePoss"),
+            "awayPoss": confirmed.get("awayPoss"),
+            "oppAvgPoss": confirmed.get("oppAvgPoss"),
+            "settlementSource": source,
+            "settledAt": refreshed_at,
+            "settlementRefreshedAt": refreshed_at,
+        }
+        if confirmed.get("passOutcome"):
+            update_fields["passOutcome"] = confirmed["passOutcome"]
+
+        await db.picks.update_one(
+            {"email": email, "pickId": str(pick_id)},
+            {
+                "$set": update_fields,
+                "$unset": {"settlementReview": ""},
+                "$push": {
+                    "settlementRefreshHistory": {
+                        "$each": [repair_entry],
+                        "$slice": -5,
+                    },
+                },
+            },
+        )
+
+        return {
+            "ok": True,
+            "confirmed": True,
+            "changed": (
+                before.get("result") != after.get("result")
+                or before.get("actualValue") != after.get("actualValue")
+                or before.get("status") != after.get("status")
+            ),
+            "pickId": str(pick_id),
+            "fixtureId": after["fixtureId"],
+            "playerId": player_id,
+            "propType": current.get("propType"),
+            "actualValue": after["actualValue"],
+            "result": after["result"],
+            "status": after["status"],
+            "minutesPlayed": after["minutesPlayed"],
+            "settlementSource": source,
+            "refreshedAt": refreshed_at,
+        }
+
+
+async def _settle_soccer_pick(
+    pick,
+    team_id,
+    player_id,
+    opponent,
+    prop_type,
+    league_id,
+    *,
+    force_refresh: bool = False,
+):
     """Settle a soccer pick — BDL path for BDL leagues, legacy path otherwise."""
     import soccer_bdl_client as _sbc
+    _api_request = priority_api_football_request if force_refresh else api_football_request
     # API-Football is the authoritative soccer settlement source. Explicit
     # legacy-review repairs must never fall back to the old BDL routes: those
     # endpoints are unauthorized/rate-limited for several mapped leagues and
@@ -5341,7 +5537,11 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         _player_seasons = [NWSL_SEASON] if league_id == NWSL_LEAGUE_ID else [CURRENT_SEASON, CURRENT_SEASON + 1]
         for s in _player_seasons:
             try:
-                pdata = await api_football_request("players", {"id": player_id, "season": s, "league": league_id})
+                pdata = await _api_request(
+                    "players",
+                    {"id": player_id, "season": s, "league": league_id},
+                    force_refresh=force_refresh,
+                )
                 if pdata:
                     stats_list = pdata[0].get("statistics", [])
                     if stats_list:
@@ -5377,8 +5577,10 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         # (and later by the player's row/stat), not by reusing that stale
         # opponent ID as a hard blocker.
         try:
-            exact_rows = await api_football_request(
-                "fixtures", {"id": int(stored_fixture_id)}
+            exact_rows = await _api_request(
+                "fixtures",
+                {"id": int(stored_fixture_id)},
+                force_refresh=force_refresh,
             ) or []
             exact = exact_rows[0] if exact_rows else None
             exact_status = (exact or {}).get("fixture", {}).get("status", {}).get("short", "")
@@ -5421,7 +5623,11 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
             _fix_params = {"team": team_id, "from": _p_from, "to": _p_to, "season": s}
             if league_id:
                 _fix_params["league"] = league_id
-            data = await api_football_request("fixtures", _fix_params)
+            data = await _api_request(
+                "fixtures",
+                _fix_params,
+                force_refresh=force_refresh,
+            )
             if data:
                 for f in data:
                     home = f.get("teams", {}).get("home", {}).get("name", "")
@@ -5466,7 +5672,11 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
 
     fixture_id = recent.get("fixture", {}).get("id")
     fixture_date = recent.get("fixture", {}).get("date", "")
-    fixture_players = await api_football_request("fixtures/players", {"fixture": fixture_id})
+    fixture_players = await _api_request(
+        "fixtures/players",
+        {"fixture": fixture_id},
+        force_refresh=force_refresh,
+    )
     actual_value = None
 
     minutes_played = 0

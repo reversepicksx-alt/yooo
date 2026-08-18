@@ -37,6 +37,7 @@ const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
 const MEDIUM_TIMEOUT_MS    = 15_000;
 const CS2_TIMEOUT_MS       = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
 const SHORT_TIMEOUT_MS     = 15_000;   // 15 s — all other API calls
+const SETTLEMENT_REFRESH_TIMEOUT_MS = 30_000;
 // Atlas can briefly take longer than a normal UI request on a cold connection.
 // The endpoint returns the durable snapshot before settlement work, so this is
 // a bounded database-read window rather than permission to wait on providers.
@@ -215,12 +216,15 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const isPlayerSearch = endpoint.startsWith(PLAYER_SEARCH_PATH);
   const isLissa = endpoint.startsWith('/api/lissa/');
   const isPicksList = endpoint === '/api/picks/list';
+  const isSettlementRefresh = endpoint.includes('/refresh-settlement');
   const isLong   = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const isMedium = MEDIUM_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const timeoutMs = isLissa
     ? LISSA_TIMEOUT_MS
     : isPicksList
       ? PICKS_LIST_TIMEOUT_MS
+    : isSettlementRefresh
+      ? SETTLEMENT_REFRESH_TIMEOUT_MS
     : isPlayerSearch
       ? PLAYER_SEARCH_TIMEOUT_MS
       : isCorePrediction(endpoint)
@@ -2314,6 +2318,13 @@ export interface Pick {
     verificationMethod?: string;
     recordedAt?: string;
   } | null;
+  settlementRefreshedAt?: string;
+  settlementRefreshHistory?: Array<{
+    confirmedAt?: string;
+    forcedProviderRefresh?: boolean;
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+  }>;
   minutesPlayed?: number | null;
   voidReason?: string | null;
   currentValue?: number | null;
@@ -2690,6 +2701,37 @@ export async function refreshPickAnalysis(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, token }),
+    },
+  );
+}
+
+export interface SettlementRefreshResult {
+  ok: boolean;
+  confirmed: boolean;
+  changed: boolean;
+  pickId: string;
+  fixtureId: number | string;
+  playerId: number | string;
+  propType?: string;
+  actualValue: number;
+  result: string;
+  status: string;
+  minutesPlayed?: number | null;
+  settlementSource?: Pick['settlementSource'];
+  refreshedAt: string;
+}
+
+export async function refreshPickSettlement(
+  email: string,
+  token: string,
+  pickId: string,
+): Promise<SettlementRefreshResult> {
+  return apiCall<SettlementRefreshResult>(
+    `/api/picks/${encodeURIComponent(pickId)}/refresh-settlement`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, token, pickId }),
     },
   );
 }

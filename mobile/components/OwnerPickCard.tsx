@@ -214,12 +214,14 @@ const pill = StyleSheet.create({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
-  pick, onDelete, onManagerBadgePress,
+  pick, onDelete, onManagerBadgePress, onRefreshSettlement, settlementRefreshing = false,
   ownerMediaEnabled = false, compact = false,
 }: {
   pick: Pick;
   onDelete?: () => void;
   onManagerBadgePress?: () => void;
+  onRefreshSettlement?: () => void;
+  settlementRefreshing?: boolean;
   ownerMediaEnabled?: boolean;
   compact?: boolean;
 }) {
@@ -230,6 +232,9 @@ export default function OwnerPickCard({
   const dnp = pickDnp(pick);
   const settled = isSettled(pick);
   const pendingReview = isPendingReview(pick);
+  const canRefreshSettlement = !!onRefreshSettlement
+    && (settled || pendingReview)
+    && (!pick.sport || String(pick.sport).toLowerCase() === 'soccer');
   const live = isLive(pick, clockNow);
   const pending = isPending(pick);
 
@@ -498,6 +503,20 @@ export default function OwnerPickCard({
                       : <Ionicons name="arrow-up-circle-outline" size={16} color={Colors.primary} />}
                   </TouchableOpacity>
                 )}
+                {canRefreshSettlement && !captureMode && (
+                  <TouchableOpacity
+                    onPress={onRefreshSettlement}
+                    style={styles.compactSettlementBtn}
+                    activeOpacity={0.7}
+                    disabled={settlementRefreshing}
+                    accessibilityLabel="Confirm final result from provider"
+                    accessibilityRole="button"
+                  >
+                    {settlementRefreshing
+                      ? <ActivityIndicator size="small" color={Colors.primary} />
+                      : <Ionicons name="checkmark-circle-outline" size={16} color={Colors.primary} />}
+                  </TouchableOpacity>
+                )}
                 <StatusPill
                   won={won} lost={lost} push={push} dnp={dnp}
                   live={live} pending={pending} pendingReview={pendingReview}
@@ -606,6 +625,20 @@ export default function OwnerPickCard({
                 {sharing
                   ? <ActivityIndicator size="small" color={Colors.primary} />
                   : <Ionicons name="arrow-up-circle-outline" size={17} color={Colors.primary} />}
+              </TouchableOpacity>
+            )}
+            {canRefreshSettlement && !captureMode && (
+              <TouchableOpacity
+                onPress={onRefreshSettlement}
+                style={styles.shareBtn}
+                activeOpacity={0.7}
+                disabled={settlementRefreshing}
+                accessibilityLabel="Confirm final result from provider"
+                accessibilityRole="button"
+              >
+                {settlementRefreshing
+                  ? <ActivityIndicator size="small" color={Colors.primary} />
+                  : <Ionicons name="checkmark-circle-outline" size={17} color={Colors.primary} />}
               </TouchableOpacity>
             )}
             <StatusPill
@@ -860,6 +893,10 @@ const styles = StyleSheet.create({
   compactShareBtn: {
     width: 22, height: 22, borderRadius: 11,
     backgroundColor: 'rgba(57,255,20,0.08)', alignItems: 'center', justifyContent: 'center',
+  },
+  compactSettlementBtn: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: 'rgba(57,255,20,0.14)', alignItems: 'center', justifyContent: 'center',
   },
   compactManagerDot: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
   compactTeamRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1, minWidth: 0 },

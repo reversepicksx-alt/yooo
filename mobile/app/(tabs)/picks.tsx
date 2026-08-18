@@ -31,6 +31,7 @@ import {
   deletePick,
   fetchPickAnalysis,
   refreshPickAnalysis,
+  refreshPickSettlement,
   refreshLivePickStats,
   Pick,
   AnalysisFactor,
@@ -1146,6 +1147,7 @@ export default function PicksScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
   const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
+  const [refreshingSettlementId, setRefreshingSettlementId] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Record<string, string>>({});
   // Tick every minute while the modal is open so the "X min ago" hint updates
   const [, setRefreshTick] = useState(0);
@@ -1398,6 +1400,72 @@ export default function PicksScreen() {
     }
   }, [session, analysisModal]);
 
+  const handleRefreshSettlement = useCallback(async (pick: Pick) => {
+    if (!session) return;
+    const id = pick.pickId;
+    if (!id || String(pick.sport || '').toLowerCase() !== 'soccer') return;
+    if (refreshingSettlementId) return;
+    setRefreshingSettlementId(String(id));
+    try {
+      const result = await refreshPickSettlement(session.email, session.token, String(id));
+      qc.setQueryData<Pick[]>(['picks', session.email], (current = []) =>
+        current.map((currentPick) => (
+          String(currentPick.pickId) === String(id)
+            ? {
+                ...currentPick,
+                status: result.status,
+                result: result.result,
+                actualValue: result.actualValue,
+                minutesPlayed: result.minutesPlayed ?? currentPick.minutesPlayed,
+                fixtureId: Number(result.fixtureId) || currentPick.fixtureId,
+                settledAt: result.refreshedAt,
+                settlementRefreshedAt: result.refreshedAt,
+                settlementSource: result.settlementSource ?? currentPick.settlementSource,
+              }
+            : currentPick
+        )),
+      );
+      setAnalysisModal((previous) => {
+        if (!previous || String(previous.pick.pickId) !== String(id)) return previous;
+        return {
+          ...previous,
+          pick: {
+            ...previous.pick,
+            status: result.status,
+            result: result.result,
+            actualValue: result.actualValue,
+            minutesPlayed: result.minutesPlayed ?? previous.pick.minutesPlayed,
+            settledAt: result.refreshedAt,
+            settlementRefreshedAt: result.refreshedAt,
+            settlementSource: result.settlementSource ?? previous.pick.settlementSource,
+          },
+          data: previous.data
+            ? {
+                ...previous.data,
+                status: result.status,
+                result: result.result,
+                actualValue: result.actualValue,
+                minutesPlayed: result.minutesPlayed ?? previous.data.minutesPlayed,
+                settlementSource: result.settlementSource ?? previous.data.settlementSource,
+              }
+            : previous.data,
+        };
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        'Result confirmed',
+        `${pick.playerName}: ${result.actualValue} · ${String(result.result).toUpperCase()}\nFresh provider data was saved.`,
+      );
+    } catch (e: any) {
+      Alert.alert(
+        'Confirmation failed',
+        e?.message || 'Fresh provider data was unavailable. The saved result was not changed.',
+      );
+    } finally {
+      setRefreshingSettlementId(null);
+    }
+  }, [qc, refreshingSettlementId, session]);
+
   // Manager badge press — open analysis modal for this pick and scroll to manager context
   const handleManagerBadgePress = useCallback(async (pick: Pick) => {
     const id = pick.pickId || pick._id || pick.id;
@@ -1591,6 +1659,8 @@ export default function PicksScreen() {
                 ownerMediaEnabled={isOwner}
                 compact
                 onDelete={onDeleteForItem}
+                onRefreshSettlement={() => handleRefreshSettlement(item)}
+                settlementRefreshing={refreshingSettlementId === String(item.pickId)}
                 onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
               />
             );

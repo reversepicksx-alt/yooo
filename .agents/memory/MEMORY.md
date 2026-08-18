@@ -93,6 +93,7 @@
 - [Full analysis destination](analysis-destination.md) — analysis views own the complete narrative and recent-game evidence; concise pick cards must not duplicate or hide it.
 - [Final projection ledger AI contract](final-projection-ledger-ai-contract.md) — Gemini must explain the exact post-calibration projection snapshot, with cache identity bound to the ledger fingerprint.
 - [Soccer settlement source integrity](settlement-source-integrity.md) — provider stat paths and exact-fixture provenance are required before a value can be final or enter calibration.
+- [User settlement confirmation](settlement-confirmation.md) — force fresh exact-fixture/player reads for manual confirmation, but keep normal incomplete-stat guards active; do not use repair bypasses as refreshes.
 - [Legacy settlement repair routing](legacy-settlement-repair-routing.md) — explicit legacy repairs must bypass old BDL routes and use exact API-Football fixture/player validation; defer mismatches instead of guessing.
 - [Compact analysis UI](compact-analysis-ui.md) — prediction analysis should use dense text and compact tabs; H2H belongs beside AWAY, not in a large standalone card.
 - [Flat analysis context](analysis-flat-context.md) — tactical context should use compact left-accent sections instead of nested rounded cards.
