@@ -117,7 +117,7 @@ async def jarvis_openapi():
     """
     base = "https://7a030359-7bf3-4fa1-8914-cbee61d63eb2-00-1w1w9xi7usfsw.picard.replit.dev"
     return JSONResponse(content={
-        "openapi": "3.1.0",
+        "openapi": "3.0.3",
         "info": {
             "title": "JARVIS Football API",
             "description": (
@@ -268,6 +268,7 @@ async def jarvis_openapi():
             },
         },
         "components": {
+            "schemas": {},
             "securitySchemes": {
                 "BearerAuth": {
                     "type": "http",
