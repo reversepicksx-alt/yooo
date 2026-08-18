@@ -1,0 +1,50 @@
+Expand the existing JARVIS Football API without breaking any current endpoints.
+
+Add these authenticated endpoints using the existing JARVIS_API_KEY bearer authentication and existing API-Sports connection:
+
+GET /api/jarvis/fixture/stats?fixture=<id>
+Return full team match statistics for a fixture.
+
+GET /api/jarvis/fixture/events?fixture=<id>
+Return goals, cards, substitutions and other match events.
+
+GET /api/jarvis/fixture/lineups?fixture=<id>
+Return starting lineups, formations, substitutes and coaches.
+
+GET /api/jarvis/injuries?fixture=<id>
+Return injuries/absences relevant to that fixture where supported.
+
+GET /api/jarvis/team/stats?team=<id>&league=<id>&season=<year>
+Return season-level team statistics including matches, goals, form, home/away splits and any other available team metrics.
+
+GET /api/jarvis/h2h?team1=<id>&team2=<id>&last=<number>
+Return recent head-to-head meetings.
+
+GET /api/jarvis/odds?fixture=<id>
+Return available pre-match odds for the fixture.
+
+Then create:
+
+GET /api/jarvis/match-context?fixture=<id>
+
+This should act as an aggregator. From only the fixture ID, automatically resolve the teams, league and season, then gather everything available from the new endpoints and return one clean JSON object designed for AI analysis.
+
+Requirements:
+
+* Never expose or return API_SPORTS_KEY, JARVIS_API_KEY, OWNER_PIN, or any secrets.
+* Keep all existing JARVIS endpoints working.
+* Handle unavailable data gracefully instead of failing the entire response.
+* Include API-Sports rate-limit/error information only when useful, but never secrets.
+* Cache repeated requests where reasonable to avoid wasting API quota.
+* Validate all query parameters.
+* Keep JSON concise but preserve the raw statistics needed for modeling.
+* Update /api/jarvis/docs.
+* Update the existing OpenAPI 3.1 schema so ChatGPT automatically sees all new Actions.
+* Test every new endpoint.
+* At the end, tell me which endpoints passed and give me one real fixture ID I can use to test match-context.
+
+That gives us a single powerful tool:
+
+match-context(fixture_id)
+
+So later Jarvis can do:
