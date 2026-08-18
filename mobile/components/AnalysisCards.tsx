@@ -902,10 +902,37 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
   ) as PositionalReality;
   const roleLabel = [player.position, player.role].filter(Boolean).join(' · ');
   const signal = positional.propSignal ?? {};
+
+  // Strip backend sentinel strings that carry no real information. The backend
+  // sets zone="Zone Unavailable" and roleMechanism="No bounded zone-to-prop…"
+  // when the positional packet is incomplete. Those strings should never
+  // surface in the UI — they look like errors to subscribers.
+  const ZONE_SENTINELS = new Set([
+    '', 'zone unavailable', 'unavailable', 'unknown', 'n/a', 'none',
+    'zone unknown', 'zone unverified', 'unverified',
+  ]);
+  const rawZone = String(positional.zone ?? '').trim();
+  // Normalize underscores to spaces before checking sentinels so that
+  // "zone_unavailable" and "zone unavailable" both match the sentinel set.
+  const normalizedZone = rawZone.toLowerCase().replace(/_/g, ' ');
+  const cleanZone = !ZONE_SENTINELS.has(normalizedZone)
+    ? rawZone.replace(/_/g, ' ')
+    : null;
+  const rawMechanism = String(positional.roleMechanism ?? '').trim();
+  const cleanMechanism = rawMechanism &&
+    !rawMechanism.toLowerCase().includes('no bounded') &&
+    !rawMechanism.toLowerCase().includes('unavailable') &&
+    !rawMechanism.toLowerCase().includes('not supported')
+    ? rawMechanism : null;
+  // Only meaningful (non-neutral) shadow directions contribute to reality display.
+  const meaningfulSignal = signal.shadowDirection &&
+    signal.shadowDirection !== 'neutral'
+    ? signal.shadowDirection : null;
+
   const hasReality = Boolean(
-    positional.zone
-      || positional.roleMechanism
-      || signal.shadowDirection
+    cleanZone
+      || cleanMechanism
+      || meaningfulSignal
       || positional.robustEvidence?.sampleSize,
   );
   if (!roleLabel && !hasReality) return null;
@@ -913,17 +940,31 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
   const roleSource = String(
     player.roleSource ?? (data as any)?.tacticalContext?.roleSource ?? '',
   );
+  // Suppress the entire card when the only info is a generic position category
+  // with no verified role, no zone, and no prop signal. The position string is
+  // already visible in the pick header and repeating it as a "POSITIONAL REALITY"
+  // card with no supporting evidence looks like an error to the subscriber.
+  const genericFallback = roleSource === 'unavailable' || roleSource === 'category_fallback';
+  if (genericFallback && !hasReality) return null;
+
+  // "unavailable" and "category_fallback" are internal resolver states — show a
+  // neutral label rather than the raw identifier.
   const roleSourceLabel = roleSource === 'fixture_lineup_observation'
     ? 'confirmed fixture lineup'
     : roleSource === 'manual_override'
     ? 'manual player profile'
+    : roleSource === 'unavailable' || roleSource === 'category_fallback'
+    ? 'listed position category'
     : roleSource.replace(/_/g, ' ') || 'role resolver';
-  const signalColor = signal.shadowDirection === 'higher_volume'
+  // Only show role confidence when the role itself is verified.
+  const showRoleDetail = roleSource !== 'unavailable' && roleSource !== 'category_fallback';
+
+  const signalColor = meaningfulSignal === 'higher_volume'
     ? Colors.success
-    : signal.shadowDirection === 'lower_volume'
+    : meaningfulSignal === 'lower_volume'
     ? Colors.error
     : Colors.textSecondary;
-  const signalLabel = String(signal.shadowDirection ?? 'neutral').replace(/_/g, ' ');
+  const signalLabel = String(meaningfulSignal ?? '').replace(/_/g, ' ');
 
   return (
     <View style={[aStyles.tacticalIntelligenceFlat, { borderLeftColor: Colors.primary }]}>
@@ -938,10 +979,12 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
             <Text style={aStyles.flatRoleValue}>{roleLabel}</Text>
             <Text style={aStyles.proCardMetricLabel}>CURRENT PLAYER PROFILE</Text>
           </View>
-          <Text style={aStyles.proCardNote}>
-            Role evidence: <Text style={{ fontWeight: '800' }}>{roleSourceLabel}</Text>
-            {player.roleConfidence ? ` · ${player.roleConfidence} confidence` : ''}
-          </Text>
+          {showRoleDetail ? (
+            <Text style={aStyles.proCardNote}>
+              Role evidence: <Text style={{ fontWeight: '800' }}>{roleSourceLabel}</Text>
+              {player.roleConfidence ? ` · ${player.roleConfidence} confidence` : ''}
+            </Text>
+          ) : null}
         </>
       ) : null}
 
@@ -956,15 +999,13 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
             </Text>
           </View>
           <View style={aStyles.flatMetricRow}>
-            {positional.zone ? (
+            {cleanZone ? (
               <View style={aStyles.flatMetricCell}>
-                <Text style={aStyles.flatMetricValue}>
-                  {String(positional.zone).replace(/_/g, ' ')}
-                </Text>
+                <Text style={aStyles.flatMetricValue}>{cleanZone}</Text>
                 <Text style={aStyles.proCardMetricLabel}>ROLE ZONE</Text>
               </View>
             ) : null}
-            {signal.shadowDirection ? (
+            {meaningfulSignal ? (
               <View style={aStyles.flatMetricCell}>
                 <Text style={[aStyles.flatMetricValue, { color: signalColor }]}>
                   {signalLabel}
@@ -973,10 +1014,10 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
               </View>
             ) : null}
           </View>
-          {positional.roleMechanism ? (
-            <Text style={aStyles.proCardNote}>{positional.roleMechanism}</Text>
+          {cleanMechanism ? (
+            <Text style={aStyles.proCardNote}>{cleanMechanism}</Text>
           ) : null}
-          {signal.shadowMultiplier != null && signal.shadowDirection !== 'neutral' ? (
+          {signal.shadowMultiplier != null && meaningfulSignal ? (
             <Text style={[aStyles.proCardNote, { color: signalColor }]}>
               Positional read: {signalLabel} · ×{Number(signal.shadowMultiplier).toFixed(3)}.
             </Text>
