@@ -425,6 +425,13 @@ async def _search_players_cache(
 async def search_players(req: PlayerSearchRequest):
     if len(req.query) < 2:
         return {"players": []}
+    # API-Football rejects searches shorter than four alphanumeric characters.
+    # The installed iOS client searches on every keystroke, so short prefixes
+    # must be handled before touching Atlas or the provider. Otherwise typing
+    # traffic can consume the interactive budget and make the eventual full
+    # name appear unavailable.
+    if len(re.sub(r"[^A-Za-z0-9]", "", req.query)) < 4:
+        return {"players": []}
     # NWSL is a calendar-year league. Do not let a client/default 2025 season
     # hide valid 2026 NWSL player IDs from API-Football.
     season = NWSL_SEASON if req.league_id == NWSL_LEAGUE_ID else (req.season or CURRENT_SEASON)
@@ -1289,12 +1296,6 @@ async def search_players(req: PlayerSearchRequest):
     # leaving users staring at a spinner for 7–40 seconds. One targeted lookup
     # is enough for the dropdown; full club/context enrichment happens after
     # the user selects the player.
-    # API-Football rejects searches shorter than four characters. Do not send
-    # those partial keystrokes upstream after the cache/durable fast paths have
-    # already had a chance to answer; this keeps typing responsive and avoids
-    # turning every two- or three-letter prefix into a provider error.
-    if len(re.sub(r"[^A-Za-z0-9]", "", provider_query)) < 4:
-        return {"players": []}
     fast_params = {"search": provider_query}
     # Profile search is the provider's fastest identity lookup and works for
     # both global and league-scoped typing. The old league/season request
@@ -1319,6 +1320,14 @@ async def search_players(req: PlayerSearchRequest):
         p for p in live_players
         if p.get("id") and not (p["id"] in seen_live_ids or seen_live_ids.add(p["id"]))
     ]
+
+    # The search response intentionally masks club fields: the selected player
+    # is verified by /players/{id}/contexts. Do not spend another 900ms on
+    # context enrichment before returning rows that are already a valid
+    # identity match. That extra lookup was invisible in the response but put
+    # the legacy iOS client's five-second typing timeout on the edge.
+    if _apply_sort_and_quality(list(live_players)):
+        return {"players": _mask_unverified_team(await _attach_owner_media(live_players))}
 
     # API-Football's profile search does not reliably understand a full
     # three-or-more-part name when the provider stores the display name as an
