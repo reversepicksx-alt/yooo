@@ -38,4 +38,11 @@ These differed from what I guessed; always use these:
 | Line deviation info | `lineDeviationBand`, `lineDeviationHitRate` |
 
 ## Club-transfer guard
-When `req.teamId` doesn't match the player's current API-Football club, `predict()` raises HTTP 422 with detail `"Current club changed to X. Please reselect the player before predicting."` — this is the club-transfer guard at ~line 1050. The JARVIS endpoint propagates this as-is; Task #280 will add auto-retry.
+When `req.teamId` doesn't match the player's current API-Football club, `predict()` raises **HTTP 409** (not 422) with detail `"Current club changed to X. Please reselect the player before predicting."` — the guard is at ~line 1088, compares `req.teamId` vs `verified_club["teamId"]` from `_resolve_verified_club()`. The guard updates the player cache before raising, so a single retry uses the fresh cache. The JARVIS `/predict/soccer` endpoint catches 409+"Current club changed" and retries once automatically.
+
+## Player resolution — international vs club stats
+`/players?id=&season=` can return national-team stats before club stats (e.g. Magalhães returns Brazil id=6 before Arsenal id=42). Resolution strategy in `_resolve_soccer_context`:
+1. **Fixture-team match first**: prefer the stats entry whose `team.id` appears in the fixture's home or away team IDs.
+2. **Non-international fallback**: skip leagues in `_INTL_LEAGUE_IDS = {1,2,10,17,18,20,29,30,31,34}`.
+3. **Any entry**: last resort.
+Always use `fixture_id` → `_resolve_fixture()` for home/away IDs before querying player stats.

@@ -229,6 +229,40 @@ async def jarvis_openapi():
                 }
             },
             # ── PREDICT ───────────────────────────────────────────────────────
+            "/api/jarvis/predict/soccer": {
+                "post": {
+                    "operationId": "runSoccerPredict",
+                    "summary": "Full soccer prediction from fixture + player ID. Auto-resolves team, opponent, venue, league.",
+                    "description": "Runs the complete 13-stage pipeline. Returns final recommendation, every Bayesian layer, each covariate, calibration, Monte Carlo, evidence quality, and the full factor ledger. Identical to the subscriber app.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["fixture_id", "player_id", "prop_type", "line"],
+                                    "properties": {
+                                        "fixture_id": {"type": "integer", "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."},
+                                        "player_id":  {"type": "integer", "description": "API-Sports player ID."},
+                                        "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
+                                        "line":       {"type": "number",  "description": "Player prop line to predict against."},
+                                        "odds":       {"type": "object",  "description": "Optional moneyline: {home: float, away: float, draw: float}."},
+                                        "position_override": {"type": "string", "description": "Override detected position (e.g. CB, CM, ST)."},
+                                        "role_override":     {"type": "string", "description": "Override detected role."},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "Full diagnostic: final output, pre-calibration Bayesian, prior, momentum, venue, each covariate, posterior, positional squeeze, calibration layers, Monte Carlo, evidence quality, calibration alert, warnings, factor ledger, model fingerprint."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "Fixture not found."},
+                        "422": {"description": "Could not resolve player in fixture, or invalid prop."},
+                        "502": {"description": "Prediction engine error."},
+                    },
+                }
+            },
             "/api/jarvis/predict": {
                 "post": {
                     "operationId": "runPredict",
@@ -465,7 +499,7 @@ async def jarvis_docs():
         },
         "endpoint_groups": {
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
-            "predict": ["/api/jarvis/predict"],
+            "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
             "aggregator": ["/api/jarvis/match-context"],
             "fixture_detail": [
                 "/api/jarvis/fixture/stats",
@@ -665,6 +699,427 @@ async def jarvis_predict(
                          "gameSituation", "bayesianMetrics", "evidenceQuality",
                          "fusionApplied", "calibrationApplied")
         },
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PREDICT/SOCCER — full pipeline, fixture+player auto-resolution, full diagnostic
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _resolve_soccer_context(fixture_id: int, player_id: int) -> dict:
+    """
+    Resolves player_name, team_id/name, opponent_id/name, venue, league_id
+    from only fixture_id + player_id.
+
+    Strategy:
+    1. Use _resolve_fixture for fixture identity (home/away/league/season).
+    2. Try fixtures/players (works for finished/in-progress matches).
+    3. Fallback to /players?id=&season= (works for future fixtures).
+    """
+    # ── Step 1: fixture metadata via existing helper ──────────────────────────
+    ctx       = await _resolve_fixture(fixture_id)          # raises 404 if not found
+    home_id   = ctx["home_team_id"]
+    home_name = ctx["home_team"] or "Home"
+    away_id   = ctx["away_team_id"]
+    away_name = ctx["away_team"] or "Away"
+    league_id = ctx["league_id"]
+    season    = ctx["season"] or 2026
+
+    if not (home_id and away_id and league_id):
+        raise HTTPException(422, detail={
+            "error": f"Fixture {fixture_id} has incomplete team/league data."
+        })
+
+    # ── Step 2a: fixtures/players (past/in-progress) ──────────────────────────
+    player_name      = None
+    player_team_id   = None
+    player_team_name = None
+    resolution_source = "unknown"
+
+    try:
+        fp_data = await _sports_get(
+            "fixtures/players", {"fixture": fixture_id},
+            cache_ttl=_CACHE_TTL_FINISHED,
+        )
+        for team_entry in fp_data.get("response", []):
+            t = team_entry.get("team", {})
+            for p in team_entry.get("players", []):
+                if p.get("player", {}).get("id") == player_id:
+                    player_name      = p["player"]["name"]
+                    player_team_id   = t.get("id")
+                    player_team_name = t.get("name")
+                    resolution_source = "fixture_players"
+                    break
+            if player_name:
+                break
+    except Exception:
+        pass
+
+    # ── Step 2b: /players?id=&season= (future fixtures) ───────────────────────
+    # Players can have multiple entries (club + national team).  Prefer the
+    # entry whose team ID matches a team in the fixture; otherwise fall back
+    # to the first entry that looks like a club (not an international league).
+    if not player_team_id:
+        try:
+            pl_data = await _sports_get(
+                "players", {"id": player_id, "season": season},
+                cache_ttl=_CACHE_TTL_FINISHED,
+            )
+            pl_rows = pl_data.get("response", [])
+            if pl_rows:
+                pl          = pl_rows[0]
+                player_name = (pl.get("player") or {}).get("name") or f"Player {player_id}"
+                stats       = pl.get("statistics") or []
+
+                # 1st pass: exact fixture-team match
+                for s in stats:
+                    tid = (s.get("team") or {}).get("id")
+                    if tid in (home_id, away_id):
+                        player_team_id   = tid
+                        player_team_name = (s.get("team") or {}).get("name")
+                        resolution_source = "player_season_stats_fixture_match"
+                        break
+
+                # 2nd pass: first non-international entry
+                if not player_team_id:
+                    _INTL_LEAGUE_IDS = {1, 2, 10, 17, 18, 20, 29, 30, 31, 34}
+                    for s in stats:
+                        tid = (s.get("team") or {}).get("id")
+                        lid = (s.get("league") or {}).get("id")
+                        if tid and lid not in _INTL_LEAGUE_IDS:
+                            player_team_id   = tid
+                            player_team_name = (s.get("team") or {}).get("name")
+                            resolution_source = "player_season_stats"
+                            break
+
+                # 3rd pass: anything
+                if not player_team_id and stats:
+                    s = stats[0]
+                    player_team_id   = (s.get("team") or {}).get("id")
+                    player_team_name = (s.get("team") or {}).get("name")
+                    resolution_source = "player_season_stats_fallback"
+        except Exception:
+            pass
+
+    if not player_team_id:
+        raise HTTPException(422, detail={
+            "error": (
+                f"Could not identify player {player_id} in fixture {fixture_id}. "
+                "Ensure the player participated in this match, or provide explicit IDs "
+                "via POST /api/jarvis/predict."
+            )
+        })
+
+    # ── Step 3: derive venue and opponent ─────────────────────────────────────
+    if player_team_id == home_id:
+        venue         = "home"
+        opponent_id   = away_id
+        opponent_name = away_name
+        team_name     = player_team_name or home_name
+    else:
+        venue         = "away"
+        opponent_id   = home_id
+        opponent_name = home_name
+        team_name     = player_team_name or away_name
+
+    return {
+        "player_name":        player_name,
+        "team_id":            player_team_id,
+        "team_name":          team_name,
+        "opponent_id":        opponent_id,
+        "opponent_name":      opponent_name,
+        "venue":              venue,
+        "league_id":          league_id,
+        "season":             season,
+        "_resolution_source": resolution_source,
+    }
+
+
+def _build_soccer_diagnostic(result: dict) -> dict:
+    """
+    Build the comprehensive JARVIS diagnostic from a raw predict() result dict.
+    All field names verified against the live predict() output 2026-08-18.
+    """
+    bm = result.get("bayesianMetrics") or {}
+    eq = result.get("evidenceQuality") or {}
+    # calibrationApplied = fusionApplied in the real response shape
+    ca = result.get("fusionApplied") or result.get("calibrationApplied") or {}
+    gs = result.get("gameSituation") or {}
+
+    return {
+        # ── Final output (identical to subscriber app) ────────────────────────
+        "final": {
+            "recommendation":          result.get("recommendation"),
+            "projected_value":         result.get("projectedValue"),
+            "most_likely_value":       bm.get("mostLikelyValue"),
+            "line":                    result.get("line"),
+            "confidence_score":        result.get("confidenceScore"),
+            "confidence_level":        result.get("confidenceLevel"),
+            "raw_confidence":          result.get("rawConfidence"),
+            "p_over":                  bm.get("pOver"),
+            "p_under":                 bm.get("pUnder"),
+            "edge_z":                  bm.get("edgeZ"),
+            "edge_gap_abs":            bm.get("edgeGapAbs"),
+            "edge_gap_band":           bm.get("edgeGapBand"),
+            "edge_gap_pct":            bm.get("edgeGapPct"),
+            "edge_rating":             result.get("edgeRating"),
+            "edge_rating_reason":      result.get("edgeRatingReason"),
+            "safety_rating":           result.get("safetyRating"),
+            "coin_flip":               result.get("coinFlip", False),
+            "low_conviction":          result.get("lowConviction", False),
+            "line_deviation_band":     result.get("lineDeviationBand"),
+            "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
+            "line_deviation_n":        result.get("lineDeviationHitRateN"),
+        },
+
+        # ── Pre-calibration Bayesian state ────────────────────────────────────
+        "pre_calibration": {
+            "bayesian_posterior":      ca.get("bayesianPosterior"),
+            "bayesian_recommendation": ca.get("bayesianRecommendation"),
+            "bayesian_confidence":     ca.get("bayesianConfidence"),
+            "early_estimate":          ca.get("earlyEstimate"),
+            "early_estimate_rec":      ca.get("earlyEstimateRec"),
+            "divergence_pct":          ca.get("divergencePct"),
+            "agreement":               ca.get("agreement"),
+            "fusion_weights":          ca.get("weights"),
+            "fusion_note":             ca.get("note"),
+        },
+
+        # ── Three-layer model (raw structure) ─────────────────────────────────
+        "three_layer_model": bm.get("threeLayerModel"),
+
+        # ── Layer 1: Prior ────────────────────────────────────────────────────
+        "prior": {
+            "mean":    bm.get("priorMean"),
+            "std":     bm.get("priorStd"),
+            "weight":  bm.get("priorWeight"),
+            "samples": bm.get("priorSamples"),
+        },
+
+        # ── Layer 2: Momentum ─────────────────────────────────────────────────
+        "momentum": {
+            "effect":         bm.get("momentumEffect"),
+            "mean":           bm.get("momentumMean"),
+            "weight":         bm.get("momentumWeight"),
+            "label":          bm.get("momentumLabel"),
+            "trend_per_game": bm.get("trendPerGame"),
+            "streak_flag":    bm.get("streakFlag"),
+        },
+
+        # ── Venue history ─────────────────────────────────────────────────────
+        "venue_history": {
+            "avg":     bm.get("venueAvg"),
+            "samples": bm.get("venueSamples"),
+        },
+
+        # ── Layer 3: Covariates (each contribution separately) ────────────────
+        "covariates": {
+            "total_adjustment":         bm.get("covariateAdjustment"),
+            "weight":                   bm.get("covariateWeight"),
+            "opponent_allowed_avg":     bm.get("opponentAllowedAvg"),
+            "opponent_allowed_samples": bm.get("opponentAllowedSamples"),
+            "opponent_allowed_weight":  bm.get("opponentAllowedWeight"),
+            "cond_poss_adj":            bm.get("condPossAdj"),
+            "press_intensity":          bm.get("pressIntensity"),
+            "team_quality_gap":         bm.get("teamQualityGap"),
+            "fatigue_layer":            bm.get("fatigueLayer"),
+            "match_stakes":             bm.get("matchStakes"),
+            "clean_sheet_layer":        bm.get("cleanSheetLayer"),
+            "league_style_layer":       bm.get("leagueStyleLayer"),
+            "set_piece_layer":          bm.get("setPieceLayer"),
+            "altitude_layer":           bm.get("altitudeLayer"),
+            "game_script_layer":        bm.get("gameScript"),
+            "cdm_inversion":            bm.get("cdmInversion"),
+            "dominant_cm_boost":        bm.get("dominantCmBoost"),
+            "home_cdm_deep_block":      bm.get("homeCdmDeepBlock"),
+            "gk_cross_team":            bm.get("gkCrossTeam"),
+        },
+
+        # ── Posterior (post-covariate Gaussian) ───────────────────────────────
+        "posterior": {
+            "mean":       bm.get("posteriorMean"),
+            "std":        bm.get("posteriorStd"),
+            "cv":         bm.get("cv"),
+            "volatility": bm.get("volatility"),
+        },
+
+        # ── Positional squeeze (James-Stein toward position baseline) ─────────
+        "positional_squeeze": bm.get("positionalBaseline"),
+
+        # ── Calibration layers ────────────────────────────────────────────────
+        "calibration": {
+            "league_calibration":    bm.get("leagueCalibration"),
+            "scenario_priors":       bm.get("scenarioPriors"),
+            "odds_tier_priors":      bm.get("oddsTierPriors"),
+            "pass_projection_cal":   bm.get("passProjectionCalibration"),
+            "goalkeeper_pool_prior": bm.get("goalkeeperPoolPrior"),
+            "pressure_response":     bm.get("pressureResponse"),
+            "fusion_applied":        ca,
+        },
+
+        # ── Monte Carlo output ────────────────────────────────────────────────
+        "monte_carlo": {
+            "p_over":              bm.get("pOver"),
+            "p_under":             bm.get("pUnder"),
+            "landing_bands":       bm.get("landingBands"),
+            "range_60":            bm.get("range60"),
+            "range_80":            bm.get("range80"),
+            "confidence_interval": bm.get("confidenceInterval"),
+            "distribution":        bm.get("distribution"),
+        },
+
+        # ── Evidence quality gate ─────────────────────────────────────────────
+        "evidence_quality": eq,
+
+        # ── Calibration alert: OK / RISKY / AVOID ────────────────────────────
+        "calibration_alert": {
+            "status":                  result.get("safetyRating", "OK"),
+            "line_deviation_band":     result.get("lineDeviationBand"),
+            "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
+            "line_deviation_n":        result.get("lineDeviationHitRateN"),
+            "coin_flip":               result.get("coinFlip", False),
+        },
+
+        # ── Warnings and missing-data flags ───────────────────────────────────
+        "warnings":      result.get("tacticalAlerts", []),
+        "risk_signals":  result.get("riskSignals"),
+        "consensus_note": result.get("consensusNote"),
+        "data_quality":  result.get("dataQuality"),
+
+        # ── Factor ledger (what raised/lowered the projection) ────────────────
+        "factor_ledger":   result.get("factorLedger"),
+        "model_breakdown": result.get("modelBreakdown"),
+
+        # ── Model version / fingerprint ───────────────────────────────────────
+        "model_version": {
+            "factor_ledger_version":     result.get("factorLedgerVersion"),
+            "factor_ledger_fingerprint": result.get("factorLedgerFingerprint"),
+            "three_layer_version":       (bm.get("threeLayerModel") or {}).get("version"),
+            "evidence_quality_version":  eq.get("version"),
+        },
+
+        # ── Match situation adjustments ───────────────────────────────────────
+        "game_situation":     gs,
+        "match_dominance":    result.get("matchDominance"),
+        "positional_reality": result.get("positionalReality"),
+
+        # ── Resolved identity ─────────────────────────────────────────────────
+        "resolved_identity": {
+            "player_name":     result.get("canonicalPlayerName") or result.get("playerName"),
+            "player_id":       result.get("playerId"),
+            "team":            result.get("teamName"),
+            "team_id":         result.get("fixtureTeamId"),
+            "opponent":        result.get("opponentName"),
+            "opponent_id":     result.get("fixtureOpponentId"),
+            "venue":           result.get("resolvedVenue") or result.get("venue"),
+            "is_home":         result.get("playerIsHome") or result.get("isHome"),
+            "league_id":       result.get("leagueId"),
+            "fixture_id":      result.get("fixtureId"),
+            "fixture_date":    result.get("fixtureDate"),
+            "player_position": result.get("playerPosition"),
+        },
+
+        # ── Narrative ─────────────────────────────────────────────────────────
+        "sharp_summary":     result.get("sharpSummary"),
+        "reasoning":         result.get("reasoning"),
+        "tactical_breakdown": result.get("tacticalBreakdown"),
+    }
+
+
+class JarvisSoccerPredictBody(BaseModel):
+    """Minimal soccer predict inputs — fixture+player auto-resolve everything else."""
+    fixture_id:        int
+    player_id:         int
+    prop_type:         str   = "pass_attempts"
+    line:              float
+    odds:              Optional[dict] = None
+    position_override: str   = ""
+    role_override:     str   = ""
+
+
+@router.post("/api/jarvis/predict/soccer")
+async def jarvis_predict_soccer(
+    body: JarvisSoccerPredictBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Full production soccer prediction. fixture_id + player_id auto-resolve
+    all team, opponent, venue, and league context. Returns the exact same
+    final projection the subscriber app shows plus every intermediate layer.
+    """
+    _require_auth(authorization)
+
+    if not _JARVIS_KEY:
+        raise HTTPException(503, detail={"error": "JARVIS_API_KEY not configured."})
+
+    # ── 1. Auto-resolve context ───────────────────────────────────────────────
+    try:
+        ctx = await _resolve_soccer_context(body.fixture_id, body.player_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, detail={"error": f"Context resolution failed: {exc}"})
+
+    # ── 2. Construct internal PredictionRequest ───────────────────────────────
+    from models import PredictionRequest
+    from routes.predict import predict as _rp_predict
+
+    req = PredictionRequest(
+        email="_jarvis_service_",
+        token=_JARVIS_KEY,
+        leagueId=ctx["league_id"],
+        playerId=body.player_id,
+        playerName=ctx["player_name"],
+        teamId=ctx["team_id"],
+        teamName=ctx["team_name"],
+        opponentId=ctx["opponent_id"],
+        opponentName=ctx["opponent_name"],
+        venue=ctx["venue"],
+        propType=body.prop_type,
+        line=body.line,
+        sport="soccer",
+        fixtureId=body.fixture_id,
+        odds=body.odds,
+        positionOverride=body.position_override,
+        roleOverride=body.role_override,
+    )
+
+    # ── 3. Run the full production pipeline ───────────────────────────────────
+    # The club-transfer guard updates the player cache and then raises HTTP 422
+    # with "Current club changed to X." — a single retry uses the fresh cache.
+    try:
+        result = await _rp_predict(req)
+    except HTTPException as exc:
+        # Club-transfer guard raises 409 with "Current club changed to X."
+        # It updates the player cache then raises — retry once with fresh cache.
+        if exc.status_code == 409 and "Current club changed" in str(exc.detail):
+            try:
+                result = await _rp_predict(req)   # retry with now-warm cache
+            except HTTPException:
+                raise
+            except Exception as exc2:
+                raise HTTPException(502, detail={"error": f"Prediction engine error on retry: {exc2}"})
+        else:
+            raise
+    except Exception as exc:
+        raise HTTPException(502, detail={"error": f"Prediction engine error: {exc}"})
+
+    if hasattr(result, "body"):
+        import json as _json
+        result = _json.loads(result.body)
+
+    # ── 4. Return comprehensive diagnostic ────────────────────────────────────
+    diagnostic = _build_soccer_diagnostic(result)
+    diagnostic["_resolution"] = {
+        "source":     ctx.get("_resolution_source"),
+        "fixture_id": body.fixture_id,
+        "player_id":  body.player_id,
+    }
+
+    return JSONResponse(content={
+        "source":       "jarvis/predict/soccer",
+        "generated_at": int(time.time()),
+        "diagnostic":   diagnostic,
     })
 
 
