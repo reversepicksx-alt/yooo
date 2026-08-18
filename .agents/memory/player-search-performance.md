@@ -14,3 +14,9 @@ Universal search is progressive: a timeout from one slow or rate-limited sport m
 **Why:** Parallel MLB/NFL requests could time out after soccer had already returned a valid player, replacing the usable dropdown with “Search unavailable.”
 
 **How to apply:** Keep provider result accumulation independent and make timeout/error rendering conditional on there being no accumulated rows.
+
+Legacy native universal-search clients may await soccer, MLB, and NFL requests together. Optional sport search routes must have their own short timeout and return an empty list on provider stalls, or a valid soccer identity can still be discarded by the old client's total timeout.
+
+**Why:** The installed iOS binary waited for a hanging NFL/MLB provider even after soccer returned the requested player; the current progressive source fix was not embedded in that binary.
+
+**How to apply:** Keep this fail-closed compatibility behavior on auxiliary MLB/NFL search endpoints until all supported clients are progressive, and never let an optional provider return a slow 5xx on the typing path.

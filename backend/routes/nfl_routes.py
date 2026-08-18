@@ -1,6 +1,7 @@
 """
 NFL prediction routes — /api/nfl/*
 """
+import asyncio as aio
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -22,7 +23,23 @@ CURRENT_NFL_SEASON = nfl_client.CURRENT_NFL_SEASON
 @router.get("/players/search")
 async def search_nfl_players(q: str = Query("", min_length=2), limit: int = Query(15)):
     try:
-        players = await nfl_client.search_players(q, limit=limit)
+        # This endpoint is called alongside soccer and MLB searches by older
+        # mobile clients.  A provider connection that hangs here must not make
+        # the whole universal dropdown time out and discard a valid soccer
+        # identity.  NFL search is optional context for a soccer query, so
+        # fail closed with an empty list inside the legacy client's budget.
+        players = await aio.wait_for(
+            nfl_client.search_players(q, limit=limit),
+            timeout=1.5,
+        )
+    except (aio.TimeoutError, TimeoutError):
+        log.warning("[NFL SEARCH] provider exceeded 1.5s for query=%r", q)
+        players = []
+    except Exception as e:
+        log.warning("[NFL SEARCH] unavailable for query=%r: %s", q, e)
+        players = []
+
+    try:
         return [
             {
                 "id":        p.get("id"),
@@ -38,7 +55,10 @@ async def search_nfl_players(q: str = Query("", min_length=2), limit: int = Quer
             for p in players
         ]
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"NFL player search failed: {e}")
+        # Keep the search contract usable even if a malformed cached provider
+        # row slips through.  Prediction routes still surface their own errors.
+        log.warning("[NFL SEARCH] response mapping failed for query=%r: %s", q, e)
+        return []
 
 
 # ── Teams ─────────────────────────────────────────────────────────────────────

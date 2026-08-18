@@ -614,6 +614,9 @@ export default function FuzzySearchInput({
     <View style={[styles.container, style]}>
       <View style={[styles.inputRow, confirmed && styles.inputRowConfirmed]}>
         {leadingIcon}
+        {/* iOS blurs TextInput when the parent screen is scrolled to dismiss
+            the keyboard. Keep the loaded result list visible; blur is not
+            an explicit request to discard search results. */}
         <TextInput
           style={[styles.input, inputStyle, INPUT_STYLE]}
           value={value}
@@ -626,7 +629,6 @@ export default function FuzzySearchInput({
           returnKeyType={returnKeyType}
           onSubmitEditing={() => { dismiss(); onSubmitEditing?.(); }}
           onFocus={() => { if (!confirmed && value.length >= 2 && results.length > 0) setShowDropdown(true); }}
-          onBlur={() => { setTimeout(dismiss, 200); }}
           editable={!confirmed}
         />
         {!loading && value.length > 0 && (

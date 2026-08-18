@@ -25,8 +25,21 @@ CURRENT_MLB_SEASON = 2026
 @router.get("/players/search")
 async def search_players(q: str = Query(..., min_length=2)):
     try:
-        players = await mlb_client.search_players(q, limit=15)
+        # Older mobile clients wait for soccer, MLB, and NFL search requests
+        # together.  MLB is optional context during a soccer search, so a
+        # provider/Stats API stall must not consume the whole dropdown timeout.
+        players = await asyncio.wait_for(
+            mlb_client.search_players(q, limit=15),
+            timeout=1.5,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        log.warning("[MLB SEARCH] provider exceeded 1.5s for query=%r", q)
+        return []
+    except Exception as e:
+        log.warning("[MLB SEARCH] unavailable for query=%r: %s", q, e)
+        return []
 
+    try:
         # BallDontLie's search endpoint omits team for traded/recently-moved players.
         # Enrich by fetching the full player record (cached at 2h TTL) for the top 8
         # active results that are missing team data.
@@ -38,8 +51,14 @@ async def search_players(q: str = Query(..., min_length=2)):
                 fetch_indices.append(i)
 
         if fetch_tasks:
-            import asyncio
-            fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            try:
+                fetched = await asyncio.wait_for(
+                    asyncio.gather(*fetch_tasks, return_exceptions=True),
+                    timeout=0.6,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                log.warning("[MLB SEARCH] team enrichment exceeded 0.6s for query=%r", q)
+                fetched = []
             for idx, result in zip(fetch_indices, fetched):
                 if isinstance(result, dict) and result:
                     players[idx] = result
@@ -89,7 +108,8 @@ async def search_players(q: str = Query(..., min_length=2)):
         ]
         return result_list
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"MLB player search failed: {e}")
+        log.warning("[MLB SEARCH] response mapping failed for query=%r: %s", q, e)
+        return []
 
 
 # ── Teams ─────────────────────────────────────────────────────────────────────
