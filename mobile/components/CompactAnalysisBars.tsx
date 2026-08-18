@@ -432,9 +432,10 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       ?? '',
   );
   const pressureIsVenueScoped = pressureScope.includes('same_venue');
-  const pressureEligibleLogs = displayLogs.filter(
-    (game) => !pressureIsVenueScoped || rowVenue(game) === historyVenue,
-  );
+  // Historical pressure labels remain supported for non-recent detail
+  // rendering, but the recent-match card intentionally does not surface the
+  // custom Reverse Picks Pressure Index or its VERY LOW/LOW/MODERATE/HIGH/
+  // ELITE recent-opponent breakdown.
   const tacticalProfileFor = (game: Record<string, any>): Record<string, any> | null => {
     const byFixture = tacticalProfiles.find((profile) => (
       profile?.fixtureId != null
@@ -466,45 +467,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       : tacticalProfileFor(game)?.pressIntensity)
     ?? null
   );
-  const pressureOpponentKeyFor = (game: Record<string, any>, profile?: Record<string, any> | null) => (
-    String(
-      game?.fixtureOpponentId
-        ?? game?.opponentId
-        ?? profile?.opponentId
-        ?? opponentName(game)
-        ?? '',
-    ).trim().toLowerCase()
-  );
   const isDenseRecent = !isH2HFilter;
-  const pressureCounts = pressureEligibleLogs.reduce(
-    (counts, game) => {
-      const packet = pressurePacketFor(game);
-      const label = packet?.available === true
-        ? reversePicksPressureLabel(packet)
-        : '';
-      if (label === 'VERY LOW' || label === 'LOW' || label === 'MODERATE' || label === 'HIGH' || label === 'ELITE') {
-        counts[label] += 1;
-      }
-      return counts;
-    },
-    { 'VERY LOW': 0, LOW: 0, MODERATE: 0, HIGH: 0, ELITE: 0 },
-  );
-  const historyOpponentKeys = new Set(
-    pressureEligibleLogs
-      .map((game) => pressureOpponentKeyFor(game))
-      .filter(Boolean),
-  );
-  const classifiedOpponentKeys = new Set(
-    pressureEligibleLogs.map((game) => {
-        const profile = pressureProfileFor(game);
-        const packet = pressurePacketFor(game);
-        return packet?.available === true
-          ? pressureOpponentKeyFor(game, profile)
-          : '';
-      }).filter(Boolean),
-  );
-  const classifiedOpponentCount = classifiedOpponentKeys.size;
-  const historyOpponentCount = historyOpponentKeys.size;
   const last10Logs = recentLogs.slice(0, 10);
   const tpHomeValues = last10Logs
     .filter((row) => rowVenue(row) === 'home' && row.teamPossession != null)
@@ -772,34 +735,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               </Text>
             </View>
           )}
-           {showRecent && isDenseRecent && (
-             <View style={styles.pressureLegend}>
-               <View style={styles.pressureLegendHeader}>
-                    <Text style={styles.pressureLegendTitle}>
-                      {pressureIsVenueScoped
-                        ? `OPPONENT PRESSURE · ${String(historyVenue || 'MATCHING').toUpperCase()} MATCHUPS`
-                        : 'OPPONENT PRESSURE · RECENT MATCHUPS'}
-                    </Text>
-                 <Text style={styles.pressureLegendCoverage}>
-                    {classifiedOpponentCount}/{historyOpponentCount} OPPONENTS
-                 </Text>
-               </View>
-               <Text style={styles.pressureLegendKey}>
-                  <Text style={{ color: '#34C759' }}>VL VERY LOW {pressureCounts['VERY LOW']}</Text>
-                  {'  ·  '}
-                  <Text style={{ color: '#8EDB8A' }}>L LOW {pressureCounts.LOW}</Text>
-                 {'  ·  '}
-                 <Text style={{ color: '#60A5FA' }}>M MOD {pressureCounts.MODERATE}</Text>
-                 {'  ·  '}
-                 <Text style={{ color: '#FF9F0A' }}>H HIGH {pressureCounts.HIGH}</Text>
-                 {'  ·  '}
-                 <Text style={{ color: '#FF453A' }}>E ELITE {pressureCounts.ELITE}</Text>
-               </Text>
-                 <Text style={styles.pressureLegendNote} numberOfLines={3}>
-                    Each value is the custom Reverse Picks Pressure Index for this opponent&apos;s recent completed matches (target N=5). It is not PPDA, a raw provider statistic, or a count of pressure events.
-                </Text>
-             </View>
-           )}
+           {/* Recent-match history stays focused on player stat outcomes.
+               Opponent pressure is measured and shown for the next matchup
+               in the tactical context card instead. */}
             {showRecent && <>{displayLogs.length > 0 ? <ScrollView
               horizontal={!isDenseRecent}
               showsHorizontalScrollIndicator={!isDenseRecent}
@@ -861,7 +799,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                           <View style={styles.denseBarTrack}>
                             <View style={[styles.denseBar, { height, backgroundColor: color + 'D8' }]} />
                           </View>
-                          <View style={[styles.densePressureDot, { backgroundColor: pressureColor }]} />
                         </>
                       ) : (
                         <>
@@ -920,7 +857,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    {showSotEvidence
                      ? ` · OPP SOT ${selectedGame.opponentShotsOnTarget != null ? Number(selectedGame.opponentShotsOnTarget).toFixed(0) : 'unavailable'}`
                      : ''}
-                    {(() => {
+                     {isH2HFilter && (() => {
                          const selectedPressureProfile = pressureProfileFor(selectedGame);
                          const selectedPressure = pressurePacketFor(selectedGame);
                         const selectedLabel = selectedPressure?.available === true
@@ -935,7 +872,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                         return ` · PRESS ${selectedLabel}${selectedScore}${selectedSample}`;
                       })()}
                   </Text>
-                  {(() => {
+                   {isH2HFilter && (() => {
                      const selectedPressureProfile = pressureProfileFor(selectedGame);
                      const selectedPressure = pressurePacketFor(selectedGame);
                     if (selectedPressure?.available === true) {
@@ -1344,13 +1281,6 @@ const styles = {
   denseChart: { height: 128, width: '100%' as const, gap: 0, alignItems: 'stretch' as const },
   denseBarTrack: { width: '100%' as const, height: 112, justifyContent: 'flex-end' as const, alignItems: 'center' as const },
   denseBar: { width: 3, minHeight: 3, borderRadius: 2 },
-  densePressureDot: { width: 5, height: 5, borderRadius: 3, marginTop: 4, marginBottom: 2 },
-  pressureLegend: { marginHorizontal: 14, marginBottom: 4 },
-  pressureLegendHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
-  pressureLegendTitle: { color: '#8B95A5', fontSize: 7, fontWeight: '900' as const, letterSpacing: 0.55 },
-  pressureLegendCoverage: { color: '#697586', fontSize: 7, fontWeight: '800' as const, letterSpacing: 0.35 },
-  pressureLegendKey: { color: '#697586', fontSize: 7, fontWeight: '800' as const, letterSpacing: 0.2, marginTop: 3 },
-  pressureLegendNote: { color: '#596575', fontSize: 7, lineHeight: 9, fontWeight: '700' as const, letterSpacing: 0.1, marginTop: 2 },
   detail: { paddingHorizontal: 2, paddingTop: 7, paddingBottom: 3, color: '#AAB4C2', fontSize: 10, lineHeight: 15 },
   splitRow: {
     marginHorizontal: 14,

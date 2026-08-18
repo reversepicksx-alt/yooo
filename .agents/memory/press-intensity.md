@@ -45,4 +45,10 @@ The product pressure bands are fixed at 0–20 Very Low, 21–40 Low, 41–60 Mo
 
 **Why:** The former 45–69 High and 70–100 Elite thresholds contradicted the owner's intended scale and made a 63/100 card misleading.
 
-**How to apply:** Keep the same five boundaries in backend classification, cached-profile versioning, recent-history legends, and saved-card rendering.
+**How to apply:** Keep the same five boundaries in backend classification and any retained H2H/detail rendering. The compact recent-match card should stay focused on player outcomes; surface the primary value as next-opponent pressure instead of repeating historical opponent profiles.
+
+The customer-facing compact recent-history view intentionally omits opponent-pressure legends, dots, and selected-row explanations. The primary pressure surface is the verified next-opponent packet in tactical context; historical opponent profiles may remain internal or in explicit H2H/detail views.
+
+**Why:** Recent-match pressure repeated a separate upcoming-match signal and made the history card visually dense without helping the pick decision. The next opponent's measured pressure is the actionable context.
+
+**How to apply:** Preserve `tacticalContext.pressIntensity` and label its card as next-opponent pressure. Do not remove or replace it when hiding recent-history pressure UI.
