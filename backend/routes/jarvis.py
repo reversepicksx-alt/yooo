@@ -1,118 +1,347 @@
 """
-Jarvis assistant API — secure proxy to API-Sports football data.
+JARVIS Integration Layer — secure proxy to API-Sports football data.
 
-Authentication: `Authorization: Bearer <OWNER_PIN>`
-The API_SPORTS_KEY is never returned in any response.
+Authentication
+--------------
+Every request (except GET /api/jarvis/health and GET /api/jarvis/docs)
+requires the header:
+
+    Authorization: Bearer <JARVIS_API_KEY>
+
+The secret JARVIS_API_KEY lives in Replit Secrets and is never returned,
+logged, or echoed in any response.  API_SPORTS_KEY is also secret and
+never leaves the server.
+
+Available endpoints
+-------------------
+GET /api/jarvis/health          – server + auth status (no key needed)
+GET /api/jarvis/docs            – machine-readable API reference (no key needed)
+GET /api/jarvis/fixtures        – match fixtures
+GET /api/jarvis/leagues         – league catalogue
+GET /api/jarvis/teams           – team catalogue
+GET /api/jarvis/standings       – league standings table
+GET /api/jarvis/players         – player season statistics
+GET /api/jarvis/player/fixtures – a player's recent match history
 """
+from __future__ import annotations
+
 import os
-import httpx
-from fastapi import APIRouter, Query, HTTPException, Header
-from fastapi.responses import JSONResponse
+import time
 from typing import Optional
+
+import httpx
+from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
+# ── Config (read once at import time) ────────────────────────────────────────
 _API_SPORTS_BASE = "https://v3.football.api-sports.io"
 _API_SPORTS_KEY  = os.environ.get("API_SPORTS_KEY", "")
-_OWNER_PIN       = os.environ.get("OWNER_PIN", "")
+_JARVIS_KEY      = os.environ.get("JARVIS_API_KEY", "")
 
 
-def _check_auth(authorization: Optional[str]) -> None:
-    """Raise 401 if the bearer token doesn't match OWNER_PIN."""
-    if not _OWNER_PIN:
-        raise HTTPException(status_code=503, detail="Jarvis auth not configured on server.")
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+def _require_auth(authorization: Optional[str]) -> None:
+    """Raise 401 unless the bearer token matches JARVIS_API_KEY."""
+    if not _JARVIS_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "JARVIS_API_KEY secret is not configured on the server.",
+                "action": "Set JARVIS_API_KEY in Replit Secrets and restart the backend.",
+            },
+        )
     if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header.")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "Missing Authorization header.",
+                "format": "Authorization: Bearer <JARVIS_API_KEY>",
+            },
+        )
     scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or token.strip() != _OWNER_PIN:
-        raise HTTPException(status_code=401, detail="Invalid Jarvis API key.")
+    if scheme.lower() != "bearer" or token.strip() != _JARVIS_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Invalid JARVIS API key."},
+        )
 
 
-async def _api_sports_get(endpoint: str, params: dict) -> dict:
-    """Internal helper: call API-Sports and return the parsed JSON."""
+# ── Internal API-Sports helper ────────────────────────────────────────────────
+
+async def _sports_get(endpoint: str, params: dict) -> dict:
+    """Call API-Sports; return parsed JSON.  Raises 502/503 on upstream errors."""
     if not _API_SPORTS_KEY:
-        raise HTTPException(status_code=503, detail="API_SPORTS_KEY not configured on server.")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "API_SPORTS_KEY not configured on the server."},
+        )
     url = f"{_API_SPORTS_BASE}/{endpoint}"
-    headers = {"x-apisports-key": _API_SPORTS_KEY}
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url, headers=headers, params=params)
+        resp = await client.get(
+            url,
+            headers={"x-apisports-key": _API_SPORTS_KEY},
+            params=params,
+        )
+    if resp.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "API-Sports daily quota exhausted. Try again after midnight UTC."},
+        )
     if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"API-Sports returned {resp.status_code}.")
-    return resp.json()
+        raise HTTPException(
+            status_code=502,
+            detail={"error": f"API-Sports returned HTTP {resp.status_code}."},
+        )
+    data = resp.json()
+    errors = data.get("errors", {})
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "API-Sports reported parameter errors.", "details": errors},
+        )
+    return data
 
 
-# ── Fixtures ─────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Public endpoints (no auth required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/jarvis/health")
+async def jarvis_health():
+    """
+    Health check — no authentication required.
+
+    Returns server status and whether the JARVIS key and API-Sports key are
+    configured.  Never reveals the actual key values.
+    """
+    return JSONResponse(content={
+        "status": "ok",
+        "service": "jarvis",
+        "timestamp": int(time.time()),
+        "auth": {
+            "jarvis_key_configured": bool(_JARVIS_KEY),
+            "api_sports_configured": bool(_API_SPORTS_KEY),
+        },
+        "note": (
+            "All data endpoints require: Authorization: Bearer <JARVIS_API_KEY>"
+        ),
+    })
+
+
+@router.get("/api/jarvis/docs")
+async def jarvis_docs():
+    """
+    Machine-readable API reference — no authentication required.
+
+    Returns a structured JSON description of every JARVIS endpoint so an AI
+    assistant can understand how to call the API without human documentation.
+    """
+    base = "https://7a030359-7bf3-4fa1-8914-cbee61d63eb2-00-1w1w9xi7usfsw.picard.replit.dev"
+    return JSONResponse(content={
+        "service": "JARVIS Football API",
+        "version": "2.0",
+        "base_url": base,
+        "authentication": {
+            "type": "Bearer token",
+            "header": "Authorization",
+            "format": "Authorization: Bearer <JARVIS_API_KEY>",
+            "obtain": "The JARVIS_API_KEY is provided by the server owner.",
+            "note": "health and docs endpoints do not require authentication.",
+        },
+        "endpoints": [
+            {
+                "method": "GET",
+                "path": "/api/jarvis/health",
+                "auth_required": False,
+                "description": "Server health and key-configuration status.",
+                "params": [],
+                "example": f"GET {base}/api/jarvis/health",
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/docs",
+                "auth_required": False,
+                "description": "This document — full API reference.",
+                "params": [],
+                "example": f"GET {base}/api/jarvis/docs",
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/fixtures",
+                "auth_required": True,
+                "description": (
+                    "Football match fixtures. Filter by date, league, team, or get "
+                    "live matches. At least one query parameter is required."
+                ),
+                "params": [
+                    {"name": "league",  "type": "integer", "required": False, "description": "League ID (see /api/jarvis/leagues)"},
+                    {"name": "season",  "type": "integer", "required": False, "description": "Season year, e.g. 2025 or 2026"},
+                    {"name": "date",    "type": "string",  "required": False, "description": "Date in YYYY-MM-DD format"},
+                    {"name": "team",    "type": "integer", "required": False, "description": "Team ID (see /api/jarvis/teams)"},
+                    {"name": "fixture", "type": "integer", "required": False, "description": "Specific fixture ID"},
+                    {"name": "next",    "type": "integer", "required": False, "description": "Next N upcoming fixtures (max 20)"},
+                    {"name": "last",    "type": "integer", "required": False, "description": "Last N completed fixtures (max 20)"},
+                    {"name": "live",    "type": "string",  "required": False, "description": "'all' for all live matches, or a league ID"},
+                ],
+                "response_fields": ["source", "results", "fixtures"],
+                "example": f"GET {base}/api/jarvis/fixtures?live=all",
+                "examples": [
+                    f"{base}/api/jarvis/fixtures?live=all",
+                    f"{base}/api/jarvis/fixtures?league=39&season=2025&date=2026-08-18",
+                    f"{base}/api/jarvis/fixtures?team=33&next=5",
+                    f"{base}/api/jarvis/fixtures?fixture=1035039",
+                ],
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/leagues",
+                "auth_required": True,
+                "description": "Search for leagues by name or country to get their IDs for use in other endpoints.",
+                "params": [
+                    {"name": "search",  "type": "string",  "required": False, "description": "Partial league name, e.g. 'premier'"},
+                    {"name": "country", "type": "string",  "required": False, "description": "Country name, e.g. 'England'"},
+                    {"name": "league",  "type": "integer", "required": False, "description": "Specific league ID to look up"},
+                    {"name": "current", "type": "boolean", "required": False, "description": "true = only currently active seasons"},
+                ],
+                "response_fields": ["source", "results", "leagues"],
+                "example": f"GET {base}/api/jarvis/leagues?search=premier&country=England",
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/teams",
+                "auth_required": True,
+                "description": "Search for teams by name or within a league to get their IDs.",
+                "params": [
+                    {"name": "search", "type": "string",  "required": False, "description": "Partial team name, e.g. 'Arsenal'"},
+                    {"name": "league", "type": "integer", "required": False, "description": "Filter to teams in a specific league"},
+                    {"name": "season", "type": "integer", "required": False, "description": "Season year"},
+                    {"name": "team",   "type": "integer", "required": False, "description": "Specific team ID to look up"},
+                ],
+                "response_fields": ["source", "results", "teams"],
+                "example": f"GET {base}/api/jarvis/teams?search=Arsenal",
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/standings",
+                "auth_required": True,
+                "description": "Current league standings / table.",
+                "params": [
+                    {"name": "league", "type": "integer", "required": True,  "description": "League ID"},
+                    {"name": "season", "type": "integer", "required": True,  "description": "Season year"},
+                    {"name": "team",   "type": "integer", "required": False, "description": "Filter to a specific team's standing"},
+                ],
+                "response_fields": ["source", "league", "season", "standings"],
+                "example": f"GET {base}/api/jarvis/standings?league=39&season=2025",
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/players",
+                "auth_required": True,
+                "description": "Season statistics for a player. Requires both player ID and season.",
+                "params": [
+                    {"name": "player", "type": "integer", "required": True,  "description": "Player ID"},
+                    {"name": "season", "type": "integer", "required": True,  "description": "Season year"},
+                    {"name": "league", "type": "integer", "required": False, "description": "Filter stats to a specific league"},
+                ],
+                "response_fields": ["source", "results", "players"],
+                "example": f"GET {base}/api/jarvis/players?player=276&season=2025",
+            },
+            {
+                "method": "GET",
+                "path": "/api/jarvis/player/fixtures",
+                "auth_required": True,
+                "description": "Recent match history for a player in a specific league and season.",
+                "params": [
+                    {"name": "player", "type": "integer", "required": True,  "description": "Player ID"},
+                    {"name": "league", "type": "integer", "required": True,  "description": "League ID"},
+                    {"name": "season", "type": "integer", "required": True,  "description": "Season year"},
+                ],
+                "response_fields": ["source", "results", "fixtures"],
+                "example": f"GET {base}/api/jarvis/player/fixtures?player=276&league=39&season=2025",
+            },
+        ],
+        "common_league_ids": {
+            "Premier League (England)": 39,
+            "La Liga (Spain)": 140,
+            "Serie A (Italy)": 135,
+            "Bundesliga (Germany)": 78,
+            "Ligue 1 (France)": 61,
+            "Champions League": 2,
+            "Europa League": 3,
+            "MLS (USA)": 253,
+            "FIFA World Cup": 1,
+        },
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Authenticated data endpoints
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/api/jarvis/fixtures")
 async def jarvis_fixtures(
     authorization: Optional[str] = Header(default=None),
-    league:  Optional[int] = Query(None, description="League ID (e.g. 39 = Premier League)"),
-    season:  Optional[int] = Query(None, description="Season year (e.g. 2025)"),
-    date:    Optional[str] = Query(None, description="Date YYYY-MM-DD"),
-    team:    Optional[int] = Query(None, description="Team ID"),
-    fixture: Optional[int] = Query(None, description="Specific fixture ID"),
-    next:    Optional[int] = Query(None, description="Next N fixtures"),
-    last:    Optional[int] = Query(None, description="Last N fixtures"),
-    live:    Optional[str] = Query(None, description="'all' or a league ID for live fixtures"),
+    league:  Optional[int] = Query(None),
+    season:  Optional[int] = Query(None),
+    date:    Optional[str] = Query(None),
+    team:    Optional[int] = Query(None),
+    fixture: Optional[int] = Query(None),
+    next:    Optional[int] = Query(None),
+    last:    Optional[int] = Query(None),
+    live:    Optional[str] = Query(None),
 ):
-    """
-    Retrieve football fixtures from API-Sports.
+    """Return football fixtures. See /api/jarvis/docs for full parameter reference."""
+    _require_auth(authorization)
 
-    Examples:
-      - Today's Premier League fixtures: ?league=39&season=2025&date=2026-08-18
-      - Next 5 fixtures for a team: ?team=33&next=5
-      - Live fixtures: ?live=all
-      - Specific fixture: ?fixture=1035039
-    """
-    _check_auth(authorization)
-
-    params = {}
-    if league  is not None: params["league"]  = league
-    if season  is not None: params["season"]  = season
-    if date    is not None: params["date"]    = date
-    if team    is not None: params["team"]    = team
-    if fixture is not None: params["id"]      = fixture
-    if next    is not None: params["next"]    = next
-    if last    is not None: params["last"]    = last
-    if live    is not None: params["live"]    = live
+    params: dict = {}
+    if league  is not None: params["league"] = league
+    if season  is not None: params["season"] = season
+    if date    is not None: params["date"]   = date
+    if team    is not None: params["team"]   = team
+    if fixture is not None: params["id"]     = fixture
+    if next    is not None: params["next"]   = next
+    if last    is not None: params["last"]   = last
+    if live    is not None: params["live"]   = live
 
     if not params:
         raise HTTPException(
             status_code=400,
-            detail="Provide at least one query param: league, season, date, team, fixture, next, last, or live."
+            detail={
+                "error": "At least one query param is required.",
+                "valid_params": ["league", "season", "date", "team", "fixture", "next", "last", "live"],
+                "docs": "/api/jarvis/docs",
+            },
         )
 
-    data = await _api_sports_get("fixtures", params)
-
-    # Strip the key from any potential echo in the response (safety measure)
+    data = await _sports_get("fixtures", params)
     return JSONResponse(content={
         "source": "api-sports/fixtures",
         "results": data.get("results", 0),
         "fixtures": data.get("response", []),
-        "errors": data.get("errors", {}),
     })
 
-
-# ── Leagues ───────────────────────────────────────────────────────────────────
 
 @router.get("/api/jarvis/leagues")
 async def jarvis_leagues(
     authorization: Optional[str] = Header(default=None),
-    search: Optional[str] = Query(None, description="League name search term"),
-    country: Optional[str] = Query(None, description="Country name"),
-    league: Optional[int] = Query(None, description="Specific league ID"),
-    current: Optional[bool] = Query(None, description="Only currently active leagues"),
+    search:  Optional[str]  = Query(None),
+    country: Optional[str]  = Query(None),
+    league:  Optional[int]  = Query(None),
+    current: Optional[bool] = Query(None),
 ):
-    """Look up league IDs by name or country — useful before querying fixtures."""
-    _check_auth(authorization)
+    """Return league catalogue. See /api/jarvis/docs for full parameter reference."""
+    _require_auth(authorization)
 
-    params = {}
+    params: dict = {}
     if search  is not None: params["search"]  = search
     if country is not None: params["country"] = country
     if league  is not None: params["id"]      = league
     if current is not None: params["current"] = "true" if current else "false"
 
-    data = await _api_sports_get("leagues", params)
+    data = await _sports_get("leagues", params)
     return JSONResponse(content={
         "source": "api-sports/leagues",
         "results": data.get("results", 0),
@@ -120,28 +349,106 @@ async def jarvis_leagues(
     })
 
 
-# ── Teams ─────────────────────────────────────────────────────────────────────
-
 @router.get("/api/jarvis/teams")
 async def jarvis_teams(
     authorization: Optional[str] = Header(default=None),
-    search: Optional[str] = Query(None, description="Team name search"),
-    league: Optional[int] = Query(None, description="League ID"),
-    season: Optional[int] = Query(None, description="Season year"),
-    team:   Optional[int] = Query(None, description="Specific team ID"),
+    search: Optional[str] = Query(None),
+    league: Optional[int] = Query(None),
+    season: Optional[int] = Query(None),
+    team:   Optional[int] = Query(None),
 ):
-    """Look up team IDs — useful before querying fixtures by team."""
-    _check_auth(authorization)
+    """Return team catalogue. See /api/jarvis/docs for full parameter reference."""
+    _require_auth(authorization)
 
-    params = {}
+    params: dict = {}
     if search is not None: params["search"] = search
     if league is not None: params["league"] = league
     if season is not None: params["season"] = season
     if team   is not None: params["id"]     = team
 
-    data = await _api_sports_get("teams", params)
+    data = await _sports_get("teams", params)
     return JSONResponse(content={
         "source": "api-sports/teams",
         "results": data.get("results", 0),
         "teams": data.get("response", []),
+    })
+
+
+@router.get("/api/jarvis/standings")
+async def jarvis_standings(
+    authorization: Optional[str] = Header(default=None),
+    league: int = Query(..., description="League ID (required)"),
+    season: int = Query(..., description="Season year (required)"),
+    team:   Optional[int] = Query(None, description="Filter to a specific team"),
+):
+    """Return league standings table. See /api/jarvis/docs for full parameter reference."""
+    _require_auth(authorization)
+
+    params: dict = {"league": league, "season": season}
+    if team is not None:
+        params["team"] = team
+
+    data = await _sports_get("standings", params)
+    raw = data.get("response", [])
+
+    # Flatten the nested standings structure for easier AI consumption
+    standings_out = []
+    for entry in raw:
+        league_info = entry.get("league", {})
+        for group in league_info.get("standings", []):
+            standings_out.extend(group)
+
+    return JSONResponse(content={
+        "source": "api-sports/standings",
+        "league": league,
+        "season": season,
+        "standings": standings_out,
+    })
+
+
+@router.get("/api/jarvis/players")
+async def jarvis_players(
+    authorization: Optional[str] = Header(default=None),
+    player: int = Query(..., description="Player ID (required)"),
+    season: int = Query(..., description="Season year (required)"),
+    league: Optional[int] = Query(None, description="Filter stats to a specific league"),
+):
+    """Return season statistics for a player. See /api/jarvis/docs for full parameter reference."""
+    _require_auth(authorization)
+
+    params: dict = {"id": player, "season": season}
+    if league is not None:
+        params["league"] = league
+
+    data = await _sports_get("players", params)
+    return JSONResponse(content={
+        "source": "api-sports/players",
+        "results": data.get("results", 0),
+        "players": data.get("response", []),
+    })
+
+
+@router.get("/api/jarvis/player/fixtures")
+async def jarvis_player_fixtures(
+    authorization: Optional[str] = Header(default=None),
+    player: int = Query(..., description="Player ID (required)"),
+    league: int = Query(..., description="League ID (required)"),
+    season: int = Query(..., description="Season year (required)"),
+):
+    """Return a player's recent match history. See /api/jarvis/docs for full parameter reference."""
+    _require_auth(authorization)
+
+    data = await _sports_get("fixtures", {
+        "player": player,
+        "league": league,
+        "season": season,
+        "last":   10,
+    })
+    return JSONResponse(content={
+        "source": "api-sports/player-fixtures",
+        "player": player,
+        "league": league,
+        "season": season,
+        "results": data.get("results", 0),
+        "fixtures": data.get("response", []),
     })
