@@ -729,7 +729,19 @@ export default function ScanScreen() {
       ?? (prediction as any)?.bayesianMetrics?.distribution?.landingBands
       ?? []
   ) as Array<{ label: string; lower?: number | null; upper?: number | null; probability: number }>;
-  const visibleRecommendation = prediction?.recommendation;
+  const predictionUnavailable = Boolean(
+    prediction
+      && (
+        prediction.isFallback
+        || prediction.predictionStatus === 'unavailable'
+        || prediction.skipReason === 'prediction_fallback'
+        || (prediction.evidenceQuality as any)?.status === 'fallback'
+        || (prediction as any).dataQuality?.status === 'fallback'
+      )
+  );
+  const visibleRecommendation = predictionUnavailable
+    ? 'UNAVAILABLE'
+    : prediction?.recommendation;
   const visibleIsOver = visibleRecommendation === 'OVER';
   const visibleIsUnder = visibleRecommendation === 'UNDER';
   const visibleRecColor = visibleIsOver
@@ -2043,8 +2055,43 @@ export default function ScanScreen() {
     }
   };
 
+  const handleRetryPrediction = async () => {
+    if (!predictionRequest) {
+      reset();
+      return;
+    }
+    cancelAbortRef.current?.abort();
+    const controller = new AbortController();
+    cancelAbortRef.current = controller;
+    setPhase('analyzing');
+    setAnalyzeError(null);
+    setSaveError(null);
+    try {
+      const result = await predict(predictionRequest, controller.signal);
+      if (result.error) {
+        setAnalyzeError(result.error);
+        setPhase('result');
+        return;
+      }
+      setPrediction(result);
+      setTacticalAnalysis(result.tacticalBreakdown || result.reasoning || result.sharpSummary || null);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === '__CANCELLED__') return;
+      setAnalyzeError(e instanceof Error ? e.message : 'Analysis failed — try again');
+      setPhase('result');
+    } finally {
+      if (cancelAbortRef.current === controller) cancelAbortRef.current = null;
+    }
+  };
+
   const handleSavePick = async () => {
     if (!session || !prediction) return;
+    if (predictionUnavailable) {
+      setSaveError('This result is not a verified prediction. Retry the analysis before saving.');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -3578,6 +3625,32 @@ export default function ScanScreen() {
                 )}
               </View>
 
+              {predictionUnavailable && (
+                <View style={{
+                  marginHorizontal: 14,
+                  marginTop: 10,
+                  paddingHorizontal: 12,
+                  paddingVertical: 11,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: 'rgba(245,158,11,0.45)',
+                  backgroundColor: 'rgba(245,158,11,0.10)',
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                }}>
+                  <Ionicons name="alert-circle-outline" size={17} color="#F59E0B" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '900', letterSpacing: 0.8 }}>
+                      NO VERIFIED PREDICTION
+                    </Text>
+                    <Text style={{ color: Colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>
+                      The provider response did not complete. The line below is your input, not a model projection. Nothing can be saved until the analysis finishes.
+                    </Text>
+                  </View>
+                </View>
+              )}
+
               <View style={styles.analysisDivider} />
 
               {/* ─── GROUNDED PLAYER + MATCH TACTICAL READ ─── */}
@@ -3734,24 +3807,36 @@ export default function ScanScreen() {
                 </View>
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
-                  <Text style={styles.analysisStatLabel}>Projection</Text>
+                   <Text style={styles.analysisStatLabel}>
+                     {predictionUnavailable ? 'Projection status' : 'Projection'}
+                   </Text>
                   <Text style={[styles.analysisStatVal, { color: Colors.primary }]}>
-                    {predictionProjection != null ? predictionProjection.toFixed(1) : '—'}
+                     {predictionUnavailable
+                       ? '—'
+                       : predictionProjection != null ? predictionProjection.toFixed(1) : '—'}
                   </Text>
-                  <Text style={styles.analysisStatSub}>REVERSE FORMULA</Text>
+                   <Text style={styles.analysisStatSub}>
+                     {predictionUnavailable ? 'NOT VERIFIED' : 'REVERSE FORMULA'}
+                   </Text>
                 </View>
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
                   <Text style={styles.analysisStatLabel}>
-                     {modelProbPct != null ? 'Calibrated probability' : 'Evidence confidence'}
+                     {predictionUnavailable
+                       ? 'Prediction status'
+                       : modelProbPct != null ? 'Calibrated probability' : 'Evidence confidence'}
                   </Text>
                   <Text style={[styles.analysisStatVal, { color: visibleRecColor }]}>
-                    {modelProbPct != null
+                     {predictionUnavailable
+                       ? '—'
+                       : modelProbPct != null
                       ? `${modelProbPct.toFixed(1)}%`
                       : confPct != null ? `${confPct}%` : '—'}
                   </Text>
                   <Text style={styles.analysisStatSub}>
-                     {modelProbPct != null ? 'FINAL MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
+                     {predictionUnavailable
+                       ? 'RETRY REQUIRED'
+                       : modelProbPct != null ? 'FINAL MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
                   </Text>
                 </View>
               </View>
@@ -6061,6 +6146,31 @@ export default function ScanScreen() {
 
             </View>{/* end captureContainer */}
 
+            {predictionUnavailable ? (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: 'rgba(245,158,11,0.12)',
+                  borderColor: '#F59E0B',
+                  borderWidth: 1,
+                  borderRadius: 18,
+                  paddingVertical: 14,
+                  paddingHorizontal: 24,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginTop: 10,
+                }}
+                onPress={handleRetryPrediction}
+                disabled={phase === 'analyzing'}
+                activeOpacity={0.82}
+              >
+                <Text style={{ color: '#F59E0B', fontWeight: '900', fontSize: 16, letterSpacing: 0.8 }}>
+                  RETRY ANALYSIS
+                </Text>
+                <Text style={{ color: Colors.textSecondary, fontWeight: '600', fontSize: 11, marginTop: 3 }}>
+                  Do not save an unverified fallback
+                </Text>
+              </TouchableOpacity>
+            ) : (
             <TouchableOpacity
                 style={[{
                   backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : '#FF3B30',
@@ -6102,6 +6212,7 @@ export default function ScanScreen() {
                   </>
                 )}
             </TouchableOpacity>
+            )}
 
             {/* Secondary actions row */}
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>

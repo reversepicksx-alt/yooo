@@ -71,3 +71,15 @@ trusted centre-back profile before cached same-position rows were assembled.
 optional-enrichment clock for cached player identity and cached cohort reads.
 Preserve manual, grounded, lineup-history, or unambiguous provider-category
 profiles across generic `DEF`/`MID`/`FWD` observations.
+
+Client timeout fallbacks must be transport states, never customer-facing picks:
+they must be marked unavailable, must not be saveable, and must expose retry
+instead of rendering a line-equal projection and 50% PASS.
+
+**Why:** A 30-second mobile timeout converted a valid slow Tyler Scott Morton
+request into `PASS 48.5 / Projection 48.5 / 50%`, making an absence of data
+look like a model decision and allowing it to be saved.
+
+**How to apply:** Keep the core client timeout above the server/proxy response
+window, and preserve explicit `predictionStatus=unavailable` metadata through
+normalization. Gate save actions on verified prediction status.

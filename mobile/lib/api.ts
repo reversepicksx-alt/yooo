@@ -22,10 +22,10 @@ const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
-// The backend returns a deterministic result or neutral fallback before this
-// deadline. Keep the client ceiling below 30 seconds so a stuck transport
-// cannot leave the prediction screen spinning indefinitely.
-const CORE_PREDICTION_TIMEOUT_MS = 29_000;
+// The backend's core response budget is 27 seconds, but cold Atlas/provider
+// connections and proxy serialization can consume the remaining headroom.
+// Do not convert a valid slow response into a fake 50/50 PASS at 29 seconds.
+const CORE_PREDICTION_TIMEOUT_MS = 120_000;
 const isPredictionPath = (endpoint: string) =>
   endpoint === '/api/scan-prop' || (endpoint.startsWith('/api/') && endpoint.endsWith('/predict'));
 const isCorePrediction = (endpoint: string) => endpoint === '/api/predict';
@@ -257,7 +257,7 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
       }
       throw new Error(
         isCorePrediction(endpoint)
-           ? 'Prediction timed out after 30 seconds. A neutral fallback will be used on the next request.'
+           ? 'Prediction timed out before verified data completed. Please retry the analysis.'
           : 'Request timed out. The server is taking too long — please try again.',
       );
     }
@@ -651,6 +651,8 @@ export interface PredictionResult {
   passLeaning?: 'OVER' | 'UNDER' | string;
   passReason?: string;
   skipReason?: string;
+  predictionStatus?: 'available' | 'unavailable' | string;
+  isFallback?: boolean;
   qualityConfidenceCapped?: boolean;
   evidenceQuality?: Record<string, unknown>;
   skipDetails?: { direction?: string; hitRate?: number; sampleSize?: number; windowDays?: number };
@@ -1949,8 +1951,10 @@ function clientPredictionFallback(
     confidence: 50,
     confidenceScore: 50,
     recommendation: 'PASS',
-    passReason: 'Verified provider data did not complete within the 30-second safety limit.',
+    passReason: 'Verified provider data did not complete before the response deadline.',
     skipReason: 'prediction_fallback',
+    predictionStatus: 'unavailable',
+    isFallback: true,
     reasoning: 'Neutral fallback returned without waiting for unavailable provider data.',
     evidenceQuality: {
       status: 'fallback',
@@ -2069,6 +2073,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     recommendation: rec,
     passReason: (raw as any).passReason ?? undefined,
     skipReason: (raw as any).skipReason ?? undefined,
+    predictionStatus: (raw as any).predictionStatus ?? undefined,
+    isFallback: (raw as any).isFallback ?? undefined,
     skipDetails: (raw as any).skipDetails ?? undefined,
     reasoning: raw.reasoning || undefined,
     confidenceLevel: raw.confidenceLevel,

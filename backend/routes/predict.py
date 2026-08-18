@@ -973,6 +973,10 @@ async def predict(req: PredictionRequest):
             "line": req.line,
             "projectedValue": req.line,
             "recommendation": "PASS",
+            "predictionStatus": "unavailable",
+            "isFallback": True,
+            "skipReason": "prediction_fallback",
+            "passReason": "Verified provider data did not complete before the response deadline.",
             "confidenceScore": 50,
             "confidenceLevel": "Medium",
             "confidenceInterval": None,
@@ -992,6 +996,11 @@ async def predict(req: PredictionRequest):
             "tacticalBreakdown": "",
             "explanation": "Neutral fallback returned without waiting for unavailable provider data.",
             "dataQuality": {
+                "status": "fallback",
+                "reason": reason,
+                "providerDataUnavailable": True,
+            },
+            "evidenceQuality": {
                 "status": "fallback",
                 "reason": reason,
                 "providerDataUnavailable": True,
