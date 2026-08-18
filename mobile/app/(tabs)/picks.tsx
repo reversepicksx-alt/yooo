@@ -16,7 +16,6 @@ import Reanimated, {
   withRepeat,
   withSequence,
   withTiming,
-  FadeInDown,
 } from 'react-native-reanimated';
 import SwipeablePickRow from '@/components/SwipeablePickRow';
 import OwnerPickCard from '@/components/OwnerPickCard';
@@ -1580,7 +1579,7 @@ export default function PicksScreen() {
           </TouchableOpacity>
         </View>
       ) : visiblePicks.length === 0 ? (
-        <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(400).springify() : undefined} style={styles.empty}>
+        <View style={styles.empty}>
           <View style={styles.emptyIconWrap}>
             <Ionicons name="bookmark-outline" size={36} color={Colors.primary} />
           </View>
@@ -1590,7 +1589,7 @@ export default function PicksScreen() {
             <Ionicons name="scan-outline" size={14} color="#000" />
             <Text style={styles.emptyActionText}>Make a Prediction</Text>
           </TouchableOpacity>
-        </Reanimated.View>
+        </View>
       ) : (
         <FlatList
           data={visiblePicks}
