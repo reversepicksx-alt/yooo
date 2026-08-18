@@ -125,7 +125,14 @@ def test_identity_keyed_manual_profile_can_resolve_facundo_exact_position():
 
 
 def test_comparison_profiles_accept_string_or_integer_provider_ids():
-    comparison_start = PREDICT_SOURCE.index("cached_pr = await db.player_positions.find_one(")
+    # The cache read is response-budget bounded; locate the query from its
+    # stable source label instead of coupling this contract to the await shape.
+    source_label = PREDICT_SOURCE.index('"fixture player position cache"')
+    comparison_start = PREDICT_SOURCE.rfind(
+        "db.player_positions.find_one(",
+        0,
+        source_label,
+    )
     comparison_block = PREDICT_SOURCE[comparison_start:comparison_start + 900]
     assert '{"playerId": p_id_key}' in comparison_block
     assert '{"playerId": str(p_id)}' in comparison_block

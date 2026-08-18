@@ -814,6 +814,38 @@ def _validate_fixture_identity(matchup: dict | None, *, team_id: int, opponent_i
     return True, ""
 
 
+async def _run_bounded_prediction_source(
+    coro,
+    *,
+    started: float,
+    budget: float,
+    timeout: float,
+    fallback=None,
+    label: str = "prediction source",
+):
+    """Await a provider/cache source without consuming the whole request."""
+    remaining = max(0.0, budget - (aio.get_running_loop().time() - started))
+    allowed = min(float(timeout), remaining)
+    if allowed <= 0.05:
+        try:
+            if hasattr(coro, "cancel"):
+                coro.cancel()
+            else:
+                coro.close()
+        except (AttributeError, RuntimeError):
+            pass
+        print(f"[PREDICTION BUDGET] {label} skipped; response budget exhausted")
+        return fallback
+    try:
+        return await aio.wait_for(coro, timeout=allowed)
+    except Exception as exc:
+        print(
+            f"[PREDICTION SOURCE] {label} unavailable within {allowed:.1f}s: "
+            f"{type(exc).__name__}"
+        )
+        return fallback
+
+
 def _select_player_context_for_league(
     docs: list[dict],
     league_id: int,
@@ -847,13 +879,38 @@ def _select_player_context_for_league(
 
 @router.post("/predict")
 async def predict(req: PredictionRequest):
+    # Start the response clock before authentication and current-club
+    # verification.  Those checks are part of the user-visible request and
+    # must not sit outside the advertised prediction budget.
+    _prediction_started = aio.get_running_loop().time()
+    _PREDICTION_RESPONSE_BUDGET = 37.0
+
+    def _prediction_elapsed() -> float:
+        return aio.get_running_loop().time() - _prediction_started
+
+    async def _bounded_prediction_source(coro, label: str, timeout: float, fallback=None):
+        return await _run_bounded_prediction_source(
+            coro,
+            started=_prediction_started,
+            budget=_PREDICTION_RESPONSE_BUDGET,
+            timeout=timeout,
+            fallback=fallback,
+            label=label,
+        )
+
     # Keep the display name defined before any optional enrichment or
     # fail-open branch can run. Older deployed builds referenced this local
     # before the later canonical-name assignment, turning a recoverable
     # provider refresh into the generic prediction error banner.
     player_team_display = req.teamName or ""
     from routes.auth import verify_session
-    sess = await verify_session(req)
+    try:
+        sess = await aio.wait_for(verify_session(req), timeout=3.0)
+    except aio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="Session verification timed out. Please retry shortly.",
+        )
     if not sess.get("valid"):
         raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
     access = sess.get("access_type", "")
@@ -884,11 +941,21 @@ async def predict(req: PredictionRequest):
         try:
             from routes.misc import _resolve_verified_club
             from cache import COL_NATIONAL
-            is_national_context = await db[COL_NATIONAL].find_one(
-                {"teamId": req.teamId}, {"_id": 1}
+            is_national_context = await _bounded_prediction_source(
+                db[COL_NATIONAL].find_one(
+                    {"teamId": req.teamId}, {"_id": 1}
+                ),
+                "current-club context",
+                1.0,
+                None,
             )
             if not is_national_context:
-                verified_club = await _resolve_verified_club(req.playerId)
+                verified_club = await _bounded_prediction_source(
+                    _resolve_verified_club(req.playerId),
+                    "current-club verification",
+                    3.0,
+                    None,
+                )
                 if not verified_club:
                     raise HTTPException(
                         status_code=409,
@@ -915,11 +982,9 @@ async def predict(req: PredictionRequest):
         # circuit breaker in utils.py.
     _priority_token = set_api_request_priority(True)
     try:
-        _prediction_started = aio.get_running_loop().time()
-
-        def _prediction_elapsed() -> float:
-            return aio.get_running_loop().time() - _prediction_started
-
+        # The mobile client needs a useful deterministic answer, not an
+        # indefinite provider wait. Keep a small amount of headroom for
+        # response serialization and the reverse proxy's own work.
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         # Ordered numeric audit trail for the explanation layer.  This is
         # intentionally separate from analysisFactors: analysisFactors describe
@@ -985,9 +1050,14 @@ async def predict(req: PredictionRequest):
         # and undermined user trust. Every request now runs full fresh analysis.
         # Results are still stored in db.predictions for analytics/top-props.
 
-        async def safe_fetch(endpoint, params, fallback=None):
+        async def safe_fetch(endpoint, params, fallback=None, *, timeout: float = 3.5):
             try:
-                return await api_football_request(endpoint, params)
+                return await _bounded_prediction_source(
+                    api_football_request(endpoint, params),
+                    endpoint,
+                    timeout,
+                    fallback,
+                )
             except Exception:
                 return fallback
 
@@ -1054,7 +1124,10 @@ async def predict(req: PredictionRequest):
             all_data = None
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
                 try:
-                    data = await api_football_request("players", {"id": req.playerId, "season": s})
+                    data = await aio.wait_for(
+                        api_football_request("players", {"id": req.playerId, "season": s}),
+                        timeout=3.5,
+                    )
                     if data:
                         entry = data[0]
                         if all_data is None:
@@ -1110,7 +1183,15 @@ async def predict(req: PredictionRequest):
             # 1. Resolve team ID from team name — always verify, never blindly trust req.teamId
             if req.teamName:
                 try:
-                    _t = await _find_team(req.teamName, league_id=league_id if league_id and league_id != 39 else None)
+                    _t = await _bounded_prediction_source(
+                        _find_team(
+                            req.teamName,
+                            league_id=league_id if league_id and league_id != 39 else None,
+                        ),
+                        "team identity resolution",
+                        1.0,
+                        None,
+                    )
                     if _t and _t.get("teamId"):
                         _resolved_tid = _t["teamId"]
                         if _resolved_tid != actual_team_id:
@@ -1129,14 +1210,27 @@ async def predict(req: PredictionRequest):
             if req.opponentName:
                 try:
                     from cache import COL_NATIONAL as _COL_NAT
-                    _opp_is_national = req.opponentId and await db[_COL_NAT].count_documents(
-                        {"teamId": req.opponentId}, limit=1
-                    ) > 0
+                    _opp_is_national = bool(
+                        req.opponentId
+                        and await _bounded_prediction_source(
+                            db[_COL_NAT].count_documents(
+                                {"teamId": req.opponentId}, limit=1
+                            ),
+                            "opponent identity context",
+                            0.75,
+                            0,
+                        )
+                    )
                     if _opp_is_national:
                         _resolved_opp_id = req.opponentId
                         print(f"[ID RESOLVE] '{req.opponentName}' opponentId={_resolved_opp_id} (national team — kept)")
                     else:
-                        _o = await _find_team(req.opponentName)
+                        _o = await _bounded_prediction_source(
+                            _find_team(req.opponentName),
+                            "opponent identity resolution",
+                            1.0,
+                            None,
+                        )
                         if _o and _o.get("teamId"):
                             _resolved_opp_id = _o["teamId"]
                             print(f"[ID RESOLVE] '{req.opponentName}' → opponentId={_resolved_opp_id}")
@@ -1156,19 +1250,29 @@ async def predict(req: PredictionRequest):
                     if league_id not in INTERNATIONAL_LEAGUES and _lookup_team_id:
                         try:
                             from cache import COL_NATIONAL as _COL_NAT_PLAYER
-                            if await db[_COL_NAT_PLAYER].count_documents(
-                                {"teamId": _lookup_team_id}, limit=1
+                            if await _bounded_prediction_source(
+                                db[_COL_NAT_PLAYER].count_documents(
+                                    {"teamId": _lookup_team_id}, limit=1
+                                ),
+                                "player national-team context",
+                                0.75,
+                                0,
                             ) > 0:
                                 _lookup_team_id = None
                                 _lookup_team_hint = None
                         except Exception:
                             pass
-                    _p = await _get_player_by_name(
-                        req.playerName,
-                        _lookup_team_id,
-                        league_id=league_id if league_id and league_id != 39 else None,
-                        team_name_hint=_lookup_team_hint,
-                        prop_type=req.propType or None,
+                    _p = await _bounded_prediction_source(
+                        _get_player_by_name(
+                            req.playerName,
+                            _lookup_team_id,
+                            league_id=league_id if league_id and league_id != 39 else None,
+                            team_name_hint=_lookup_team_hint,
+                            prop_type=req.propType or None,
+                        ),
+                        "player identity resolution",
+                        2.0,
+                        None,
                     )
                     if _p and _p.get("playerId"):
                         _resolved_player_id = _p["playerId"]
@@ -1187,10 +1291,22 @@ async def predict(req: PredictionRequest):
                             _nc = (_p.get("nameClean") or "").strip()
                             if _nc:
                                 from cache import COL_PLAYERS
-                                _all_nc = await db[COL_PLAYERS].find(
-                                    {"nameClean": _nc},
-                                    {"playerId": 1, "name": 1, "teamName": 1, "position": 1, "leagueId": 1, "_id": 0}
-                                ).to_list(15)
+                                _all_nc = await _bounded_prediction_source(
+                                    db[COL_PLAYERS].find(
+                                        {"nameClean": _nc},
+                                        {
+                                            "playerId": 1,
+                                            "name": 1,
+                                            "teamName": 1,
+                                            "position": 1,
+                                            "leagueId": 1,
+                                            "_id": 0,
+                                        },
+                                    ).to_list(15),
+                                    "player ambiguity context",
+                                    0.75,
+                                    [],
+                                )
                                 if len(_all_nc) > 1:
                                     _player_candidates = [
                                         {
@@ -1216,10 +1332,21 @@ async def predict(req: PredictionRequest):
             if _resolved_player_id and league_id not in INTERNATIONAL_LEAGUES:
                 try:
                     from cache import COL_PLAYERS as _COL_PLAYER_CONTEXT
-                    _context_docs = await db[_COL_PLAYER_CONTEXT].find(
-                        {"playerId": _resolved_player_id},
-                        {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1, "leagueId": 1},
-                    ).to_list(30)
+                    _context_docs = await _bounded_prediction_source(
+                        db[_COL_PLAYER_CONTEXT].find(
+                            {"playerId": _resolved_player_id},
+                            {
+                                "_id": 0,
+                                "playerId": 1,
+                                "teamId": 1,
+                                "teamName": 1,
+                                "leagueId": 1,
+                            },
+                        ).to_list(30),
+                        "player competition context",
+                        0.75,
+                        [],
+                    )
                     _league_context = _select_player_context_for_league(
                         _context_docs, league_id, actual_team_id
                     )
@@ -1351,7 +1478,10 @@ async def predict(req: PredictionRequest):
                 if match_status:
                     result["matchStatus"] = match_status
                 try:
-                    odds = await api_football_request("odds", {"fixture": fid})
+                    odds = await aio.wait_for(
+                        api_football_request("odds", {"fixture": fid}),
+                        timeout=2.5,
+                    )
                     if odds:
                         for bk in odds[0].get("bookmakers", [])[:1]:
                             for bet in bk.get("bets", []):
@@ -1412,7 +1542,12 @@ async def predict(req: PredictionRequest):
         match_odds_prefetched = None
         sgo_market_task = None
         if not ai_only_mode and actual_team_id and not _is_bdl_league:
-            match_odds_prefetched = await get_match_odds()
+            match_odds_prefetched = await _bounded_prediction_source(
+                get_match_odds(),
+                "verified fixture and odds",
+                6.0,
+                None,
+            )
             if not match_odds_prefetched:
                 # Do not analyze a stale OCR/manual opponent when the current
                 # fixture cannot be verified.  A clear retry is safer than a
@@ -1541,13 +1676,40 @@ async def predict(req: PredictionRequest):
 
         import time as _t
         _t0 = _t.time()
-        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, match_odds = await aio.gather(
-            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, odds_task,
+        (
+            player_stats,
+            team_stats,
+            opponent_stats,
+            h2h_data,
+            standings_raw,
+            recent_fixtures,
+            match_odds,
+        ) = await aio.gather(
+            _bounded_prediction_source(player_data_task, "player season data", 6.0, None),
+            _bounded_prediction_source(team_stats_task, "team season data", 5.0, None),
+            _bounded_prediction_source(opponent_stats_task, "opponent season data", 5.0, None),
+            _bounded_prediction_source(h2h_task, "team H2H history", 4.5, []),
+            _bounded_prediction_source(standings_task, "standings", 3.5, None),
+            _bounded_prediction_source(fixtures_task, "recent fixtures", 4.5, []),
+            odds_task,
+            return_exceptions=True,
         )
+        player_stats = player_stats if not isinstance(player_stats, Exception) else None
+        team_stats = team_stats if not isinstance(team_stats, Exception) else None
+        opponent_stats = opponent_stats if not isinstance(opponent_stats, Exception) else None
+        h2h_data = h2h_data if not isinstance(h2h_data, Exception) else []
+        standings_raw = standings_raw if not isinstance(standings_raw, Exception) else None
+        recent_fixtures = recent_fixtures if not isinstance(recent_fixtures, Exception) else []
+        match_odds = match_odds if not isinstance(match_odds, Exception) else match_odds_prefetched
         sgo_market_context = None
         if sgo_market_task is not None:
             try:
-                sgo_market_context = await sgo_market_task
+                sgo_market_context = await _bounded_prediction_source(
+                    sgo_market_task,
+                    "sports market context",
+                    1.5,
+                    None,
+                )
             except Exception as _sgo_err:
                 print(f"[SGO] prediction context skipped: {type(_sgo_err).__name__}: {_sgo_err}")
         print(f"[TIMING] Wave 1: {_t.time()-_t0:.1f}s")
@@ -1582,7 +1744,12 @@ async def predict(req: PredictionRequest):
         if actual_team_id and actual_team_id != 0 and not recent_fixtures and not _is_bdl_league:
             try:
                 print(f"[FIXTURE RECOVERY] Fetching fixtures for recovered teamId={actual_team_id}")
-                recent_fixtures = await get_recent_fixtures_fast(actual_team_id, 40)
+                recent_fixtures = await _bounded_prediction_source(
+                    get_recent_fixtures_fast(actual_team_id, 40),
+                    "fixture recovery",
+                    3.0,
+                    [],
+                )
             except Exception as _fre:
                 print(f"[FIXTURE RECOVERY] Error: {_fre}")
 
@@ -1678,7 +1845,10 @@ async def predict(req: PredictionRequest):
                     # pressing; the defending team's own passes are not.
                     result = dict(cached["d"]) if cached and cached.get("d") else {}
                     if "opponentTotalPasses" not in result:
-                        data = await api_football_request("fixtures/statistics", {"fixture": fid})
+                        data = await aio.wait_for(
+                            api_football_request("fixtures/statistics", {"fixture": fid}),
+                            timeout=3.0,
+                        )
                         if data:
                             stats_by_team = {}
                             for team_data in data:
@@ -4429,25 +4599,34 @@ async def predict(req: PredictionRequest):
                             # Look up cached specific position + role. Atlas may be
                             # write-blocked, so a missing cache row is expected; in
                             # that case infer the role from this API fixture row.
-                            cached_pr = await db.player_positions.find_one(
-                                {
-                                    "$or": [
-                                        {"playerId": p_id},
-                                        {"playerId": p_id_key},
-                                        {"playerId": str(p_id)}
-                                        if p_id is not None
-                                        else {"playerId": None},
-                                    ]
-                                },
-                                {
-                                    "_id": 0,
-                                    "specificPosition": 1,
-                                    "role": 1,
-                                    "source": 1,
-                                    "roleSource": 1,
-                                    "confidence": 1,
-                                },
-                            ) if p_id else None
+                            cached_pr = (
+                                await _bounded_prediction_source(
+                                    db.player_positions.find_one(
+                                        {
+                                            "$or": [
+                                                {"playerId": p_id},
+                                                {"playerId": p_id_key},
+                                                {"playerId": str(p_id)}
+                                                if p_id is not None
+                                                else {"playerId": None},
+                                            ]
+                                        },
+                                        {
+                                            "_id": 0,
+                                            "specificPosition": 1,
+                                            "role": 1,
+                                            "source": 1,
+                                            "roleSource": 1,
+                                            "confidence": 1,
+                                        },
+                                    ),
+                                    "fixture player position cache",
+                                    0.5,
+                                    None,
+                                )
+                                if p_id
+                                else None
+                            )
                             spec_pos = (cached_pr or {}).get("specificPosition", "")
                             spec_role = (cached_pr or {}).get("role", "")
                             # A cache row is only an exact-position claim when it
@@ -4911,9 +5090,14 @@ async def predict(req: PredictionRequest):
                 and not _is_bdl_league
             ):
                 try:
-                    _opp_live = await api_football_request(
-                        "fixtures",
-                        {"team": safe_opp_id, "last": _cohort_fixture_lookback},
+                    _opp_live = await _bounded_prediction_source(
+                        api_football_request(
+                            "fixtures",
+                            {"team": safe_opp_id, "last": _cohort_fixture_lookback},
+                        ),
+                        "opponent fixture fill",
+                        3.0,
+                        [],
                     )
                     _seen_opp_fixture_ids = {
                         row.get("fixture", {}).get("id")
@@ -5170,11 +5354,13 @@ async def predict(req: PredictionRequest):
             _pressure_team_fixtures,
             actual_team_id or 40,
             _PRESSURE_SAMPLE_TARGET,
+            include_player_actions=False,
         )
         opponent_fixture_stats_task = fetch_fixture_team_stats(
             _pressure_opponent_fixtures,
             req.opponentId,
             _PRESSURE_SAMPLE_TARGET,
+            include_player_actions=False,
         )
         # Matchup-volume evidence uses exact venue samples. Fetch both home
         # and away pools for both clubs so the UI can show, for example,
@@ -5523,39 +5709,37 @@ async def predict(req: PredictionRequest):
         # projection sees the same evidence as before. StatsBomb is optional
         # explanation-only enrichment and must not hold the result hostage.
         async def _bounded_required(coro, label: str, timeout: float):
-            try:
-                return await aio.wait_for(coro, timeout=timeout)
-            except Exception as exc:
-                print(
-                    f"[WAVE2 SOURCE] {label} unavailable after {timeout:.0f}s: "
-                    f"{type(exc).__name__}"
-                )
-                return None
+            return await _bounded_prediction_source(
+                coro,
+                f"Wave 2 {label}",
+                timeout,
+                None,
+            )
 
         # Bound sources independently. A slow team-level enrichment must not
         # cancel the player's game logs, which are the primary Bayesian prior.
         required_wave2 = aio.gather(
-            _bounded_required(team_fixture_stats_task, "team fixture stats", 10),
-            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 10),
-            _bounded_required(player_game_logs_task, "player game logs", 12),
-            _bounded_required(situation_task, "match situation", 8),
+            _bounded_required(team_fixture_stats_task, "team fixture stats", 5),
+            _bounded_required(opponent_fixture_stats_task, "opponent fixture stats", 5),
+            _bounded_required(player_game_logs_task, "player game logs", 8),
+            _bounded_required(situation_task, "match situation", 5),
             _bounded_required(
                 team_schedule_possession_task,
                 "team schedule possession",
-                12,
+                5,
             ),
             _bounded_required(
                 opponent_schedule_possession_task,
                 "opponent schedule possession",
-                12,
+                5,
             ),
             return_exceptions=True,
         )
         matchup_volume_wave = aio.gather(
-            _bounded_required(team_home_volume_task, "team home volume", 6),
-            _bounded_required(team_away_volume_task, "team away volume", 6),
-            _bounded_required(opponent_home_volume_task, "opponent home volume", 6),
-            _bounded_required(opponent_away_volume_task, "opponent away volume", 6),
+            _bounded_required(team_home_volume_task, "team home volume", 4),
+            _bounded_required(team_away_volume_task, "team away volume", 4),
+            _bounded_required(opponent_home_volume_task, "opponent home volume", 4),
+            _bounded_required(opponent_away_volume_task, "opponent away volume", 4),
             return_exceptions=True,
         )
         optional_wave2 = aio.gather(statsbomb_task, return_exceptions=True)
@@ -5573,17 +5757,23 @@ async def predict(req: PredictionRequest):
                 f"{req.playerName}: {type(_required_wave_err).__name__}"
             )
 
-        try:
-            matchup_volume_results = await aio.wait_for(matchup_volume_wave, timeout=6)
-        except aio.TimeoutError:
+        matchup_volume_results = await _bounded_prediction_source(
+            matchup_volume_wave,
+            "Wave 2 matchup volume",
+            4.0,
+            [None] * 4,
+        )
+        if not isinstance(matchup_volume_results, list):
             matchup_volume_results = [None] * 4
-            print(f"[MATCHUP VOLUME TIMEOUT] venue evidence exceeded 6s for {req.playerName}")
 
-        try:
-            optional_results = await aio.wait_for(optional_wave2, timeout=3)
-        except aio.TimeoutError:
+        optional_results = await _bounded_prediction_source(
+            optional_wave2,
+            "Wave 2 optional enrichment",
+            3.0,
+            [None],
+        )
+        if not isinstance(optional_results, list):
             optional_results = [None]
-            print(f"[WAVE2 OPTIONAL TIMEOUT] shadow enrichment exceeded 3s for {req.playerName}")
 
         required_results = required_results + matchup_volume_results
         team_fixture_stats = required_results[0] if not isinstance(required_results[0], (Exception, type(None))) else []
@@ -5818,20 +6008,27 @@ async def predict(req: PredictionRequest):
                 ],
             }
 
-        try:
-            # Do not serialize the new packet as "not yet warmed" after a
-            # 1.5-second placeholder window. The caller needs the actual
-            # exact-fixture classification or a real provider limitation.
-            recent_opponent_press_intensity = await aio.wait_for(
-                aio.shield(_recent_opponent_press_task),
-                timeout=20.0,
-            )
-        except Exception as _recent_press_err:
-            print(
-                f"[RECENT PRESS INTENSITY] bounded response window: "
-                f"{type(_recent_press_err).__name__}"
-            )
-            recent_opponent_press_intensity = {
+            try:
+                # Pressure is explanation-only enrichment. Give it a short
+                # window after the core fixture/history work, then keep the
+                # packet explicitly limited rather than adding another
+                # provider-sized delay to the prediction response.
+                if _prediction_elapsed() >= 20.0:
+                    _recent_opponent_press_task.cancel()
+                    raise aio.TimeoutError()
+                recent_opponent_press_intensity = await aio.wait_for(
+                    aio.shield(_recent_opponent_press_task),
+                    timeout=min(
+                        3.0,
+                        max(0.5, _PREDICTION_RESPONSE_BUDGET - _prediction_elapsed()),
+                    ),
+                )
+            except Exception as _recent_press_err:
+                print(
+                    f"[RECENT PRESS INTENSITY] bounded response window: "
+                    f"{type(_recent_press_err).__name__}"
+                )
+                recent_opponent_press_intensity = {
                 "status": "limited",
                 "available": False,
                 "sampleSize": len(_recent_profile_rows),
@@ -5898,7 +6095,12 @@ async def predict(req: PredictionRequest):
         _manager_possession_drift = {}
         if _manager_task is not None:
             try:
-                _manager_ctx = await _manager_task or {}
+                _manager_ctx = await _bounded_prediction_source(
+                    _manager_task,
+                    "manager context",
+                    1.5,
+                    {},
+                ) or {}
                 if _manager_ctx.get("isRecent"):
                     print(
                         f"[MANAGER] ⚠ Recent change: {_manager_ctx.get('prevCoachName','?')} → "
@@ -6256,7 +6458,10 @@ async def predict(req: PredictionRequest):
                     try:
                         _pf_results = await aio.wait_for(
                             aio.gather(*_pf_tasks, return_exceptions=True),
-                            timeout=8,
+                            timeout=min(
+                                5.0,
+                                max(0.5, _PREDICTION_RESPONSE_BUDGET - _prediction_elapsed()),
+                            ),
                         )
                     except aio.TimeoutError:
                         print(
@@ -6274,7 +6479,10 @@ async def predict(req: PredictionRequest):
                 print(f"[PLAYER-DIRECT] Error: {_pde}")
 
         # Stage 2: Season aggregate fallback — only if API direct also returned nothing
-        if req.sport == "soccer":
+        # Comparison rows are useful context but are not required to produce
+        # the deterministic projection. Once the response is late, leave the
+        # evidence explicitly unavailable instead of holding the result.
+        if req.sport == "soccer" and _prediction_elapsed() < 27.0:
             # A provider/cache response can contain a mixture of complete
             # appearances and rows missing minutes, target stats, or optional
             # fixture possession, especially when a new competition season has
@@ -7041,7 +7249,7 @@ async def predict(req: PredictionRequest):
             return None
 
         _h2h_team_poss_vals: list[float] = []
-        if h2h_data and actual_team_id:
+        if h2h_data and actual_team_id and _prediction_elapsed() < 24.0:
             _h2h_poss_tasks = []
             _h2h_fxt_ids_used = []
             for _hf in h2h_data[:8]:
@@ -7061,7 +7269,11 @@ async def predict(req: PredictionRequest):
                 _h2h_fxt_ids_used.append(_hf_fid)
             try:
                 _h2h_poss_results = await aio.wait_for(
-                    aio.gather(*_h2h_poss_tasks), timeout=8
+                    aio.gather(*_h2h_poss_tasks),
+                    timeout=min(
+                        2.5,
+                        max(0.5, _PREDICTION_RESPONSE_BUDGET - _prediction_elapsed()),
+                    ),
                 )
                 _h2h_team_poss_vals = [r for r in _h2h_poss_results if r is not None]
                 print(f"[H2H POSS FETCH] {req.playerName}: venue={'home' if _is_home else 'away'} "
@@ -7691,12 +7903,27 @@ async def predict(req: PredictionRequest):
             _bayes_position = ""
             _bayes_role     = ""
             try:
-                _pos_doc = await db.player_positions.find_one(
-                    {"playerId": req.playerId}
-                ) if req.playerId else None
+                _pos_doc = (
+                    await _bounded_prediction_source(
+                        db.player_positions.find_one({"playerId": req.playerId}),
+                        "Bayesian position cache",
+                        0.5,
+                        None,
+                    )
+                    if req.playerId
+                    else None
+                )
                 if not _pos_doc:
-                    _pos_doc = await db.player_positions.find_one(
-                        {"playerName": req.playerName, "playerId": {"$exists": True}}
+                    _pos_doc = await _bounded_prediction_source(
+                        db.player_positions.find_one(
+                            {
+                                "playerName": req.playerName,
+                                "playerId": {"$exists": True},
+                            }
+                        ),
+                        "Bayesian position-name cache",
+                        0.5,
+                        None,
                     )
                 if _pos_doc:
                     _bayes_position = _pos_doc.get("specificPosition", "")
@@ -7785,8 +8012,13 @@ async def predict(req: PredictionRequest):
             # because recent appearances included managed minutes.
             if _sit_fixture_id and req.playerId:
                 try:
-                    _lineup_raw_preflight = await api_football_request(
-                        "fixtures/lineups", {"fixture": _sit_fixture_id}
+                    _lineup_raw_preflight = await _bounded_prediction_source(
+                        api_football_request(
+                            "fixtures/lineups", {"fixture": _sit_fixture_id}
+                        ),
+                        "lineup preflight",
+                        2.0,
+                        [],
                     )
                     _lineup_status = _lineup_player_status(
                         _lineup_raw_preflight, req.playerId
@@ -8067,7 +8299,12 @@ async def predict(req: PredictionRequest):
             try:
                 from league_priors import lookup as _league_lookup, ensure_loaded as _ensure_lp
                 # Make sure the cache is warm (no-op if already loaded recently)
-                await _ensure_lp(db)
+                await _bounded_prediction_source(
+                    _ensure_lp(db),
+                    "league prior cache",
+                    1.0,
+                    None,
+                )
                 # Pass BOTH sides of the bucket — over/under are independently
                 # estimated populations, so we let the engine pick the bucket
                 # that matches the side we end up recommending.
@@ -8188,17 +8425,22 @@ async def predict(req: PredictionRequest):
                         # No odds signal — use balanced defaults (style still fires if opp_cede is strong)
                         _cp_p_trail = 0.33
                         _cp_p_lead  = 0.33
-                    _cond_poss_result = await _compute_cond_poss(
-                        base_poss=match_dominance["expectedPoss"],
-                        p_trail=_cp_p_trail,
-                        p_lead=_cp_p_lead,
-                        player_team_name=(
-                            locals().get("corrected_team_name") or req.teamName or ""
+                    _cond_poss_result = await _bounded_prediction_source(
+                        _compute_cond_poss(
+                            base_poss=match_dominance["expectedPoss"],
+                            p_trail=_cp_p_trail,
+                            p_lead=_cp_p_lead,
+                            player_team_name=(
+                                locals().get("corrected_team_name") or req.teamName or ""
+                            ),
+                            opp_team_name=req.opponentName or "",
+                            db=db,
+                            team_fixture_stats=team_fixture_stats,
+                            opp_fixture_stats=opponent_fixture_stats,
                         ),
-                        opp_team_name=req.opponentName or "",
-                        db=db,
-                        team_fixture_stats=team_fixture_stats,
-                        opp_fixture_stats=opponent_fixture_stats,
+                        "conditional possession",
+                        1.5,
+                        None,
                     )
                     if _cond_poss_result and _cond_poss_result.get("adjusted_poss"):
                         if _cond_poss_mode == "live":
@@ -8230,7 +8472,12 @@ async def predict(req: PredictionRequest):
                 try:
                     from scenario_priors import (lookup_weighted as _scen_lookup,
                                                  ensure_loaded as _ensure_scen)
-                    await _ensure_scen(db)
+                    await _bounded_prediction_source(
+                        _ensure_scen(db),
+                        "scenario prior cache",
+                        1.0,
+                        None,
+                    )
                     # Look up BOTH sides; the engine has already chosen which
                     # to apply by the time scenario_priors runs in shadow/live.
                     # We emit both so the inspector and downstream consumers
@@ -8266,7 +8513,12 @@ async def predict(req: PredictionRequest):
                                                  odds_tier_from_moneyline as _ot_from_ml,
                                                  odds_tier_from_possession as _ot_from_poss,
                                                  ensure_loaded as _ensure_ot)
-                    await _ensure_ot(db)
+                    await _bounded_prediction_source(
+                        _ensure_ot(db),
+                        "odds-tier prior cache",
+                        1.0,
+                        None,
+                    )
                     # Resolve odds tier deterministically: moneyline first, then
                     # projected possession (already computed by match_dominance).
                     if match_odds and match_odds.get("americanOdds"):
@@ -8713,8 +8965,13 @@ async def predict(req: PredictionRequest):
                     _lineup_raw = (
                         _lineup_raw_preflight
                         if _lineup_raw_preflight is not None
-                        else await api_football_request(
-                            "fixtures/lineups", {"fixture": _sit_fixture_id}
+                        else await _bounded_prediction_source(
+                            api_football_request(
+                                "fixtures/lineups", {"fixture": _sit_fixture_id}
+                            ),
+                            "fixture lineup context",
+                            2.0,
+                            [],
                         )
                     )
                     _lineup_responses = _api_response_list(_lineup_raw)
@@ -8764,9 +9021,21 @@ async def predict(req: PredictionRequest):
                                             return _tl
                                 return None
 
-                            _own_last, _opp_last = await aio.gather(
-                                _last_lineup(_canonical_team_id), _last_lineup(_canonical_opponent_id),
-                                return_exceptions=True
+                            _last_lineup_results = await _bounded_prediction_source(
+                                aio.gather(
+                                    _last_lineup(_canonical_team_id),
+                                    _last_lineup(_canonical_opponent_id),
+                                    return_exceptions=True,
+                                ),
+                                "predicted lineup context",
+                                2.5,
+                                [None, None],
+                            )
+                            _own_last, _opp_last = (
+                                _last_lineup_results
+                                if isinstance(_last_lineup_results, (list, tuple))
+                                and len(_last_lineup_results) >= 2
+                                else (None, None)
                             )
                             if _own_last and not isinstance(_own_last, Exception):
                                 _tp = _build_pitch_team(_own_last, _sit_is_home, _player_id_int)
@@ -9120,7 +9389,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         # the core prediction is late.
         if h2h_data:
             h2h_fixture_ids = []
-            for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
+            # Player-vs-opponent rows are explanatory only. Keep a small
+            # verified sample so deep replay cannot consume the response budget.
+            for h in h2h_data[:min(H2H_PLAYER_SCAN_LIMIT, 6)]:
                 fid = h.get("fixture", {}).get("id")
                 if fid:
                     h2h_fixture_ids.append((fid, h))
@@ -9252,15 +9523,20 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     try:
                         return await aio.wait_for(
                             fetch_h2h_player_stat(fid, fixture_info),
-                            timeout=5.0,
+                            timeout=2.5,
                         )
                     except Exception:
                         return None
 
-                h2h_results = await aio.gather(*[
-                    _bounded_h2h_player_stat(fid, fi)
-                    for fid, fi in h2h_fixture_ids
-                ], return_exceptions=True)
+                h2h_results = await _bounded_prediction_source(
+                    aio.gather(*[
+                        _bounded_h2h_player_stat(fid, fi)
+                        for fid, fi in h2h_fixture_ids
+                    ], return_exceptions=True),
+                    "player H2H evidence",
+                    3.0,
+                    [],
+                )
                 h2h_player_stats = [
                     r for r in h2h_results
                     if isinstance(r, dict) and r
@@ -9391,12 +9667,18 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     return None
 
             try:
-                _meeting_rows = await aio.gather(*[
-                    _build_team_meeting_row(item) for item in h2h_data[:H2H_FIXTURE_LIMIT]
-                ])
+                _meeting_rows = await _bounded_prediction_source(
+                    aio.gather(*[
+                        _build_team_meeting_row(item)
+                        for item in h2h_data[:min(H2H_FIXTURE_LIMIT, 6)]
+                    ], return_exceptions=True),
+                    "H2H meeting context",
+                    3.0,
+                    [],
+                )
                 _meetings_by_venue = {"home": [], "away": []}
                 for _meeting in _meeting_rows:
-                    if _meeting:
+                    if _meeting and not isinstance(_meeting, Exception):
                         _venue_key, _row = _meeting
                         _meetings_by_venue[_venue_key].append(_row)
             except Exception:
@@ -9666,9 +9948,20 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             )
         elif player_position in GENERIC_POSITIONS or not player_position:
             from ai_positions import resolve_player_role
-            cached_pos = await db.player_positions.find_one(
-                {"playerId": req.playerId},
-                {"_id": 0, "source": 1, "roleSource": 1, "specificPosition": 1, "role": 1},
+            cached_pos = await _bounded_prediction_source(
+                db.player_positions.find_one(
+                    {"playerId": req.playerId},
+                    {
+                        "_id": 0,
+                        "source": 1,
+                        "roleSource": 1,
+                        "specificPosition": 1,
+                        "role": 1,
+                    },
+                ),
+                "grounded position cache",
+                0.5,
+                None,
             )
             cached_specific = str((cached_pos or {}).get("specificPosition") or "").strip().upper()
             cached_source = str(
@@ -9695,7 +9988,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 # provider category fallback available when the Gemini proxy
                 # is slow or unavailable; it must not delay the deterministic
                 # projection.
-                specific_position, player_role, _position_resolution_source = await aio.wait_for(
+                _position_result = await _bounded_prediction_source(
                     resolve_player_role(
                         player_name=req.playerName,
                         team_name=corrected_team_name or req.teamName or "",
@@ -9703,8 +9996,11 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         player_id=req.playerId or 0,
                         stats=_role_stats if "_role_stats" in locals() else None,
                     ),
-                    timeout=1.5,
+                    "grounded position resolver",
+                    1.5,
+                    ("", "", "category_fallback"),
                 )
+                specific_position, player_role, _position_resolution_source = _position_result
                 # ai_positions returns the provider category on its
                 # fail-open path so callers can display it honestly. It is
                 # not an exact position for projection, role matching, or
@@ -10549,7 +10845,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 position_comparison_meta["status"] = "unavailable"
                 position_comparison_meta["unavailableReason"] = "opponent_fixture_history_unavailable"
             try:
-                position_comparison = await aio.wait_for(
+                position_comparison = await _bounded_prediction_source(
                     fetch_position_comparison(
                         opponent_fixture_list,
                         player_position,
@@ -10562,11 +10858,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         allow_broad_category=not _exact_target_for_comparison,
                         allow_exact_fallback=True,
                     ) if player_position else _empty_list(),
-                    # This is required evidence, not optional late enrichment.
-                    # Keep it independently bounded, but do not drop the attempt
-                    # merely because the deterministic pass took longer than the
-                    # old 17-second response heuristic.
-                    timeout=10,
+                    "position comparison",
+                    7.0,
+                    [],
                 )
                 if position_comparison:
                     position_comparison_meta["status"] = "available"
@@ -10599,6 +10893,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             len(position_comparison) < 15
             and safe_opp_id
             and not _is_bdl_league
+            and _prediction_elapsed() < 30.0
         ):
             _prior_season_rows = []
             # Fetch up to 4 prior seasons in parallel — sequential season fetches
@@ -10629,12 +10924,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 
             _prior_seasons = list(range(CURRENT_SEASON - 1, CURRENT_SEASON - 5, -1))
             try:
-                _prior_results = await aio.wait_for(
+                _prior_results = await _bounded_prediction_source(
                     aio.gather(
                         *[_fetch_prior_season(s) for s in _prior_seasons],
                         return_exceptions=True,
                     ),
-                    timeout=3.5,
+                    "prior-season position fixtures",
+                    3.0,
+                    [],
                 )
             except Exception as _prior_fetch_err:
                 print(
@@ -10655,7 +10952,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     if row.get("fixtureId") not in _existing_fixture_ids
                 )
                 try:
-                    _prior_comparison = await aio.wait_for(
+                    _prior_comparison = await _bounded_prediction_source(
                         fetch_position_comparison(
                             _prior_season_rows,
                             player_position,
@@ -10668,7 +10965,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             allow_broad_category=not _exact_target_for_comparison,
                             allow_exact_fallback=True,
                         ) if player_position else _empty_list(),
-                        timeout=10,
+                        "prior-season position comparison",
+                        6.0,
+                        [],
                     )
                 except Exception as _prior_comp_err:
                     print(f"[POS COMP] Prior-season comparison failed: {_prior_comp_err}")
@@ -10712,7 +11011,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 
         # Always show most-recent appearances first so subscribers see
         # current-form evidence before older historical data.
-        if position_comparison:
+        if position_comparison and _prediction_elapsed() < 34.0:
             position_comparison = sorted(
                 position_comparison,
                 key=lambda x: str(x.get("date") or ""),
@@ -10811,7 +11110,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # Run enrichment for all comparison players in parallel
             _enrich_tasks = [_fetch_comp_player_stats(p) for p in position_comparison]
             try:
-                await aio.wait_for(aio.gather(*_enrich_tasks, return_exceptions=True), timeout=8)
+                await _bounded_prediction_source(
+                    aio.gather(*_enrich_tasks, return_exceptions=True),
+                    "position comparison enrichment",
+                    2.5,
+                    [],
+                )
                 _enriched = sum(1 for p in position_comparison if p.get("saveRate") or p.get("seasonAvgStat"))
                 if _enriched:
                     print(f"[POS ENRICH] Enriched {_enriched}/{len(position_comparison)} comparison players for {req.propType}")
@@ -11218,13 +11522,30 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             try:
                 from first_goal_engine import get_first_goal_profile, compute_scenario_weights as _fg_sw
                 _fg_season = 2025
-                _fg_results = await aio.gather(
-                    get_first_goal_profile(actual_team_id, _fg_season, api_football_request, db),
-                    get_first_goal_profile(req.opponentId,  _fg_season, api_football_request, db),
-                    return_exceptions=True,
+                _fg_results = await _bounded_prediction_source(
+                    aio.gather(
+                        get_first_goal_profile(
+                            actual_team_id, _fg_season, api_football_request, db
+                        ),
+                        get_first_goal_profile(
+                            req.opponentId, _fg_season, api_football_request, db
+                        ),
+                        return_exceptions=True,
+                    ),
+                    "first-goal context",
+                    2.0,
+                    [{}, {}],
                 )
-                _fg_team = _fg_results[0] if not isinstance(_fg_results[0], Exception) else {}
-                _fg_opp  = _fg_results[1] if not isinstance(_fg_results[1], Exception) else {}
+                _fg_team = (
+                    _fg_results[0]
+                    if len(_fg_results) > 0 and not isinstance(_fg_results[0], Exception)
+                    else {}
+                )
+                _fg_opp = (
+                    _fg_results[1]
+                    if len(_fg_results) > 1 and not isinstance(_fg_results[1], Exception)
+                    else {}
+                )
                 if _fg_team.get("available"):
                     _fg_scenario_weights = _fg_sw(_fg_team, req.propType)
                     print(f"[FIRST GOAL] {req.playerName}: teamFirst={_fg_team.get('teamScoredFirstPct'):.0%} oppFirst={_fg_team.get('opponentScoredFirstPct'):.0%} n={_fg_team.get('dataPoints')}")
@@ -12154,13 +12475,18 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     _offset_venue = player_venue or req.venue or "home"
                     # For GK UNDER: skip direction offset, fall through to venue/league
                     _cal_rec = None if _is_gk_pass_under else bayesian_rec
-                    bayesian_posterior, _offset_note = await apply_learned_offsets(
-                        posterior=bayesian_posterior,
-                        prop_type=req.propType,
-                        venue=_offset_venue,
-                        recommendation=_cal_rec,
-                        league_id=req.leagueId,
-                        sport="soccer",
+                    bayesian_posterior, _offset_note = await _bounded_prediction_source(
+                        apply_learned_offsets(
+                            posterior=bayesian_posterior,
+                            prop_type=req.propType,
+                            venue=_offset_venue,
+                            recommendation=_cal_rec,
+                            league_id=req.leagueId,
+                            sport="soccer",
+                        ),
+                        "nightly calibration offsets",
+                        1.0,
+                        (bayesian_posterior, ""),
                     )
                     if _offset_note:
                         # Recalculate direction from calibrated posterior, then apply
@@ -12658,14 +12984,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             from calibration import get_line_deviation_intel
             _dev_proj = prediction.get("projectedValue", req.line)
             if _dev_proj and req.line > 0 and rec in ("over", "under"):
-                _dev_intel = await aio.wait_for(
+                _dev_intel = await _bounded_prediction_source(
                     get_line_deviation_intel(
                         line=req.line,
                         projected_value=_dev_proj,
                         recommendation=rec,
                         prop_type=req.propType,
                     ),
-                    timeout=1.0,
+                    "line-deviation calibration",
+                    1.0,
+                    {},
                 )
                 _dev_band       = _dev_intel.get("band", "aligned")
                 _dev_pct        = _dev_intel.get("deviationPct", 0)
@@ -14175,15 +14503,21 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         _fbref_opponent_kb = None
         try:
             from knowledge_base import get_player_kb, get_team_kb
-            _fbref_player_kb, _fbref_opponent_kb = await aio.gather(
-                get_player_kb(req.playerId or 0, req.leagueId or 0),
-                get_team_kb(
-                    req.opponentId or prediction.get("fixtureOpponentId") or 0,
-                    req.leagueId or 0,
-                    getattr(req, "season", None) or CURRENT_SEASON,
+            _kb_results = await _bounded_prediction_source(
+                aio.gather(
+                    get_player_kb(req.playerId or 0, req.leagueId or 0),
+                    get_team_kb(
+                        req.opponentId or prediction.get("fixtureOpponentId") or 0,
+                        req.leagueId or 0,
+                        getattr(req, "season", None) or CURRENT_SEASON,
+                    ),
+                    return_exceptions=True,
                 ),
-                return_exceptions=True,
+                "knowledge-base context",
+                1.0,
+                (None, None),
             )
+            _fbref_player_kb, _fbref_opponent_kb = _kb_results
             if not isinstance(_fbref_player_kb, dict):
                 _fbref_player_kb = None
             if not isinstance(_fbref_opponent_kb, dict):
@@ -14929,7 +15263,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             try:
                 from pass_projection_calibration import ensure_loaded, lookup
 
-                await ensure_loaded(db, datetime.now(timezone.utc))
+                await _bounded_prediction_source(
+                    ensure_loaded(db, datetime.now(timezone.utc)),
+                    "pass projection calibration",
+                    0.75,
+                    None,
+                )
                 _cal_position = (
                     prediction.get("player", {}).get("position")
                     or prediction.get("position")
@@ -16078,9 +16417,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         try:
             # Persistence is analytics-only. Atlas quota/network stalls must
             # never consume the user-facing prediction response budget.
-            await aio.wait_for(
+            await _bounded_prediction_source(
                 db.predictions.insert_one(safe_prediction),
-                timeout=1.5,
+                "prediction analytics persistence",
+                1.5,
+                None,
             )
         except Exception as _persist_err:
             # Atlas can hard-block writes when the free-tier cluster reaches
@@ -16095,9 +16436,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         safe_prediction.pop("_id", None)
         if access == "Owner":
             try:
-                await aio.wait_for(
+                await _bounded_prediction_source(
                     _attach_owner_prediction_media(safe_prediction, req.email),
-                    timeout=1.0,
+                    "owner prediction media",
+                    1.0,
+                    None,
                 )
             except Exception as _media_err:
                 print(
@@ -16116,12 +16459,19 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 or safe_prediction.get("fixtureOpponentId")
                 or 0
             )
-            await fire_and_forget_compile(
+            _kb_task = aio.create_task(fire_and_forget_compile(
                 player_id=req.playerId or 0,
                 team_id=req.teamId or 0,
                 league_id=req.leagueId or 0,
                 opponent_id=int(_kb_opp_id) if _kb_opp_id else 0,
                 season=req.season if hasattr(req, "season") and req.season else __import__("config").CURRENT_SEASON,
+            ))
+            _kb_task.add_done_callback(
+                lambda task: (
+                    task.exception()
+                    if not task.cancelled()
+                    else None
+                )
             )
         except Exception as _kb_err:
             print(f"[KB fire-and-forget] scheduling error: {_kb_err}")

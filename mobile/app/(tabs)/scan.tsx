@@ -914,6 +914,9 @@ export default function ScanScreen() {
   const [mlbNextMatchLoading, setMlbNextMatchLoading] = useState(false);
 
   const selectSport = (next: Sport) => {
+    // MLB remains supported by dormant compatibility code, but it is no
+    // longer an active prediction option for new picks.
+    if (next === 'mlb') return;
     cancelAbortRef.current?.abort();
     setSport(next);
     setMode('manual');
@@ -2257,9 +2260,8 @@ export default function ScanScreen() {
           <View style={styles.sportPickerOptions}>
             {([
               { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline', color: '#39FF14' },
-              { key: 'mlb' as const, label: 'MLB', icon: 'baseball-outline', color: '#C084FC' },
               { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline', color: '#FF9500' },
-            ]).filter(option => Platform.OS !== 'ios' || option.key !== 'mlb').map(option => {
+            ]).map(option => {
               const active = sport === option.key;
               return (
                 <TouchableOpacity
