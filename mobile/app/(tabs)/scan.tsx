@@ -555,7 +555,7 @@ function PostedLineValue({
 }) {
   return (
     <View>
-      <Text style={styles.fieldLabel}>POSTED LINE</Text>
+      <Text style={styles.strongWhiteFieldLabel}>POSTED LINE</Text>
       <TextInput
         style={styles.postedLineValue}
         value={value}
@@ -2402,7 +2402,7 @@ export default function ScanScreen() {
 
         {phase !== 'result' && phase !== 'saved' && (
           <View style={styles.universalPlayerSection}>
-            <Text style={styles.fieldLabel}>PLAYER</Text>
+             <Text style={styles.playerFieldLabel}>PLAYER</Text>
             <FuzzySearchInput
               value={
                 sport === 'mlb' ? mlbPlayerQuery
@@ -2437,6 +2437,7 @@ export default function ScanScreen() {
               placeholder={`Search ${sport === 'mlb' ? 'MLB' : sport === 'nfl' ? 'NFL' : 'Soccer'} player`}
                ownerSession={session?.email && session?.token ? { email: session.email, token: session.token } : undefined}
                confirmed={sport === 'mlb' ? !!mlbResolvedPlayer : sport === 'nfl' ? !!nflResolvedPlayer : (!!resolvedPlayer && (clubVerificationStatus === 'verified' || clubVerificationStatus === 'last_known'))}
+               strongAccent
               style={{ marginBottom: 2 }}
               onSelectAllPlayer={handleUniversalPlayerSelect}
             />
@@ -2652,7 +2653,7 @@ export default function ScanScreen() {
             )}
 
             {resolvedPlayer && (<>
-            <Text style={styles.fieldLabel}>PROP TYPE</Text>
+             <Text style={styles.strongWhiteFieldLabel}>PROP TYPE</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
               <Text style={styles.pickerBtnText}>
                 {PROP_TYPES.find(p => p.value === propType)?.label
@@ -6959,6 +6960,30 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 10, color: Colors.primary, fontWeight: '800',
     letterSpacing: 1.2, marginBottom: 4, marginTop: 10, textTransform: 'uppercase',
+  },
+  playerFieldLabel: {
+    fontSize: 10.5,
+    color: Colors.primary,
+    fontWeight: '900',
+    letterSpacing: 1.45,
+    marginBottom: 5,
+    marginTop: 10,
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(57,255,20,0.62)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 5,
+  },
+  strongWhiteFieldLabel: {
+    fontSize: 10.5,
+    color: '#FFFFFF',
+    fontWeight: '900',
+    letterSpacing: 1.45,
+    marginBottom: 5,
+    marginTop: 10,
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(255,255,255,0.24)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
   },
   fieldLabelOpt: {
     fontSize: 10, color: Colors.textTertiary, fontWeight: '400', textTransform: 'none', letterSpacing: 0,

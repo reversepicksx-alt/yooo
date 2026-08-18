@@ -65,6 +65,8 @@ interface FuzzySearchInputProps {
   placeholder?: string;
   style?: object;
   inputStyle?: object;
+  /** Use the stronger green treatment for the primary player search field. */
+  strongAccent?: boolean;
   autoFocus?: boolean;
   returnKeyType?: 'done' | 'search' | 'next';
   onSubmitEditing?: () => void;
@@ -128,6 +130,7 @@ export default function FuzzySearchInput({
   placeholder = 'Search...',
   style,
   inputStyle,
+  strongAccent = false,
   autoFocus = false,
   returnKeyType = 'done',
   onSubmitEditing,
@@ -625,7 +628,7 @@ export default function FuzzySearchInput({
 
   return (
     <View style={[styles.container, style]}>
-      <View style={[styles.inputRow, confirmed && styles.inputRowConfirmed]}>
+      <View style={[styles.inputRow, strongAccent && styles.inputRowStrongAccent, confirmed && styles.inputRowConfirmed]}>
         {leadingIcon}
         {/* iOS blurs TextInput when the parent screen is scrolled to dismiss
             the keyboard. Keep the loaded result list visible; blur is not
@@ -712,6 +715,16 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(57,255,20,0.5)',
     borderWidth: 1.5,
     backgroundColor: 'rgba(57,255,20,0.06)',
+  },
+  inputRowStrongAccent: {
+    borderColor: 'rgba(57,255,20,0.78)',
+    borderWidth: 1.75,
+    backgroundColor: 'rgba(57,255,20,0.035)',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 3,
   },
   leadIcon: { marginRight: 7 },
   input: {
