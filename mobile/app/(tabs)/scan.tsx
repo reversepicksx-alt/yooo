@@ -2601,57 +2601,6 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ── League + Opponent — only shown when player is selected but auto-match didn't find a fixture ── */}
-            {resolvedPlayer && !autoMatch?.found && !nextMatchLoading && (
-              <View style={{
-                marginTop: 4, padding: 12, borderRadius: 12,
-                backgroundColor: 'rgba(255,255,255,0.03)',
-                borderWidth: 1, borderColor: 'rgba(57,255,20,0.1)',
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                  <Ionicons name="search-outline" size={11} color={Colors.textTertiary} />
-                  <Text style={{ fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>
-                    Set Match Manually
-                  </Text>
-                </View>
-                <FuzzySearchInput
-                  value={leagueQuery}
-                  onChangeText={(t) => setLeagueQuery(t)}
-                  searchType="leagues"
-                  placeholder="Search league…"
-                  style={{ marginBottom: 8 }}
-                  confirmed={!!leagueId}
-                  onSelectLeague={(l: FuzzyLeagueResult) => {
-                    setLeagueId(l.id);
-                    setLeagueQuery(l.name);
-                    Haptics.selectionAsync();
-                  }}
-                />
-
-                <FuzzySearchInput
-                  searchType="teams"
-                  value={manualOpponentQuery}
-                  onChangeText={(t) => {
-                    setManualOpponentQuery(t);
-                    if (!t) setResolvedManualOpponent(null);
-                  }}
-                  placeholder={leagueId === 1 ? 'e.g. France, Argentina, Spain…' : 'e.g. Arsenal, Real Madrid…'}
-                  confirmed={!!resolvedManualOpponent}
-                  staticItems={leagueId === 1 ? WC_NATIONS : undefined}
-                  onSelectTeam={(t: FuzzyTeamResult) => {
-                    setResolvedManualOpponent(t);
-                    setManualOpponentQuery(t.teamName);
-                    Haptics.selectionAsync();
-                  }}
-                  onSelectStaticItem={(_raw: any, primary: string) => {
-                    setManualOpponentQuery(primary);
-                    setResolvedManualOpponent(null);
-                    Haptics.selectionAsync();
-                  }}
-                />
-              </View>
-            )}
-
             {resolvedPlayer && (<>
              <Text style={styles.strongWhiteFieldLabel}>PROP TYPE</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
@@ -6924,9 +6873,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   formEyebrow: {
-    fontSize: 11, color: Colors.textTertiary, fontWeight: '700',
+    fontSize: 11, color: Colors.primary, fontWeight: '900',
     letterSpacing: 2.5, textAlign: 'center', marginBottom: 14,
     textTransform: 'uppercase',
+    textShadowColor: 'rgba(57,255,20,0.55)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 5,
   },
   autoFillBanner: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,

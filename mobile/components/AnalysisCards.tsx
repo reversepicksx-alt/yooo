@@ -498,31 +498,24 @@ export function renderTacticalContext(data: Record<string, unknown> | null) {
     : 'NO VERIFIED SAMPLE';
   const sampleSize = Number(pressIntensity?.sampleSize || 0);
   return (
-    <View style={aStyles.tacticalContextCard}>
-      <View style={aStyles.proCardHeader}>
-        <View style={[aStyles.proCardPill, { backgroundColor: available ? '#60A5FA18' : '#94A3B818' }]}>
-          <Text style={[aStyles.proCardPillText, { color: available ? '#60A5FA' : '#94A3B8' }]}>PRESS INTENSITY</Text>
-        </View>
-         <Text style={aStyles.proCardTitle}>NEXT OPPONENT PRESSURE</Text>
+    <View style={[aStyles.tacticalContextFlat, { borderLeftColor: available ? '#60A5FA' : '#64748B' }]}>
+      <View style={aStyles.flatContextHeader}>
+        <Text style={[aStyles.flatContextKicker, { color: available ? '#60A5FA' : '#94A3B8' }]}>PRESS INTENSITY</Text>
+        <Text style={aStyles.flatContextTitle}>NEXT OPPONENT PRESSURE</Text>
       </View>
-      <View style={aStyles.tacticalContextGrid}>
-        <View style={aStyles.tacticalContextCell}>
-          <Text style={aStyles.proCardMetricLabel}>OPPONENT PRESS</Text>
-          <Text style={aStyles.tacticalContextValue}>
-            {score != null ? `INDEX ${score}/100 · ${label}` : label}
-          </Text>
-          <Text style={aStyles.proCardNote}>
-            {available
-               ? `${sampleSize} verified next-opponent pressure input${sampleSize === 1 ? '' : 's'}`
-               : 'No verified next-opponent pressure input was returned; no 0/100 is implied.'}
-          </Text>
-          {available && pressIntensity?.projectionApplied ? (
-            <Text style={aStyles.proCardNote}>
-              Passing projection factor: ×{Number(pressIntensity.projectionMultiplier || 1).toFixed(3)}
-            </Text>
-          ) : null}
-        </View>
-      </View>
+      <Text style={aStyles.flatContextValue}>
+        {score != null ? `INDEX ${score}/100 · ${label}` : label}
+      </Text>
+      <Text style={aStyles.flatContextNote}>
+        {available
+          ? `${sampleSize} verified next-opponent pressure input${sampleSize === 1 ? '' : 's'}`
+          : 'No verified next-opponent pressure input was returned; no 0/100 is implied.'}
+      </Text>
+      {available && pressIntensity?.projectionApplied ? (
+        <Text style={aStyles.flatContextNote}>
+          Passing projection factor: ×{Number(pressIntensity.projectionMultiplier || 1).toFixed(3)}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -933,21 +926,17 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
   const signalLabel = String(signal.shadowDirection ?? 'neutral').replace(/_/g, ' ');
 
   return (
-    <View style={[aStyles.proCard, { borderColor: Colors.primary + '55' }]}>
-      <View style={aStyles.proCardHeader}>
-        <View style={[aStyles.proCardPill, { backgroundColor: Colors.primary + '20' }]}>
-          <Text style={[aStyles.proCardPillText, { color: Colors.primary }]}>ROLE + POSITION</Text>
-        </View>
-        <Text style={aStyles.proCardTitle}>POSITIONAL REALITY</Text>
+    <View style={[aStyles.tacticalIntelligenceFlat, { borderLeftColor: Colors.primary }]}>
+      <View style={aStyles.flatContextHeader}>
+        <Text style={[aStyles.flatContextKicker, { color: Colors.primary }]}>ROLE + POSITION</Text>
+        <Text style={aStyles.flatContextTitle}>POSITIONAL REALITY</Text>
       </View>
 
       {roleLabel ? (
         <>
-          <View style={aStyles.tacticalGrid}>
-            <View style={aStyles.tacticalCell}>
-              <Text style={aStyles.tacticalValue}>{roleLabel}</Text>
-              <Text style={aStyles.proCardMetricLabel}>CURRENT PLAYER PROFILE</Text>
-            </View>
+          <View style={aStyles.flatRoleBlock}>
+            <Text style={aStyles.flatRoleValue}>{roleLabel}</Text>
+            <Text style={aStyles.proCardMetricLabel}>CURRENT PLAYER PROFILE</Text>
           </View>
           <Text style={aStyles.proCardNote}>
             Role evidence: <Text style={{ fontWeight: '800' }}>{roleSourceLabel}</Text>
@@ -957,8 +946,8 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
       ) : null}
 
       {hasReality ? (
-        <View style={aStyles.intelSection}>
-          <View style={aStyles.intelSectionHeader}>
+        <View style={aStyles.flatIntelSection}>
+          <View style={aStyles.flatSectionHeader}>
             <Text style={aStyles.intelSectionTitle}>POSITIONAL REALITY</Text>
             <Text style={aStyles.intelBadge}>
               {positional.zoneConfidence != null
@@ -966,18 +955,18 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
                 : 'ROLE ZONE'}
             </Text>
           </View>
-          <View style={aStyles.tacticalGrid}>
+          <View style={aStyles.flatMetricRow}>
             {positional.zone ? (
-              <View style={aStyles.tacticalCell}>
-                <Text style={aStyles.tacticalValue}>
+              <View style={aStyles.flatMetricCell}>
+                <Text style={aStyles.flatMetricValue}>
                   {String(positional.zone).replace(/_/g, ' ')}
                 </Text>
                 <Text style={aStyles.proCardMetricLabel}>ROLE ZONE</Text>
               </View>
             ) : null}
             {signal.shadowDirection ? (
-              <View style={aStyles.tacticalCell}>
-                <Text style={[aStyles.tacticalValue, { color: signalColor }]}>
+              <View style={aStyles.flatMetricCell}>
+                <Text style={[aStyles.flatMetricValue, { color: signalColor }]}>
                   {signalLabel}
                 </Text>
                 <Text style={aStyles.proCardMetricLabel}>PROP SIGNAL</Text>
@@ -1257,19 +1246,84 @@ export const aStyles = StyleSheet.create({
     fontSize: 11.5, lineHeight: 17, fontWeight: '800',
     borderTopWidth: 1, borderTopColor: Colors.borderSubtle, paddingTop: 8,
   },
-  tacticalContextCard: {
-    backgroundColor: Colors.cardSecondary, borderRadius: 9,
-    borderWidth: 1, borderColor: Colors.borderSubtle,
-    padding: 9, marginBottom: 7, gap: 7,
+  tacticalContextFlat: {
+    borderLeftWidth: 2,
+    paddingLeft: 11,
+    marginBottom: 14,
+    gap: 4,
   },
-  tacticalContextGrid: { flexDirection: 'row', gap: 7 },
-  tacticalContextCell: {
-    flex: 1, minWidth: 0, backgroundColor: Colors.card,
-    borderRadius: 7, paddingHorizontal: 7, paddingVertical: 6,
+  tacticalIntelligenceFlat: {
+    borderLeftWidth: 2,
+    paddingLeft: 11,
+    marginBottom: 14,
+    gap: 7,
   },
-  tacticalContextValue: {
-    color: Colors.text, fontSize: 12, fontWeight: '800',
-    marginTop: 2, textTransform: 'capitalize',
+  flatContextHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginBottom: 1,
+  },
+  flatContextKicker: {
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 1.05,
+  },
+  flatContextTitle: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.15,
+  },
+  flatContextValue: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2,
+    textTransform: 'capitalize',
+  },
+  flatContextNote: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  flatRoleBlock: {
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
+  },
+  flatRoleValue: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+    textTransform: 'capitalize',
+  },
+  flatIntelSection: {
+    gap: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  flatSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  flatMetricRow: {
+    flexDirection: 'row',
+    gap: 24,
+  },
+  flatMetricCell: {
+    flex: 1,
+    minWidth: 0,
+  },
+  flatMetricValue: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'capitalize',
   },
   proCardMetrics: { flexDirection: 'row', gap: 5 },
   proCardMetric: {
