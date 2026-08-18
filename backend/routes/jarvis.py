@@ -109,6 +109,177 @@ async def _sports_get(endpoint: str, params: dict) -> dict:
 # Public endpoints (no auth required)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@router.get("/api/jarvis/openapi.json", include_in_schema=False)
+async def jarvis_openapi():
+    """
+    OpenAPI 3.1 schema — import this URL directly into a ChatGPT Custom GPT Action.
+    No authentication required.
+    """
+    base = "https://7a030359-7bf3-4fa1-8914-cbee61d63eb2-00-1w1w9xi7usfsw.picard.replit.dev"
+    return JSONResponse(content={
+        "openapi": "3.1.0",
+        "info": {
+            "title": "JARVIS Football API",
+            "description": (
+                "Secure proxy to real-time football data via API-Sports. "
+                "Provides fixtures, league tables, team info, player stats, "
+                "and recent match history. All data endpoints require a "
+                "Bearer token in the Authorization header."
+            ),
+            "version": "2.0.0",
+        },
+        "servers": [{"url": base}],
+        "paths": {
+            "/api/jarvis/health": {
+                "get": {
+                    "operationId": "getHealth",
+                    "summary": "Server health check",
+                    "description": "Returns server status and whether both API keys are configured. No authentication required.",
+                    "security": [],
+                    "responses": {
+                        "200": {
+                            "description": "Health status",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string"},
+                                    "service": {"type": "string"},
+                                    "timestamp": {"type": "integer"},
+                                    "auth": {"type": "object"},
+                                }
+                            }}},
+                        }
+                    },
+                }
+            },
+            "/api/jarvis/fixtures": {
+                "get": {
+                    "operationId": "getFixtures",
+                    "summary": "Get football fixtures",
+                    "description": (
+                        "Retrieve football match fixtures. Filter by date, league, team, or get live matches. "
+                        "At least one parameter is required. Use live='all' for currently in-progress matches."
+                    ),
+                    "parameters": [
+                        {"name": "league",  "in": "query", "schema": {"type": "integer"}, "description": "League ID (use /api/jarvis/leagues to look up IDs). Common: 39=Premier League, 140=La Liga, 2=Champions League."},
+                        {"name": "season",  "in": "query", "schema": {"type": "integer"}, "description": "Season year, e.g. 2025 or 2026."},
+                        {"name": "date",    "in": "query", "schema": {"type": "string"},  "description": "Date in YYYY-MM-DD format."},
+                        {"name": "team",    "in": "query", "schema": {"type": "integer"}, "description": "Team ID (use /api/jarvis/teams to look up IDs)."},
+                        {"name": "fixture", "in": "query", "schema": {"type": "integer"}, "description": "Specific fixture ID for detailed lookup."},
+                        {"name": "next",    "in": "query", "schema": {"type": "integer"}, "description": "Fetch the next N upcoming fixtures (max 20)."},
+                        {"name": "last",    "in": "query", "schema": {"type": "integer"}, "description": "Fetch the last N completed fixtures (max 20)."},
+                        {"name": "live",    "in": "query", "schema": {"type": "string"},  "description": "Pass 'all' for all live matches, or a league ID string for live matches in that league."},
+                    ],
+                    "responses": {
+                        "200": {"description": "List of fixtures", "content": {"application/json": {"schema": {"type": "object", "properties": {"source": {"type": "string"}, "results": {"type": "integer"}, "fixtures": {"type": "array", "items": {"type": "object"}}}}}}},
+                        "400": {"description": "No query parameters provided"},
+                        "401": {"description": "Invalid or missing bearer token"},
+                    },
+                }
+            },
+            "/api/jarvis/leagues": {
+                "get": {
+                    "operationId": "getLeagues",
+                    "summary": "Look up league IDs",
+                    "description": (
+                        "Search for football leagues by name or country to find their numeric IDs. "
+                        "Use `search` OR `country`, not both at once."
+                    ),
+                    "parameters": [
+                        {"name": "search",  "in": "query", "schema": {"type": "string"},  "description": "Partial league name, e.g. 'premier' or 'champions'."},
+                        {"name": "country", "in": "query", "schema": {"type": "string"},  "description": "Country name, e.g. 'England' or 'Spain'. Use search OR country, not both."},
+                        {"name": "league",  "in": "query", "schema": {"type": "integer"}, "description": "Specific league ID to look up details for."},
+                        {"name": "current", "in": "query", "schema": {"type": "boolean"}, "description": "Set true to return only currently active league seasons."},
+                    ],
+                    "responses": {
+                        "200": {"description": "List of leagues", "content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "integer"}, "leagues": {"type": "array", "items": {"type": "object"}}}}}}},
+                        "401": {"description": "Invalid or missing bearer token"},
+                    },
+                }
+            },
+            "/api/jarvis/teams": {
+                "get": {
+                    "operationId": "getTeams",
+                    "summary": "Look up team IDs",
+                    "description": "Search for football teams by name or within a specific league to find their numeric IDs for use in other endpoints.",
+                    "parameters": [
+                        {"name": "search", "in": "query", "schema": {"type": "string"},  "description": "Partial team name, e.g. 'Arsenal' or 'Real Madrid'."},
+                        {"name": "league", "in": "query", "schema": {"type": "integer"}, "description": "Filter results to teams that compete in this league."},
+                        {"name": "season", "in": "query", "schema": {"type": "integer"}, "description": "Season year to use when filtering by league."},
+                        {"name": "team",   "in": "query", "schema": {"type": "integer"}, "description": "Specific team ID to look up."},
+                    ],
+                    "responses": {
+                        "200": {"description": "List of teams", "content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "integer"}, "teams": {"type": "array", "items": {"type": "object"}}}}}}},
+                        "401": {"description": "Invalid or missing bearer token"},
+                    },
+                }
+            },
+            "/api/jarvis/standings": {
+                "get": {
+                    "operationId": "getStandings",
+                    "summary": "Get league standings table",
+                    "description": "Returns the current standings/table for a league and season. League ID and season are required.",
+                    "parameters": [
+                        {"name": "league", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "League ID (e.g. 39 for Premier League)."},
+                        {"name": "season", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "Season year (e.g. 2025)."},
+                        {"name": "team",   "in": "query", "schema": {"type": "integer"}, "description": "Optional: filter to a single team's row in the table."},
+                    ],
+                    "responses": {
+                        "200": {"description": "Standings table", "content": {"application/json": {"schema": {"type": "object", "properties": {"league": {"type": "integer"}, "season": {"type": "integer"}, "standings": {"type": "array", "items": {"type": "object"}}}}}}},
+                        "401": {"description": "Invalid or missing bearer token"},
+                    },
+                }
+            },
+            "/api/jarvis/players": {
+                "get": {
+                    "operationId": "getPlayerStats",
+                    "summary": "Get player season statistics",
+                    "description": "Returns season statistics for a specific player. Player ID and season year are required.",
+                    "parameters": [
+                        {"name": "player", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "Player ID."},
+                        {"name": "season", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "Season year (e.g. 2025)."},
+                        {"name": "league", "in": "query", "schema": {"type": "integer"}, "description": "Optional: filter stats to a specific league."},
+                    ],
+                    "responses": {
+                        "200": {"description": "Player statistics", "content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "integer"}, "players": {"type": "array", "items": {"type": "object"}}}}}}},
+                        "401": {"description": "Invalid or missing bearer token"},
+                    },
+                }
+            },
+            "/api/jarvis/player/fixtures": {
+                "get": {
+                    "operationId": "getPlayerFixtures",
+                    "summary": "Get a player's recent match history",
+                    "description": (
+                        "Returns the player's last 10 team fixtures in a given league and season. "
+                        "Automatically resolves the player's team — no team ID needed. "
+                        "Player ID, league ID, and season are all required."
+                    ),
+                    "parameters": [
+                        {"name": "player", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "Player ID."},
+                        {"name": "league", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "League ID."},
+                        {"name": "season", "in": "query", "required": True, "schema": {"type": "integer"}, "description": "Season year."},
+                    ],
+                    "responses": {
+                        "200": {"description": "Player's recent fixtures", "content": {"application/json": {"schema": {"type": "object", "properties": {"player_name": {"type": "string"}, "team_id": {"type": "integer"}, "results": {"type": "integer"}, "fixtures": {"type": "array", "items": {"type": "object"}}}}}}},
+                        "401": {"description": "Invalid or missing bearer token"},
+                    },
+                }
+            },
+        },
+        "components": {
+            "securitySchemes": {
+                "BearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Enter your JARVIS_API_KEY as the bearer token.",
+                }
+            }
+        },
+        "security": [{"BearerAuth": []}],
+    })
+
+
 @router.get("/api/jarvis/health")
 async def jarvis_health():
     """
