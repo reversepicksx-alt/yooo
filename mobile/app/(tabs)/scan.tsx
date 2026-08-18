@@ -3520,6 +3520,46 @@ export default function ScanScreen() {
                       {[prediction.matchContext.league, prediction.matchContext.round, prediction.matchContext.date].filter(Boolean).join('  ·  ')}
                     </Text>
                   )}
+                  {/* Knockout / leg pill — shows immediately under the match context line */}
+                  {(prediction.gameSituation as any)?.isKnockout && (() => {
+                    const gs = prediction.gameSituation as any;
+                    const isSecond = Boolean(gs.isSecondLeg);
+                    const legLabel = isSecond ? '2ND LEG' : '1ST LEG';
+                    const legColor = isSecond ? '#7c3aed' : '#0ea5e9';
+                    return (
+                      <View style={{ flexDirection: 'row', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
+                        <View style={{
+                          backgroundColor: legColor + '22',
+                          borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+                          borderWidth: 1, borderColor: legColor + '66',
+                        }}>
+                          <Text style={{ fontSize: 9, fontWeight: '900', color: legColor, letterSpacing: 0.9 }}>
+                            KNOCKOUT
+                          </Text>
+                        </View>
+                        <View style={{
+                          backgroundColor: legColor + '22',
+                          borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+                          borderWidth: 1, borderColor: legColor + '66',
+                        }}>
+                          <Text style={{ fontSize: 9, fontWeight: '900', color: legColor, letterSpacing: 0.9 }}>
+                            {legLabel}
+                          </Text>
+                        </View>
+                        {isSecond && gs.aggregate?.firstLegScore ? (
+                          <View style={{
+                            backgroundColor: 'rgba(255,255,255,0.04)',
+                            borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+                            borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                          }}>
+                            <Text style={{ fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 }}>
+                              1st leg {gs.aggregate.firstLegScore}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
                   {/* Player disambiguation warning — shown when multiple players share the same abbreviated name */}
                   {Array.isArray(prediction.playerCandidates) && prediction.playerCandidates.length > 1 &&
                     prediction.playerCandidates.some(c => c.playerId !== prediction.playerId) && (
@@ -4604,48 +4644,84 @@ export default function ScanScreen() {
                 </View>
               </>
 
-              {/* 2nd Leg Aggregate Banner */}
-              {prediction.gameSituation && (prediction.gameSituation as any).isSecondLeg && (() => {
+              {/* Knockout / Leg Situation Banner */}
+              {prediction.gameSituation && (prediction.gameSituation as any).isKnockout && (() => {
                 const gs = prediction.gameSituation as any;
                 const agg = gs.aggregate || {};
+                const isSecond = Boolean(gs.isSecondLeg);
                 const homeTeam = prediction.homeTeam || prediction.teamName || 'HOME';
                 const awayTeam = prediction.awayTeam || prediction.opponentName || 'AWAY';
-                const tied = agg.goalDeficit === 0;
-                const homeName = homeTeam.split(' ').pop()?.slice(0, 8).toUpperCase() || 'HOME';
-                const awayName = awayTeam.split(' ').pop()?.slice(0, 8).toUpperCase() || 'AWAY';
-                const aggColor = tied ? '#F59E0B' : agg.homeTeamTrailing ? Colors.error : Colors.success;
-                const aggLabel = tied
-                  ? '⚡ AGGREGATE TIED — Both teams must score'
-                  : agg.homeTeamTrailing
-                    ? `⚠ ${homeName} TRAILS — Must score ${agg.mustWinByGoals} to advance`
-                    : `✓ ${homeName} LEADS — Can manage the game`;
-                return (
-                  <View style={styles.secondLegBanner}>
-                    <View style={styles.secondLegHeader}>
-                      <View style={styles.secondLegBadge}>
-                        <Text style={styles.secondLegBadgeText}>2ND LEG</Text>
-                      </View>
-                      {gs.isKnockout && (
+                const homeName = homeTeam.split(' ').pop()?.slice(0, 9).toUpperCase() || 'HOME';
+                const awayName = awayTeam.split(' ').pop()?.slice(0, 9).toUpperCase() || 'AWAY';
+                const round = (prediction.matchContext as any)?.round || '';
+
+                if (isSecond) {
+                  // ── 2ND LEG: show aggregate score and advancement status ──
+                  const tied = agg.goalDeficit === 0;
+                  const aggColor = tied ? '#F59E0B' : agg.homeTeamTrailing ? Colors.error : Colors.success;
+                  const aggLabel = tied
+                    ? '⚡ AGGREGATE TIED — Both teams must score'
+                    : agg.homeTeamTrailing
+                      ? `⚠ ${homeName} TRAILS — Must score ${agg.mustWinByGoals} to advance`
+                      : `✓ ${homeName} LEADS — Can manage the game`;
+                  return (
+                    <View style={styles.secondLegBanner}>
+                      <View style={styles.secondLegHeader}>
+                        <View style={styles.secondLegBadge}>
+                          <Text style={styles.secondLegBadgeText}>2ND LEG</Text>
+                        </View>
                         <View style={[styles.secondLegBadge, { backgroundColor: '#1a1a2e' }]}>
                           <Text style={[styles.secondLegBadgeText, { color: '#818cf8' }]}>KNOCKOUT</Text>
                         </View>
+                        {round ? (
+                          <View style={[styles.secondLegBadge, { backgroundColor: 'rgba(255,255,255,0.05)', marginLeft: 'auto' }]}>
+                            <Text style={[styles.secondLegBadgeText, { color: Colors.textSecondary, letterSpacing: 0.5 }]}>{round.toUpperCase()}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      {agg.firstLegFound && agg.firstLegScore ? (
+                        <>
+                          <Text style={styles.secondLegFirstLeg}>1st leg result: {agg.firstLegScore}</Text>
+                          <View style={styles.secondLegAggRow}>
+                            <Text style={styles.secondLegAggTeam}>{homeName}</Text>
+                            <Text style={[styles.secondLegAggScore, { color: aggColor }]}>
+                              {agg.homeTeamAggregate} – {agg.awayTeamAggregate}
+                            </Text>
+                            <Text style={styles.secondLegAggTeam}>{awayName}</Text>
+                          </View>
+                          <Text style={{ fontSize: 8, color: Colors.textTertiary, textAlign: 'center', marginBottom: 4 }}>AGGREGATE</Text>
+                          <Text style={[styles.secondLegStatus, { color: aggColor }]}>{aggLabel}</Text>
+                        </>
+                      ) : (
+                        <Text style={styles.secondLegFirstLeg}>Knockout 2nd leg — 1st-leg result unavailable · elevated intensity expected</Text>
                       )}
                     </View>
-                    {agg.firstLegFound && agg.firstLegScore ? (
-                      <>
-                        <Text style={styles.secondLegFirstLeg}>1st leg: {agg.firstLegScore}</Text>
-                        <View style={styles.secondLegAggRow}>
-                          <Text style={styles.secondLegAggTeam}>{homeName}</Text>
-                          <Text style={[styles.secondLegAggScore, { color: aggColor }]}>
-                            {agg.homeTeamAggregate} – {agg.awayTeamAggregate}
-                          </Text>
-                          <Text style={styles.secondLegAggTeam}>{awayName}</Text>
+                  );
+                }
+
+                // ── 1ST LEG: no aggregate yet, but surface the knockout context ──
+                return (
+                  <View style={[styles.secondLegBanner, { borderColor: '#0ea5e944' }]}>
+                    <View style={styles.secondLegHeader}>
+                      <View style={[styles.secondLegBadge, { backgroundColor: '#0c2233' }]}>
+                        <Text style={[styles.secondLegBadgeText, { color: '#38bdf8' }]}>1ST LEG</Text>
+                      </View>
+                      <View style={[styles.secondLegBadge, { backgroundColor: '#1a1a2e' }]}>
+                        <Text style={[styles.secondLegBadgeText, { color: '#818cf8' }]}>KNOCKOUT</Text>
+                      </View>
+                      {round ? (
+                        <View style={[styles.secondLegBadge, { backgroundColor: 'rgba(255,255,255,0.05)', marginLeft: 'auto' }]}>
+                          <Text style={[styles.secondLegBadgeText, { color: Colors.textSecondary, letterSpacing: 0.5 }]}>{round.toUpperCase()}</Text>
                         </View>
-                        <Text style={[styles.secondLegStatus, { color: aggColor }]}>{aggLabel}</Text>
-                      </>
-                    ) : (
-                      <Text style={styles.secondLegFirstLeg}>Knockout 2nd leg — elevated intensity expected</Text>
-                    )}
+                      ) : null}
+                    </View>
+                    <Text style={[styles.secondLegFirstLeg, { color: Colors.text }]}>
+                      First leg — 2nd leg to follow.
+                    </Text>
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15 }}>
+                      Aggregate score from this match will shape 2nd-leg dynamics. A comfortable result here
+                      can allow the winner to manage play in the away leg.
+                    </Text>
                   </View>
                 );
               })()}
