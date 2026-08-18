@@ -332,20 +332,41 @@ async def jarvis_leagues(
     league:  Optional[int]  = Query(None),
     current: Optional[bool] = Query(None),
 ):
-    """Return league catalogue. See /api/jarvis/docs for full parameter reference."""
+    """
+    Return league catalogue. See /api/jarvis/docs for full parameter reference.
+
+    NOTE: `search` and `country` are mutually exclusive on the upstream API —
+    use only one at a time.  `search` is preferred for name lookups.
+    """
     _require_auth(authorization)
 
+    # API-Sports ignores `country` when `search` is also provided — prefer
+    # search so the caller always gets results.
     params: dict = {}
-    if search  is not None: params["search"]  = search
-    if country is not None: params["country"] = country
+    if search  is not None:
+        params["search"] = search
+    elif country is not None:
+        params["country"] = country
     if league  is not None: params["id"]      = league
     if current is not None: params["current"] = "true" if current else "false"
 
     data = await _sports_get("leagues", params)
+    leagues = data.get("response", [])
+    # If a country filter was requested but search took priority, post-filter
+    if search and country:
+        country_lower = country.lower()
+        leagues = [
+            l for l in leagues
+            if country_lower in (l.get("country", {}).get("name") or "").lower()
+        ]
     return JSONResponse(content={
         "source": "api-sports/leagues",
-        "results": data.get("results", 0),
-        "leagues": data.get("response", []),
+        "results": len(leagues),
+        "leagues": leagues,
+        "note": (
+            "Use `search` for name lookup, `country` for country filter. "
+            "Combining both applies country as a post-filter on the search results."
+        ),
     })
 
 
@@ -435,20 +456,65 @@ async def jarvis_player_fixtures(
     league: int = Query(..., description="League ID (required)"),
     season: int = Query(..., description="Season year (required)"),
 ):
-    """Return a player's recent match history. See /api/jarvis/docs for full parameter reference."""
+    """
+    Return a player's recent match history.
+
+    Uses a 2-step lookup: fetches the player's team from their season stats,
+    then returns that team's last 10 fixtures in the given league/season.
+    API-Sports does not support filtering /fixtures directly by player ID.
+    """
     _require_auth(authorization)
 
-    data = await _sports_get("fixtures", {
-        "player": player,
+    # Step 1 — resolve the player's team ID for this league/season
+    player_data = await _sports_get("players", {
+        "id":     player,
+        "season": season,
+        "league": league,
+    })
+    player_rows = player_data.get("response", [])
+    team_id: Optional[int] = None
+    player_name: Optional[str] = None
+    if player_rows:
+        first = player_rows[0]
+        player_name = first.get("player", {}).get("name")
+        stats = first.get("statistics", [])
+        if stats:
+            team_id = stats[0].get("team", {}).get("id")
+
+    if not team_id:
+        return JSONResponse(content={
+            "source": "api-sports/player-fixtures",
+            "player": player,
+            "league": league,
+            "season": season,
+            "results": 0,
+            "fixtures": [],
+            "note": (
+                "Could not resolve this player's team for the given league/season. "
+                "Verify the player ID, league ID, and season year."
+            ),
+        })
+
+    # Step 2 — fetch the team's last 10 fixtures in this league/season
+    fix_data = await _sports_get("fixtures", {
+        "team":   team_id,
         "league": league,
         "season": season,
         "last":   10,
     })
+    fixtures = fix_data.get("response", [])
+
     return JSONResponse(content={
         "source": "api-sports/player-fixtures",
         "player": player,
+        "player_name": player_name,
+        "team_id": team_id,
         "league": league,
         "season": season,
-        "results": data.get("results", 0),
-        "fixtures": data.get("response", []),
+        "results": len(fixtures),
+        "fixtures": fixtures,
+        "note": (
+            "Fixtures are for the player's team — individual player stats "
+            "per fixture are not included in this endpoint."
+        ),
     })
