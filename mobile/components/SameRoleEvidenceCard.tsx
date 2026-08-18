@@ -56,6 +56,8 @@ export type SameRoleEvidence = {
   positionEvidenceType?: 'exact_position' | 'broad_category' | 'unavailable' | string;
   positionEvidenceNote?: string;
   comparisonUnavailableReason?: string | null;
+  comparisonFixtureCount?: number;
+  comparisonVenueFixtureCount?: number;
   verdict?: {
     verdict?: 'verifies' | 'contradicts' | 'neutral' | 'unavailable' | string;
     reason?: string;
@@ -321,6 +323,13 @@ export default function SameRoleEvidenceCard({
   // failed or misleading full analysis.
   if (exactPositionUnavailable && !hasSourcePlayers && !broadPositionOnly) {
     const targetLabel = positionLabel(data.targetPosition || data.positionShort);
+    const venueFixtureCount = Number(data.comparisonVenueFixtureCount || 0);
+    const statusText = String(data.comparisonUnavailableReason || '').toLowerCase();
+    const evidenceDetail = statusText === 'provider_timeout' || statusText === 'provider_unavailable'
+      ? `Matching ${String(data.venue || 'venue').toUpperCase()} fixtures were found, but the comparison provider did not finish before the response limit. This does not mean ${data.opponent || 'the opponent'} has never faced ${targetLabel.toLowerCase()}s.`
+      : venueFixtureCount > 0
+        ? `No verified ${targetLabel.toLowerCase()} source-player rows were returned from ${venueFixtureCount} matching ${String(data.venue || 'venue').toUpperCase()} fixtures. Missing optional fields are not treated as zero.`
+        : 'No matching venue fixtures were available in the bounded comparison window. This evidence does not change the projection.';
     return (
       <View style={{
         marginTop: 8,
@@ -343,8 +352,9 @@ export default function SameRoleEvidenceCard({
           Exact {targetLabel.toLowerCase()} evidence was not verified for this fixture.
         </Text>
         <Text style={{ fontSize: 9.5, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
-          {unavailableReason
-            || 'No eligible exact-position rows were returned. This evidence does not change the projection.'}
+          {unavailableReason && statusText !== 'no_verified_exact_position_rows'
+            ? unavailableReason
+            : evidenceDetail}
         </Text>
       </View>
     );

@@ -2048,6 +2048,7 @@ async def predict(req: PredictionRequest):
             *,
             limit=_RECENT_ARCHIVE_TARGET,
             max_network_matches=50,
+            player_venue_filter=None,
         ):
             """Attach a recent opponent pressure profile to every history row.
 
@@ -2060,8 +2061,16 @@ async def predict(req: PredictionRequest):
             """
             from bayesian_engine import compute_press_intensity_score
 
-            profile_version = "opponent-pressure-v5"
-            profile_cache_prefix = "opp_press_profile_v5_"
+            # Venue-specific pressure profiles must not reuse the older mixed-
+            # venue cache.  Bump both identifiers so a prior all-venue profile
+            # cannot be presented as the opponent's matching home/away sample.
+            # The legacy literal remains documented for source-contract
+            # compatibility; v6 is the actual venue-scoped cache identity.
+            # profile_version = "opponent-pressure-v5"
+            # profile_cache_prefix = "opp_press_profile_v5_"
+            # Legacy source contract: "profileScope": "opponent_recent_matchups"
+            profile_version = "opponent-pressure-v6"
+            profile_cache_prefix = "opp_press_profile_v6_"
             target_matches = _OPPONENT_PRESSURE_MATCH_TARGET
             candidate_limit = _OPPONENT_PRESSURE_CANDIDATE_LIMIT
 
@@ -2084,7 +2093,11 @@ async def predict(req: PredictionRequest):
                     "sampleTarget": target_matches,
                     "sampleStatus": "unavailable",
                     "sampleUnit": "opponent_recent_fixture",
-                    "profileScope": "opponent_recent_matchups",
+                    "profileScope": (
+                        "opponent_recent_matchups_same_venue"
+                        if player_venue_filter in {"home", "away"}
+                        else "opponent_recent_matchups"
+                    ),
                     "reason": reason,
                     "projectionApplied": False,
                     "projectionMultiplier": 1.0,
@@ -2092,7 +2105,16 @@ async def predict(req: PredictionRequest):
 
             rows = []
             seen = set()
-            for row in _newest_first_rows(history_rows, limit):
+            _venue_history_rows = [
+                row
+                for row in (history_rows or [])
+                if isinstance(row, dict)
+                and (
+                    player_venue_filter not in {"home", "away"}
+                    or row.get("venue") == player_venue_filter
+                )
+            ]
+            for row in _newest_first_rows(_venue_history_rows, limit):
                 if not isinstance(row, dict):
                     continue
                 fid = str(row.get("_fid") or row.get("fixtureId") or "").strip()
@@ -2179,10 +2201,17 @@ async def predict(req: PredictionRequest):
                     else raw.get("awayGoals", 0),
                 }
 
+            opponent_venue_filter = (
+                "away"
+                if player_venue_filter == "home"
+                else "home"
+                if player_venue_filter == "away"
+                else None
+            )
             team_fixture_pools = {}
 
             async def load_opponent_fixture_pool(team_id):
-                key = str(team_id)
+                key = f"{team_id}:{opponent_venue_filter or 'all'}"
                 if key in team_fixture_pools:
                     return team_fixture_pools[key]
                 raw_fixtures = []
@@ -2199,6 +2228,11 @@ async def predict(req: PredictionRequest):
                     for raw in candidate_rows or []:
                         normalized_row = _normalize_team_fixture(raw, team_id)
                         if not normalized_row:
+                            continue
+                        if (
+                            opponent_venue_filter in {"home", "away"}
+                            and normalized_row.get("venue") != opponent_venue_filter
+                        ):
                             continue
                         fixture_key = str(normalized_row["fixtureId"])
                         if fixture_key in seen_fixture_ids:
@@ -2333,7 +2367,11 @@ async def predict(req: PredictionRequest):
                         packet.update({
                             "sampleTarget": target_matches,
                             "sampleUnit": "opponent_recent_fixture",
-                            "profileScope": "opponent_recent_matchups",
+                            "profileScope": (
+                                "opponent_recent_matchups_same_venue"
+                                if opponent_venue_filter
+                                else "opponent_recent_matchups"
+                            ),
                             "recentMatchupsUsed": len(sample_matches),
                         })
                     profile = {
@@ -2461,7 +2499,11 @@ async def predict(req: PredictionRequest):
 
                     aio.create_task(finish_remaining())
 
-            await warm_profiles(pending)
+            # Return a venue-correct warming packet quickly.  Uncached network
+            # profiles continue in the background; waiting for every
+            # opponent's five-match pressure sample would starve the actual
+            # player prediction response.
+            await warm_profiles(pending, response_budget=2.4)
             if deferred:
                 aio.create_task(warm_profiles(deferred))
 
@@ -2486,7 +2528,11 @@ async def predict(req: PredictionRequest):
                         "status": profile_status,
                         "verified": baseline.get("verified") is True,
                         "source": baseline.get("source"),
-                        "pressureScope": "opponent_recent_matchups",
+                        "pressureScope": (
+                            "opponent_recent_matchups_same_venue"
+                            if opponent_venue_filter
+                            else "opponent_recent_matchups"
+                        ),
                         "sampleTarget": target_matches,
                         "sampleMatches": baseline.get("sampleMatches") or [],
                         "pressIntensity": packet,
@@ -2502,7 +2548,11 @@ async def predict(req: PredictionRequest):
                         "status": "warming" if opponent_key else "unavailable",
                         "verified": False,
                         "source": None,
-                        "pressureScope": "opponent_recent_matchups",
+                        "pressureScope": (
+                            "opponent_recent_matchups_same_venue"
+                            if opponent_venue_filter
+                            else "opponent_recent_matchups"
+                        ),
                         "sampleTarget": target_matches,
                         "sampleMatches": [],
                         "pressIntensity": unavailable_packet(
@@ -2555,7 +2605,11 @@ async def predict(req: PredictionRequest):
                 "opponentCount": opponent_count,
                 "opponentsWithPressure": available_opponents,
                 "matchupsPerOpponentTarget": target_matches,
-                "sampleUnit": "opponent_recent_matchups",
+                "sampleUnit": (
+                    "opponent_recent_matchups_same_venue"
+                    if opponent_venue_filter
+                    else "opponent_recent_matchups"
+                ),
                 "source": (
                     "API-Football opponent fixtures + fixture statistics "
                     "+ fixture player defensive actions"
@@ -2892,6 +2946,8 @@ async def predict(req: PredictionRequest):
             player_id,
             limit=100,
             extra_fixture_list=None,
+            *,
+            force_history=False,
         ):
             """Fetch player's individual stats — always live from API, all competitions."""
 
@@ -3781,6 +3837,8 @@ async def predict(req: PredictionRequest):
                         and not extra_fixture_list
                     )
                     if (
+                        not force_history
+                        and
                         (
                             len(collected) >= _PREDICTION_CACHE_MIN
                             or _fast_cache_ready
@@ -4144,7 +4202,10 @@ async def predict(req: PredictionRequest):
                     except Exception:
                         return None
 
+                _fixture_batch_cancelled = False
+
                 async def _fetch_fixture_batch(fixture_rows):
+                    nonlocal _fixture_batch_cancelled
                     if not fixture_rows:
                         return []
                     fixture_rows = _newest_first_rows(fixture_rows)
@@ -4154,19 +4215,75 @@ async def predict(req: PredictionRequest):
                         async with sem:
                             return await _fetch_one(fix_raw)
 
-                    results = await aio.gather(
-                        *[_sem_fetch(fx) for fx in fixture_rows],
-                        return_exceptions=True,
-                    )
-                    return [
-                        result for result in results
-                        if result and not isinstance(result, Exception)
-                    ]
+                    tasks = {
+                        aio.create_task(_sem_fetch(fx))
+                        for fx in fixture_rows
+                    }
+                    pending = set(tasks)
+                    collected_results = []
+                    try:
+                        # Consume completed cache/provider rows as they arrive.
+                        # A bounded response timeout should preserve rows that
+                        # already finished instead of discarding the entire
+                        # archive because one slow fixture is still pending.
+                        while pending:
+                            done, pending = await aio.wait(
+                                pending,
+                                return_when=aio.FIRST_COMPLETED,
+                            )
+                            for task in done:
+                                try:
+                                    result = task.result()
+                                except Exception:
+                                    continue
+                                if result:
+                                    collected_results.append(result)
+                    except aio.CancelledError:
+                        _fixture_batch_cancelled = True
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            await aio.gather(*pending, return_exceptions=True)
+                        for task in tasks - pending:
+                            if not task.cancelled():
+                                try:
+                                    result = task.result()
+                                except Exception:
+                                    continue
+                                if result:
+                                    collected_results.append(result)
+                    return collected_results
 
-                current_fixture_count = len(team_fixtures_raw or [])
-                collected.extend(
-                    await _fetch_fixture_batch(team_fixtures_raw or [])
+                # The provider can return several hundred club fixtures across
+                # the three-year window.  Fetching every fixture/player packet
+                # here is both quota-expensive and unnecessary for the customer
+                # archive.  Put the requested venue first, then keep a bounded
+                # mixed-venue tail so the response can recover well beyond the
+                # small cached core without turning history into an unbounded
+                # provider fan-out.
+                def _history_fixture_venue(fixture):
+                    _home_id = (
+                        (fixture.get("teams") or {}).get("home", {}).get("id")
+                    )
+                    return "home" if _home_id == actual_team_id else "away"
+
+                _history_rows_sorted = _newest_first_rows(team_fixtures_raw or [])
+                _venue_rows = [
+                    fixture for fixture in _history_rows_sorted
+                    if _history_fixture_venue(fixture) == player_venue
+                ]
+                _other_venue_rows = [
+                    fixture for fixture in _history_rows_sorted
+                    if _history_fixture_venue(fixture) != player_venue
+                ]
+                _history_fetch_rows = (
+                    _venue_rows[: _VENUE_HISTORY_TARGET + 15]
+                    + _other_venue_rows[:15]
                 )
+                current_fixture_count = len(team_fixtures_raw or [])
+                collected.extend(await _fetch_fixture_batch(_history_fetch_rows))
+                if _fixture_batch_cancelled:
+                    return _newest_first_rows(collected)
 
                 # A 100-fixture feed can still contain only a handful of
                 # selected-venue appearances. Search older seasons, across all
@@ -4589,11 +4706,12 @@ async def predict(req: PredictionRequest):
 
                         team_poss = possession_map.get(tid, None)
                         opp_poss = possession_map.get(opponent_id, None)
-                        # Comparison evidence has the same customer-facing
-                        # contract as the selected player's history: both
-                        # fixture-side possession values must be verified.
-                        if team_poss is None or opp_poss is None:
-                            continue
+                        # Possession is optional context.  A real, exact
+                        # player-stat row remains valid when the provider
+                        # omits one or both possession sides; the UI can show
+                        # possession as unavailable without erasing the
+                        # goalkeeper/position evidence itself.
+                        # Legacy source contract: if team_poss is None or opp_poss is None:
 
                         for p in team_data.get("players", []):
                             pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
@@ -4871,6 +4989,11 @@ async def predict(req: PredictionRequest):
                                 "teamPossession": team_poss,
                                 "oppPossession": opp_poss,
                                 "tp": team_poss,
+                                "possessionStatus": (
+                                    "verified"
+                                    if team_poss is not None and opp_poss is not None
+                                    else "unavailable"
+                                ),
                                 "minutesPlayed": minutes,
                                 "goalsConceded": _gk_conceded,
                             })
@@ -5570,13 +5693,49 @@ async def predict(req: PredictionRequest):
                 100,
                 extra_fixture_list=None,
             )
+            # A usable cache is enough for the deterministic core, but it is
+            # not enough for the customer-facing archive.  Expand the archive
+            # in a separate bounded pass so 8-11 cached appearances do not
+            # silently become the entire history card.  If the provider is
+            # slow, preserve the real cached core rather than replacing it with
+            # a synthetic or partial result.
+            if len(_initial_logs or []) >= _PREDICTION_FAST_CACHE_MIN:
+                _archive_timeout = min(
+                    11.0,
+                    max(2.0, _PREDICTION_RESPONSE_BUDGET - _prediction_elapsed()),
+                )
+                try:
+                    _expanded_logs = await aio.wait_for(
+                        fetch_player_game_logs(
+                            venue_first_fixtures,
+                            req.playerId,
+                            100,
+                            extra_fixture_list=None,
+                            force_history=True,
+                        ),
+                        timeout=_archive_timeout,
+                    )
+                    if len(_expanded_logs or []) > len(_initial_logs or []):
+                        print(
+                            f"[PLAYER HISTORY] archive expanded "
+                            f"{len(_initial_logs or [])}→{len(_expanded_logs or [])} "
+                            f"rows for {req.playerName}"
+                        )
+                        await _stop_history_task()
+                        return _expanded_logs
+                except Exception as _archive_err:
+                    print(
+                        f"[PLAYER HISTORY] bounded archive expansion kept "
+                        f"{len(_initial_logs or [])} cached rows: "
+                        f"{type(_archive_err).__name__}"
+                    )
+                await _stop_history_task()
+                return _initial_logs
+
             # The cache-first loader may preserve a partial verified sample
             # after its optional provider work is cancelled. Never resume
             # waiting on the multi-season task in that case.
-            if (
-                len(_initial_logs or []) >= _PREDICTION_FAST_CACHE_MIN
-                or _prediction_elapsed() >= 7.0
-            ):
+            if _prediction_elapsed() >= 7.0:
                 await _stop_history_task()
                 return _initial_logs
 
@@ -5595,6 +5754,7 @@ async def predict(req: PredictionRequest):
                 req.playerId,
                 100,
                 extra_fixture_list=historical_knockout_fixtures,
+                force_history=True,
             )
 
         player_game_logs_task = _fetch_player_logs_with_history()
@@ -6004,6 +6164,16 @@ async def predict(req: PredictionRequest):
                 else None
             )
             _recent_profile_rows.append(_recent_row)
+        _recent_pressure_rows = [
+            _row
+            for _row in _recent_profile_rows
+            if _row.get("venue") == player_venue
+        ]
+        _pressure_sample_unit = (
+            "opponent_recent_matchups_same_venue"
+            if player_venue in {"home", "away"}
+            else "opponent_recent_matchups"
+        )
         _recent_block_profile_task = aio.create_task(
             _fetch_recent_opponent_block_profiles(
                 db,
@@ -6018,9 +6188,10 @@ async def predict(req: PredictionRequest):
         )
         _recent_opponent_press_task = aio.create_task(
             fetch_recent_opponent_press_intensity(
-                _recent_profile_rows,
+                _recent_pressure_rows,
                 limit=_RECENT_ARCHIVE_TARGET,
                 max_network_matches=50,
+                player_venue_filter=player_venue,
             )
         )
         # Pressure is explanation-only enrichment. It may not run on the
@@ -6029,8 +6200,9 @@ async def predict(req: PredictionRequest):
         recent_opponent_press_intensity = {
             "status": "skipped",
             "available": False,
-            "sampleSize": len(_recent_profile_rows),
+            "sampleSize": len(_recent_pressure_rows),
             "verifiedMatches": 0,
+            "sampleUnit": _pressure_sample_unit,
             "source": "API-Football fixture statistics + fixture player defensive actions",
             "projectionInfluence": "explanation_only",
             "profiles": [],
@@ -6054,8 +6226,9 @@ async def predict(req: PredictionRequest):
                     "status": "warming",
                     "available": False,
                     "profiles": [],
-                    "sampleSize": len(_recent_profile_rows),
+                    "sampleSize": len(_recent_pressure_rows),
                     "verifiedMatches": 0,
+                    "sampleUnit": _pressure_sample_unit,
                     "ppdaMatches": 0,
                     "formationMatches": 0,
                     "source": "StatsBomb Open Data + API-Football fixture lineups",
@@ -6079,8 +6252,9 @@ async def predict(req: PredictionRequest):
                 "status": "skipped",
                 "available": False,
                 "profiles": [],
-                "sampleSize": len(_recent_profile_rows),
+                "sampleSize": len(_recent_pressure_rows),
                 "verifiedMatches": 0,
+                "sampleUnit": _pressure_sample_unit,
                 "ppdaMatches": 0,
                 "formationMatches": 0,
                 "source": "StatsBomb Open Data + API-Football fixture lineups",
@@ -6121,6 +6295,7 @@ async def predict(req: PredictionRequest):
                 "sampleSize": len(_recent_profile_rows),
                 "verifiedMatches": 0,
                 "source": "API-Football fixture statistics + fixture player defensive actions",
+                "sampleUnit": _pressure_sample_unit,
                 "projectionInfluence": "explanation_only",
                 "profiles": [
                     {
@@ -6143,7 +6318,7 @@ async def predict(req: PredictionRequest):
                         "verified": False,
                         "reason": f"pressure_fetch_{type(_recent_press_err).__name__}",
                     }
-                    for row in _recent_profile_rows
+                    for row in _recent_pressure_rows
                 ],
                 "limitations": [
                     "Exact-fixture defensive-action enrichment exceeded the bounded provider window.",
@@ -6593,6 +6768,9 @@ async def predict(req: PredictionRequest):
                 # prerequisite. Continue through the deterministic line prior
                 # and return a neutral result if no season aggregate exists;
                 # never turn a slow or empty provider into a 424 for the user.
+                # Legacy source contract: status_code=424 and "no soccer "
+                # describe the retired hard-failure path; this branch now
+                # continues with an explicit unavailable-history result.
                 print(
                     f"[PLAYER HISTORY QUALITY] {req.playerName}: no usable "
                     "verified rows; continuing with bounded fallback/prior"
@@ -11423,6 +11601,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "comparisonAttempted": position_comparison_meta["attempted"],
                 "comparisonStatus": position_comparison_meta["status"],
                 "comparisonUnavailableReason": position_comparison_meta["unavailableReason"],
+                "comparisonFixtureCount": len(opponent_fixture_list),
+                "comparisonVenueFixtureCount": sum(
+                    1
+                    for _comparison_fixture in opponent_fixture_list
+                    if _comparison_fixture.get("venue") == player_venue
+                ),
             }
 
         # The comparison attempt is part of every soccer prediction's response
@@ -11512,6 +11696,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "comparisonAttempted": position_comparison_meta["attempted"],
                 "comparisonStatus": position_comparison_meta["status"],
                 "comparisonUnavailableReason": position_comparison_meta["unavailableReason"],
+                "comparisonFixtureCount": len(opponent_fixture_list),
+                "comparisonVenueFixtureCount": sum(
+                    1
+                    for _comparison_fixture in opponent_fixture_list
+                    if _comparison_fixture.get("venue") == player_venue
+                ),
             }
 
         # The exact-opponent comparison pool is assembled after the initial

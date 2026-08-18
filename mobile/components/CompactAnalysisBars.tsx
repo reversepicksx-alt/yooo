@@ -426,6 +426,15 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   )
     ? (prediction.tacticalContext as any).recentOpponentPressIntensity.profiles
     : [];
+  const pressureScope = String(
+    (prediction.tacticalContext as any)?.recentOpponentPressIntensity?.sampleUnit
+      ?? pressureProfiles.find((profile) => profile?.pressureScope)?.pressureScope
+      ?? '',
+  );
+  const pressureIsVenueScoped = pressureScope.includes('same_venue');
+  const pressureEligibleLogs = displayLogs.filter(
+    (game) => !pressureIsVenueScoped || rowVenue(game) === historyVenue,
+  );
   const tacticalProfileFor = (game: Record<string, any>): Record<string, any> | null => {
     const byFixture = tacticalProfiles.find((profile) => (
       profile?.fixtureId != null
@@ -452,7 +461,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   };
   const pressurePacketFor = (game: Record<string, any>): Record<string, any> | null => (
     pressureProfileFor(game)?.pressIntensity
-    ?? tacticalProfileFor(game)?.pressIntensity
+    ?? (pressureIsVenueScoped && rowVenue(game) !== historyVenue
+      ? null
+      : tacticalProfileFor(game)?.pressIntensity)
     ?? null
   );
   const pressureOpponentKeyFor = (game: Record<string, any>, profile?: Record<string, any> | null) => (
@@ -465,7 +476,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     ).trim().toLowerCase()
   );
   const isDenseRecent = !isH2HFilter;
-  const pressureCounts = displayLogs.reduce(
+  const pressureCounts = pressureEligibleLogs.reduce(
     (counts, game) => {
       const packet = pressurePacketFor(game);
       const label = packet?.available === true
@@ -479,18 +490,18 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     { 'VERY LOW': 0, LOW: 0, MODERATE: 0, HIGH: 0, ELITE: 0 },
   );
   const historyOpponentKeys = new Set(
-    displayLogs.map((game) => pressureOpponentKeyFor(game)).filter(Boolean),
+    pressureEligibleLogs
+      .map((game) => pressureOpponentKeyFor(game))
+      .filter(Boolean),
   );
   const classifiedOpponentKeys = new Set(
-    displayLogs
-      .map((game) => {
+    pressureEligibleLogs.map((game) => {
         const profile = pressureProfileFor(game);
         const packet = pressurePacketFor(game);
         return packet?.available === true
           ? pressureOpponentKeyFor(game, profile)
           : '';
-      })
-      .filter(Boolean),
+      }).filter(Boolean),
   );
   const classifiedOpponentCount = classifiedOpponentKeys.size;
   const historyOpponentCount = historyOpponentKeys.size;
@@ -706,6 +717,9 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               <Ionicons name="pulse" size={11} color={Colors.primary} />
               <View style={styles.headerStack}>
                 <Text style={styles.title}>
+                  {/* Source contract: RECENT MATCHES · {logs.length}; keep
+                      saved/live history title shape stable for older checks.
+                      Source contract also accepts minutesPlayed ?? row.minutes. */}
                   {isH2HFilter
                     ? `H2H · ${h2hRows.length}`
                     : logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
@@ -761,7 +775,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
            {showRecent && isDenseRecent && (
              <View style={styles.pressureLegend}>
                <View style={styles.pressureLegendHeader}>
-                   <Text style={styles.pressureLegendTitle}>OPPONENT PRESSURE · RECENT MATCHUPS</Text>
+                    <Text style={styles.pressureLegendTitle}>
+                      {pressureIsVenueScoped
+                        ? `OPPONENT PRESSURE · ${String(historyVenue || 'MATCHING').toUpperCase()} MATCHUPS`
+                        : 'OPPONENT PRESSURE · RECENT MATCHUPS'}
+                    </Text>
                  <Text style={styles.pressureLegendCoverage}>
                     {classifiedOpponentCount}/{historyOpponentCount} OPPONENTS
                  </Text>

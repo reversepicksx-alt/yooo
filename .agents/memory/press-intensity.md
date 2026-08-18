@@ -17,15 +17,15 @@ Stable pressure evidence requires at least seven valid defensive-action rows. Fe
 
 **How to apply:** Sort fixture and history rows newest-first before applying any lookback limit. Keep the actual valid action count in the response and show limited/stable status in the UI. For wide players, broad provider-category comparison rows may be shown as context only when exact rows are unavailable; they must not influence projection or calibration.
 
-Opponent pressure history is cached as one versioned profile per opponent and reused across all matching player-history rows. The current profile contract is `opponent-pressure-v3`: target five recent completed matches, bounded candidate lookback, explicit `sampleTarget`/`sampleMatches`, and `projectionInfluence=explanation_only`.
+Opponent pressure history is cached as one versioned profile per opponent and reused across matching player-history rows. The cache identity must include the player's venue scope when the evidence contract is same-venue: target five recent completed opponent matches at the corresponding venue, bounded candidate lookback, explicit `sampleTarget`/`sampleMatches`, and `projectionInfluence=explanation_only`.
 
-**Why:** Scoring only the one fixture represented by a player-history row produced misleading `N=1`/`0` cards and repeated provider work for the same opponent.
+**Why:** A mixed-venue profile can attribute the wrong match script to a player. Scoring only the one fixture represented by a player-history row also produced misleading `N=1`/`0` cards and repeated provider work for the same opponent.
 
-**How to apply:** Build profiles from verified opponent team IDs, never from the player row's single match alone. Display opponent coverage separately from row coverage, and never convert an unavailable packet's null score into `0/100`.
+**How to apply:** Filter the player's history to the requested venue before applying the lookback limit, then build profiles from verified opponent team IDs using the opponent's corresponding venue. Display opponent coverage separately from row coverage, and never convert an unavailable packet's null score into `0/100`.
 
-Large opponent histories must warm incrementally rather than through one all-or-nothing `gather()`. Return completed profiles within the prediction window, persist the remaining profiles in background work, and let later renders consume the versioned cache.
+Large opponent histories must warm incrementally rather than through one all-or-nothing `gather()`. Return completed profiles within a short response budget, persist or continue remaining profiles in background work, and let later renders consume the versioned cache. The UI's pressure counts must use the same venue-scoped eligible rows as the profiles.
 
-**Why:** An 18-opponent batch previously hit the 20-second response boundary and discarded profiles that had already completed, producing `0/18` even when provider data was available.
+**Why:** An 18-opponent batch previously hit the 20-second response boundary and discarded profiles that had already completed, producing `0/18` even when provider data was available. A separate UI count over all displayed games could also make a venue-scoped card look inconsistent.
 
 **How to apply:** Use a bounded `wait()` over per-opponent tasks, prioritize the newest/current opponents, and keep unresolved rows explicitly warming or unavailable instead of replacing the entire response with a synthetic empty packet.
 
