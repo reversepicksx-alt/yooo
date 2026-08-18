@@ -31,7 +31,7 @@ EXPO_TOKEN=$EXPO_TOKEN ./scripts/submit_ios.sh <finished-build-id>
 
 ## Critical fixes that were required
 
-1. **Replit package-firewall URLs**: Every time `npm install` runs inside Replit, package-lock.json gets `http://package-firewall.replit.local/npm/` URLs baked in. EAS build machines can't reach these. Fix: `sed -i 's|http://package-firewall.replit.local/npm/|https://registry.npmjs.org/|g' package-lock.json`. Prevented by pinning registry in .npmrc: `registry=https://registry.npmjs.org/`
+1. **Replit package-firewall URLs**: `npm install` and `npx expo install` can still bake `http://package-firewall.replit.local/npm/` URLs into package-lock.json even when `.npmrc` pins `registry=https://registry.npmjs.org/`. EAS build machines can't reach these; validate zero workspace-registry URLs before uploading and restore public npm tarball URLs.
 
 2. **New Architecture must be enabled**: react-native-reanimated v4 (required for Xcode 16 compatibility) uses react-native-worklets, which requires `newArchEnabled: true` in app.json. Old arch + v4 = CocoaPods failure.
 
