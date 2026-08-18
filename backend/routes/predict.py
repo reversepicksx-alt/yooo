@@ -6023,6 +6023,22 @@ async def predict(req: PredictionRequest):
                 max_network_matches=50,
             )
         )
+        # Pressure is explanation-only enrichment. It may not run on the
+        # fast response branch, but the response assembler always expects a
+        # shaped packet. Keep the deterministic prediction independent of it.
+        recent_opponent_press_intensity = {
+            "status": "skipped",
+            "available": False,
+            "sampleSize": len(_recent_profile_rows),
+            "verifiedMatches": 0,
+            "source": "API-Football fixture statistics + fixture player defensive actions",
+            "projectionInfluence": "explanation_only",
+            "profiles": [],
+            "limitations": [
+                "Pressure enrichment was skipped to keep the core prediction responsive.",
+                "No pressure score was guessed from possession, odds, or the aggregate matchup packet.",
+            ],
+        }
         if _prediction_elapsed() < 20.0:
             try:
                 recent_block_profiles = await aio.wait_for(
