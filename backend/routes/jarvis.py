@@ -41,14 +41,21 @@ Aggregator:
 from __future__ import annotations
 
 import asyncio
+import html
 import os
+import secrets
+import shutil
 import time
+from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Body, Header, HTTPException, Query
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+
+from config import OWNER_EMAIL, db
 
 router = APIRouter()
 
@@ -56,6 +63,12 @@ router = APIRouter()
 _API_SPORTS_BASE = "https://v3.football.api-sports.io"
 _API_SPORTS_KEY  = os.environ.get("API_SPORTS_KEY", "")
 _JARVIS_KEY      = os.environ.get("JARVIS_API_KEY", "")
+
+# Screenshot files are deliberately short-lived and addressed only by an
+# opaque random handle. They are never placed in the public app bundle.
+_SCREENSHOT_ROOT = Path("/tmp/reversepicks-jarvis-screenshots")
+_SCREENSHOT_TTL_SECONDS = 10 * 60
+_SCREENSHOTS: dict[str, tuple[Path, float, str]] = {}
 
 # ── Simple TTL cache (in-memory, per-process) ─────────────────────────────────
 # Keeps repeated match-context calls from burning quota on the same fixture.
@@ -86,6 +99,81 @@ def _require_auth(authorization: Optional[str]) -> None:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or token.strip() != _JARVIS_KEY:
         raise HTTPException(401, detail={"error": "Invalid JARVIS API key."})
+
+
+async def _resolve_owner_session() -> tuple[str, str]:
+    """Resolve the private assistant's owner session without caller credentials.
+
+    The owner email is the server-side account mapping from config. The session
+    token stays in MongoDB and never crosses the JARVIS API boundary. If the
+    owner has no session yet, create_session provisions one internally.
+    """
+    owner_email = str(OWNER_EMAIL or "").strip().lower()
+    if not owner_email:
+        raise HTTPException(503, detail={"error": "Owner account mapping is not configured."})
+
+    try:
+        session = await db.sessions.find_one(
+            {"email": owner_email},
+            {"_id": 0, "session_token": 1},
+        )
+        owner_token = (session or {}).get("session_token")
+        if not owner_token:
+            from routes.auth import create_session
+            owner_token = await create_session(owner_email, "Owner")
+    except Exception as exc:
+        # Never echo the database error: provider/session details can include
+        # connection metadata. Keep the public response intentionally generic.
+        raise HTTPException(503, detail={"error": "Owner session is temporarily unavailable."}) from exc
+
+    return owner_email, str(owner_token)
+
+
+def _cleanup_screenshot_files() -> None:
+    now = time.time()
+    for handle, (path, expires_at, _section) in list(_SCREENSHOTS.items()):
+        if expires_at <= now:
+            _SCREENSHOTS.pop(handle, None)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _prediction_metrics(result: dict) -> dict[str, Any]:
+    """Read final probability/calibration values across engine response shapes."""
+    bayesian = result.get("bayesianMetrics") or {}
+    ledger = result.get("factorLedger") or {}
+    ledger_final = ledger.get("final") if isinstance(ledger, dict) else {}
+    ledger_final = ledger_final if isinstance(ledger_final, dict) else {}
+
+    def first(*values: Any) -> Any:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
+    return {
+        "pOver": first(
+            result.get("pOver"),
+            bayesian.get("pOver"),
+            ledger_final.get("pOver"),
+        ),
+        "pUnder": first(
+            result.get("pUnder"),
+            bayesian.get("pUnder"),
+            ledger_final.get("pUnder"),
+        ),
+        "propHistoricalRate": first(
+            result.get("propHistoricalRate"),
+            ledger_final.get("propHistoricalRate"),
+        ),
+        "propHistoricalN": first(
+            result.get("propHistoricalN"),
+            ledger_final.get("propHistoricalN"),
+            0,
+        ),
+    }
 
 
 # ── API-Sports helper ─────────────────────────────────────────────────────────
@@ -232,18 +320,16 @@ async def jarvis_openapi():
             "/api/jarvis/save-pick/soccer": {
                 "post": {
                     "operationId": "saveSoccerPick",
-                    "summary": "Predict AND save a soccer prop pick for a subscriber in one call.",
-                    "description": "Runs the full 13-stage prediction pipeline then saves the pick to the subscriber's ledger. Requires the subscriber's session email + token alongside the JARVIS bearer key. Returns pick_id, tracking_id, correlation_warnings, and summary with p_over, p_under, prop_historical_rate.",
+                    "summary": "Predict AND save a soccer prop pick to the owner's My Picks ledger.",
+                    "description": "Runs the full 13-stage production pipeline and saves the result to the private owner's My Picks ledger. The owner account is resolved server-side; the request contains only prediction inputs. Returns pick_id, tracking_id, warnings, and the model summary.",
                     "requestBody": {
                         "required": True,
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": ["subscriber_email", "subscriber_token", "fixture_id", "player_id", "prop_type", "line"],
+                                    "required": ["fixture_id", "player_id", "prop_type", "line"],
                                     "properties": {
-                                        "subscriber_email": {"type": "string",  "description": "The subscriber's account email (the one they log in with)."},
-                                        "subscriber_token": {"type": "string",  "description": "The subscriber's active session token (from their login session)."},
                                         "fixture_id": {"type": "integer", "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."},
                                         "player_id":  {"type": "integer", "description": "API-Sports player ID."},
                                         "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
@@ -258,12 +344,61 @@ async def jarvis_openapi():
                     },
                     "responses": {
                         "200": {"description": "saved.pick_id, saved.tracking_id, correlation_warnings, and summary with recommendation, p_over, p_under, prop_historical_rate, prop_historical_n, confidence_score, edge_rating, safety_rating."},
-                        "401": {"description": "Invalid JARVIS bearer token or invalid subscriber credentials."},
+                        "401": {"description": "Invalid or missing JARVIS bearer token."},
                         "404": {"description": "Fixture or player not found."},
                         "409": {"description": "Pick already saved for this player/prop/fixture. Delete it first."},
                         "422": {"description": "Could not resolve player in fixture, or invalid prop."},
                         "502": {"description": "Prediction or save engine error."},
                         "507": {"description": "Database storage full — free Atlas storage and retry."},
+                    },
+                }
+            },
+            "/api/jarvis/prediction-screenshots": {
+                "post": {
+                    "operationId": "getPredictionScreenshots",
+                    "summary": "Render prediction sections and return short-lived screenshot URLs.",
+                    "description": "Runs the production soccer prediction, renders a server-side report with the same model values, and captures selected sections with Chromium. Returns opaque temporary image URLs; no app credentials are accepted or returned.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["fixture_id", "player_id", "prop_type", "line"],
+                                    "properties": {
+                                        "fixture_id": {"type": "integer", "description": "API-Sports fixture ID."},
+                                        "player_id": {"type": "integer", "description": "API-Sports player ID."},
+                                        "prop_type": {"type": "string", "description": "Player prop type.", "default": "pass_attempts"},
+                                        "line": {"type": "number", "description": "Player prop line."},
+                                        "sections": {"type": "array", "items": {"type": "string", "enum": ["read", "form", "matchup", "context", "picks"]}, "description": "Sections to capture. Defaults to read, form, matchup, context."},
+                                        "pick_id": {"type": "string", "description": "Optional saved pick ID. When supplied, the owner My Picks card is included in the picks section."},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "Opaque temporary image URLs keyed by section, plus summary. URLs expire after 10 minutes and require the JARVIS bearer token."},
+                        "401": {"description": "Invalid or missing JARVIS bearer token."},
+                        "404": {"description": "Fixture, player, or saved pick not found."},
+                        "422": {"description": "Invalid section or prediction input."},
+                        "502": {"description": "Prediction or browser rendering error."},
+                    },
+                }
+            },
+            "/api/jarvis/prediction-screenshots/{handle}/{section}": {
+                "get": {
+                    "operationId": "getPredictionScreenshotFile",
+                    "summary": "Fetch one authenticated temporary prediction screenshot.",
+                    "description": "Downloads one PNG returned by getPredictionScreenshots. The opaque handle expires after 10 minutes and the JARVIS bearer token is required.",
+                    "parameters": [
+                        {"name": "handle", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "section", "in": "path", "required": True, "schema": {"type": "string", "enum": ["read", "form", "matchup", "context", "picks"]}},
+                    ],
+                    "responses": {
+                        "200": {"description": "PNG image bytes."},
+                        "401": {"description": "Invalid or missing JARVIS bearer token."},
+                        "404": {"description": "Screenshot expired or not found."},
                     },
                 }
             },
@@ -608,6 +743,7 @@ async def jarvis_docs():
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
             "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
             "save": ["/api/jarvis/save-pick/soccer"],
+            "screenshots": ["/api/jarvis/prediction-screenshots"],
             "tactical_evidence": ["/api/jarvis/tactical-evidence"],
             "role_analysis": ["/api/jarvis/role-profile", "/api/jarvis/role-opponent-cohort"],
             "aggregator": ["/api/jarvis/match-context"],
@@ -723,6 +859,7 @@ async def jarvis_predict(
     bm = result.get("bayesianMetrics") or {}
     eq = result.get("evidenceQuality") or {}
     gs = result.get("gameSituation") or {}
+    model_metrics = _prediction_metrics(result)
 
     jarvis_brief = {
         "recommendation":        result.get("recommendation"),
@@ -756,13 +893,13 @@ async def jarvis_predict(
         "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
         # ── The two numbers that must always be surfaced together ─────────────
         # p_over / p_under: Bayesian probability for each direction (0-100 float)
-        "p_over":                result.get("pOver"),
-        "p_under":               result.get("pUnder"),
+        "p_over":                model_metrics["pOver"],
+        "p_under":               model_metrics["pUnder"],
         # prop_historical_rate: system-wide settled-pick hit rate for this
         # prop+direction (e.g. 62 means 62% of all UNDER pass_attempts picks hit).
         # None when fewer than ~10 settled picks exist for this bucket.
-        "prop_historical_rate":  result.get("propHistoricalRate"),
-        "prop_historical_n":     result.get("propHistoricalN"),
+        "prop_historical_rate":  model_metrics["propHistoricalRate"],
+        "prop_historical_n":     model_metrics["propHistoricalN"],
     }
 
     return JSONResponse(content={
@@ -964,6 +1101,7 @@ def _build_soccer_diagnostic(result: dict) -> dict:
     # calibrationApplied = fusionApplied in the real response shape
     ca = result.get("fusionApplied") or result.get("calibrationApplied") or {}
     gs = result.get("gameSituation") or {}
+    model_metrics = _prediction_metrics(result)
 
     return {
         # ── Final output (identical to subscriber app) ────────────────────────
@@ -976,8 +1114,8 @@ def _build_soccer_diagnostic(result: dict) -> dict:
             "confidence_level":        result.get("confidenceLevel"),
             "raw_confidence":          result.get("rawConfidence"),
             # pOver/pUnder live at top-level result, not inside bayesianMetrics
-            "p_over":                  result.get("pOver") or bm.get("pOver"),
-            "p_under":                 result.get("pUnder") or bm.get("pUnder"),
+            "p_over":                  model_metrics["pOver"],
+            "p_under":                 model_metrics["pUnder"],
             "edge_z":                  bm.get("edgeZ"),
             "edge_gap_abs":            bm.get("edgeGapAbs"),
             "edge_gap_band":           bm.get("edgeGapBand"),
@@ -991,8 +1129,8 @@ def _build_soccer_diagnostic(result: dict) -> dict:
             "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
             "line_deviation_n":        result.get("lineDeviationHitRateN"),
             # System-wide settled-pick hit rate for this prop+direction
-            "prop_historical_rate":    result.get("propHistoricalRate"),
-            "prop_historical_n":       result.get("propHistoricalN"),
+            "prop_historical_rate":    model_metrics["propHistoricalRate"],
+            "prop_historical_n":       model_metrics["propHistoricalN"],
         },
 
         # ── Pre-calibration Bayesian state ────────────────────────────────────
@@ -1282,9 +1420,7 @@ async def jarvis_predict_soccer(
 # ─────────────────────────────────────────────────────────────────────────────
 
 class JarvisSavePickBody(BaseModel):
-    """Predict then save a soccer prop pick for a subscriber."""
-    subscriber_email:  str
-    subscriber_token:  str
+    """Predict then save a soccer prop pick to the private owner's ledger."""
     fixture_id:        int
     player_id:         int
     prop_type:         str   = "pass_attempts"
@@ -1301,8 +1437,8 @@ async def jarvis_save_pick_soccer(
 ):
     """
     Run the full soccer prediction pipeline then immediately save the pick
-    to the subscriber's ledger.  Requires both the JARVIS bearer token AND
-    the subscriber's own session credentials.
+    to the private owner's ledger. The owner account is resolved entirely
+    server-side from the configured owner mapping and MongoDB session.
 
     Returns: pick_id, tracking_id, correlation_warnings, and the model
     summary (recommendation, p_over, p_under, prop_historical_rate, …).
@@ -1364,6 +1500,8 @@ async def jarvis_save_pick_soccer(
         import json as _json
         result = _json.loads(result.body)
 
+    model_metrics = _prediction_metrics(result)
+
     # ── 3. Build pick dict from prediction result ─────────────────────────────
     # Mirrors the fields the mobile app sends to /picks/save.
     pick_dict = {
@@ -1387,10 +1525,10 @@ async def jarvis_save_pick_soccer(
         "confidenceLevel": result.get("confidenceLevel", "Low"),
         "rawConfidence":   result.get("rawConfidence") or result.get("confidenceScore", 50),
         # Both numbers always together
-        "pOver":           result.get("pOver"),
-        "pUnder":          result.get("pUnder"),
-        "propHistoricalRate": result.get("propHistoricalRate"),
-        "propHistoricalN":   result.get("propHistoricalN"),
+        "pOver":           model_metrics["pOver"],
+        "pUnder":          model_metrics["pUnder"],
+        "propHistoricalRate": model_metrics["propHistoricalRate"],
+        "propHistoricalN":   model_metrics["propHistoricalN"],
         "bayesianMetrics": result.get("bayesianMetrics") or {},
         "factorLedger":    result.get("factorLedger") or {},
         "factorLedgerVersion": result.get("factorLedgerVersion"),
@@ -1420,13 +1558,14 @@ async def jarvis_save_pick_soccer(
         },
     }
 
-    # ── 4. Save with subscriber credentials ───────────────────────────────────
+    # ── 4. Save with the server-side owner session ────────────────────────────
     from models import SavePickRequest
     from routes.picks import save_pick as _rp_save_pick
 
+    owner_email, owner_token = await _resolve_owner_session()
     save_req = SavePickRequest(
-        email=body.subscriber_email,
-        token=body.subscriber_token,
+        email=owner_email,
+        token=owner_token,
         pick=pick_dict,
     )
 
@@ -1463,13 +1602,324 @@ async def jarvis_save_pick_soccer(
             "coin_flip":            result.get("coinFlip", False),
             "low_conviction":       result.get("lowConviction", False),
             # ── The two numbers that always travel together ───────────────────
-            "p_over":               result.get("pOver"),
-            "p_under":              result.get("pUnder"),
-            "prop_historical_rate": result.get("propHistoricalRate"),
-            "prop_historical_n":    result.get("propHistoricalN"),
+            "p_over":               model_metrics["pOver"],
+            "p_under":              model_metrics["pUnder"],
+            "prop_historical_rate": model_metrics["propHistoricalRate"],
+            "prop_historical_n":    model_metrics["propHistoricalN"],
             "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
         },
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JARVIS PREDICTION SCREENSHOTS — server-side report capture
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SCREENSHOT_SECTIONS = ("read", "form", "matchup", "context", "picks")
+
+
+class JarvisScreenshotBody(BaseModel):
+    """Inputs for a server-side prediction report capture."""
+    fixture_id: int
+    player_id: int
+    prop_type: str = "pass_attempts"
+    line: float
+    sections: list[str] = Field(
+        default_factory=lambda: ["read", "form", "matchup", "context"]
+    )
+    pick_id: Optional[str] = None
+
+
+def _report_value(value: Any, fallback: str = "—") -> str:
+    if value is None or value == "":
+        return fallback
+    if isinstance(value, float):
+        return f"{value:.1f}"
+    return str(value)
+
+
+def _report_html(prediction_payload: dict, saved_pick: Optional[dict]) -> str:
+    """Build a self-contained, credential-free report for Chromium capture."""
+    brief = prediction_payload.get("jarvis_brief") or {}
+    diagnostic = prediction_payload.get("diagnostic") or {}
+    final = diagnostic.get("final") or {}
+    identity = diagnostic.get("resolved_identity") or {}
+    evidence = diagnostic.get("evidence_quality") or {}
+    venue = diagnostic.get("venue_history") or {}
+    situation = diagnostic.get("game_situation") or {}
+    warnings = diagnostic.get("warnings") or []
+
+    def esc(value: Any, fallback: str = "—") -> str:
+        return html.escape(_report_value(value, fallback))
+
+    p_over = final.get("p_over")
+    p_under = final.get("p_under")
+    hist_rate = final.get("prop_historical_rate")
+    hist_n = final.get("prop_historical_n")
+    direction = str(final.get("recommendation") or brief.get("recommendation") or "PASS").upper()
+    hist_label = (
+        f"HIST {direction} {esc(hist_rate)}% · n={esc(hist_n)}"
+        if hist_rate is not None
+        else "HIST unavailable for this prop bucket"
+    )
+    player = identity.get("player_name") or "Player"
+    matchup = (
+        f"{identity.get('team') or 'Team'} vs {identity.get('opponent') or 'Opponent'}"
+    )
+    title = f"{player} · {esc(final.get('line'))} {esc(prediction_payload.get('prop_type'), 'prop')}"
+
+    def metric(label: str, value: Any, sub: str = "") -> str:
+        return (
+            f'<div class="metric"><div class="metric-label">{html.escape(label)}</div>'
+            f'<div class="metric-value">{esc(value)}</div>'
+            f'<div class="metric-sub">{html.escape(sub)}</div></div>'
+        )
+
+    warning_text = "; ".join(
+        _report_value(w.get("message") if isinstance(w, dict) else w)
+        for w in warnings[:3]
+    ) or "No active warnings."
+    tactical = (
+        brief.get("tactical_breakdown")
+        or diagnostic.get("tactical_breakdown")
+        or brief.get("reasoning")
+        or "Verified model read is available from the production prediction."
+    )
+    saved = saved_pick or {}
+    saved_card = (
+        f'<div class="saved-card"><div class="eyebrow">MY PICKS · SAVED</div>'
+        f'<h2>{esc(saved.get("playerName") or player)}</h2>'
+        f'<div class="muted">{esc(saved.get("teamName") or identity.get("team"))} vs '
+        f'{esc(saved.get("opponentName") or identity.get("opponent"))}</div>'
+        f'<div class="metrics">'
+        f'{metric("LINE", saved.get("line"))}'
+        f'{metric("PROJECTION", saved.get("projection") or saved.get("projectedValue"))}'
+        f'{metric("DIRECTION", str(saved.get("recommendation") or direction).upper())}'
+        f'</div><div class="probability"><b>P(OVER) {esc(saved.get("pOver") if saved.get("pOver") is not None else p_over)}%</b>'
+        f'<b>P(UNDER) {esc(saved.get("pUnder") if saved.get("pUnder") is not None else p_under)}%</b>'
+        f'<span>{hist_label}</span></div></div>'
+        if saved
+        else '<div class="empty">No saved pick was supplied for this capture.</div>'
+    )
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Reverse Picks report</title>
+<style>
+*{{box-sizing:border-box}} body{{margin:0;background:#070909;color:#f4f7f2;font-family:Arial,Helvetica,sans-serif}}
+.report{{width:980px;margin:0 auto;padding:30px 34px 42px;background:#0b1110}}
+.header{{border-bottom:1px solid #25362d;padding-bottom:22px;margin-bottom:18px}}
+.brand{{color:#39ff14;font-size:12px;font-weight:800;letter-spacing:3px}}
+h1{{font-size:30px;margin:8px 0 5px}} h2{{font-size:21px;margin:7px 0}}
+.muted,.detail,.metric-sub{{color:#9daaa1}} .muted{{font-size:14px}}
+.eyebrow{{font-size:10px;letter-spacing:2px;color:#39ff14;font-weight:800;margin-bottom:7px}}
+.section{{background:#111a17;border:1px solid #284034;border-radius:14px;padding:20px 22px;margin:16px 0}}
+.section-title{{font-size:11px;color:#b9c4bb;letter-spacing:2px;font-weight:800;margin-bottom:14px}}
+.metrics{{display:flex;gap:12px;margin:14px 0}} .metric{{flex:1;background:#0b1110;border:1px solid #22352a;border-radius:9px;padding:12px}}
+.metric-label{{font-size:10px;color:#95a299;letter-spacing:1.4px}} .metric-value{{font-size:24px;font-weight:800;margin-top:6px}}
+.metric-sub{{font-size:10px;margin-top:3px;letter-spacing:.7px}}
+.probability{{display:flex;align-items:center;gap:18px;padding:12px 14px;background:#0a100d;border-left:3px solid #39ff14;border-radius:8px;font-size:14px}}
+.probability b:first-child{{color:#39ff14}} .probability b:nth-child(2){{color:#60a5fa}} .probability span{{color:#ffc857;margin-left:auto;font-size:12px}}
+.detail{{font-size:14px;line-height:1.55}} .grid{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+.kv{{background:#0b1110;border-radius:8px;padding:11px}} .kv-label{{font-size:10px;color:#819087;letter-spacing:1px}} .kv-value{{font-size:14px;margin-top:4px}}
+.callout{{padding:13px 15px;background:#0d1712;border-left:3px solid #39ff14;border-radius:7px;line-height:1.55;font-size:14px}}
+.warning{{padding:12px 14px;background:#1a1710;border-left:3px solid #ffc857;color:#f5d98d;border-radius:7px;font-size:13px;line-height:1.45}}
+.saved-card{{border:1px solid #39ff14;border-radius:12px;padding:18px;background:#0d1710}} .empty{{color:#79867d;padding:18px 0}}
+</style></head><body><main class="report">
+<header class="header"><div class="brand">REVERSE PICKS · JARVIS REPORT</div>
+<h1>{html.escape(title)}</h1><div class="muted">{html.escape(matchup)} · {esc(identity.get("venue"))}</div></header>
+
+<section class="section" data-jarvis-section="read">
+<div class="section-title">READ · FINAL MODEL VIEW</div>
+<div class="metrics">
+{metric("RECOMMENDATION", direction, esc(brief.get("edge_rating"), "NO EDGE"))}
+{metric("PROJECTION", brief.get("projected_value"), "production model")}
+{metric("CONFIDENCE", brief.get("confidence_score"), esc(brief.get("confidence_level"), "SCORE"))}
+</div>
+<div class="probability"><b>P(OVER) {esc(p_over)}%</b><b>P(UNDER) {esc(p_under)}%</b><span>{hist_label}</span></div>
+<p class="detail">{html.escape(_report_value(tactical))}</p></section>
+
+<section class="section" data-jarvis-section="form">
+<div class="section-title">FORM · VERIFIED EVIDENCE</div>
+<div class="grid">
+<div class="kv"><div class="kv-label">EVIDENCE QUALITY</div><div class="kv-value">{esc(evidence.get("level") or evidence.get("status"))}</div></div>
+<div class="kv"><div class="kv-label">PLAYER LOG SAMPLE</div><div class="kv-value">{esc(evidence.get("realPlayerLogCount") or evidence.get("sampleSize"))}</div></div>
+<div class="kv"><div class="kv-label">VENUE HISTORY</div><div class="kv-value">{esc(venue.get("modelScope") or venue.get("scope"))}</div></div>
+<div class="kv"><div class="kv-label">VENUE SAMPLE</div><div class="kv-value">{esc(venue.get("sampleSize") or venue.get("n"))}</div></div>
+</div><p class="detail">Historical rate is system calibration evidence, not a claim that this individual player has the same hit rate.</p></section>
+
+<section class="section" data-jarvis-section="matchup">
+<div class="section-title">MATCHUP · MODEL CONTEXT</div>
+<div class="grid">
+<div class="kv"><div class="kv-label">VENUE</div><div class="kv-value">{esc(identity.get("venue"))}</div></div>
+<div class="kv"><div class="kv-label">OPPONENT</div><div class="kv-value">{esc(identity.get("opponent"))}</div></div>
+<div class="kv"><div class="kv-label">MATCH SCRIPT</div><div class="kv-value">{esc(situation.get("label") or situation.get("summary") or situation.get("status"))}</div></div>
+<div class="kv"><div class="kv-label">LINE DEVIATION HIT RATE</div><div class="kv-value">{esc(final.get("line_deviation_hit_rate"))}%</div></div>
+</div><div class="callout">The two directional probabilities and the system hit rate are displayed together so the math signal and calibration evidence cannot be confused.</div></section>
+
+<section class="section" data-jarvis-section="context">
+<div class="section-title">MATCH CONTEXT · IDENTITY & RISKS</div>
+<div class="grid">
+<div class="kv"><div class="kv-label">PLAYER</div><div class="kv-value">{esc(identity.get("player_name"))}</div></div>
+<div class="kv"><div class="kv-label">TEAM</div><div class="kv-value">{esc(identity.get("team"))}</div></div>
+<div class="kv"><div class="kv-label">FIXTURE</div><div class="kv-value">{esc(identity.get("fixture_id"))}</div></div>
+<div class="kv"><div class="kv-label">POSITION</div><div class="kv-value">{esc(identity.get("player_position"))}</div></div>
+</div><div class="warning">{html.escape(warning_text)}</div></section>
+
+<section class="section" data-jarvis-section="picks">
+<div class="section-title">MY PICKS · SAVED CARD</div>{saved_card}</section>
+</main></body></html>"""
+
+
+def _capture_report_sections(report_html: str, sections: list[str]) -> dict[str, Path]:
+    """Render the report in headless Chromium and capture exact section nodes."""
+    binary = shutil.which("chromium") or shutil.which("chromium-browser")
+    if not binary:
+        raise RuntimeError("Chromium runtime is unavailable")
+
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    _SCREENSHOT_ROOT.mkdir(parents=True, exist_ok=True)
+    source_path = _SCREENSHOT_ROOT / f"report-{secrets.token_hex(12)}.html"
+    source_path.write_text(report_html, encoding="utf-8")
+    output: dict[str, Path] = {}
+    driver = None
+    try:
+        options = Options()
+        options.binary_location = binary
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--hide-scrollbars")
+        options.add_argument("--window-size=1100,1200")
+        driver = webdriver.Chrome(options=options)
+        driver.get(source_path.as_uri())
+        wait = WebDriverWait(driver, 15)
+        for section in sections:
+            selector = f'[data-jarvis-section="{section}"]'
+            element = wait.until(lambda current, s=selector: current.find_element(By.CSS_SELECTOR, s))
+            path = _SCREENSHOT_ROOT / f"capture-{secrets.token_hex(12)}.png"
+            element.screenshot(str(path))
+            output[section] = path
+        return output
+    finally:
+        if driver is not None:
+            driver.quit()
+        try:
+            source_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@router.post("/api/jarvis/prediction-screenshots")
+async def jarvis_prediction_screenshots(
+    body: JarvisScreenshotBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Run a prediction and return short-lived section screenshot URLs."""
+    _require_auth(authorization)
+    sections = list(dict.fromkeys(body.sections or ["read", "form", "matchup", "context"]))
+    invalid = [section for section in sections if section not in _SCREENSHOT_SECTIONS]
+    if invalid or len(sections) > len(_SCREENSHOT_SECTIONS):
+        raise HTTPException(422, detail={"error": "Invalid screenshot section."})
+
+    owner_email, _owner_token = await _resolve_owner_session()
+    saved_pick = None
+    if body.pick_id:
+        saved_pick = await db.picks.find_one(
+            {"email": owner_email, "pickId": body.pick_id},
+            {
+                "_id": 0,
+                "playerName": 1,
+                "teamName": 1,
+                "opponentName": 1,
+                "line": 1,
+                "projection": 1,
+                "projectedValue": 1,
+                "recommendation": 1,
+                "pOver": 1,
+                "pUnder": 1,
+                "propHistoricalRate": 1,
+                "propHistoricalN": 1,
+            },
+        )
+        if not saved_pick:
+            raise HTTPException(404, detail={"error": "Saved pick not found."})
+        if "picks" not in sections:
+            sections.append("picks")
+
+    try:
+        prediction_response = await jarvis_predict_soccer(
+            JarvisSoccerPredictBody(
+                fixture_id=body.fixture_id,
+                player_id=body.player_id,
+                prop_type=body.prop_type,
+                line=body.line,
+            ),
+            authorization=f"Bearer {_JARVIS_KEY}",
+        )
+        import json as _json
+        prediction_payload = _json.loads(prediction_response.body)
+        prediction_payload["prop_type"] = body.prop_type
+        report_html = _report_html(prediction_payload, saved_pick)
+        captures = await asyncio.to_thread(_capture_report_sections, report_html, sections)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Keep browser/provider details out of both the response and logs.
+        print(f"[JARVIS SCREENSHOT] capture failed: {type(exc).__name__}")
+        raise HTTPException(502, detail={"error": "Prediction screenshot rendering failed."}) from exc
+
+    _cleanup_screenshot_files()
+    expires_at = time.time() + _SCREENSHOT_TTL_SECONDS
+    urls: dict[str, str] = {}
+    for section, path in captures.items():
+        handle = secrets.token_urlsafe(24)
+        _SCREENSHOTS[handle] = (path, expires_at, section)
+        urls[section] = f"/api/jarvis/prediction-screenshots/{handle}/{section}"
+
+    brief = prediction_payload.get("jarvis_brief") or {}
+    return JSONResponse(content={
+        "source": "jarvis/prediction-screenshots",
+        "generated_at": int(time.time()),
+        "expires_in_seconds": _SCREENSHOT_TTL_SECONDS,
+        "sections": urls,
+        "summary": {
+            "recommendation": brief.get("recommendation"),
+            "p_over": brief.get("p_over"),
+            "p_under": brief.get("p_under"),
+            "prop_historical_rate": brief.get("prop_historical_rate"),
+            "prop_historical_n": brief.get("prop_historical_n"),
+            "saved_pick_card_included": bool(saved_pick),
+        },
+    })
+
+
+@router.get("/api/jarvis/prediction-screenshots/{handle}/{section}")
+async def jarvis_prediction_screenshot_file(
+    handle: str,
+    section: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Serve one opaque, authenticated, short-lived screenshot file."""
+    _require_auth(authorization)
+    _cleanup_screenshot_files()
+    entry = _SCREENSHOTS.get(handle)
+    if not entry or entry[2] != section:
+        raise HTTPException(404, detail={"error": "Screenshot expired or not found."})
+    path, _expires_at, _stored_section = entry
+    if not path.exists():
+        _SCREENSHOTS.pop(handle, None)
+        raise HTTPException(404, detail={"error": "Screenshot expired or not found."})
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename=f"reverse-picks-{section}.png",
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

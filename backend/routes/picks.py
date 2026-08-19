@@ -777,6 +777,12 @@ async def save_pick(req: SavePickRequest):
         "bayesianMetrics": pick.get("bayesianMetrics") or {},
         "pOver":           pick.get("pOver") or (pick.get("bayesianMetrics") or {}).get("pOver"),
         "pUnder":          pick.get("pUnder") or (pick.get("bayesianMetrics") or {}).get("pUnder"),
+        # Preserve the system-wide evidence next to the Bayesian direction
+        # probabilities so saved My Picks cards can show both numbers later.
+        "propHistoricalRate": pick.get("propHistoricalRate"),
+        "propHistoricalN":    pick.get("propHistoricalN"),
+        "lineDeviationHitRate": pick.get("lineDeviationHitRate"),
+        "lineDeviationHitRateN": pick.get("lineDeviationHitRateN"),
         "priorMean":       pick.get("priorMean") or (pick.get("bayesianMetrics") or {}).get("priorMean"),
         "momentumMean":    pick.get("momentumMean") or (pick.get("bayesianMetrics") or {}).get("momentumMean"),
         "venue": pick.get("venue") or pick.get("_request", {}).get("venue", "home"),
