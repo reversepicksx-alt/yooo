@@ -271,7 +271,9 @@ async def jarvis_health():
 @router.get("/api/jarvis/openapi.json", include_in_schema=False)
 async def jarvis_openapi():
     """OpenAPI 3.1.0 schema — import this URL directly into a ChatGPT Custom GPT Action."""
-    base = "https://7a030359-7bf3-4fa1-8914-cbee61d63eb2-00-1w1w9xi7usfsw.picard.replit.dev"
+    # External Actions must call the published app, not the workspace's
+    # ephemeral .replit.dev host.
+    base = "https://reversepicks.com"
 
     def _param(name, typ, req, desc):
         p = {"name": name, "in": "query", "schema": {"type": typ}, "description": desc}
