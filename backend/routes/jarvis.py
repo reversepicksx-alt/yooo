@@ -255,7 +255,7 @@ async def jarvis_openapi():
                         },
                     },
                     "responses": {
-                        "200": {"description": "Full diagnostic: final output, pre-calibration Bayesian, prior, momentum, venue, each covariate, posterior, positional squeeze, calibration layers, Monte Carlo, evidence quality, calibration alert, warnings, factor ledger, model fingerprint."},
+                        "200": {"description": "Diagnostic: jarvis_brief.p_over/p_under (Bayesian %, 0-100) + jarvis_brief.prop_historical_rate/prop_historical_n (system hit rate). Also in diagnostic.final. p_over+p_under sum to ~100; prop_historical_rate null when <10 settled picks for this bucket."},
                         "401": {"description": "Invalid or missing bearer token."},
                         "404": {"description": "Fixture not found."},
                         "422": {"description": "Could not resolve player in fixture, or invalid prop."},
@@ -297,7 +297,7 @@ async def jarvis_openapi():
                         },
                     },
                     "responses": {
-                        "200": {"description": "Full prediction with jarvis_brief, bayesian_metrics, calibration, situation, evidence_quality, factors, and full_prediction."},
+                        "200": {"description": "jarvis_brief contains p_over, p_under (Bayesian direction probability, 0-100), prop_historical_rate (settled hit rate %, null if no data), prop_historical_n (sample count). Also has confidence_score, edge_rating, recommendation, projection, and tactical summaries."},
                         "401": {"description": "Invalid or missing bearer token."},
                         "422": {"description": "Invalid prop type or parameter."},
                         "502": {"description": "Prediction engine error."},
@@ -715,6 +715,15 @@ async def jarvis_predict(
         "safety_rating":         result.get("safetyRating"),
         "line_deviation_band":   result.get("lineDeviationBand"),
         "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
+        # ── The two numbers that must always be surfaced together ─────────────
+        # p_over / p_under: Bayesian probability for each direction (0-100 float)
+        "p_over":                result.get("pOver"),
+        "p_under":               result.get("pUnder"),
+        # prop_historical_rate: system-wide settled-pick hit rate for this
+        # prop+direction (e.g. 62 means 62% of all UNDER pass_attempts picks hit).
+        # None when fewer than ~10 settled picks exist for this bucket.
+        "prop_historical_rate":  result.get("propHistoricalRate"),
+        "prop_historical_n":     result.get("propHistoricalN"),
     }
 
     return JSONResponse(content={
@@ -927,8 +936,9 @@ def _build_soccer_diagnostic(result: dict) -> dict:
             "confidence_score":        result.get("confidenceScore"),
             "confidence_level":        result.get("confidenceLevel"),
             "raw_confidence":          result.get("rawConfidence"),
-            "p_over":                  bm.get("pOver"),
-            "p_under":                 bm.get("pUnder"),
+            # pOver/pUnder live at top-level result, not inside bayesianMetrics
+            "p_over":                  result.get("pOver") or bm.get("pOver"),
+            "p_under":                 result.get("pUnder") or bm.get("pUnder"),
             "edge_z":                  bm.get("edgeZ"),
             "edge_gap_abs":            bm.get("edgeGapAbs"),
             "edge_gap_band":           bm.get("edgeGapBand"),
@@ -941,6 +951,9 @@ def _build_soccer_diagnostic(result: dict) -> dict:
             "line_deviation_band":     result.get("lineDeviationBand"),
             "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
             "line_deviation_n":        result.get("lineDeviationHitRateN"),
+            # System-wide settled-pick hit rate for this prop+direction
+            "prop_historical_rate":    result.get("propHistoricalRate"),
+            "prop_historical_n":       result.get("propHistoricalN"),
         },
 
         # ── Pre-calibration Bayesian state ────────────────────────────────────
@@ -1187,9 +1200,40 @@ async def jarvis_predict_soccer(
         "player_id":  body.player_id,
     }
 
+    # ── 5. Build curated top-level brief (same shape as /api/jarvis/predict) ──
+    # Pull from diagnostic.final which is already correctly populated above.
+    _df = diagnostic.get("final", {})
+    jarvis_brief = {
+        "recommendation":          _df.get("recommendation"),
+        "confidence_score":        _df.get("confidence_score"),
+        "confidence_level":        _df.get("confidence_level"),
+        "projected_value":         result.get("projectedValue"),
+        "line":                    _df.get("line"),
+        "edge_rating":             _df.get("edge_rating"),
+        "edge_rating_reason":      _df.get("edge_rating_reason"),
+        "safety_rating":           _df.get("safety_rating"),
+        "coin_flip":               _df.get("coin_flip", False),
+        "low_conviction":          _df.get("low_conviction", False),
+        "sharp_summary":           result.get("sharpSummary"),
+        "reasoning":               result.get("reasoning"),
+        "tactical_breakdown":      result.get("tacticalBreakdown"),
+        # ── The two numbers that must always travel together ─────────────────
+        # p_over/p_under: Bayesian direction probability (0-100 float, sum ~100)
+        "p_over":                  _df.get("p_over"),
+        "p_under":                 _df.get("p_under"),
+        # prop_historical_rate: settled-pick hit rate for this prop+direction.
+        # null when fewer than ~10 settled picks exist for this bucket.
+        "prop_historical_rate":    _df.get("prop_historical_rate"),
+        "prop_historical_n":       _df.get("prop_historical_n"),
+        "line_deviation_hit_rate": _df.get("line_deviation_hit_rate"),
+        "line_deviation_n":        _df.get("line_deviation_n"),
+    }
+
     return JSONResponse(content={
         "source":       "jarvis/predict/soccer",
         "generated_at": int(time.time()),
+        # Curated AI-ready summary — read this first
+        "jarvis_brief": jarvis_brief,
         "diagnostic":   diagnostic,
     })
 
