@@ -322,11 +322,12 @@ export default function SameRoleEvidenceCard({
     Number.isFinite(avgPossession) &&
     Number.isFinite(avgOpponentPossession) &&
     possessionStatus !== 'unavailable';
+  const hasComparableCohort = average != null && sample > 0;
   // An unavailable exact position is a valid evidence outcome, but it should
   // not consume the same visual weight as a verified comparison cohort. Keep
   // the disclosure visible without presenting broad-category rows as a
   // failed or misleading full analysis.
-  if (exactPositionUnavailable && !hasSourcePlayers && !broadPositionOnly) {
+  if (exactPositionUnavailable && !hasComparableCohort && !broadPositionOnly) {
     const targetLabel = positionLabel(data.targetPosition || data.positionShort);
     const venueFixtureCount = Number(data.comparisonVenueFixtureCount || 0);
     const statusText = String(data.comparisonUnavailableReason || '').toLowerCase();
@@ -354,12 +355,12 @@ export default function SameRoleEvidenceCard({
           </Text>
         </View>
         <Text style={{ fontSize: 11, color: Colors.text, fontWeight: '800', lineHeight: 15, marginTop: 4 }}>
-          Exact {targetLabel.toLowerCase()} evidence was not verified for this fixture.
+          No verified comparable {targetLabel.toLowerCase()} average is available for {data.opponent || 'this opponent'}.
         </Text>
         <Text style={{ fontSize: 9.5, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
           {unavailableReason && statusText !== 'no_verified_exact_position_rows'
             ? unavailableReason
-            : evidenceDetail}
+            : 'No recent same-position player evidence was verified. This does not change the projection.'}
         </Text>
       </View>
     );
@@ -389,9 +390,31 @@ export default function SameRoleEvidenceCard({
           {verdict}
         </Text>
       </View>
-      <Text style={{ fontSize: 12, color: Colors.text, fontWeight: '800', lineHeight: 17 }}>
-        {cohortSentence}
-      </Text>
+       {hasPossessionComparison && (
+         <View style={{
+           marginTop: 0,
+           marginBottom: 2,
+           paddingBottom: 7,
+           borderBottomWidth: 1,
+           borderBottomColor: 'rgba(255,255,255,0.08)',
+         }}>
+           <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8 }}>
+             POSSESSION CONTEXT · TEAM SCHEDULES
+           </Text>
+           <Text style={{ fontSize: 10, color: Colors.text, lineHeight: 15, marginTop: 4 }}>
+             The selected team schedule averaged {avgPossession.toFixed(0)}% possession
+             {' '}vs {avgOpponentPossession.toFixed(0)}% for {data.opponent || 'the opponent'}.
+           </Text>
+           <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
+             {possessionStatus === 'verified'
+               ? `${teamPossessionSampleSize} selected-team matches and ${opponentPossessionSampleSize} opponent matches with verified possession · player appearances not required · context only`
+               : 'Estimated possession context · context only'}
+           </Text>
+         </View>
+       )}
+       <Text style={{ fontSize: 12, color: Colors.text, fontWeight: '800', lineHeight: 17 }}>
+         {cohortSentence}
+       </Text>
        <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 15, marginTop: 4 }}>
            {sample > 0
               ? `${sample} distinct ${cohortUnitLabel}${sample === 1 ? '' : 's'} in ${scopeLabel}`
@@ -405,28 +428,6 @@ export default function SameRoleEvidenceCard({
          {data.positionEvidenceNote
            || 'Exact observed position is required; tactical role is context only.'}
       </Text>
-      {hasPossessionComparison && (
-        <View style={{
-          marginTop: 8,
-          paddingTop: 7,
-          borderTopWidth: 1,
-          borderTopColor: 'rgba(255,255,255,0.08)',
-        }}>
-          <Text style={{ fontSize: 9, color: Colors.textSecondary, fontWeight: '900', letterSpacing: 0.8 }}>
-             POSSESSION CONTEXT · TEAM SCHEDULES
-          </Text>
-          <Text style={{ fontSize: 10, color: Colors.text, lineHeight: 15, marginTop: 4 }}>
-             The selected team schedule averaged {avgPossession.toFixed(0)}% possession
-            {' '}vs {avgOpponentPossession.toFixed(0)}% for {data.opponent || 'the opponent'}
-             .
-          </Text>
-          <Text style={{ fontSize: 9, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
-            {possessionStatus === 'verified'
-               ? `${teamPossessionSampleSize} selected-team matches and ${opponentPossessionSampleSize} opponent matches with verified possession · player appearances not required · context only`
-              : 'Estimated possession context · context only'}
-          </Text>
-        </View>
-      )}
       {(data.overHitRate != null || data.underHitRate != null) && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 3 }}>
           Against this line: {data.overHitRate != null ? `${data.overHitRate}% OVER` : 'OVER —'}

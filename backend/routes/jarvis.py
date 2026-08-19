@@ -1970,7 +1970,22 @@ async def jarvis_full_audit_soccer(
     rp_diagnostic = _build_soccer_diagnostic(result)
     jarvis_brief = dict(rp_diagnostic.get("final") or {})
     jarvis_brief.update(_audit_first_goal_brief(audit))
-    jarvis_brief.update(_audit_news_brief(audit))
+    news_brief = _audit_news_brief(audit)
+    jarvis_brief.update(news_brief)
+    news_values = news_brief.get("news_intelligence") or {}
+    # Keep the compact brief easy for callers that do not traverse the module
+    # envelope. The canonical copy remains audit.modules.news_intelligence.
+    for field in (
+        "expected_lineup",
+        "target_start_probability",
+        "minutes_risk",
+        "expected_role",
+        "formation",
+        "important_teammate_changes",
+        "lineup_confidence",
+        "regime_changes",
+    ):
+        jarvis_brief[field] = news_values.get(field)
     return {
         "source": "jarvis/full-audit/soccer",
         "generated_at": int(time.time()),
@@ -1978,6 +1993,9 @@ async def jarvis_full_audit_soccer(
         "math_unchanged": True,
         "production_influence": False,
         "jarvis_brief": jarvis_brief,
+        "news_intelligence": news_values,
+        "news_brief": news_brief.get("news_brief"),
+        "news_warnings": news_brief.get("news_warnings") or [],
         "rp_prediction": rp_diagnostic,
         "audit": audit,
     }

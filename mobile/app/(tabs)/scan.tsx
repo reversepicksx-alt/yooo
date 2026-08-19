@@ -4022,10 +4022,10 @@ export default function ScanScreen() {
 
                {/* The detailed script, formula, and tactical prose stay in the
                    deterministic payload but are not repeated in the customer UI. */}
-               {false && (<>
+                <>
               {/* Line vs Season Average + Edge Explanation — tactical verdict replaces
                   generic soccer prose so the customer sees one coherent read. */}
-              {prediction.sport !== 'soccer' && prediction.priorMean != null && prediction.line != null && (() => {
+               {prediction.priorMean != null && prediction.line != null && (() => {
                 const pct = ((prediction.line - prediction.priorMean) / prediction.priorMean) * 100;
                 const lineBelow = pct < 0;
                 const absPct = Math.abs(pct).toFixed(1);
@@ -4119,7 +4119,9 @@ export default function ScanScreen() {
                 );
               })()}
 
-              {/* ─── GAME SCRIPT BANNER — kept in the payload, hidden in the compact UI ─── */}
+               </>)}
+               {false && (<>
+               {/* ─── GAME SCRIPT BANNER — kept in the payload, hidden in the compact UI ─── */}
               {(() => {
                 const gs = prediction.gameScript;
                 if (!gs || !gs.dominant) return null;
