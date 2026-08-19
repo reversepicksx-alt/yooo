@@ -3,8 +3,8 @@ name: Deep player H2H history
 description: Rules for retrieving and counting historical player-vs-opponent soccer appearances.
 ---
 
-Search H2H fixtures across multiple provider seasons instead of relying on one current-season response. Deduplicate and retain only finished meetings, then inspect the fixture player records and count a game only when the target player logged positive minutes.
+Use the provider's bounded direct team-pairing history without a season filter. Deduplicate and retain only finished meetings, then inspect fixture player records and count a game only when the exact target player ID logged positive minutes.
 
-**Why:** A season-scoped H2H response and a five-fixture cap made valid 4–5+ meeting histories appear inconsistently. API-Football can also return bench or DNP rows, which would falsely inflate the sample if counted.
+**Why:** A rolling recent-season search reported zero for valid older pairings and spent the request budget on redundant calls. API-Football can also return bench or DNP rows, which would falsely inflate the player sample.
 
-**How to apply:** Keep the broader fixture search separate from the bounded model sample. Use the deeper meetings to find real player appearances, expose the searched depth/sample metadata, and preserve venue filtering for model weighting.
+**How to apply:** Keep team-meeting coverage separate from verified player appearances. Fetch player packets before optional lineup enrichment, retain completed fixture rows when the fan-out deadline cancels pending work, expose the provider limit/date range/truncation and searched/verified counts, and preserve venue filtering for model weighting.

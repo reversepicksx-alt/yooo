@@ -92,6 +92,7 @@
 - [Player prop line history](player-prop-line-history.md) — current PrizePicks rows do not preserve 53.5→68.5 movement; never treat a late/live line as pre-match evidence without a timestamped snapshot.
 - [Community feed payloads](community-feed-payloads.md) — omit historical base64 pick-card images by default; oversized responses can time out and falsely show an empty chat.
 - [Pick deletion cache](pick-deletion-cache.md) — delete every matching canonical pick ID and invalidate the per-user list cache so removed history cannot reappear.
+- [Saved pick revisions](saved-pick-revisions.md) — each deliberate Save Pick preserves a fresh snapshot; soft-hidden or visible matching picks never block an updated save.
 - [Settlement production version](settlement-production-version.md) — terminal settlement fixes must be published; an older healthy VM build can recreate review states.
 - [AI spend governance](ai-spend-governance.md) — user-facing explanations share a persistent atomic token budget; background enrichment is opt-in and must never silently bypass it.
 - [Deterministic provider removal](deterministic-provider-removal.md) — when retiring generation providers, preserve compatibility-shaped response fields and rebuild their values from deterministic ledger data.

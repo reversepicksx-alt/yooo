@@ -1150,7 +1150,25 @@ export interface PredictionResult {
     trendDelta?: number;
     venueHitRate?: { hits: number; total: number; pct: number; venue: string } | null;
     historySeasons?: number;
+    historyDepth?: string;
     searchedFixtureCount?: number;
+    historyCoverage?: {
+      source?: string;
+      scope?: string;
+      requestedMeetingLimit?: number;
+      returnedFinishedMeetings?: number;
+      oldestFixtureDate?: string | null;
+      newestFixtureDate?: string | null;
+      oldestYear?: number | null;
+      newestYear?: number | null;
+      seasonCount?: number;
+      possiblyTruncated?: boolean;
+    };
+    playerAppearanceCoverage?: {
+      searchedFixtures?: number;
+      verifiedAppearances?: number;
+      targetStatAppearances?: number;
+    };
   };
   positionComparison?: {
     targetPosition?: string;
@@ -1554,6 +1572,10 @@ interface RawPrediction {
     opponentH2HSamples?: number;
     opponentH2HWeight?: number;
     h2hLineHitRate?: number;
+    h2hLineOverRate?: number;
+    h2hLineUnderRate?: number;
+    h2hLineDirection?: 'over' | 'under';
+    h2hLineDirectionalHitRate?: number;
     h2hLineSampleN?: number;
   };
   playerGameLogs?: {
@@ -1612,6 +1634,27 @@ interface RawPrediction {
     sampleSize?: number;
     targetProp?: string;
     teamMeetings?: number;
+    historySeasons?: number;
+    historyDepth?: string;
+    searchedFixtureCount?: number;
+    seasonsCovered?: { min: number; max: number; range: string } | null;
+    historyCoverage?: {
+      source?: string;
+      scope?: string;
+      requestedMeetingLimit?: number;
+      returnedFinishedMeetings?: number;
+      oldestFixtureDate?: string | null;
+      newestFixtureDate?: string | null;
+      oldestYear?: number | null;
+      newestYear?: number | null;
+      seasonCount?: number;
+      possiblyTruncated?: boolean;
+    };
+    playerAppearanceCoverage?: {
+      searchedFixtures?: number;
+      verifiedAppearances?: number;
+      targetStatAppearances?: number;
+    };
     teamMeetingsByVenue?: {
       home?: Array<{
         date?: string;
@@ -2159,6 +2202,12 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
           teamMeetings: raw.h2hPlayerStats.teamMeetings,
           teamMeetingsByVenue: raw.h2hPlayerStats.teamMeetingsByVenue,
           venueSplits: raw.h2hPlayerStats.venueSplits,
+          historySeasons: raw.h2hPlayerStats.historySeasons,
+          historyDepth: raw.h2hPlayerStats.historyDepth,
+          searchedFixtureCount: raw.h2hPlayerStats.searchedFixtureCount,
+          seasonsCovered: raw.h2hPlayerStats.seasonsCovered,
+          historyCoverage: raw.h2hPlayerStats.historyCoverage,
+          playerAppearanceCoverage: raw.h2hPlayerStats.playerAppearanceCoverage,
         }
       : undefined,
     expectedPossession: raw.matchupOverview?.expectedPossession

@@ -551,14 +551,12 @@ async def _attach_owner_prediction_media(prediction: dict, requester_email: str)
     except Exception as exc:
         print(f"[PREDICTION] owner media skipped: {exc}")
 
-# H2H history is intentionally broader than the current-season prediction
-# window. The player-specific pass still caps the displayed sample so older
-# meetings cannot dominate the model, but it must inspect enough real fixtures
-# to find 4-5+ appearances when they exist.
-H2H_HISTORY_SEASONS = 6
-# API-Football's `last` parameter is applied per season. Keep enough merged
-# meetings to find actual player appearances rather than stopping at the first
-# dozen team fixtures from whichever season responded first.
+# H2H history uses API-Football's direct team-pairing feed without a season
+# filter. A rolling recent-season window incorrectly reported zero meetings for
+# clubs whose last matchup was older (for example Atlético Madrid–Málaga).
+# The provider caps `last` at 20, which is deep enough to find historical player
+# appearances while keeping the response path bounded.
+H2H_DIRECT_PAIRING_LIMIT = 20
 H2H_FIXTURE_LIMIT = 48
 H2H_PLAYER_SCAN_LIMIT = 24
 H2H_PLAYER_RESULT_LIMIT = 20
@@ -805,6 +803,36 @@ def _merge_h2h_fixtures(*responses: list, limit: int = H2H_FIXTURE_LIMIT) -> lis
         reverse=True,
     )[:limit]
 
+
+def _h2h_history_coverage(
+    fixtures: list | None,
+    requested_limit: int = H2H_DIRECT_PAIRING_LIMIT,
+) -> dict:
+    """Describe the bounded direct-pairing history without calling it complete."""
+    rows = fixtures if isinstance(fixtures, list) else []
+    dates = sorted(
+        str((row.get("fixture") or {}).get("date") or "")
+        for row in rows
+        if isinstance(row, dict) and (row.get("fixture") or {}).get("date")
+    )
+    years = sorted({
+        int(value[:4])
+        for value in dates
+        if len(value) >= 4 and value[:4].isdigit()
+    })
+    return {
+        "source": "provider_direct_pairing",
+        "scope": "bounded_direct_meetings",
+        "requestedMeetingLimit": requested_limit,
+        "returnedFinishedMeetings": len(rows),
+        "oldestFixtureDate": dates[0][:10] if dates else None,
+        "newestFixtureDate": dates[-1][:10] if dates else None,
+        "oldestYear": years[0] if years else None,
+        "newestYear": years[-1] if years else None,
+        "seasonCount": len(years),
+        "possiblyTruncated": len(rows) >= requested_limit,
+    }
+
 # ── CALIBRATION TOGGLE ────────────────────────────────────────────────────────
 # Nightly-learned bias offsets from historical pick outcomes.
 # Priority: prop_rec (direction) > prop_league > prop_venue > prop (general).
@@ -904,6 +932,58 @@ async def _run_bounded_prediction_source(
             f"{type(exc).__name__}"
         )
         return fallback
+
+
+async def _collect_partial_prediction_results(
+    task_factories,
+    *,
+    started: float,
+    budget: float,
+    timeout: float,
+    label: str = "prediction source",
+) -> list:
+    """Return finished fan-out results at a deadline instead of discarding them.
+
+    This is deliberately separate from `_run_bounded_prediction_source`: a
+    normal all-or-nothing source should use its fallback when it times out, but
+    fixture fan-outs can already contain independently verified evidence. On
+    deadline, retain completed successful tasks and cancel only pending work.
+    """
+    remaining = max(0.0, budget - (aio.get_running_loop().time() - started))
+    allowed = min(float(timeout), remaining)
+    if allowed <= 0.05:
+        print(f"[PREDICTION BUDGET] {label} skipped; response budget exhausted")
+        return []
+
+    tasks = [aio.create_task(factory()) for factory in task_factories]
+    if not tasks:
+        return []
+
+    try:
+        done, pending = await aio.wait(tasks, timeout=allowed)
+        results = []
+        for task in done:
+            try:
+                value = task.result()
+            except (aio.CancelledError, Exception):
+                continue
+            if value is not None:
+                results.append(value)
+
+        if pending:
+            for task in pending:
+                task.cancel()
+            await aio.gather(*pending, return_exceptions=True)
+            print(
+                f"[PREDICTION SOURCE] {label} retained {len(results)} completed "
+                f"result(s); cancelled {len(pending)} pending after {allowed:.1f}s"
+            )
+        return results
+    except aio.CancelledError:
+        for task in tasks:
+            task.cancel()
+        await aio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 def _select_player_context_for_league(
@@ -1187,40 +1267,33 @@ async def predict(req: PredictionRequest):
                 return fallback
 
         async def get_h2h_history(team_id: int, opponent_id: int, league_id: int):
-            """Fetch a deep, deduplicated H2H history across recent seasons.
-
-            API-Football's headtohead endpoint is season-scoped when `season`
-            is supplied. A single current-season request silently omits older
-            meetings, so search the recent six seasons and merge them.
-            """
+            """Fetch bounded direct-pairing H2H history without a season cutoff."""
             if not team_id or not opponent_id:
                 return []
 
-            # Current-season config is 2025 for European competitions, while
-            # calendar-year leagues (and the current date) are already in 2026.
-            # Starting at 2026 covers both without changing the global season
-            # constant used by the rest of the prediction pipeline.
-            start_season = 2026 if league_id == 254 else max(CURRENT_SEASON + 1, 2026)
-            seasons = list(range(start_season, start_season - H2H_HISTORY_SEASONS, -1))
-            responses = await aio.gather(
-                *[
-                    safe_fetch(
-                        "fixtures/headtohead",
-                        {
-                            "h2h": f"{team_id}-{opponent_id}",
-                            "season": season,
-                            "last": min(H2H_FIXTURE_LIMIT, 20),
-                        },
-                        [],
-                    )
-                    for season in seasons
-                ],
-                return_exceptions=True,
+            # `league_id` is intentionally not sent here. Direct H2H may span
+            # competitions and old seasons; fixture identity and player minutes
+            # are validated later before any row becomes player-level evidence.
+            pair_limit = min(H2H_DIRECT_PAIRING_LIMIT, H2H_FIXTURE_LIMIT)
+            direct_response = await safe_fetch(
+                "fixtures/headtohead",
+                {
+                    "h2h": f"{team_id}-{opponent_id}",
+                    "last": pair_limit,
+                },
+                [],
+                timeout=4.0,
             )
-            merged = _merge_h2h_fixtures(*responses)
+            merged = _merge_h2h_fixtures(direct_response, limit=pair_limit)
+            coverage = _h2h_history_coverage(merged, pair_limit)
+            year_range = (
+                f"{coverage['oldestYear']}-{coverage['newestYear']}"
+                if coverage.get("oldestYear") is not None
+                else "no dated meetings"
+            )
             print(
                 f"[H2H HISTORY] {team_id} vs {opponent_id}: "
-                f"{len(merged)} finished meetings across seasons {seasons[0]}-{seasons[-1]}"
+                f"{len(merged)} finished direct meetings ({year_range}; limit={pair_limit})"
             )
             return merged
 
@@ -1823,9 +1896,13 @@ async def predict(req: PredictionRequest):
         team_stats = team_stats if not isinstance(team_stats, Exception) else None
         opponent_stats = opponent_stats if not isinstance(opponent_stats, Exception) else None
         h2h_data = h2h_data if not isinstance(h2h_data, Exception) else []
-        # H2H provider/cache order is not contractual. Sort the complete
-        # six-season result before any player-stat, meeting, or trend slice.
+        # H2H provider/cache order is not contractual. Sort the bounded direct
+        # pairing result before any player-stat, meeting, or trend slice.
         h2h_data = _newest_first_rows(h2h_data, H2H_FIXTURE_LIMIT)
+        h2h_coverage = _h2h_history_coverage(
+            h2h_data,
+            H2H_DIRECT_PAIRING_LIMIT,
+        )
         standings_raw = standings_raw if not isinstance(standings_raw, Exception) else None
         recent_fixtures = recent_fixtures if not isinstance(recent_fixtures, Exception) else []
         match_odds = match_odds if not isinstance(match_odds, Exception) else match_odds_prefetched
@@ -10134,7 +10211,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         if h2h_data:
             h2h_fixture_ids = []
             # Player-vs-opponent rows are explanatory only, but scan the full
-            # bounded six-season window before limiting returned appearances.
+            # bounded direct-pairing window before limiting returned appearances.
             for h in h2h_data[:H2H_PLAYER_SCAN_LIMIT]:
                 fid = h.get("fixture", {}).get("id")
                 if fid:
@@ -10143,15 +10220,13 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             async def fetch_h2h_player_stat(fid, fixture_info):
                 """Fetch the target player's stats from a specific H2H fixture"""
                 try:
-                    pstats, lineup_payload = await aio.gather(
-                        api_football_request("fixtures/players", {"fixture": fid}),
-                        api_football_request("fixtures/lineups", {"fixture": fid}),
-                        return_exceptions=True,
+                    # Fetch only the player packet in the first pass. Optional
+                    # lineup enrichment runs after every candidate fixture had a
+                    # chance to return, so the first three lineup calls cannot
+                    # starve older verified appearances behind the semaphore.
+                    pstats = await api_football_request(
+                        "fixtures/players", {"fixture": fid}
                     )
-                    if isinstance(pstats, Exception):
-                        pstats = []
-                    if isinstance(lineup_payload, Exception):
-                        lineup_payload = []
                     if not pstats:
                         return None
 
@@ -10220,13 +10295,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                             _h2h_poss_opp  = 100 - _h2h_poss_team
                                 except Exception:
                                     pass
-                                exact_h2h_position = exact_position_from_lineup_payload(
-                                    _api_response_list(lineup_payload),
-                                    req.playerId,
-                                )
                                 observed_h2h_position = (
-                                    exact_h2h_position
-                                    or (stats.get("games") or {}).get("position")
+                                    (stats.get("games") or {}).get("position")
                                 )
                                 return {
                                      "fixtureId": fid,
@@ -10242,11 +10312,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                     "minutes": minutes_played,
                                     "minutesPlayed": minutes_played,
                                     "observedPosition": observed_h2h_position,
-                                    "positionSource": (
-                                        "fixture_lineup_grid"
-                                        if exact_h2h_position
-                                        else "fixture_player_stats"
-                                    ),
+                                    "positionSource": "fixture_player_stats",
                                     "statValues": {k: v for k, v in stat_key_map_h2h.items() if v is not None},
                                     "targetStat": stat_key_map_h2h.get(req.propType),
                                     "targetStatPer90": round((stat_key_map_h2h.get(req.propType, 0) or 0) / minutes_played * 90, 2) if minutes_played > 0 and stat_key_map_h2h.get(req.propType) else None,
@@ -10259,10 +10325,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     return None
 
             if h2h_fixture_ids:
-                # Do not put one slow lineup/stat request in charge of the
-                # entire H2H result. The old outer gather timeout cancelled all
-                # siblings and returned zero rows, even when several fixtures
-                # had already produced verified player appearances.
+                # Preserve independently verified rows when the H2H deadline
+                # expires. An all-or-nothing gather would cancel slow siblings
+                # and discard the player appearances that had already returned.
                 async def _bounded_h2h_player_stat(fid, fixture_info):
                     try:
                         return await aio.wait_for(
@@ -10272,14 +10337,15 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     except Exception:
                         return None
 
-                h2h_results = await _bounded_prediction_source(
-                    aio.gather(*[
-                        _bounded_h2h_player_stat(fid, fi)
+                h2h_results = await _collect_partial_prediction_results(
+                    [
+                        lambda fid=fid, fi=fi: _bounded_h2h_player_stat(fid, fi)
                         for fid, fi in h2h_fixture_ids
-                    ], return_exceptions=True),
-                    "player H2H evidence",
-                    3.0,
-                    [],
+                    ],
+                    started=_prediction_started,
+                    budget=_PREDICTION_RESPONSE_BUDGET,
+                    timeout=3.0,
+                    label="player H2H evidence",
                 )
                 h2h_player_stats = [
                     r for r in h2h_results
@@ -10289,6 +10355,48 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     h2h_player_stats,
                     H2H_PLAYER_RESULT_LIMIT,
                 )
+                if h2h_player_stats:
+                    async def _enrich_h2h_lineup_position(row):
+                        fixture_id = row.get("fixtureId")
+                        if not fixture_id:
+                            return row
+                        try:
+                            lineup_payload = await api_football_request(
+                                "fixtures/lineups", {"fixture": fixture_id}
+                            )
+                            exact_position = exact_position_from_lineup_payload(
+                                _api_response_list(lineup_payload),
+                                req.playerId,
+                            )
+                            if exact_position:
+                                return {
+                                    **row,
+                                    "observedPosition": exact_position,
+                                    "positionSource": "fixture_lineup_grid",
+                                }
+                        except Exception:
+                            pass
+                        return row
+
+                    enriched_h2h_rows = await _bounded_prediction_source(
+                        aio.gather(*[
+                            _enrich_h2h_lineup_position(row)
+                            for row in h2h_player_stats
+                        ], return_exceptions=True),
+                        "player H2H lineup evidence",
+                        1.5,
+                        h2h_player_stats,
+                    )
+                    if isinstance(enriched_h2h_rows, list):
+                        h2h_player_stats = [
+                            enriched
+                            if isinstance(enriched, dict)
+                            else original
+                            for original, enriched in zip(
+                                h2h_player_stats,
+                                enriched_h2h_rows,
+                            )
+                        ]
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
         # Team meetings are useful even when the player did not appear in any
@@ -10438,6 +10546,29 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         else:
             _meetings_by_venue = {"home": [], "away": []}
 
+        _h2h_year_range = None
+        if (
+            h2h_coverage.get("oldestYear") is not None
+            and h2h_coverage.get("newestYear") is not None
+        ):
+            _h2h_year_range = (
+                f"{h2h_coverage['oldestYear']}–{h2h_coverage['newestYear']}"
+            )
+        _h2h_summary_coverage = {
+            "historyDepth": "bounded direct pairing history",
+            "historySeasons": h2h_coverage.get("seasonCount", 0),
+            "historyCoverage": h2h_coverage,
+            "seasonsCovered": (
+                {
+                    "min": h2h_coverage["oldestYear"],
+                    "max": h2h_coverage["newestYear"],
+                    "range": _h2h_year_range,
+                }
+                if _h2h_year_range
+                else None
+            ),
+        }
+
         if h2h_player_stats:
             # The player-appearance rows and team-meeting rows are both tied to
             # the exact fixture. Reuse the verified possession pair discovered
@@ -10467,8 +10598,12 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "targetProp": req.propType,
                 "sampleSize": len(h2h_values),
                 "searchedFixtureCount": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
-                "historySeasons": H2H_HISTORY_SEASONS,
-                "historyDepth": "six seasons",
+                "playerAppearanceCoverage": {
+                    "searchedFixtures": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
+                    "verifiedAppearances": len(h2h_player_stats),
+                    "targetStatAppearances": len(h2h_values),
+                },
+                **_h2h_summary_coverage,
             }
             if h2h_values:
                 h2h_summary["avgVsOpponent"] = round(sum(h2h_values) / len(h2h_values), 2)
@@ -10523,24 +10658,6 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             h2h_summary["teamMeetings"] = len(h2h_data) if h2h_data else 0
             h2h_summary["teamMeetingsByVenue"] = _meetings_by_venue
 
-            # Season span from team H2H fixture dates
-            try:
-                _h2h_years = []
-                for _hd in (h2h_data or []):
-                    _hd_date = (_hd.get("fixture") or {}).get("date", "")
-                    if _hd_date and len(_hd_date) >= 4:
-                        try:
-                            _h2h_years.append(int(_hd_date[:4]))
-                        except (ValueError, TypeError):
-                            pass
-                if _h2h_years:
-                    h2h_summary["seasonsCovered"] = {
-                        "min": min(_h2h_years), "max": max(_h2h_years),
-                        "range": f"{min(_h2h_years)}–{max(_h2h_years)}",
-                    }
-            except Exception:
-                pass
-
             # Trend: recent 3 appearances vs prior (positive = improving)
             if len(h2h_values) >= 4:
                 try:
@@ -10584,12 +10701,16 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "matches": [],
                 "targetProp": req.propType,
                 "sampleSize": 0,
-                "searchedFixtureCount": min(len(h2h_data), H2H_FIXTURE_LIMIT),
-                "historySeasons": H2H_HISTORY_SEASONS,
-                "historyDepth": "six seasons",
+                "searchedFixtureCount": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
+                "playerAppearanceCoverage": {
+                    "searchedFixtures": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
+                    "verifiedAppearances": 0,
+                    "targetStatAppearances": 0,
+                },
                 "teamMeetings": len(h2h_data),
                 "teamMeetingsByVenue": _meetings_by_venue,
                 "trendDirection": "stable",
+                **_h2h_summary_coverage,
             }
 
         # Extract player's ACTUAL position from API-Sports data
@@ -12920,6 +13041,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     _h2h_under_n  = len(_venue_vals) - _h2h_over_n
                     _h2h_line_n   = len(_venue_vals)
                     _h2h_over_pct = _h2h_over_n / _h2h_line_n
+                    _h2h_under_pct = _h2h_under_n / _h2h_line_n
 
                     if _h2h_over_pct >= 0.75 or _h2h_over_pct <= 0.25:
                         # Pull toward a target that is definitively on the dominant side
@@ -12951,16 +13073,34 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             reason="Same-venue H2H appearances consistently cleared one side of the line.",
                         )
                         real_bayes["h2hLineHitRate"]   = round(_h2h_over_pct * 100)
+                        real_bayes["h2hLineOverRate"]  = round(_h2h_over_pct * 100)
+                        real_bayes["h2hLineUnderRate"] = round(_h2h_under_pct * 100)
+                        real_bayes["h2hLineDirection"] = (
+                            "over" if _h2h_over_pct >= 0.75 else "under"
+                        )
+                        real_bayes["h2hLineDirectionalHitRate"] = round(
+                            max(_h2h_over_pct, _h2h_under_pct) * 100
+                        )
                         real_bayes["h2hLineSampleN"]   = _h2h_line_n
                         real_bayes["posteriorMean"]    = bayesian_posterior
 
                         if abs(bayesian_posterior - _old_bp2) >= 0.3:
                             _ldir = "▲" if bayesian_posterior > _old_bp2 else "▼"
                             _ldir_word = "OVER" if _h2h_over_pct >= 0.75 else "UNDER"
+                            _ldir_n = (
+                                _h2h_over_n
+                                if _ldir_word == "OVER"
+                                else _h2h_under_n
+                            )
+                            _ldir_pct = (
+                                _h2h_over_pct
+                                if _ldir_word == "OVER"
+                                else _h2h_under_pct
+                            )
                             print(
                                 f"[H2H LINE SIGNAL] {req.playerName} vs {req.opponentName}: "
-                                f"{_h2h_over_n}/{_h2h_line_n} same-venue H2H {_ldir_word} {req.line} "
-                                f"({_h2h_over_pct:.0%}) → target={_h2h_line_target:.1f} "
+                                f"{_ldir_n}/{_h2h_line_n} same-venue H2H {_ldir_word} {req.line} "
+                                f"({_ldir_pct:.0%}) → target={_h2h_line_target:.1f} "
                                 f"weight={_h2h_line_weight:.0%} {_ldir} {_old_bp2:.1f} → {bayesian_posterior:.1f}"
                             )
                 # ─────────────────────────────────────────────────────────────────
@@ -16632,7 +16772,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 _af_factor(
                     "historical_depth", "Multi-season player history", _af_history_status,
                     f"{len(_af_values)} usable {_af_target.replace('_', ' ')} game logs",
-                    {"games": len(_af_values), "avg": _af_avg(_af_values), "seasonsSearched": H2H_HISTORY_SEASONS},
+                    {"games": len(_af_values), "avg": _af_avg(_af_values)},
                     len(_af_values), "projection", "neutral",
                     "Logs are filtered for usable stat evidence and minutes before entering the prior."
                 ),

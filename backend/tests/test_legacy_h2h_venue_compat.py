@@ -23,12 +23,12 @@ def test_h2h_player_and_team_meeting_rows_use_legacy_compatible_date():
 
 
 def test_current_bundle_still_uses_dedicated_marker_and_date_prefix():
-    assert "venueMark(rowVenue(row))" in COMPACT_SOURCE
-    assert "displayH2HDate(row.date)" in COMPACT_SOURCE
+    assert "venueMark(rowVenue(game))" in COMPACT_SOURCE
+    assert "displayH2HDate(game.date)" in COMPACT_SOURCE
     assert "encoded = raw.match" in COMPACT_SOURCE
 
 
 def test_h2h_date_and_venue_rows_have_room_to_stay_on_one_line():
-    assert "const H2H_COLUMN_WIDTH = 68;" in COMPACT_SOURCE
-    assert "numberOfLines={1} ellipsizeMode=\"clip\">{date}</Text>" in COMPACT_SOURCE
+    assert "barColumn: { width: 116" in COMPACT_SOURCE
+    assert "<Text style={styles.date}>{date}</Text>" in COMPACT_SOURCE
     assert "numberOfLines={1}" in COMPACT_SOURCE

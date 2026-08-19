@@ -298,6 +298,19 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
     String(prediction.propType || prediction.playerGameLogs?.targetProp || '')
   ];
   const h2h = prediction.h2hPlayerStats ?? {};
+  const h2hTeamMeetings = Number(h2h.teamMeetings || 0);
+  const h2hCoverage = h2h.historyCoverage ?? {};
+  const h2hRange = String(
+    h2h.seasonsCovered?.range
+      ?? (
+        h2hCoverage.oldestYear != null && h2hCoverage.newestYear != null
+          ? `${h2hCoverage.oldestYear}–${h2hCoverage.newestYear}`
+          : ''
+      ),
+  );
+  const h2hCoverageLabel = h2hTeamMeetings > 0
+    ? `${h2hTeamMeetings} FINISHED TEAM MEETINGS SEARCHED${h2hRange ? ` · ${h2hRange}` : ''}`
+    : 'NO FINISHED DIRECT TEAM MEETINGS FOUND';
   const playerMatches = Array.isArray(h2h.matches) ? h2h.matches : [];
   const h2hRows = playerMatches
     .slice()
@@ -684,7 +697,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                       saved/live history title shape stable for older checks.
                       Source contract also accepts minutesPlayed ?? row.minutes. */}
                   {isH2HFilter
-                    ? `H2H · ${h2hRows.length}`
+                    ? `H2H · ${h2hRows.length > 0 ? h2hRows.length : h2hTeamMeetings > 0 ? 'NO PLAYER APPS' : 'NO MEETINGS'}`
                     : logs.length > 0 ? `RECENT MATCHES · ${logs.length}` : 'MATCH HISTORY'}
                 </Text>
                 {logs.length > 0 && (
@@ -698,10 +711,19 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                 )}
                 <Text style={styles.recentInlineStats} numberOfLines={isH2HFilter ? 2 : 1}>
                   {isH2HFilter
-                    ? `HOME AVG ${h2hHomeSplit?.average?.toFixed(1) ?? '—'}${h2hHomeSplit?.count ? ` (N=${h2hHomeSplit.count})` : ''} · AWAY AVG ${h2hAwaySplit?.average?.toFixed(1) ?? '—'}${h2hAwaySplit?.count ? ` (N=${h2hAwaySplit.count})` : ''}`
+                    ? h2hRows.length > 0
+                      ? `HOME AVG ${h2hHomeSplit?.average?.toFixed(1) ?? '—'}${h2hHomeSplit?.count ? ` (N=${h2hHomeSplit.count})` : ''} · AWAY AVG ${h2hAwaySplit?.average?.toFixed(1) ?? '—'}${h2hAwaySplit?.count ? ` (N=${h2hAwaySplit.count})` : ''}`
+                      : h2hTeamMeetings > 0
+                        ? `${h2hTeamMeetings} TEAM MEETINGS · 0 VERIFIED PLAYER APPS`
+                        : 'NO FINISHED TEAM MEETINGS IN DIRECT HISTORY'
                      : `HOME ${venueCounts.home} · AWAY ${venueCounts.away}${homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}${metadataLabel}`}
                 </Text>
-                {venueHistoryFallback && (
+                {isH2HFilter && (
+                  <Text style={styles.contextWarning} numberOfLines={1}>
+                    {h2hCoverageLabel}
+                  </Text>
+                )}
+                {!isH2HFilter && venueHistoryFallback && (
                   <Text style={styles.contextWarning} numberOfLines={1}>
                     {Number.isFinite(venueHistorySample) ? venueHistorySample : 0}/{venueHistoryTarget} VERIFIED · FULL HISTORY PRIOR
                   </Text>
@@ -895,7 +917,11 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
               )}
             </View>
            </ScrollView> : isH2HFilter ? (
-             <Text style={styles.empty}>No verified history for this opponent</Text>
+             <Text style={styles.empty}>
+               {h2hTeamMeetings > 0
+                 ? `No verified player appearance in ${h2hTeamMeetings} searched team meetings`
+                 : 'No finished direct team meetings found'}
+             </Text>
            ) : null}
           {showPossessionContext && (tpHomeSplit || tpAwaySplit) && (
             <Text style={styles.recentInlineStats}>

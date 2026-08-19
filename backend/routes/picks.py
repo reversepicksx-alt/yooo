@@ -953,39 +953,12 @@ async def save_pick(req: SavePickRequest):
         except Exception:
             pass
 
-    # ── Duplicate-pick guard ─────────────────────────────────────────────────
-    # Reject only the same prediction event.  The same player/prop/line can be
-    # a valid new record in a later fixture, so fixtureId is the identity when
-    # present.  Legacy records without a fixture use the timestamp window.
-    dup_query = {
-        "email": req.email.lower(),
-        "playerName": doc["playerName"],
-        "opponentName": doc["opponentName"],
-        "propType": doc["propType"],
-        "line": doc["line"],
-    }
-    if doc.get("fixtureId"):
-        dup_query["fixtureId"] = doc["fixtureId"]
-    else:
-        try:
-            ts = datetime.fromisoformat(doc["timestamp"].replace("Z", "+00:00"))
-            from_d = (ts - timedelta(days=7)).isoformat()
-            to_d = (ts + timedelta(days=1)).isoformat()
-            dup_query["timestamp"] = {"$gte": from_d, "$lte": to_d}
-        except Exception:
-            pass
-    dup_query["pickId"] = {"$ne": pick_id}
-    existing_dup = await db.picks.find_one(
-        dup_query, {"_id": 0, "pickId": 1, "timestamp": 1}
-    )
-    if existing_dup:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"You already saved a {doc['playerName']} {doc['propType']} ({doc['line']}) pick "
-                f"against {doc['opponentName']}. Delete it first if you want to re-pick."
-            )
-        )
+    # Every explicit Save Pick creates a snapshot, even when the player,
+    # opponent, prop, line, and fixture match a previous save. A user can
+    # intentionally preserve revised model output after an analysis refresh;
+    # soft-hidden records must never block that action either. The client
+    # disables the button while a request is in flight, and a supplied pickId
+    # still updates that exact snapshot through the upsert below.
 
     async def _write_pick() -> None:
         await db.picks.update_one(
