@@ -16,8 +16,11 @@ Grid classification (most accurate) is only available on **completed fixtures** 
 ## Teammate id=None bug
 `_build_teammate_context` at line 1633 built per-player dicts without the `id` field. Fix: add `"id": p.get("id")` to the comprehension inside `by_zone[lbl] = sorted([...])`.
 
+## JARVIS save-pick endpoint
+`POST /api/jarvis/save-pick/soccer` — predict + save in one call. Requires both the JARVIS bearer token AND `subscriber_email`/`subscriber_token` in the JSON body. Prediction runs under `_jarvis_service_` account; save uses real subscriber session. Returns `saved.pick_id`, `saved.tracking_id`, `correlation_warnings`, and `summary` with `p_over`, `p_under`, `prop_historical_rate`, `prop_historical_n` always present. 401 = bad subscriber creds; 409 = duplicate pick; 507 = Atlas storage full.
+
 ## OpenAPI character limits
-ChatGPT GPT Action builder rejects operation `description` fields over 300 chars. All 20 endpoints verified ≤300 chars. Both role endpoints: getRoleProfile=270ch, getRoleOpponentCohort=227ch.
+ChatGPT GPT Action builder rejects operation `description` fields over 300 chars. All 21 endpoints verified ≤300 chars. Both role endpoints: getRoleProfile=270ch, getRoleOpponentCohort=227ch.
 
 ## Arsenal fixture 1582365 player ID reference (Aug 16 2026, Arsenal vs Man City, 4-2-3-1, FT)
 | ID     | Name            | Pos | Grid | JARVIS role               | Cohort group |

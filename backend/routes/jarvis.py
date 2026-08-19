@@ -229,6 +229,44 @@ async def jarvis_openapi():
                 }
             },
             # ── PREDICT ───────────────────────────────────────────────────────
+            "/api/jarvis/save-pick/soccer": {
+                "post": {
+                    "operationId": "saveSoccerPick",
+                    "summary": "Predict AND save a soccer prop pick for a subscriber in one call.",
+                    "description": "Runs the full 13-stage prediction pipeline then saves the pick to the subscriber's ledger. Requires the subscriber's session email + token alongside the JARVIS bearer key. Returns pick_id, tracking_id, correlation_warnings, and summary with p_over, p_under, prop_historical_rate.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["subscriber_email", "subscriber_token", "fixture_id", "player_id", "prop_type", "line"],
+                                    "properties": {
+                                        "subscriber_email": {"type": "string",  "description": "The subscriber's account email (the one they log in with)."},
+                                        "subscriber_token": {"type": "string",  "description": "The subscriber's active session token (from their login session)."},
+                                        "fixture_id": {"type": "integer", "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."},
+                                        "player_id":  {"type": "integer", "description": "API-Sports player ID."},
+                                        "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
+                                        "line":       {"type": "number",  "description": "Player prop line to predict against."},
+                                        "odds":       {"type": "object",  "description": "Optional moneyline: {home: float, away: float, draw: float}."},
+                                        "position_override": {"type": "string", "description": "Override detected position (e.g. CB, CM, ST)."},
+                                        "role_override":     {"type": "string", "description": "Override detected role."},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "saved.pick_id, saved.tracking_id, correlation_warnings, and summary with recommendation, p_over, p_under, prop_historical_rate, prop_historical_n, confidence_score, edge_rating, safety_rating."},
+                        "401": {"description": "Invalid JARVIS bearer token or invalid subscriber credentials."},
+                        "404": {"description": "Fixture or player not found."},
+                        "409": {"description": "Pick already saved for this player/prop/fixture. Delete it first."},
+                        "422": {"description": "Could not resolve player in fixture, or invalid prop."},
+                        "502": {"description": "Prediction or save engine error."},
+                        "507": {"description": "Database storage full — free Atlas storage and retry."},
+                    },
+                }
+            },
             "/api/jarvis/predict/soccer": {
                 "post": {
                     "operationId": "runSoccerPredict",
@@ -569,6 +607,7 @@ async def jarvis_docs():
         "endpoint_groups": {
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
             "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
+            "save": ["/api/jarvis/save-pick/soccer"],
             "tactical_evidence": ["/api/jarvis/tactical-evidence"],
             "role_analysis": ["/api/jarvis/role-profile", "/api/jarvis/role-opponent-cohort"],
             "aggregator": ["/api/jarvis/match-context"],
@@ -1235,6 +1274,201 @@ async def jarvis_predict_soccer(
         # Curated AI-ready summary — read this first
         "jarvis_brief": jarvis_brief,
         "diagnostic":   diagnostic,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JARVIS SAVE PICK — predict + save in one call
+# ─────────────────────────────────────────────────────────────────────────────
+
+class JarvisSavePickBody(BaseModel):
+    """Predict then save a soccer prop pick for a subscriber."""
+    subscriber_email:  str
+    subscriber_token:  str
+    fixture_id:        int
+    player_id:         int
+    prop_type:         str   = "pass_attempts"
+    line:              float
+    odds:              Optional[dict] = None
+    position_override: str   = ""
+    role_override:     str   = ""
+
+
+@router.post("/api/jarvis/save-pick/soccer")
+async def jarvis_save_pick_soccer(
+    body: JarvisSavePickBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Run the full soccer prediction pipeline then immediately save the pick
+    to the subscriber's ledger.  Requires both the JARVIS bearer token AND
+    the subscriber's own session credentials.
+
+    Returns: pick_id, tracking_id, correlation_warnings, and the model
+    summary (recommendation, p_over, p_under, prop_historical_rate, …).
+    """
+    _require_auth(authorization)
+
+    if not _JARVIS_KEY:
+        raise HTTPException(503, detail={"error": "JARVIS_API_KEY not configured."})
+
+    # ── 1. Auto-resolve fixture context ───────────────────────────────────────
+    try:
+        ctx = await _resolve_soccer_context(body.fixture_id, body.player_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, detail={"error": f"Context resolution failed: {exc}"})
+
+    # ── 2. Run prediction (JARVIS service account, same as /predict/soccer) ───
+    from models import PredictionRequest
+    from routes.predict import predict as _rp_predict
+
+    req = PredictionRequest(
+        email="_jarvis_service_",
+        token=_JARVIS_KEY,
+        leagueId=ctx["league_id"],
+        playerId=body.player_id,
+        playerName=ctx["player_name"],
+        teamId=ctx["team_id"],
+        teamName=ctx["team_name"],
+        opponentId=ctx["opponent_id"],
+        opponentName=ctx["opponent_name"],
+        venue=ctx["venue"],
+        propType=body.prop_type,
+        line=body.line,
+        sport="soccer",
+        fixtureId=body.fixture_id,
+        odds=body.odds,
+        positionOverride=body.position_override,
+        roleOverride=body.role_override,
+    )
+
+    try:
+        result = await _rp_predict(req)
+    except HTTPException as exc:
+        # Club-transfer guard: update cache then retry once
+        if exc.status_code == 409 and "Current club changed" in str(exc.detail):
+            try:
+                result = await _rp_predict(req)
+            except HTTPException:
+                raise
+            except Exception as exc2:
+                raise HTTPException(502, detail={"error": f"Prediction engine error on retry: {exc2}"})
+        else:
+            raise
+    except Exception as exc:
+        raise HTTPException(502, detail={"error": f"Prediction engine error: {exc}"})
+
+    if hasattr(result, "body"):
+        import json as _json
+        result = _json.loads(result.body)
+
+    # ── 3. Build pick dict from prediction result ─────────────────────────────
+    # Mirrors the fields the mobile app sends to /picks/save.
+    pick_dict = {
+        "sport":           "soccer",
+        "playerId":        body.player_id,
+        "playerName":      ctx["player_name"],
+        "teamId":          ctx["team_id"],
+        "teamName":        ctx["team_name"],
+        "opponentId":      ctx["opponent_id"],
+        "opponentName":    ctx["opponent_name"],
+        "leagueId":        ctx["league_id"],
+        "fixtureId":       body.fixture_id,
+        "venue":           ctx["venue"],
+        "playerIsHome":    ctx["venue"] == "home",
+        "propType":        body.prop_type,
+        "line":            body.line,
+        "recommendation":  result.get("recommendation", "pass"),
+        "projectedValue":  result.get("projectedValue"),
+        "projection":      result.get("projection") or result.get("projectedValue"),
+        "confidenceScore": result.get("confidenceScore", 50),
+        "confidenceLevel": result.get("confidenceLevel", "Low"),
+        "rawConfidence":   result.get("rawConfidence") or result.get("confidenceScore", 50),
+        # Both numbers always together
+        "pOver":           result.get("pOver"),
+        "pUnder":          result.get("pUnder"),
+        "propHistoricalRate": result.get("propHistoricalRate"),
+        "propHistoricalN":   result.get("propHistoricalN"),
+        "bayesianMetrics": result.get("bayesianMetrics") or {},
+        "factorLedger":    result.get("factorLedger") or {},
+        "factorLedgerVersion": result.get("factorLedgerVersion"),
+        "factorLedgerFingerprint": result.get("factorLedgerFingerprint"),
+        "edgeRating":      result.get("edgeRating"),
+        "edgeRatingReason": result.get("edgeRatingReason"),
+        "safetyRating":    result.get("safetyRating"),
+        "lineDeviationBand": result.get("lineDeviationBand"),
+        "lineDeviationHitRate": result.get("lineDeviationHitRate"),
+        "coinFlip":        result.get("coinFlip", False),
+        "lowConviction":   result.get("lowConviction", False),
+        "moneyline":       result.get("moneyline"),
+        "matchupOverview": result.get("matchupOverview"),
+        "sharpSummary":    result.get("sharpSummary"),
+        "reasoning":       result.get("reasoning"),
+        "tacticalBreakdown": result.get("tacticalBreakdown"),
+        "tacticalContext": result.get("tacticalContext"),
+        "playerGameLogs":  result.get("playerGameLogs") or {},
+        "analysisFactors": result.get("analysisFactors") or [],
+        "modelInputSnapshot": result.get("modelInputSnapshot") or {},
+        # _request block used by save_pick for venue / IDs fallback
+        "_request": {
+            "teamId":     ctx["team_id"],
+            "opponentId": ctx["opponent_id"],
+            "leagueId":   ctx["league_id"],
+            "venue":      ctx["venue"],
+        },
+    }
+
+    # ── 4. Save with subscriber credentials ───────────────────────────────────
+    from models import SavePickRequest
+    from routes.picks import save_pick as _rp_save_pick
+
+    save_req = SavePickRequest(
+        email=body.subscriber_email,
+        token=body.subscriber_token,
+        pick=pick_dict,
+    )
+
+    try:
+        save_result = await _rp_save_pick(save_req)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, detail={"error": f"Save failed: {exc}"})
+
+    # ── 5. Return compact summary ──────────────────────────────────────────────
+    return JSONResponse(content={
+        "source":       "jarvis/save-pick/soccer",
+        "generated_at": int(time.time()),
+        "saved": {
+            "pick_id":     save_result.get("pickId"),
+            "tracking_id": save_result.get("trackingId"),
+        },
+        # Correlation risk warnings (zero-sum pass props, all-under slip, etc.)
+        "correlation_warnings": save_result.get("correlationWarnings", []),
+        # Full model summary — both numbers always present
+        "summary": {
+            "player_name":          ctx["player_name"],
+            "team":                 ctx["team_name"],
+            "opponent":             ctx["opponent_name"],
+            "venue":                ctx["venue"],
+            "prop_type":            body.prop_type,
+            "line":                 body.line,
+            "recommendation":       result.get("recommendation"),
+            "projected_value":      result.get("projectedValue"),
+            "confidence_score":     result.get("confidenceScore"),
+            "edge_rating":          result.get("edgeRating"),
+            "safety_rating":        result.get("safetyRating"),
+            "coin_flip":            result.get("coinFlip", False),
+            "low_conviction":       result.get("lowConviction", False),
+            # ── The two numbers that always travel together ───────────────────
+            "p_over":               result.get("pOver"),
+            "p_under":              result.get("pUnder"),
+            "prop_historical_rate": result.get("propHistoricalRate"),
+            "prop_historical_n":    result.get("propHistoricalN"),
+            "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
+        },
     })
 
 
