@@ -4022,7 +4022,6 @@ export default function ScanScreen() {
 
                {/* The detailed script, formula, and tactical prose stay in the
                    deterministic payload but are not repeated in the customer UI. */}
-                <>
               {/* Line vs Season Average + Edge Explanation — tactical verdict replaces
                   generic soccer prose so the customer sees one coherent read. */}
                {prediction.priorMean != null && prediction.line != null && (() => {
@@ -4034,6 +4033,8 @@ export default function ScanScreen() {
                 const band = prediction.lineDeviationBand;
                 const bandAccent = band ? (BAND_ACCENT[band] ?? '#888') : null;
                 const hitRate = prediction.lineDeviationHitRate;
+                 const lineDeviationSample = prediction.lineDeviationHitRateN ?? 0;
+                 const hasDeviationHistory = typeof hitRate === 'number' && lineDeviationSample > 0;
                 const rec = (prediction.recommendation ?? '').toUpperCase();
                 const playerFirst = (prediction.playerName ?? 'This player').split(' ')[0];
 
@@ -4068,13 +4069,13 @@ export default function ScanScreen() {
 
                 let edgeParagraph = '';
                 if (lineBelow && rec === 'OVER') {
-                  edgeParagraph = `The book set this line ${absPct}% below ${playerFirst}'s season average of ${safeFixed(prediction.priorMean)} ${propAvgLabel}. That's a ${bandStrength} market underpricing — the sportsbook is essentially betting ${playerFirst} underperforms their own baseline. In ${band ?? ''} deviation cases like this where our model took the OVER, it has hit ${hitRate != null ? safeFixed(hitRate, 0) + '%' : 'at a strong rate'} historically. The edge is structural: any time a book sets the line meaningfully below a player's proven average, the math favors the over.`;
+                   edgeParagraph = `The book set this line ${absPct}% below ${playerFirst}'s season average of ${safeFixed(prediction.priorMean)} ${propAvgLabel}. That's a ${bandStrength} market underpricing — the sportsbook is essentially betting ${playerFirst} underperforms their own baseline. ${hasDeviationHistory ? `In ${band ?? ''} deviation cases like this where our model took the OVER, it has hit ${safeFixed(hitRate, 0)}% historically.` : 'There is not yet a settled line-deviation sample for this exact band, so the result relies on the verified baseline and current match context.'} The edge is structural: any time a book sets the line meaningfully below a player's proven average, the math favors the over.`;
                 } else if (!lineBelow && rec === 'UNDER') {
-                  edgeParagraph = `The book set this line ${absPct}% above ${playerFirst}'s season average of ${safeFixed(prediction.priorMean)} ${propAvgLabel}. When sportsbooks overprice a line like this — betting the player outperforms their own baseline — the data says that rarely holds. In ${band ?? ''} deviation UNDER cases, our model has hit ${hitRate != null ? safeFixed(hitRate, 0) + '%' : 'at a strong rate'} historically. The book is overreacting to recent form while ignoring the season trend.`;
+                   edgeParagraph = `The book set this line ${absPct}% above ${playerFirst}'s season average of ${safeFixed(prediction.priorMean)} ${propAvgLabel}. When sportsbooks overprice a line like this — betting the player outperforms their own baseline — the data says that rarely holds. ${hasDeviationHistory ? `In ${band ?? ''} deviation UNDER cases, our model has hit ${safeFixed(hitRate, 0)}% historically.` : 'There is not yet a settled line-deviation sample for this exact band, so the result relies on the verified baseline and current match context.'} The book is overreacting to recent form while ignoring the season trend.`;
                 } else if (lineBelow && rec === 'UNDER') {
                   edgeParagraph = `The line is ${absPct}% below season average, yet our model still leans UNDER. This reflects momentum evidence — ${playerFirst}'s recent games have tracked below their season baseline, and the projection expects that trend to continue. The deviation means the book is already pricing in some weakness, but not enough.`;
                 } else if (!lineBelow && rec === 'OVER') {
-                  edgeParagraph = `The line is ${absPct}% above season average, yet our model sees OVER value. This is a high-conviction play — ${playerFirst}'s recent form and match context (possession, opponent profile) project production that justifies beating even an elevated line. ${hitRate != null ? `In similar cases, this has hit ${hitRate.toFixed(0)}%.` : ''}`;
+                   edgeParagraph = `The line is ${absPct}% above season average, yet our model sees OVER value. This is a high-conviction play — ${playerFirst}'s recent form and match context (possession, opponent profile) project production that justifies beating even an elevated line. ${hasDeviationHistory ? `In similar cases, this has hit ${safeFixed(hitRate, 0)}%.` : ''}`;
                 }
 
                 return (
@@ -4098,9 +4099,9 @@ export default function ScanScreen() {
                           <Text style={[styles.devBandPillText, { color: bandAccent }]}>
                             {BAND_LABEL[band!] ?? (band ?? '').toUpperCase()}
                           </Text>
-                          {hitRate != null && (
+                          {hasDeviationHistory && (
                             <Text style={[styles.devBandPillHit, { color: bandAccent }]}>
-                              {hitRate.toFixed(0)}% hit
+                              {safeFixed(hitRate, 0)}% hit
                             </Text>
                           )}
                         </View>
@@ -4119,7 +4120,6 @@ export default function ScanScreen() {
                 );
               })()}
 
-               </>)}
                {false && (<>
                {/* ─── GAME SCRIPT BANNER — kept in the payload, hidden in the compact UI ─── */}
               {(() => {

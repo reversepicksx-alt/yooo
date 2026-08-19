@@ -93,6 +93,20 @@ def test_full_audit_route_attaches_news_to_audit_and_jarvis_brief(monkeypatch):
     assert response["jarvis_brief"]["news_intelligence"] == news_packet
     assert response["jarvis_brief"]["news_brief"] == "Confirmed lineup requires review."
     assert response["jarvis_brief"]["lineup_rerun_required"] is True
+    assert response["news_intelligence"] == news_packet
+    assert response["news_brief"] == "Confirmed lineup requires review."
+    assert response["news_warnings"] == [{"code": "CONFIRMED_LINEUP_MATERIAL_DRIFT"}]
+    for field in (
+        "expected_lineup",
+        "target_start_probability",
+        "minutes_risk",
+        "expected_role",
+        "formation",
+        "important_teammate_changes",
+        "lineup_confidence",
+        "regime_changes",
+    ):
+        assert response["jarvis_brief"][field] == news_packet[field]
     for key, value in immutable_values.items():
         assert rp_prediction[key] == value
 
