@@ -304,6 +304,45 @@ async def jarvis_openapi():
                     },
                 }
             },
+            # ── TACTICAL EVIDENCE ─────────────────────────────────────────────
+            "/api/jarvis/tactical-evidence": {
+                "get": {
+                    "operationId": "getTacticalEvidence",
+                    "summary": "Raw + derived tactical evidence for one player in one fixture",
+                    "description": (
+                        "Returns every observable data layer for a player matchup without running the prediction pipeline. "
+                        "Sections: fixture/player identity, season profile, confirmed lineup position + grid, "
+                        "last 8 match logs (all raw API fields), per-90 values, home/away splits, "
+                        "prop-specific summary (if prop_type given), team/opponent season stats, "
+                        "opponent recent match stats, press intensity index, opponent concession profile, "
+                        "possession history, buildup proxies, fatigue/rest days, injuries, H2H, odds. "
+                        "Each section carries _source: raw_api_data | reverse_picks_metric | unavailable."
+                    ),
+                    "parameters": [
+                        _param("fixture_id", "integer", True,  "API-Sports fixture ID — resolves both teams, venue, league, and season automatically."),
+                        _param("player_id",  "integer", True,  "API-Sports player ID."),
+                        _param("prop_type",  "string",  False, "Optional: pass_attempts | shots | shots_on_target | tackles | clearances | saves | goals | key_passes | dribbles | interceptions | blocks | crosses | fouls_drawn | fouls_committed | duels_won. Enables prop-specific summary and opponent concession estimate."),
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": (
+                                "Comprehensive tactical evidence bundle. Key top-level keys: "
+                                "fixture_identity, player_identity, player_season_profile, "
+                                "this_fixture_lineup, player_recent_logs, player_per_90, "
+                                "player_home_splits, player_away_splits, prop_specific_evidence, "
+                                "this_fixture_stats, team_season_stats, team_standings, team_recent_form, "
+                                "opponent_season_stats, opponent_standings, opponent_recent_form, "
+                                "opponent_recent_match_stats, opponent_press_intensity, "
+                                "opponent_concession_profile, possession_context, buildup_proxies, "
+                                "team_quality_inputs, fatigue_rest_inputs, injuries, h2h_team_meetings, odds_context."
+                            )
+                        },
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "Fixture not found."},
+                        "422": {"description": "Could not resolve player in fixture."},
+                    },
+                }
+            },
             # ── AGGREGATOR ────────────────────────────────────────────────────
             "/api/jarvis/match-context": {
                 "get": {
@@ -500,6 +539,7 @@ async def jarvis_docs():
         "endpoint_groups": {
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
             "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
+            "tactical_evidence": ["/api/jarvis/tactical-evidence"],
             "aggregator": ["/api/jarvis/match-context"],
             "fixture_detail": [
                 "/api/jarvis/fixture/stats",
@@ -1120,6 +1160,755 @@ async def jarvis_predict_soccer(
         "source":       "jarvis/predict/soccer",
         "generated_at": int(time.time()),
         "diagnostic":   diagnostic,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TACTICAL EVIDENCE — raw + minimally-derived evidence for JARVIS/ChatGPT
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/jarvis/tactical-evidence")
+async def jarvis_tactical_evidence(
+    authorization: Optional[str] = Header(default=None),
+    fixture_id: int = Query(..., description="API-Sports fixture ID."),
+    player_id:  int = Query(..., description="API-Sports player ID."),
+    prop_type:  Optional[str] = Query(
+        None,
+        description=(
+            "Optional prop context for opponent concession estimate: "
+            "pass_attempts | shots | shots_on_target | tackles | clearances | "
+            "saves | goals | key_passes | dribbles | interceptions | blocks | "
+            "crosses | fouls_drawn | fouls_committed | duels_won"
+        ),
+    ),
+):
+    """
+    Raw + minimally-derived tactical evidence for one player in one fixture.
+
+    Returns: fixture/player identity, season profile, confirmed position +
+    lineup grid, last 8 match logs (all raw API values), per-90 values,
+    home/away splits, team/opponent season stats, recent form, possession
+    history, press intensity index, opponent concession profile (prop_type
+    required), buildup proxies, fatigue/rest days, injuries, H2H, odds.
+
+    Each section carries _source: raw_api_data | reverse_picks_metric | unavailable.
+    Does NOT run the prediction pipeline and cannot be used to infer model output.
+    """
+    _require_auth(authorization)
+
+    # ── 1. resolve identity ───────────────────────────────────────────────────
+    ctx = await _resolve_soccer_context(fixture_id, player_id)
+    fix = await _resolve_fixture(fixture_id)
+
+    team_id     = ctx["team_id"]
+    opponent_id = ctx["opponent_id"]
+    league_id   = ctx["league_id"]
+    season      = ctx["season"]
+
+    status_short = fix["status_short"]
+    is_live  = status_short in ("1H", "HT", "2H", "ET", "BT", "P", "INT", "LIVE")
+    finished = status_short in ("FT", "AET", "PEN")
+    ttl      = _CACHE_TTL_LIVE if is_live else (_CACHE_TTL_FINISHED if finished else _CACHE_TTL_SCHEDULED)
+
+    # ── 2. wave-1: static parallel fetches (12 calls) ────────────────────────
+    (
+        player_season_raw,
+        lineups_raw,
+        injuries_raw,
+        odds_raw,
+        team_szn_raw,
+        opp_szn_raw,
+        h2h_raw,
+        standings_raw,
+        team_fix_raw,
+        opp_fix_raw,
+        fix_stats_raw,
+        fix_players_raw,
+    ) = await asyncio.gather(
+        _sports_get_safe("players",             {"id": player_id, "season": season},                                     cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("fixtures/lineups",    {"fixture": fixture_id},                                                  cache_ttl=ttl),
+        _sports_get_safe("injuries",            {"fixture": fixture_id},                                                  cache_ttl=_CACHE_TTL_SCHEDULED),
+        _sports_get_safe("odds",                {"fixture": fixture_id},                                                  cache_ttl=_CACHE_TTL_SCHEDULED),
+        _sports_get_safe("teams/statistics",    {"team": team_id,     "league": league_id, "season": season},            cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("teams/statistics",    {"team": opponent_id, "league": league_id, "season": season},            cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("fixtures/headtohead", {"h2h": f"{team_id}-{opponent_id}", "last": 10},                         cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("standings",           {"league": league_id, "season": season},                                 cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("fixtures",            {"team": team_id,     "last": 15}, cache_ttl=_CACHE_TTL_SCHEDULED),
+        _sports_get_safe("fixtures",            {"team": opponent_id, "last": 10}, cache_ttl=_CACHE_TTL_SCHEDULED),
+        _sports_get_safe("fixtures/statistics", {"fixture": fixture_id},                                                  cache_ttl=ttl),
+        _sports_get_safe("fixtures/players",    {"fixture": fixture_id},                                                  cache_ttl=ttl),
+    )
+
+    # ── 3. pick completed fixtures for per-match fetches ──────────────────────
+    _DONE = {"FT", "AET", "PEN"}
+
+    def _completed(raw, limit):
+        rows = (raw or {}).get("response", [])
+        return [f for f in rows if f.get("fixture", {}).get("status", {}).get("short") in _DONE][:limit]
+
+    team_done = _completed(team_fix_raw, 8)
+    opp_done  = _completed(opp_fix_raw,  6)
+    team_fids = [f["fixture"]["id"] for f in team_done if f.get("fixture", {}).get("id")]
+    opp_fids  = [f["fixture"]["id"] for f in opp_done  if f.get("fixture", {}).get("id")]
+
+    # ── 4. wave-2: per-fixture fetches ────────────────────────────────────────
+    #   fixtures/players per team fixture → player match logs
+    #   fixtures/statistics per opp fixture → press intensity + concession
+    player_log_tasks = [
+        _sports_get_safe("fixtures/players",    {"fixture": fid}, cache_ttl=_CACHE_TTL_FINISHED)
+        for fid in team_fids
+    ]
+    opp_stat_tasks = [
+        _sports_get_safe("fixtures/statistics", {"fixture": fid}, cache_ttl=_CACHE_TTL_FINISHED)
+        for fid in opp_fids
+    ]
+
+    wave2 = await asyncio.gather(*player_log_tasks, *opp_stat_tasks)
+    n_pl  = len(player_log_tasks)
+    player_log_raws = wave2[:n_pl]
+    opp_stat_raws   = wave2[n_pl:]
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    def _rnd(v):
+        try:    return round(float(v), 2) if v is not None else None
+        except: return None
+
+    def _num(v):
+        if v is None:
+            return None
+        try:    return float(str(v).replace("%", "").strip())
+        except: return None
+
+    def _avg(vals):
+        c = [v for v in vals if v is not None]
+        return _rnd(sum(c) / len(c)) if c else None
+
+    # ── 5. player season profile ──────────────────────────────────────────────
+    def _season_profile():
+        rows = (player_season_raw or {}).get("response", [])
+        if not rows:
+            return {"_source": "unavailable"}
+        pl    = rows[0].get("player", {})
+        stats = rows[0].get("statistics", [])
+        cs    = next((s for s in stats if (s.get("league") or {}).get("id") == league_id), stats[0] if stats else {})
+        gs    = cs.get("games", {})
+        p     = cs.get("passes", {})
+        sh    = cs.get("shots", {})
+        tk    = cs.get("tackles", {})
+        dr    = cs.get("dribbles", {})
+        du    = cs.get("duels", {})
+        gl    = cs.get("goals", {})
+        cr    = cs.get("cards", {})
+        return {
+            "_source": "raw_api_data",
+            "name": pl.get("name"), "age": pl.get("age"),
+            "height": pl.get("height"), "weight": pl.get("weight"),
+            "nationality": pl.get("nationality"),
+            "position": gs.get("position"),
+            "appearances": gs.get("appearences"), "starts": gs.get("lineups"),
+            "minutes": gs.get("minutes"), "rating": gs.get("rating"),
+            "season_passes_total":    p.get("total"),
+            "season_passes_key":      p.get("key"),
+            "season_passes_accuracy": p.get("accuracy"),
+            "season_shots_total":     sh.get("total"),
+            "season_shots_on":        sh.get("on"),
+            "season_tackles":         tk.get("total"),
+            "season_interceptions":   tk.get("interceptions"),
+            "season_blocks":          tk.get("blocks"),
+            "season_clearances":      tk.get("clearances"),
+            "season_dribbles":        dr.get("attempts"),
+            "season_duels_total":     du.get("total"),
+            "season_duels_won":       du.get("won"),
+            "season_goals":           gl.get("total"),
+            "season_assists":         gl.get("assists"),
+            "season_saves":           gl.get("saves"),
+            "season_crosses":         p.get("cross"),
+            "season_yellow_cards":    cr.get("yellow"),
+            "season_red_cards":       cr.get("red"),
+            "all_competition_entries": [
+                {
+                    "league": (s.get("league") or {}).get("name"),
+                    "league_id": (s.get("league") or {}).get("id"),
+                    "team": (s.get("team") or {}).get("name"),
+                    "team_id": (s.get("team") or {}).get("id"),
+                    "apps": (s.get("games") or {}).get("appearences"),
+                    "minutes": (s.get("games") or {}).get("minutes"),
+                    "position": (s.get("games") or {}).get("position"),
+                }
+                for s in stats
+            ],
+        }
+
+    # ── 6. this-fixture lineup ────────────────────────────────────────────────
+    def _lineup():
+        rows = (lineups_raw or {}).get("response", [])
+        if not rows:
+            return {"_source": "unavailable", "note": "Lineup not yet released."}
+        out = {"_source": "raw_api_data", "teams": {}}
+        target_found = None
+        for t in rows:
+            tname  = (t.get("team") or {}).get("name", "unknown")
+            tid_lu = (t.get("team") or {}).get("id")
+            xi = []
+            for p in t.get("startXI", []):
+                pl = p.get("player", {})
+                row = {
+                    "name":   pl.get("name"),
+                    "id":     pl.get("id"),
+                    "number": pl.get("number"),
+                    "pos":    pl.get("pos"),
+                    "grid":   pl.get("grid"),
+                }
+                if pl.get("id") == player_id:
+                    row["_is_target_player"] = True
+                    target_found = {"status": "starter", "pos": pl.get("pos"), "grid": pl.get("grid"), "team": tname}
+                xi.append(row)
+            subs = []
+            for p in t.get("substitutes", []):
+                pl = p.get("player", {})
+                sr = {"name": pl.get("name"), "id": pl.get("id"), "number": pl.get("number"), "pos": pl.get("pos")}
+                if pl.get("id") == player_id:
+                    target_found = {"status": "substitute", "pos": pl.get("pos"), "grid": None, "team": tname}
+                subs.append(sr)
+            out["teams"][tname] = {
+                "team_id": tid_lu, "formation": t.get("formation"),
+                "coach": (t.get("coach") or {}).get("name"),
+                "start_xi": xi, "substitutes": subs,
+            }
+        out["target_player"] = target_found or {"status": "not_in_confirmed_lineup"}
+        return out
+
+    # ── 7. player match logs ──────────────────────────────────────────────────
+    _STAT_FIELDS = [
+        "passes_total", "passes_key", "passes_accuracy", "passes_cross",
+        "shots_total", "shots_on", "tackles_total", "tackles_interceptions",
+        "tackles_blocks", "tackles_clearances", "dribbles_attempts",
+        "duels_total", "duels_won", "fouls_drawn", "fouls_committed",
+        "goals_total", "goals_assists", "goals_saves",
+    ]
+
+    # Also look for player in the current fixture's players response
+    all_logs_raw = list(player_log_raws)
+    all_done     = list(team_done)
+    if (is_live or finished) and fix_players_raw:
+        all_done.insert(0, {"fixture": {"id": fixture_id, "date": fix.get("date", ""), "status": {"short": status_short}},
+                             "teams": {"home": {"id": fix["home_team_id"]}, "away": {"id": fix["away_team_id"]}},
+                             "goals": {"home": None, "away": None},
+                             "league": {"name": fix.get("league_name", "")}})
+        all_logs_raw.insert(0, fix_players_raw)
+
+    player_logs = []
+    for i, raw in enumerate(all_logs_raw):
+        if not raw or i >= len(all_done):
+            continue
+        fix_row  = all_done[i]
+        fid      = (fix_row.get("fixture") or {}).get("id")
+        fdate    = ((fix_row.get("fixture") or {}).get("date") or "")[:10]
+        home_id  = (((fix_row.get("teams") or {}).get("home")) or {}).get("id")
+        mv       = "home" if home_id == team_id else "away"
+        opp_side = "away" if mv == "home" else "home"
+        opp_name = (((fix_row.get("teams") or {}).get(opp_side)) or {}).get("name", "")
+        gh       = (fix_row.get("goals") or {}).get("home")
+        ga       = (fix_row.get("goals") or {}).get("away")
+        lname    = ((fix_row.get("league") or {}).get("name") or "")
+
+        for te in (raw or {}).get("response", []):
+            for p in te.get("players", []):
+                if (p.get("player") or {}).get("id") != player_id:
+                    continue
+                s    = ((p.get("statistics") or [{}])[0])
+                mins = _num((s.get("games") or {}).get("minutes")) or 0
+                log  = {
+                    "_source":         "raw_api_data",
+                    "fixture_id":      fid,
+                    "date":            fdate,
+                    "league":          lname,
+                    "opponent":        opp_name,
+                    "venue":           mv,
+                    "score":           f"{gh}-{ga}",
+                    "minutes":         _num((s.get("games") or {}).get("minutes")),
+                    "position_played": (s.get("games") or {}).get("position"),
+                    "rating":          _rnd((s.get("games") or {}).get("rating")),
+                    "passes_total":    _num((s.get("passes") or {}).get("total")),
+                    "passes_key":      _num((s.get("passes") or {}).get("key")),
+                    "passes_accuracy": _num((s.get("passes") or {}).get("accuracy")),
+                    "passes_cross":    _num((s.get("passes") or {}).get("cross")),
+                    "shots_total":     _num((s.get("shots") or {}).get("total")),
+                    "shots_on":        _num((s.get("shots") or {}).get("on")),
+                    "tackles_total":   _num((s.get("tackles") or {}).get("total")),
+                    "tackles_interceptions": _num((s.get("tackles") or {}).get("interceptions")),
+                    "tackles_blocks":  _num((s.get("tackles") or {}).get("blocks")),
+                    "tackles_clearances": _num((s.get("tackles") or {}).get("clearances")),
+                    "dribbles_attempts": _num((s.get("dribbles") or {}).get("attempts")),
+                    "duels_total":     _num((s.get("duels") or {}).get("total")),
+                    "duels_won":       _num((s.get("duels") or {}).get("won")),
+                    "fouls_drawn":     _num((s.get("fouls") or {}).get("drawn")),
+                    "fouls_committed": _num((s.get("fouls") or {}).get("committed")),
+                    "goals_total":     _num((s.get("goals") or {}).get("total")),
+                    "goals_assists":   _num((s.get("goals") or {}).get("assists")),
+                    "goals_saves":     _num((s.get("goals") or {}).get("saves")),
+                    "offsides":        _num(s.get("offsides")),
+                    "yellow_cards":    _num((s.get("cards") or {}).get("yellow")),
+                    "red_cards":       _num((s.get("cards") or {}).get("red")),
+                    "_dnp":            mins == 0,
+                }
+                player_logs.append(log)
+                break
+
+    # active logs (minutes > 0) for derived metrics
+    active_logs = [l for l in player_logs if not l.get("_dnp")]
+
+    def _per90(field):
+        vals = []
+        for l in active_logs:
+            v = l.get(field); m = l.get("minutes") or 0
+            if v is not None and m > 0:
+                vals.append(v * 90 / m)
+        return {"avg_per90": _avg(vals), "n": len(vals), "_source": "reverse_picks_metric" if vals else "unavailable"}
+
+    def _split(field, sv):
+        vals = [l[field] for l in active_logs if l.get("venue") == sv and l.get(field) is not None]
+        return {"avg": _avg(vals), "n": len(vals), "_source": "reverse_picks_metric" if vals else "unavailable"}
+
+    per90       = {f: _per90(f) for f in _STAT_FIELDS}
+    home_splits = {f: _split(f, "home") for f in _STAT_FIELDS}
+    away_splits = {f: _split(f, "away") for f in _STAT_FIELDS}
+
+    # prop-specific convenience summary
+    _FIELD_MAP = {
+        "pass_attempts": "passes_total", "passes": "passes_total",
+        "key_passes": "passes_key", "shots": "shots_total",
+        "shots_on_target": "shots_on", "tackles": "tackles_total",
+        "clearances": "tackles_clearances", "saves": "goals_saves",
+        "goals": "goals_total", "assists": "goals_assists",
+        "blocks": "tackles_blocks", "interceptions": "tackles_interceptions",
+        "dribbles": "dribbles_attempts", "crosses": "passes_cross",
+        "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+        "duels_won": "duels_won",
+    }
+    prop_field = _FIELD_MAP.get(prop_type or "") if prop_type else None
+    if prop_field and active_logs:
+        _pv  = [l[prop_field] for l in active_logs if l.get(prop_field) is not None]
+        _phv = [l[prop_field] for l in active_logs if l.get("venue") == "home" and l.get(prop_field) is not None]
+        _pav = [l[prop_field] for l in active_logs if l.get("venue") == "away" and l.get(prop_field) is not None]
+        prop_summary = {
+            "_source": "reverse_picks_metric",
+            "prop_type": prop_type, "stat_field": prop_field,
+            "avg": _avg(_pv), "n": len(_pv),
+            "home_avg": _avg(_phv), "home_n": len(_phv),
+            "away_avg": _avg(_pav), "away_n": len(_pav),
+            "values": _pv,
+            "min": _rnd(min(_pv)) if _pv else None,
+            "max": _rnd(max(_pv)) if _pv else None,
+        }
+    else:
+        prop_summary = {"_source": "unavailable", "note": "Provide prop_type param for prop-specific summary."}
+
+    # ── 8. opponent fixture stats → press + concession ────────────────────────
+    def _num_rs(v):
+        try:    return float(str(v or "").replace("%", "").strip()) if v is not None else None
+        except: return None
+
+    opp_fixture_stats = []   # shape expected by bayesian_engine helpers
+    opp_match_rows    = []   # compact display rows
+
+    for i, raw in enumerate(opp_stat_raws):
+        if not raw or i >= len(opp_done):
+            continue
+        fix_row  = opp_done[i]
+        fdate    = ((fix_row.get("fixture") or {}).get("date") or "")[:10]
+        home_id  = (((fix_row.get("teams") or {}).get("home")) or {}).get("id")
+        ov       = "home" if home_id == opponent_id else "away"
+        opp_opp_side = "away" if ov == "home" else "home"
+        opp_opp_name = (((fix_row.get("teams") or {}).get(opp_opp_side)) or {}).get("name", "")
+        gh = (fix_row.get("goals") or {}).get("home")
+        ga = (fix_row.get("goals") or {}).get("away")
+
+        by_tid = {}
+        for tr in (raw or {}).get("response", []):
+            tid = (tr.get("team") or {}).get("id")
+            if tid:
+                by_tid[tid] = {str(s.get("type") or ""): s.get("value") for s in tr.get("statistics", [])}
+
+        opp_rs   = by_tid.get(opponent_id, {})
+        other_rs = next((v for tid, v in by_tid.items() if tid != opponent_id), {})
+        if not opp_rs:
+            continue
+
+        engine_row = {
+            "date":                fdate,
+            "venue":               ov,
+            "possession":          opp_rs.get("Ball Possession"),
+            "totalPasses":         _num_rs(opp_rs.get("Total passes")),
+            "accuratePasses":      _num_rs(opp_rs.get("Passes accurate")),
+            "shotsOnTarget":       _num_rs(opp_rs.get("Shots on Goal")),
+            "totalShots":          _num_rs(opp_rs.get("Total Shots")),
+            "fouls":               _num_rs(opp_rs.get("Fouls")),
+            "fouls_committed_agg": _num_rs(opp_rs.get("Fouls")),
+            "corners":             _num_rs(opp_rs.get("Corner Kicks")),
+            "opponentTotalPasses": _num_rs(other_rs.get("Total passes")),
+            "opponentTotalShots":  _num_rs(other_rs.get("Total Shots")),
+        }
+        opp_fixture_stats.append(engine_row)
+        opp_match_rows.append({
+            "_source": "raw_api_data",
+            "date": fdate, "opponent": opp_opp_name, "venue": ov,
+            "score": f"{gh}-{ga}",
+            "possession":    opp_rs.get("Ball Possession"),
+            "total_passes":  _num_rs(opp_rs.get("Total passes")),
+            "pass_accuracy": opp_rs.get("Passes %"),
+            "total_shots":   _num_rs(opp_rs.get("Total Shots")),
+            "shots_on_target": _num_rs(opp_rs.get("Shots on Goal")),
+            "xg":            _num_rs(opp_rs.get("expected_goals")),
+            "fouls":         _num_rs(opp_rs.get("Fouls")),
+            "corners":       _num_rs(opp_rs.get("Corner Kicks")),
+            "opp_total_passes": _num_rs(other_rs.get("Total passes")),
+        })
+
+    # bayesian_engine press + concession (no prediction algo changes)
+    press_packet = {"_source": "unavailable", "note": "Insufficient opponent fixture data (need ≥1 completed fixture)."}
+    concession   = {"_source": "unavailable", "note": "Provide prop_type and sufficient opponent data."}
+
+    if opp_fixture_stats:
+        try:
+            from bayesian_engine import compute_press_intensity_score as _cpi
+            press_packet = _cpi(opp_fixture_stats)
+            press_packet["_source"] = "reverse_picks_metric"
+            press_packet["_note"] = (
+                "Reverse Picks Pressure Index — synthetic PPDA proxy from API-Football team aggregates. "
+                "Not a raw PPDA count. 0-100 where higher = stronger press."
+            )
+            press_packet["raw_opp_fixture_stats_n"] = len(opp_fixture_stats)
+        except Exception as _e:
+            press_packet = {"_source": "unavailable", "note": f"Press computation error: {_e}"}
+
+        if prop_type:
+            try:
+                from bayesian_engine import _estimate_opponent_concession as _eoc
+                est = _eoc(opp_fixture_stats, prop_type)
+                if est is not None:
+                    concession = {
+                        "_source": "reverse_picks_metric",
+                        "prop_type": prop_type,
+                        "estimated_player_share_conceded": est,
+                        "based_on_n_fixtures": len(opp_fixture_stats),
+                        "_note": (
+                            "Estimated prop units the opponent concedes to a player of this position per game, "
+                            "derived from opponent team-level fixture aggregates using a position-specific share."
+                        ),
+                    }
+                else:
+                    concession = {
+                        "_source": "unavailable",
+                        "note": f"prop_type={prop_type!r} not supported in opponent concession model.",
+                    }
+            except Exception as _e2:
+                concession = {"_source": "unavailable", "note": f"Concession computation error: {_e2}"}
+
+    # ── 9. possession + buildup proxies ───────────────────────────────────────
+    def _poss_avg(rows):
+        vals = []
+        for r in rows:
+            p = r.get("possession")
+            if p is None:
+                continue
+            try:
+                vals.append(float(str(p).replace("%", "")))
+            except (TypeError, ValueError):
+                pass
+        return {"avg_pct": _avg(vals), "n": len(vals), "_source": "reverse_picks_metric" if vals else "unavailable"}
+
+    team_poss_avg = _poss_avg(opp_match_rows)   # team's possession = opponent's opponent context
+    opp_poss_avg  = _poss_avg(opp_match_rows)   # raw opp possession
+
+    # build possession history from opp fixture stats directly
+    team_passes_vals = [_num_rs(r.get("opp_total_passes")) for r in opp_match_rows if _num_rs(r.get("opp_total_passes")) is not None]
+    opp_passes_vals  = [_num_rs(r.get("total_passes"))     for r in opp_match_rows if _num_rs(r.get("total_passes"))     is not None]
+
+    buildup_proxies = {
+        "_source": "reverse_picks_metric" if (opp_passes_vals or team_passes_vals) else "unavailable",
+        "opponent_avg_passes_per_game":   _avg(opp_passes_vals),
+        "opponent_avg_passes_n":          len(opp_passes_vals),
+        "conceding_team_avg_passes_per_game": _avg(team_passes_vals),  # what teams playing against opp average
+        "conceding_team_avg_passes_n":    len(team_passes_vals),
+        "opponent_avg_shots_per_game":    _avg([r.get("total_shots") for r in opp_match_rows if r.get("total_shots") is not None]),
+        "opponent_avg_xg_per_game":       _avg([r.get("xg") for r in opp_match_rows if r.get("xg") is not None]),
+        "_note": "Derived from opponent's recent completed fixtures via API-Football team statistics.",
+    }
+
+    # ── 10. season stats + standings ─────────────────────────────────────────
+    def _team_season(raw):
+        r = (raw or {}).get("response", {})
+        if not r:
+            return {"_source": "unavailable"}
+        return {
+            "_source": "raw_api_data",
+            "team":   (r.get("team") or {}).get("name"),
+            "form":    r.get("form"),
+            "played":  (r.get("fixtures") or {}).get("played", {}),
+            "wins":    (r.get("fixtures") or {}).get("wins", {}),
+            "draws":   (r.get("fixtures") or {}).get("draws", {}),
+            "losses":  (r.get("fixtures") or {}).get("loses", {}),
+            "goals_for":     (r.get("goals") or {}).get("for", {}),
+            "goals_against": (r.get("goals") or {}).get("against", {}),
+            "clean_sheet":   r.get("clean_sheet", {}),
+            "failed_to_score": r.get("failed_to_score", {}),
+            "biggest":       r.get("biggest", {}),
+            "penalty":       r.get("penalty", {}),
+        }
+
+    def _standings_row(tid):
+        if not standings_raw:
+            return {"_source": "unavailable"}
+        all_rows = []
+        for entry in (standings_raw or {}).get("response", []):
+            for grp in (entry.get("league") or {}).get("standings", []):
+                all_rows.extend(grp)
+        row = next((r for r in all_rows if (r.get("team") or {}).get("id") == tid), None)
+        if not row:
+            return {"_source": "unavailable"}
+        return {
+            "_source": "raw_api_data",
+            "rank": row.get("rank"), "points": row.get("points"), "form": row.get("form"),
+            "played": (row.get("all") or {}).get("played"),
+            "won":    (row.get("all") or {}).get("win"),
+            "drawn":  (row.get("all") or {}).get("draw"),
+            "lost":   (row.get("all") or {}).get("lose"),
+            "goals_for":     (row.get("all") or {}).get("goals", {}).get("for"),
+            "goals_against": (row.get("all") or {}).get("goals", {}).get("against"),
+            "goal_diff": row.get("goalsDiff"),
+        }
+
+    # ── 11. fatigue / rest inputs ─────────────────────────────────────────────
+    def _rest(done_list, fixture_date_str):
+        if not done_list or not fixture_date_str:
+            return {"_source": "unavailable"}
+        try:
+            from datetime import date as _dt
+            md = _dt.fromisoformat(fixture_date_str[:10])
+            latest = max(
+                _dt.fromisoformat(((f.get("fixture") or {}).get("date") or "")[:10])
+                for f in done_list
+                if ((f.get("fixture") or {}).get("date") or "")[:10]
+            )
+            return {
+                "_source": "reverse_picks_metric",
+                "last_match_date": str(latest),
+                "days_rest": (md - latest).days,
+                "fixture_date": fixture_date_str[:10],
+            }
+        except Exception:
+            return {"_source": "unavailable"}
+
+    fix_date_str = (fix.get("date") or "")[:10]
+    team_rest = _rest(team_done, fix_date_str)
+    opp_rest  = _rest(opp_done,  fix_date_str)
+
+    # ── 12. team recent form (raw fixture summary) ────────────────────────────
+    def _form(raw):
+        rows = (raw or {}).get("response", [])
+        done = [f for f in rows if (f.get("fixture") or {}).get("status", {}).get("short") in _DONE][:8]
+        if not done:
+            return {"_source": "unavailable"}
+        out = []
+        for f in done:
+            gh = (f.get("goals") or {}).get("home")
+            ga = (f.get("goals") or {}).get("away")
+            out.append({
+                "date":   ((f.get("fixture") or {}).get("date") or "")[:10],
+                "home":   ((f.get("teams") or {}).get("home") or {}).get("name"),
+                "away":   ((f.get("teams") or {}).get("away") or {}).get("name"),
+                "score":  f"{gh}-{ga}",
+                "league": ((f.get("league") or {}).get("name") or ""),
+                "round":  ((f.get("league") or {}).get("round") or ""),
+            })
+        return {"_source": "raw_api_data", "n": len(out), "matches": out}
+
+    # ── 13. current fixture stats ─────────────────────────────────────────────
+    def _fix_stats():
+        rows = (fix_stats_raw or {}).get("response", [])
+        if not rows:
+            return {"_source": "unavailable"}
+        out = {}
+        for tb in rows:
+            nm = (tb.get("team") or {}).get("name", "unknown")
+            out[nm] = {s["type"]: s["value"] for s in tb.get("statistics", [])}
+        return {"_source": "raw_api_data", "by_team": out} if out else {"_source": "unavailable"}
+
+    # ── 14. injuries ──────────────────────────────────────────────────────────
+    injuries_out = [
+        {
+            "player": (r.get("player") or {}).get("name"),
+            "team":   (r.get("team") or {}).get("name"),
+            "type":   (r.get("player") or {}).get("type"),
+            "reason": (r.get("player") or {}).get("reason"),
+        }
+        for r in (injuries_raw or {}).get("response", [])
+    ]
+
+    # ── 15. H2H ───────────────────────────────────────────────────────────────
+    def _h2h():
+        rows = (h2h_raw or {}).get("response", [])
+        out  = []
+        for f in rows:
+            fx = f.get("fixture", {}); ts = f.get("teams", {}); gl = f.get("goals", {})
+            out.append({
+                "date":    fx.get("date", "")[:10],
+                "venue":   (fx.get("venue") or {}).get("name"),
+                "home":    (ts.get("home") or {}).get("name"),
+                "away":    (ts.get("away") or {}).get("name"),
+                "score":   f"{gl.get('home')}-{gl.get('away')}",
+                "winner":  (
+                    (ts.get("home") or {}).get("name") if (ts.get("home") or {}).get("winner")
+                    else (ts.get("away") or {}).get("name") if (ts.get("away") or {}).get("winner")
+                    else "Draw"
+                ),
+                "league": (f.get("league") or {}).get("name"),
+            })
+        return out or None
+
+    # ── 16. odds ─────────────────────────────────────────────────────────────
+    def _odds():
+        rows = (odds_raw or {}).get("response", [])
+        if not rows:
+            return {"_source": "unavailable"}
+        mkts = []
+        for bm in rows[0].get("bookmakers", [])[:3]:
+            for m in bm.get("bets", []):
+                if m["name"] in ("Match Winner", "Goals Over/Under", "Asian Handicap"):
+                    mkts.append({"bookmaker": bm["name"], "market": m["name"], "values": m.get("values", [])})
+        return {"_source": "raw_api_data", "markets": mkts} if mkts else {"_source": "unavailable"}
+
+    # ── assemble ─────────────────────────────────────────────────────────────
+    return JSONResponse(content={
+        "source":        "jarvis/tactical-evidence",
+        "generated_at":  int(time.time()),
+        "prop_type":     prop_type,
+        "_field_labels": {
+            "raw_api_data":         "Direct observation from API-Sports provider. Not processed by Reverse Picks.",
+            "reverse_picks_metric": "Derived by Reverse Picks from raw API data. Not a raw provider measurement.",
+            "unavailable":          "Data not available for this player/fixture combination.",
+        },
+
+        # ── identity ──────────────────────────────────────────────────────────
+        "fixture_identity": {
+            "_source":    "raw_api_data",
+            "fixture_id": fixture_id,
+            "date":       fix_date_str or None,
+            "status":     status_short,
+            "home_team":  {"name": fix["home_team"],   "id": fix["home_team_id"]},
+            "away_team":  {"name": fix["away_team"],   "id": fix["away_team_id"]},
+            "league":     {"name": fix["league_name"], "id": fix["league_id"], "country": fix.get("country")},
+            "venue_name": fix.get("venue"),
+            "city":       fix.get("city"),
+            "round":      fix.get("round"),
+            "season":     fix.get("season"),
+        },
+
+        "player_identity": {
+            "_source":            "raw_api_data",
+            "player_id":          player_id,
+            "player_name":        ctx["player_name"],
+            "team":               ctx["team_name"],
+            "team_id":            ctx["team_id"],
+            "opponent":           ctx["opponent_name"],
+            "opponent_id":        ctx["opponent_id"],
+            "player_venue":       ctx["venue"],
+            "league_id":          ctx["league_id"],
+            "season":             ctx["season"],
+            "_resolution_source": ctx["_resolution_source"],
+        },
+
+        # ── player profile ────────────────────────────────────────────────────
+        "player_season_profile": _season_profile(),
+
+        # ── lineup ───────────────────────────────────────────────────────────
+        "this_fixture_lineup": _lineup(),
+
+        # ── match logs ───────────────────────────────────────────────────────
+        "player_recent_logs": {
+            "_source":       "raw_api_data",
+            "n_with_minutes": len(active_logs),
+            "n_dnp":          len(player_logs) - len(active_logs),
+            "fixtures_checked": len(team_fids),
+            "matches":        player_logs,
+        },
+
+        # ── derived metrics ───────────────────────────────────────────────────
+        "player_per_90": {
+            "_source": "reverse_picks_metric",
+            "_note":   "Computed from recent match logs where minutes > 0.",
+            **per90,
+        },
+        "player_home_splits": {"_source": "reverse_picks_metric", **home_splits},
+        "player_away_splits": {"_source": "reverse_picks_metric", **away_splits},
+
+        # ── prop-specific ─────────────────────────────────────────────────────
+        "prop_specific_evidence": prop_summary,
+
+        # ── current fixture live stats ────────────────────────────────────────
+        "this_fixture_stats": _fix_stats(),
+
+        # ── team context ─────────────────────────────────────────────────────
+        "team_season_stats":  _team_season(team_szn_raw),
+        "team_standings":     _standings_row(team_id),
+        "team_recent_form":   _form(team_fix_raw),
+
+        # ── opponent context ──────────────────────────────────────────────────
+        "opponent_season_stats": _team_season(opp_szn_raw),
+        "opponent_standings":    _standings_row(opponent_id),
+        "opponent_recent_form":  _form(opp_fix_raw),
+
+        # ── opponent match stats (raw) ─────────────────────────────────────────
+        "opponent_recent_match_stats": {
+            "_source": "raw_api_data",
+            "n":       len(opp_match_rows),
+            "matches": opp_match_rows,
+            "_note":   "Raw per-fixture team statistics for opponent's last N completed matches.",
+        },
+
+        # ── press intensity ───────────────────────────────────────────────────
+        "opponent_press_intensity": press_packet,
+
+        # ── opponent concession profile ───────────────────────────────────────
+        "opponent_concession_profile": concession,
+
+        # ── possession + buildup ──────────────────────────────────────────────
+        "possession_context": {
+            "_source":                    "reverse_picks_metric",
+            "opponent_avg_possession":    _poss_avg(opp_match_rows),
+            "opponent_match_stats_n":     len(opp_match_rows),
+            "_note": "Derived from opponent's recent completed fixtures.",
+        },
+        "buildup_proxies": buildup_proxies,
+
+        # ── team quality inputs ───────────────────────────────────────────────
+        "team_quality_inputs": {
+            "_source":            "raw_api_data",
+            "team_standings":     _standings_row(team_id),
+            "opponent_standings": _standings_row(opponent_id),
+        },
+
+        # ── fatigue / rest ────────────────────────────────────────────────────
+        "fatigue_rest_inputs": {
+            "_source":       "reverse_picks_metric",
+            "team_rest":     team_rest,
+            "opponent_rest": opp_rest,
+        },
+
+        # ── injuries ──────────────────────────────────────────────────────────
+        "injuries": {
+            "_source": "raw_api_data",
+            "n":       len(injuries_out),
+            "players": injuries_out,
+        },
+
+        # ── H2H + odds ────────────────────────────────────────────────────────
+        "h2h_team_meetings": {
+            "_source":  "raw_api_data",
+            "meetings": _h2h(),
+        },
+        "odds_context": _odds(),
     })
 
 
