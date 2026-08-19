@@ -807,6 +807,7 @@ export interface PredictionResult {
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
   lineDeviationHitRateN?: number;
+  lineDeviationStatus?: 'available' | 'unavailable' | string;
   sport?: string;
   tacticalAlerts?: string[];
   tacticalContext?: {
@@ -1744,6 +1745,7 @@ interface RawPrediction {
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
   lineDeviationHitRateN?: number;
+  lineDeviationStatus?: string;
   gameScript?: Record<string, unknown>;
   error?: string;
 }
@@ -2261,6 +2263,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     lineDeviationPct: raw.lineDeviationPct ?? undefined,
     lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
     lineDeviationHitRateN: raw.lineDeviationHitRateN ?? undefined,
+    lineDeviationStatus: raw.lineDeviationStatus ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
     analysisFactors: raw.analysisFactors ?? undefined,

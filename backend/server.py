@@ -326,6 +326,21 @@ async def _run_startup_tasks():
                 print(f"[PROP SAFETY] refresh failed: {_e}")
     asyncio.create_task(_prop_safety_loop())
 
+    # Warm the heavier line-deviation evidence reads in the background. The
+    # prediction path shares these cache fills instead of timing out and
+    # falsely exposing a zero-sample default to the user.
+    async def _line_deviation_cache_loop():
+        from calibration import compute_line_deviation_bands
+        import asyncio as _a
+        while True:
+            for _prop_type in ("pass_attempts", "saves"):
+                try:
+                    await compute_line_deviation_bands(_prop_type)
+                except Exception as _e:
+                    print(f"[DEV BANDS] warmup failed for {_prop_type}: {_e}")
+            await _a.sleep(2 * 60 * 60)
+    asyncio.create_task(_line_deviation_cache_loop())
+
     # Calibration alerts: scan per-sport/per-prop walk-forward Brier score
     # and calibration gaps every 6h.  Emits AVOID/RISKY suppression signals
     # when confidence is systematically over-stated for a sport or prop type.

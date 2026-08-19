@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -756,6 +757,80 @@ def calibration_summary(
         "deduplicated_events": len(ordered),
         "source": "db.picks settled verified ledger",
         "no_fake_precision": True,
+    }
+
+
+def line_deviation_ledger_coverage(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Explain why settled rows do or do not qualify for band calibration.
+
+    This is a diagnostic companion to ``compute_line_deviation_bands``. It
+    deliberately reports the exact field gate instead of treating a zero-size
+    band as proof that no historical picks exist.
+    """
+    from calibration import DEVIATION_BANDS
+    from model_metrics import dedupe_prediction_rows
+
+    raw_rows = list(rows)
+    unique_rows = dedupe_prediction_rows(raw_rows)
+    gates = Counter()
+    eligible_by_band = Counter()
+    eligible_by_position = Counter()
+    eligible_by_prop = Counter()
+
+    for row in unique_rows:
+        if str(row.get("status") or "").lower() != "settled":
+            gates["not_settled"] += 1
+            continue
+        if str(row.get("result") or "").lower() not in {"hit", "miss"}:
+            gates["not_directional_result"] += 1
+            continue
+        direction = _row_direction(row)
+        if direction not in {"over", "under"}:
+            gates["not_directional_recommendation"] += 1
+            continue
+
+        projected = _number(row.get("projectedValue"))
+        if projected is None or projected <= 0:
+            gates["missing_projected_value"] += 1
+            continue
+        if _number(row.get("actualValue")) is None:
+            gates["missing_actual_value"] += 1
+            continue
+        line = _number(row.get("line"))
+        if line is None or line <= 0:
+            gates["missing_line"] += 1
+            continue
+
+        deviation = abs(line - projected) / projected
+        band = next(
+            (
+                name for name, lower, upper in DEVIATION_BANDS
+                if lower <= deviation < upper
+            ),
+            None,
+        )
+        if not band:
+            gates["outside_band_definition"] += 1
+            continue
+
+        gates["eligible"] += 1
+        position = str(row.get("position") or row.get("playerPosition") or "UNSPECIFIED").strip() or "UNSPECIFIED"
+        prop_type = str(row.get("propType") or "UNSPECIFIED").strip() or "UNSPECIFIED"
+        eligible_by_band[f"{band}|{direction}"] += 1
+        eligible_by_position[position] += 1
+        eligible_by_prop[prop_type] += 1
+
+    return {
+        "raw_settled_rows": len(raw_rows),
+        "deduplicated_events": len(unique_rows),
+        "field_gate_counts": dict(gates),
+        "eligible_by_band_and_direction": dict(sorted(eligible_by_band.items())),
+        "eligible_by_position": dict(eligible_by_position.most_common()),
+        "eligible_by_prop": dict(eligible_by_prop.most_common()),
+        "note": (
+            "Line-band calibration requires a settled HIT/MISS with directional "
+            "recommendation plus projectedValue, actualValue, and line."
+        ),
     }
 
 

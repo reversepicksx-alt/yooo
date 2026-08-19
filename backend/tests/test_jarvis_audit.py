@@ -7,6 +7,7 @@ from jarvis_audit import (
     build_audit_snapshot,
     calibration_summary,
     implementation_status,
+    line_deviation_ledger_coverage,
     prediction_event_key,
     record_settlement_postmortem,
 )
@@ -234,6 +235,59 @@ def test_calibration_deduplicates_prediction_events_and_reports_metrics():
     assert summary["overall"]["brier_score"] is not None
     assert summary["overall"]["log_loss"] is not None
     assert summary["no_fake_precision"] is True
+
+
+def test_line_deviation_coverage_reports_field_gates_and_position_buckets():
+    rows = [
+        {
+            "sport": "soccer",
+            "fixtureId": 10,
+            "playerId": 1,
+            "propType": "pass_attempts",
+            "line": 35.5,
+            "projectedValue": 30,
+            "actualValue": 38,
+            "recommendation": "over",
+            "result": "hit",
+            "status": "settled",
+            "position": "CAM",
+        },
+        {
+            "sport": "soccer",
+            "fixtureId": 11,
+            "playerId": 2,
+            "propType": "pass_attempts",
+            "line": 35.5,
+            "projectedValue": 30,
+            "recommendation": "under",
+            "result": "miss",
+            "status": "settled",
+            "playerPosition": "GK",
+        },
+        {
+            "sport": "soccer",
+            "fixtureId": 12,
+            "playerId": 3,
+            "propType": "pass_attempts",
+            "line": 35.5,
+            "projectedValue": 30,
+            "actualValue": 28,
+            "recommendation": "pass",
+            "result": "hit",
+            "status": "settled",
+            "position": "CB",
+        },
+    ]
+
+    coverage = line_deviation_ledger_coverage(rows)
+
+    assert coverage["raw_settled_rows"] == 3
+    assert coverage["deduplicated_events"] == 3
+    assert coverage["field_gate_counts"]["eligible"] == 1
+    assert coverage["field_gate_counts"]["missing_actual_value"] == 1
+    assert coverage["field_gate_counts"]["not_directional_recommendation"] == 1
+    assert coverage["eligible_by_position"] == {"CAM": 1}
+    assert coverage["eligible_by_band_and_direction"]["elevated|over"] == 1
 
 
 def test_event_key_is_independent_of_tracking_id():

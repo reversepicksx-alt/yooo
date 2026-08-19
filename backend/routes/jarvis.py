@@ -65,6 +65,7 @@ from jarvis_audit import (
     build_audit_snapshot,
     calibration_summary,
     implementation_status,
+    line_deviation_ledger_coverage,
     persist_prediction_audit,
 )
 
@@ -2025,9 +2026,15 @@ async def jarvis_calibration(
             "opponentId": 1,
             "fixtureId": 1,
             "propType": 1,
+            "sport": 1,
             "line": 1,
+            "projectedValue": 1,
+            "actualValue": 1,
             "recommendation": 1,
+            "passLeaning": 1,
+            "isCalibrationOnly": 1,
             "result": 1,
+            "status": 1,
             "pOver": 1,
             "pUnder": 1,
             "bayesianMetrics": 1,
@@ -2043,6 +2050,8 @@ async def jarvis_calibration(
             "settlementSource": 1,
             "settledAt": 1,
             "timestamp": 1,
+            "trackingId": 1,
+            "pickId": 1,
         },
     ).sort([("settledAt", -1), ("timestamp", -1)]).limit(limit).to_list(length=limit)
     summary = calibration_summary(
@@ -2059,6 +2068,7 @@ async def jarvis_calibration(
         "source": "db.picks settled ledger",
         "generated_at": int(time.time()),
         "calibration": summary,
+        "line_deviation_coverage": line_deviation_ledger_coverage(rows),
         "rows_returned": len(rows),
         "requested_limit": limit,
         "may_be_truncated": len(rows) >= limit,

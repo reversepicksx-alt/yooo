@@ -13927,9 +13927,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                         prop_type=req.propType,
                     ),
                     "line-deviation calibration",
-                    1.0,
-                    {},
+                    4.0,
+                    None,
                 )
+                if not isinstance(_dev_intel, dict) or not _dev_intel:
+                    # Never turn a bounded database timeout into the false
+                    # statement that this band has zero settled examples.
+                    prediction["lineDeviationStatus"] = "unavailable"
+                    prediction["lineDeviationBand"] = None
+                    prediction["lineDeviationHitRate"] = None
+                    prediction["lineDeviationHitRateN"] = None
+                    prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                        "LINE-DEVIATION CALIBRATION: settled-ledger lookup is warming; no band evidence was used."
+                    ]
+                    raise RuntimeError("line-deviation lookup unavailable")
                 _dev_band       = _dev_intel.get("band", "aligned")
                 _dev_pct        = _dev_intel.get("deviationPct", 0)
                 _dev_against    = _dev_intel.get("againstBook", False)
@@ -13944,6 +13955,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 prediction["lineDeviationPct"]     = _dev_pct
                 prediction["lineDeviationHitRate"] = _dev_hit_rate
                 prediction["lineDeviationHitRateN"] = _dev_n
+                prediction["lineDeviationStatus"] = "available"
 
                 # Apply confidence adjustment for non-aligned, against-book bands
                 if _dev_against and _dev_band not in ("aligned",) and abs(_dev_delta) >= 2:

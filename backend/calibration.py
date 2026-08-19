@@ -1250,6 +1250,7 @@ async def nightly_calibration_loop(sport: str = "soccer"):
 # ══════════════════════════════════════════════════════════════════════════
 
 _dev_band_cache: dict = {}
+_dev_band_inflight: dict[str, asyncio.Task] = {}
 _DEV_BAND_TTL = 7200  # 2 hours
 
 DEVIATION_BANDS = [
@@ -1296,6 +1297,36 @@ async def compute_line_deviation_bands(
     cached = _dev_band_cache.get(cache_key)
     if cached and (_time.time() - cached["ts"]) < _DEV_BAND_TTL:
         return cached["data"]
+
+    # A cold Atlas read can take longer than the prediction endpoint's response
+    # budget. Keep one shared refresh alive when its first waiter times out, so
+    # the next prediction reads the warmed two-hour cache instead of repeatedly
+    # reporting a misleading n=0 default.
+    task = _dev_band_inflight.get(cache_key)
+    if task is None or task.done():
+        task = asyncio.create_task(
+            _refresh_line_deviation_bands(
+                prop_type=prop_type,
+                min_samples=min_samples,
+                cache_key=cache_key,
+            )
+        )
+        _dev_band_inflight[cache_key] = task
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if task.done() and _dev_band_inflight.get(cache_key) is task:
+            _dev_band_inflight.pop(cache_key, None)
+
+
+async def _refresh_line_deviation_bands(
+    *,
+    prop_type: str | None,
+    min_samples: int,
+    cache_key: str,
+) -> dict:
+    """Populate one deviation-band cache entry without caller cancellation."""
+    import time as _time
 
     query = {
         "status": "settled",
