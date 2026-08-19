@@ -331,6 +331,42 @@ def _first_goal_modules(prediction: dict[str, Any]) -> dict[str, dict[str, Any]]
     }
 
 
+def _news_intelligence_module(prediction: dict[str, Any]) -> dict[str, Any]:
+    """Normalize current-news evidence into one mandatory shadow audit module."""
+    packet = prediction.get("newsIntelligence")
+    if not isinstance(packet, dict):
+        reason = "Current team news was not attached to this audit snapshot."
+        return _module(
+            "unavailable",
+            source="dynamic_news_research_and_confirmed_lineups",
+            values={
+                "status": "unavailable",
+                "projection_influence": "shadow_only",
+                "math_unchanged": True,
+                "expected_lineup": "UNKNOWN",
+                "target_start_probability": "UNKNOWN",
+                "minutes_risk": "UNKNOWN",
+                "expected_role": "UNKNOWN",
+                "formation": "UNKNOWN",
+                "important_teammate_changes": "UNKNOWN",
+                "lineup_confidence": "UNKNOWN",
+                "regime_changes": "UNKNOWN",
+                "news_warnings": [],
+                "news_brief": reason,
+            },
+            reason=reason,
+        )
+    status = str(packet.get("status") or "unavailable").lower()
+    if status not in {"available", "partial", "unavailable"}:
+        status = "partial"
+    return _module(
+        status,
+        source=str(packet.get("source") or "dynamic_news_research_and_confirmed_lineups"),
+        values=packet,
+        reason=packet.get("reason") if status == "unavailable" else None,
+    )
+
+
 def build_audit_snapshot(
     prediction: dict[str, Any],
     request: dict[str, Any],
@@ -390,6 +426,7 @@ def build_audit_snapshot(
     anomalies = _anomalies(anomaly_input, eq, stat_definition)
     evidence_score = _number(eq.get("score"))
     first_goal_modules = _first_goal_modules(prediction)
+    news_intelligence_module = _news_intelligence_module(prediction)
 
     return {
         "schema_version": AUDIT_SCHEMA_VERSION,
@@ -461,6 +498,7 @@ def build_audit_snapshot(
             "game_state": first_goal_modules["game_state"],
             "first_goal_market": first_goal_modules["first_goal_market"],
             "first_goal_regime_change": first_goal_modules["first_goal_regime_change"],
+            "news_intelligence": news_intelligence_module,
             "market_movement": _module("unknown", source="saved_prediction_input", reason="Timestamped opening/current/closing line history is unavailable unless separately captured."),
             "anomaly_detection": anomalies,
             "evidence_quality": _module(

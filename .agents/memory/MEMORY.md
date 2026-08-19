@@ -146,3 +146,4 @@
 - [JARVIS audit calibration reads](jarvis-audit-calibration.md) — use inclusion-only, indexed bounded settled-ledger reads and expose truncation instead of implying partial data is lifetime truth.
 - [Settlement prop aliases](settlement-prop-aliases.md) — empirical history must canonicalize labels that share one provider settlement field or valid samples appear unavailable.
 - [First-goal audit response](first-goal-audit-response.md) — full-audit must independently preserve shadow-only first-goal evidence when the core prediction times out late enrichment; normalize API list/envelope shapes and never cache temporary misses as data.
+- [Soccer news intelligence](soccer-news-intelligence.md) — current web evidence must be entity-matched, dated, and fresh; incomplete lineups stay UNKNOWN; all news remains shadow-only.

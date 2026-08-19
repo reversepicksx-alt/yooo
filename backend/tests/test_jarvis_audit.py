@@ -101,6 +101,45 @@ def test_audit_labels_missing_first_goal_data_as_unavailable_not_not_started():
     assert snapshot["modules"]["first_goal_regime_change"]["status"] == "unavailable"
 
 
+def test_audit_always_includes_unknown_safe_news_intelligence():
+    snapshot = build_audit_snapshot(
+        _prediction(),
+        {"fixture_id": 123, "player_id": 456, "prop_type": "pass_attempts", "line": 57.5},
+    )
+
+    module = snapshot["modules"]["news_intelligence"]
+    assert module["status"] == "unavailable"
+    assert module["values"]["expected_lineup"] == "UNKNOWN"
+    assert module["values"]["target_start_probability"] == "UNKNOWN"
+    assert module["values"]["projection_influence"] == "shadow_only"
+    assert snapshot["rp_snapshot"]["projectedValue"] == 48.2
+    assert snapshot["probability"]["p_under"] == 78.0
+
+
+def test_audit_promotes_news_packet_without_changing_rp_math():
+    packet = {
+        "status": "available",
+        "source": "dynamic_news_research_and_confirmed_lineups",
+        "projection_influence": "shadow_only",
+        "math_unchanged": True,
+        "expected_lineup": {"status": "CONFIRMED"},
+        "target_start_probability": 1.0,
+        "minutes_risk": "LOW",
+        "news_brief": "Confirmed starter.",
+        "news_warnings": [],
+    }
+    snapshot = build_audit_snapshot(
+        _prediction(newsIntelligence=packet),
+        {"fixture_id": 123, "player_id": 456, "prop_type": "pass_attempts", "line": 57.5},
+    )
+
+    assert snapshot["modules"]["news_intelligence"]["status"] == "available"
+    assert snapshot["modules"]["news_intelligence"]["values"] == packet
+    assert snapshot["rp_snapshot"]["projectedValue"] == 48.2
+    assert snapshot["probability"]["p_over"] == 22.0
+    assert snapshot["verdict"]["audit_decision"] == "RP_RECOMMENDATION_UNCHANGED"
+
+
 def test_audit_fingerprint_is_stable_when_capture_time_changes():
     request = {"fixture_id": 123, "player_id": 456, "prop_type": "shots", "line": 2.5}
     first = build_audit_snapshot(_prediction(propType="shots"), request)

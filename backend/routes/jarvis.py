@@ -315,11 +315,12 @@ async def jarvis_openapi():
                 "/api/jarvis/audit-status when reporting audit coverage. Never "
                 "rerun or override Reverse Picks math with audit values."
             ),
-            "version": "3.0.0",
+            "version": "3.1.0",
             "x-jarvis-mandatory-workflow": [
                 "Resolve the fixture and player first.",
                 "Call runFullSoccerAudit exactly once per analysis.",
                 "Use rp_prediction for recommendation, projection, and probabilities.",
+                "Review jarvis_brief.news_intelligence for current lineup, availability, contradiction, and rerun warnings without overriding RP math.",
                 "Call getCalibration before the final answer.",
                 "Call getStatDefinitions for an unknown or ambiguous prop.",
                 "Call getAuditStatus when reporting which audit phases ran.",
@@ -388,7 +389,7 @@ async def jarvis_openapi():
                 "post": {
                     "operationId": "runFullSoccerAudit",
                     "summary": "MANDATORY: Run RP once and return a separate JARVIS audit packet.",
-                    "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. `audit.modules.game_state`, `first_goal_market`, and `first_goal_regime_change` expose completed-fixture first-goal evidence when available; all remain shadow-only and never alter RP math.",
+                    "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. `audit.modules.game_state`, `first_goal_market`, and `first_goal_regime_change` expose completed-fixture first-goal evidence when available. The mandatory `audit.modules.news_intelligence` packet dynamically researches current club and competition sources, confirmed lineups, injuries, role/tactical changes, teammate availability, contradictions, and confirmed-lineup drift. Every news finding keeps source URL/name, timestamp, source tier, fact/analysis/speculation classification, and confidence. Missing evidence is `UNKNOWN`; material confirmed-lineup differences flag a rerun but never alter RP math.",
                     "requestBody": {
                         "required": True,
                         "content": {
@@ -410,7 +411,7 @@ async def jarvis_openapi():
                         },
                     },
                     "responses": {
-                        "200": {"description": "RP diagnostic plus independent audit packet. jarvis_brief includes game_state, first_goal_market, and first_goal_regime_change."},
+                        "200": {"description": "RP diagnostic plus independent audit packet. jarvis_brief includes game_state, first_goal_market, first_goal_regime_change, news_intelligence, news_brief, news_warnings, and lineup_rerun_required."},
                         "401": {"description": "Invalid or missing JARVIS bearer token."},
                         "404": {"description": "Audit feature disabled."},
                         "422": {"description": "Fixture/player could not be resolved."},
@@ -839,7 +840,7 @@ async def jarvis_docs():
     base = "https://reversepicks.com"
     return JSONResponse(content={
         "service": "JARVIS Football API",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "base_url": base,
         "openapi_schema": f"{base}/api/jarvis/openapi.json",
         "authentication": {
@@ -874,6 +875,8 @@ async def jarvis_docs():
             "interpretation": [
                 "Use audit.rp_prediction for the production recommendation, projection, and probabilities.",
                 "Treat audit.modules as provenance-labeled evidence, not a probability override.",
+                "Review audit.modules.news_intelligence for current sources, UNKNOWN fields, contradictions, and confirmed-lineup drift.",
+                "If lineup_rerun_required is true, flag the prediction for review or rerun; the current response remains unchanged.",
                 "Never rerun Reverse Picks to manufacture disagreement and never let audit values change the saved pick.",
             ],
         },
@@ -1224,13 +1227,26 @@ async def _resolve_soccer_context(fixture_id: int, player_id: int) -> dict:
 
     return {
         "player_name":        player_name,
+        "player_id":          player_id,
         "team_id":            player_team_id,
         "team_name":          team_name,
         "opponent_id":        opponent_id,
         "opponent_name":      opponent_name,
         "venue":              venue,
         "league_id":          league_id,
+        "league_name":        ctx.get("league_name"),
+        "competition_country": ctx.get("country"),
         "season":             season,
+        "fixture_id":         fixture_id,
+        "fixture_date":       ctx.get("date"),
+        "fixture_status":     ctx.get("status_short"),
+        "fixture_round":      ctx.get("round"),
+        "fixture_venue":      ctx.get("venue"),
+        "fixture_city":       ctx.get("city"),
+        "home_team_id":       home_id,
+        "home_team_name":     home_name,
+        "away_team_id":       away_id,
+        "away_team_name":     away_name,
         "_resolution_source": resolution_source,
     }
 
@@ -1456,6 +1472,21 @@ def _audit_first_goal_brief(audit: dict) -> dict:
     }
 
 
+def _audit_news_brief(audit: dict) -> dict:
+    """Expose the mandatory shadow news packet in the compact JARVIS brief."""
+    modules = audit.get("modules") if isinstance(audit.get("modules"), dict) else {}
+    module = modules.get("news_intelligence") if isinstance(modules.get("news_intelligence"), dict) else {}
+    values = module.get("values") if isinstance(module.get("values"), dict) else {}
+    return {
+        "news_intelligence": values,
+        "news_brief": values.get("news_brief"),
+        "news_warnings": values.get("news_warnings") or [],
+        "lineup_rerun_required": bool(
+            (values.get("confirmed_lineup_comparison") or {}).get("rerun_required")
+        ),
+    }
+
+
 async def _ensure_full_audit_first_goal_context(
     result: dict,
     ctx: dict,
@@ -1504,6 +1535,56 @@ async def _ensure_full_audit_first_goal_context(
     if isinstance(factors, dict):
         factors["firstGoalMarket"] = market
         factors["firstGoalRegimeChange"] = regime
+
+
+async def _ensure_full_audit_news_context(
+    result: dict,
+    ctx: dict,
+    fixture_id: int,
+) -> None:
+    """Research current team news after the immutable RP prediction is complete."""
+    from news_intelligence import run_news_intelligence, unknown_news_intelligence
+
+    async def _research_within_budget() -> dict:
+        try:
+            lineups_payload, injuries_payload = await asyncio.wait_for(
+                asyncio.gather(
+                    _sports_get_safe(
+                        "fixtures/lineups",
+                        {"fixture": fixture_id},
+                        cache_ttl=60,
+                    ),
+                    _sports_get_safe(
+                        "injuries",
+                        {"fixture": fixture_id},
+                        cache_ttl=60,
+                    ),
+                ),
+                timeout=4.0,
+            )
+        except Exception:
+            lineups_payload, injuries_payload = None, None
+        return await run_news_intelligence(
+            context=ctx,
+            prediction=result,
+            db=db,
+            lineups_payload=lineups_payload,
+            injuries_payload=injuries_payload,
+        )
+
+    try:
+        packet = await asyncio.wait_for(
+            _research_within_budget(),
+            timeout=18.0,
+        )
+    except Exception as exc:
+        packet = unknown_news_intelligence(
+            f"Current news research was unavailable: {type(exc).__name__}."
+        )
+
+    # This assignment happens only after _rp_predict returned. The packet is
+    # response metadata for the audit and is never read by prediction math.
+    result["newsIntelligence"] = packet
 
 
 class JarvisSoccerPredictBody(BaseModel):
@@ -1880,11 +1961,16 @@ async def jarvis_full_audit_soccer(
         )
 
     ctx, result = await _run_soccer_prediction(body)
-    await _ensure_full_audit_first_goal_context(result, ctx, body.prop_type)
+    await asyncio.gather(
+        _ensure_full_audit_first_goal_context(result, ctx, body.prop_type),
+        _ensure_full_audit_news_context(result, ctx, body.fixture_id),
+        return_exceptions=True,
+    )
     audit = build_audit_snapshot(result, _soccer_audit_request(body), context=ctx)
     rp_diagnostic = _build_soccer_diagnostic(result)
     jarvis_brief = dict(rp_diagnostic.get("final") or {})
     jarvis_brief.update(_audit_first_goal_brief(audit))
+    jarvis_brief.update(_audit_news_brief(audit))
     return {
         "source": "jarvis/full-audit/soccer",
         "generated_at": int(time.time()),
