@@ -1137,11 +1137,14 @@ async def _discard_dnp_pick(
     email: str | None = None,
     reason: str = "",
 ) -> int:
-    """Delete a pick once a verified settlement says the player did not play.
+    """Preserve a questionable DNP as a review record instead of deleting it.
 
-    DNP is a discard state, not a user-facing result.  Keep the identity
-    scoped when an email is known; settlement helpers sometimes receive an
-    in-memory request-shaped pick without the persisted email field.
+    A missing player row can be caused by a transient provider response or
+    quota pressure.  Physical deletion made a legitimate saved pick
+    unrecoverable before an exact fixture/player read could correct it.
+    Settlement helpers sometimes receive an in-memory request-shaped pick
+    without the persisted email field, so identity remains email-scoped when
+    it is available.
     """
     pick_id = pick.get("pickId") or pick.get("id")
     if not pick_id:
@@ -1151,18 +1154,92 @@ async def _discard_dnp_pick(
     if owner_email:
         query["email"] = owner_email
     try:
-        deleted = await db.picks.delete_many(query)
-        count = int(deleted.deleted_count or 0)
+        now = datetime.now(timezone.utc).isoformat()
+        actual_value = pick.get("actualValue")
+        if _has_soccer_stat_evidence(pick):
+            settled_result, pass_outcome = _settle_pick_result(
+                actual_value,
+                pick.get("line", 0),
+                pick,
+            )
+            set_fields = {
+                "status": "settled",
+                "result": settled_result,
+                "actualValue": actual_value,
+                "hitPct": (
+                    100 if settled_result == "hit"
+                    else 50 if settled_result == "push"
+                    else 0
+                ),
+                "settlementCorrection": {
+                    "reason": "positive provider stat overrides DNP classification",
+                    "correctedAt": now,
+                },
+            }
+            if pass_outcome:
+                set_fields["passOutcome"] = pass_outcome
+            update_result = await db.picks.update_one(
+                query,
+                {
+                    "$set": set_fields,
+                    "$unset": {
+                        "voidReason": "",
+                        "settlementReview": "",
+                        "settlementReviewReason": "",
+                        "settlementReviewAt": "",
+                    },
+                },
+            )
+            pick.update(set_fields)
+            pick.pop("voidReason", None)
+            pick.pop("settlementReview", None)
+            pick.pop("settlementReviewReason", None)
+            pick.pop("settlementReviewAt", None)
+            count = int(getattr(update_result, "modified_count", 0) or 0)
+            print(
+                f"[DNP-REPAIR] {pick.get('playerName', '?')} "
+                f"{pick.get('propType', '?')} pick={pick_id} "
+                f"actual={actual_value} result={settled_result}"
+            )
+        else:
+            review = {
+                "kind": "dnp",
+                "reason": reason or "Provider did not verify player participation",
+                "createdAt": now,
+                "retryable": True,
+            }
+            update_result = await db.picks.update_one(
+                query,
+                {
+                    "$set": {
+                        "status": "pending_review",
+                        "result": "pending_review",
+                        "settlementReview": review,
+                        "settlementReviewReason": review["reason"],
+                        "settlementReviewAt": now,
+                    },
+                    "$unset": {"voidReason": ""},
+                },
+            )
+            pick.update({
+                "status": "pending_review",
+                "result": "pending_review",
+                "settlementReview": review,
+                "settlementReviewReason": review["reason"],
+                "settlementReviewAt": now,
+            })
+            pick.pop("voidReason", None)
+            count = int(getattr(update_result, "modified_count", 0) or 0)
+            print(
+                f"[DNP-REVIEW] {pick.get('playerName', '?')} "
+                f"{pick.get('propType', '?')} pick={pick_id} "
+                f"review={review['reason']}"
+            )
         if owner_email:
             _picks_list_cache.pop(owner_email, None)
-        print(
-            f"[DNP-DISCARD] {pick.get('playerName', '?')} "
-            f"{pick.get('propType', '?')} pick={pick_id} deleted={count}"
-            + (f" reason={reason}" if reason else "")
-        )
         return count
     except Exception as exc:
-        print(f"[DNP-DISCARD] delete failed for {pick_id}: {exc}")
+        print(f"[DNP-REVIEW] update failed for {pick_id}: {exc}")
         return 0
 
 
@@ -1414,14 +1491,9 @@ async def list_picks(req: GetPicksRequest):
     # Calibration and analytics independently read the full collection.
     _atlas_read_blocked = False
     try:
-        # Existing DNP rows are legacy clutter. Clean them only in the
-        # background refresh; deleting before the compact read made the first
-        # My Picks request wait on a write that is unrelated to rendering.
-        if _picks_list_background.get():
-            await db.picks.delete_many({
-                "email": requester_email,
-                "result": {"$regex": r"^dnp$", "$options": "i"},
-            })
+        # Existing DNP rows remain durable until an exact refresh resolves
+        # them.  Never delete them as cache cleanup: a missing provider row can
+        # be transient and must remain recoverable.
         picks = await db.picks.find(
             {"email": requester_email},
             _PICKS_LIST_PROJECTION,
@@ -1554,12 +1626,10 @@ async def list_picks(req: GetPicksRequest):
             continue
         pick_email = _pick_email(p)
 
-        # DNP is intentionally not retained as a settled card. This catches
-        # legacy rows and any provider-specific worker that handed us a DNP
-        # before the new discard policy was deployed.
+        # Legacy/provider DNP rows are moved to durable review instead of
+        # being deleted or marked as discarded in the response.
         if str(p.get("result") or "").lower() == "dnp":
             await _discard_dnp_pick(p, pick_email, "existing DNP row")
-            p["_discardedDnp"] = True
             continue
 
         # ── DNP / early-sub guard ────────────────────────────────────────────
@@ -1584,7 +1654,6 @@ async def list_picks(req: GetPicksRequest):
                 if _sport == "soccer" else f"DNP ({_sport})"
             )
             await _discard_dnp_pick(p, pick_email, void_label)
-            p["_discardedDnp"] = True
             continue
 
         # Repair an already-settled false DNP in-place the next time the
@@ -1866,7 +1935,6 @@ async def list_picks(req: GetPicksRequest):
                     continue
                 if str(settled.get("result") or "").lower() == "dnp":
                     await _discard_dnp_pick(p, req.email, "CS2 settlement")
-                    p["_discardedDnp"] = True
                     continue
                 p["status"]      = "settled"
                 p["result"]      = settled.get("result", "pending")
@@ -1905,7 +1973,6 @@ async def list_picks(req: GetPicksRequest):
                     continue
                 if str(settled.get("result") or "").lower() == "dnp":
                     await _discard_dnp_pick(p, req.email, "WTA settlement")
-                    p["_discardedDnp"] = True
                     continue
                 p["status"]      = "settled"
                 p["result"]      = settled.get("result", "pending")
@@ -1927,7 +1994,6 @@ async def list_picks(req: GetPicksRequest):
                 if upd:
                     if str(upd.get("result") or "").lower() == "dnp":
                         await _discard_dnp_pick(p, req.email, "BDL settlement")
-                        p["_discardedDnp"] = True
                         continue
                     p["currentValue"] = upd.get("currentValue")
                     p["pace"]         = upd.get("pace")
@@ -1965,7 +2031,6 @@ async def list_picks(req: GetPicksRequest):
                 if upd:
                     if str(upd.get("result") or "").lower() == "dnp":
                         await _discard_dnp_pick(p, req.email, "soccer settlement")
-                        p["_discardedDnp"] = True
                         continue
                     # Never erase the last confirmed live stat because a
                     # provider poll temporarily omitted the player row.  A
@@ -2225,7 +2290,6 @@ async def list_picks(req: GetPicksRequest):
                                 pick_email,
                                 refreshed["voidReason"],
                             )
-                            p["_discardedDnp"] = True
                             print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: DNP/VOID ({refreshed['voidReason']})")
                             continue
                         else:
@@ -2299,7 +2363,6 @@ async def list_picks(req: GetPicksRequest):
     visible_picks = [
         p for p in picks
         if p.get("hiddenFromUser") is not True
-        and p.get("_discardedDnp") is not True
         and str(p.get("result") or "").lower() != "dnp"
     ]
     await _enrich_owner_media(visible_picks, requester_email)
@@ -3293,8 +3356,8 @@ SOCCER_STAT_MAP = {
     "shots_on_target": lambda s: _soccer_stat_section(s, "shots").get("on"),
     "tackles": lambda s: _soccer_stat_section(s, "tackles").get("total"),
     "key_passes": lambda s: _soccer_stat_section(s, "passes").get("key"),
-    "saves": lambda s: _soccer_stat_section(s, "goals").get("saves"),
-    "goalie_saves": lambda s: _soccer_stat_section(s, "goals").get("saves"),
+    "saves": lambda s: _soccer_stat_section(s, "goals").get("saves") or 0,
+    "goalie_saves": lambda s: _soccer_stat_section(s, "goals").get("saves") or 0,
     "interceptions": lambda s: _soccer_stat_section(s, "tackles").get("interceptions"),
     "blocks": lambda s: _soccer_stat_section(s, "tackles").get("blocks"),
     "dribbles": lambda s: _soccer_stat_section(s, "dribbles").get("attempts"),
@@ -4575,7 +4638,6 @@ async def _build_bdl_soccer_update(
     settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
     if result_str == "dnp":
         await _discard_dnp_pick(pick, email, update.get("voidReason") or "BDL soccer settlement")
-        update["_discardedDnp"] = True
         return update
 
     update["result"]      = result_str
@@ -5073,7 +5135,6 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 email,
                 "Player not in finished matchday squad",
             )
-            update["_discardedDnp"] = True
             return update
 
         # If stat came back as None (API didn't return the field), defer to background loop
@@ -5132,7 +5193,6 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 email,
                 update.get("voidReason") or "API-Football soccer settlement",
             )
-            update["_discardedDnp"] = True
             return update
         # Capture final score + scenario bucket for scenario_priors mining
         try:

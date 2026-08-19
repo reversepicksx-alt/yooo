@@ -106,17 +106,17 @@ def test_zero_stat_does_not_prove_soccer_participation():
     assert _has_soccer_stat_evidence(pick) is False
 
 
-def test_dnp_discard_deletes_pick_and_invalidates_list_cache(monkeypatch):
-    class DeleteResult:
-        deleted_count = 1
+def test_dnp_discard_preserves_pick_for_review_and_invalidates_list_cache(monkeypatch):
+    class UpdateResult:
+        modified_count = 1
 
     class FakePicks:
         def __init__(self):
             self.queries = []
 
-        async def delete_many(self, query):
-            self.queries.append(query)
-            return DeleteResult()
+        async def update_one(self, query, update):
+            self.queries.append((query, update))
+            return UpdateResult()
 
     class FakeDB:
         def __init__(self):
@@ -130,31 +130,72 @@ def test_dnp_discard_deletes_pick_and_invalidates_list_cache(monkeypatch):
         {"subscriber@example.com": {"ts": 1, "picks": []}},
     )
 
-    deleted = asyncio.run(
+    reviewed = asyncio.run(
         _discard_dnp_pick(
             {"pickId": "pick-dnp-1", "email": "Subscriber@Example.com"},
             reason="player not in finished squad",
         )
     )
 
-    assert deleted == 1
-    assert fake_db.picks.queries == [{
+    assert reviewed == 1
+    query, update = fake_db.picks.queries[0]
+    assert query == {
         "pickId": "pick-dnp-1",
         "email": "subscriber@example.com",
-    }]
+    }
+    assert update["$set"]["status"] == "pending_review"
+    assert update["$set"]["result"] == "pending_review"
+    assert update["$set"]["settlementReview"]["retryable"] is True
     assert "subscriber@example.com" not in picks_routes._picks_list_cache
 
 
 def test_dnp_discard_without_identity_is_a_noop(monkeypatch):
     class FakePicks:
-        async def delete_many(self, query):
-            raise AssertionError("a pick without an id must not be deleted")
+        async def update_one(self, query, update):
+            raise AssertionError("a pick without an id must not be updated")
 
     class FakeDB:
         picks = FakePicks()
 
     monkeypatch.setattr(picks_routes, "db", FakeDB())
     assert asyncio.run(_discard_dnp_pick({"playerName": "No ID"})) == 0
+
+
+def test_positive_pass_stat_repairs_instead_of_reviewing_as_dnp(monkeypatch):
+    class UpdateResult:
+        modified_count = 1
+
+    class FakePicks:
+        def __init__(self):
+            self.update = None
+
+        async def update_one(self, query, update):
+            self.update = (query, update)
+            return UpdateResult()
+
+    class FakeDB:
+        def __init__(self):
+            self.picks = FakePicks()
+
+    fake_db = FakeDB()
+    monkeypatch.setattr(picks_routes, "db", fake_db)
+    pick = {
+        "pickId": "pick-muslera-1",
+        "email": "subscriber@example.com",
+        "sport": "soccer",
+        "propType": "pass_attempts",
+        "line": 26.5,
+        "recommendation": "over",
+        "actualValue": 27,
+        "result": "dnp",
+    }
+
+    assert asyncio.run(_discard_dnp_pick(pick, reason="temporary provider miss")) == 1
+    assert pick["status"] == "settled"
+    assert pick["result"] == "hit"
+    assert pick["actualValue"] == 27
+    assert pick["hitPct"] == 100
+    assert "$unset" in fake_db.picks.update[1]
 
 
 def test_stat_evidence_is_not_applied_to_non_soccer_picks():

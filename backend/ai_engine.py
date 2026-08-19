@@ -852,13 +852,13 @@ async def _refresh_recent_soccer_settlements(
 
             if new_result == "dnp":
                 from routes.picks import _discard_dnp_pick
-                deleted = await _discard_dnp_pick(
+                reviewed = await _discard_dnp_pick(
                     pick_doc,
                     pick_doc.get("email"),
                     result.get("voidReason") or "final settlement refresh",
                 )
-                entry["action"] = "discarded-dnp" if deleted else "dnp-not-found"
-                if deleted:
+                entry["action"] = "settlement-review" if reviewed else "review-update-failed"
+                if reviewed:
                     repaired += 1
                 entries.append(entry)
                 continue
