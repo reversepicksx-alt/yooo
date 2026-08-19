@@ -308,35 +308,20 @@ async def jarvis_openapi():
             "/api/jarvis/tactical-evidence": {
                 "get": {
                     "operationId": "getTacticalEvidence",
-                    "summary": "Raw + derived tactical evidence for one player in one fixture",
+                    "summary": "Raw + derived evidence for one player in one fixture",
                     "description": (
-                        "Returns every observable data layer for a player matchup without running the prediction pipeline. "
-                        "Sections: fixture/player identity, season profile, confirmed lineup position + grid, "
-                        "last 8 match logs (all raw API fields), per-90 values, home/away splits, "
-                        "prop-specific summary (if prop_type given), team/opponent season stats, "
-                        "opponent recent match stats, press intensity index, opponent concession profile, "
-                        "possession history, buildup proxies, fatigue/rest days, injuries, H2H, odds. "
-                        "Each section carries _source: raw_api_data | reverse_picks_metric | unavailable."
+                        "Raw evidence for one player/fixture — does NOT run the prediction pipeline. "
+                        "Sections: match logs, per-90s, home/away splits, lineup grid, season stats, "
+                        "press intensity, concession profile, possession, buildup proxies, rest days, "
+                        "injuries, H2H, odds. Every section carries a _source label."
                     ),
                     "parameters": [
-                        _param("fixture_id", "integer", True,  "API-Sports fixture ID — resolves both teams, venue, league, and season automatically."),
+                        _param("fixture_id", "integer", True,  "Fixture ID — auto-resolves both teams, venue, league, season."),
                         _param("player_id",  "integer", True,  "API-Sports player ID."),
-                        _param("prop_type",  "string",  False, "Optional: pass_attempts | shots | shots_on_target | tackles | clearances | saves | goals | key_passes | dribbles | interceptions | blocks | crosses | fouls_drawn | fouls_committed | duels_won. Enables prop-specific summary and opponent concession estimate."),
+                        _param("prop_type",  "string",  False, "pass_attempts | shots | shots_on_target | tackles | clearances | saves | goals | key_passes | dribbles | interceptions | blocks | crosses | fouls_drawn | fouls_committed | duels_won"),
                     ],
                     "responses": {
-                        "200": {
-                            "description": (
-                                "Comprehensive tactical evidence bundle. Key top-level keys: "
-                                "fixture_identity, player_identity, player_season_profile, "
-                                "this_fixture_lineup, player_recent_logs, player_per_90, "
-                                "player_home_splits, player_away_splits, prop_specific_evidence, "
-                                "this_fixture_stats, team_season_stats, team_standings, team_recent_form, "
-                                "opponent_season_stats, opponent_standings, opponent_recent_form, "
-                                "opponent_recent_match_stats, opponent_press_intensity, "
-                                "opponent_concession_profile, possession_context, buildup_proxies, "
-                                "team_quality_inputs, fatigue_rest_inputs, injuries, h2h_team_meetings, odds_context."
-                            )
-                        },
+                        "200": {"description": "Tactical evidence bundle with _source labels on every section."},
                         "401": {"description": "Invalid or missing bearer token."},
                         "404": {"description": "Fixture not found."},
                         "422": {"description": "Could not resolve player in fixture."},
