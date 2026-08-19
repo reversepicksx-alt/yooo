@@ -304,6 +304,51 @@ async def jarvis_openapi():
                     },
                 }
             },
+            # ── ROLE PROFILE ──────────────────────────────────────────────────
+            "/api/jarvis/role-profile": {
+                "get": {
+                    "operationId": "getRoleProfile",
+                    "summary": "Granular tactical role for one player in one fixture",
+                    "description": (
+                        "Returns observed JARVIS role (ball-playing CB, destroyer 6, single pivot, inside forward, etc.), "
+                        "confidence + evidence chain, grid slot, formation context, teammate layout by zone, "
+                        "buildup/defensive indicators, and recent role history. No AI calls — fully deterministic."
+                    ),
+                    "parameters": [
+                        _param("fixture_id", "integer", True, "Fixture ID — auto-resolves both teams, venue, league, season."),
+                        _param("player_id",  "integer", True, "API-Sports player ID."),
+                    ],
+                    "responses": {
+                        "200": {"description": "Role profile: observed_tactical_role, role_confidence, evidence_used, formation_context, teammate_context, buildup_responsibility, defensive_responsibility, recent_role_history, position_group_for_cohort."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "Fixture not found."},
+                        "422": {"description": "Could not resolve player in fixture."},
+                    },
+                }
+            },
+            # ── ROLE OPPONENT COHORT ───────────────────────────────────────────
+            "/api/jarvis/role-opponent-cohort": {
+                "get": {
+                    "operationId": "getRoleOpponentCohort",
+                    "summary": "Role-matched players who faced this opponent recently",
+                    "description": (
+                        "Identifies the player's JARVIS role, then finds players in the same position group "
+                        "who played ≥45min against the opponent in their last 6 fixtures. "
+                        "Returns per-player match stats and a prop aggregate when prop_type is provided."
+                    ),
+                    "parameters": [
+                        _param("fixture_id", "integer", True,  "Fixture ID — auto-resolves opponent."),
+                        _param("player_id",  "integer", True,  "API-Sports player ID."),
+                        _param("prop_type",  "string",  False, "pass_attempts | shots | shots_on_target | tackles | clearances | key_passes | dribbles | crosses | goals | interceptions | blocks"),
+                    ],
+                    "responses": {
+                        "200": {"description": "Cohort with player_identity, opponent info, cohort_filter, n_cohort_players, cohort_players (per-match stats), and cohort_aggregate (avg/max/min/median/values for prop)."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "Fixture not found."},
+                        "422": {"description": "Could not resolve player in fixture."},
+                    },
+                }
+            },
             # ── TACTICAL EVIDENCE ─────────────────────────────────────────────
             "/api/jarvis/tactical-evidence": {
                 "get": {
@@ -525,6 +570,7 @@ async def jarvis_docs():
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
             "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
             "tactical_evidence": ["/api/jarvis/tactical-evidence"],
+            "role_analysis": ["/api/jarvis/role-profile", "/api/jarvis/role-opponent-cohort"],
             "aggregator": ["/api/jarvis/match-context"],
             "fixture_detail": [
                 "/api/jarvis/fixture/stats",
@@ -1145,6 +1191,905 @@ async def jarvis_predict_soccer(
         "source":       "jarvis/predict/soccer",
         "generated_at": int(time.time()),
         "diagnostic":   diagnostic,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JARVIS ROLE CLASSIFICATION — granular tactical-role layer (no AI calls)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Map existing ai_positions system roles → JARVIS granular role names
+_EXISTING_TO_JARVIS: dict[str, str] = {
+    "Shot-Stopper":        "Shot-Stopper",
+    "Sweeper Keeper":      "Sweeper Keeper",
+    "Ball-Playing CB":     "Ball-Playing CB",
+    "Stopper":             "Stopper CB",
+    "Fullback":            "Overlapping FB",
+    "Wing-Back":           "Overlapping FB",
+    "Inverted Fullback":   "Inverted FB",
+    "Anchor":              "Single Pivot",
+    "Ball Winner":         "Destroyer 6",
+    "Deep-Lying Playmaker":"Deep-Lying Playmaker",
+    "Box-to-Box":          "Box-to-Box 8",
+    "Mezzala":             "Advanced 8",
+    "Advanced Playmaker":  "Attacking Midfielder",
+    "Wide Playmaker":      "Wide Playmaker",
+    "Traditional Winger":  "Touchline Winger",
+    "Inverted Winger":     "Inside Forward",
+    "Progressive Carrier": "Inside Forward",
+    "Inside Forward":      "Inside Forward",
+    "Target Man":          "Target Striker",
+    "Poacher":             "Pressing Striker",
+    "Complete Forward":    "Target Striker",
+    "Pressing Forward":    "Pressing Striker",
+    "False 9":             "False 9",
+    "Shadow Striker":      "Second Striker",
+}
+
+_JARVIS_ROLE_DESC: dict[str, str] = {
+    "Ball-Playing CB":         "Central defender initiating buildup with high-volume passing; comfortable under pressure.",
+    "Stopper CB":              "Dominant CB prioritising aerial duels, clearances, and blocking passing lanes.",
+    "Wide CB":                 "Outer CB in a back-three/five who carries forward and provides width like a fullback.",
+    "Overlapping FB":          "Fullback making attacking runs into the final third and delivering crosses from deep.",
+    "Inverted FB":             "Fullback cutting inside into halfspace to create overloads and progress centrally.",
+    "Defensive FB":            "Disciplined fullback whose primary duty is defensive cover with minimal attacking runs.",
+    "Destroyer 6":             "Aggressive CDM winning duels and breaking up play; limited creative output.",
+    "Deep-Lying Playmaker":    "Deepest midfielder dictating tempo through high-volume short-to-medium passing.",
+    "Single Pivot":            "Lone CDM providing defensive screening as the sole shield in front of the backline.",
+    "Double-Pivot Distributor":"One of two CDMs recycling possession and protecting width in a pair.",
+    "Box-to-Box 8":            "Central midfielder contributing in both phases: pressing, carrying, and supporting attack.",
+    "Advanced 8":              "Technically gifted CM driving into dangerous areas and creating from central positions.",
+    "Attacking Midfielder":    "Central no.10 connecting midfield to attack through key passes and movement.",
+    "Wide Playmaker":          "Wide or halfspace midfielder creating rather than crossing — inverted creative focus.",
+    "Touchline Winger":        "Traditional wide forward hugging the touchline and delivering crosses into the box.",
+    "Inside Forward":          "Winger cutting inside to shoot or create from central positions.",
+    "Second Striker":          "Shadow striker pressing high and exploiting pockets behind the central striker.",
+    "False 9":                 "Deep-dropping centre forward creating space and threading key passes through lines.",
+    "Target Striker":          "Focal-point striker holding up play, winning aerials, and finishing from range.",
+    "Pressing Striker":        "High-energy centre forward whose primary role is pressing triggers and winning the ball high.",
+    "Shot-Stopper":            "Traditional goalkeeper prioritising shot-stopping and aerial command.",
+    "Sweeper Keeper":          "Ball-playing goalkeeper comfortable distributing with feet and sweeping behind the line.",
+}
+
+_JARVIS_ROLE_POSITION_GROUP: dict[str, str] = {
+    "Ball-Playing CB": "CB",  "Stopper CB": "CB",   "Wide CB": "CB",
+    "Overlapping FB":  "FB",  "Inverted FB": "FB",  "Defensive FB": "FB",
+    "Destroyer 6":     "CDM", "Deep-Lying Playmaker": "CDM",
+    "Single Pivot":    "CDM", "Double-Pivot Distributor": "CDM",
+    "Box-to-Box 8":    "CM",  "Advanced 8": "CM",
+    "Attacking Midfielder": "CAM", "Wide Playmaker": "W",
+    "Touchline Winger": "W", "Inside Forward": "W",
+    "Second Striker": "SS",  "False 9": "CF",
+    "Target Striker":  "ST", "Pressing Striker": "ST",
+    "Shot-Stopper":    "GK", "Sweeper Keeper": "GK",
+}
+
+# Provider position code → position groups used for cohort filtering
+_PROVIDER_POS_TO_GROUPS: dict[str, set[str]] = {
+    "D": {"CB", "FB"},
+    "M": {"CDM", "CM", "CAM", "W"},
+    "F": {"W", "SS", "CF", "ST"},
+    "G": {"GK"},
+}
+
+# Prop type → API-Football (category, sub-key) for fixtures/players stat extraction
+_PROP_TO_API_PATH: dict[str, tuple[str, str]] = {
+    "pass_attempts":   ("passes",   "total"),
+    "passes":          ("passes",   "total"),
+    "key_passes":      ("passes",   "key"),
+    "crosses":         ("passes",   "cross"),
+    "shots":           ("shots",    "total"),
+    "shots_on_target": ("shots",    "on"),
+    "goals":           ("goals",    "total"),
+    "assists":         ("goals",    "assists"),
+    "saves":           ("goals",    "saves"),
+    "tackles":         ("tackles",  "total"),
+    "clearances":      ("tackles",  "clearances"),
+    "interceptions":   ("tackles",  "interceptions"),
+    "blocks":          ("tackles",  "blocks"),
+    "dribbles":        ("dribbles", "attempts"),
+    "duels_won":       ("duels",    "won"),
+    "fouls_drawn":     ("fouls",    "drawn"),
+    "fouls_committed": ("fouls",    "committed"),
+}
+
+# Position group → provider position codes for cohort matching
+_POS_GROUP_TO_PROVIDER: dict[str, set[str]] = {
+    "CB":  {"D"}, "FB": {"D"},
+    "CDM": {"M"}, "CM": {"M"}, "CAM": {"M"},
+    "W":   {"M", "F"}, "SS": {"F"}, "CF": {"F"}, "ST": {"F"},
+    "GK":  {"G"},
+}
+
+
+def _parse_formation_rows(formation: str | None) -> list[int]:
+    """Parse '4-3-3' → [4, 3, 3].  Returns [] if unparseable."""
+    if not formation:
+        return []
+    try:
+        parts = [int(x) for x in formation.replace(" ", "").split("-") if x.isdigit()]
+        return parts if 0 < sum(parts) <= 11 else []
+    except Exception:
+        return []
+
+
+def _classify_grid_slot(
+    grid: str | None,
+    formation: str | None,
+    start_xi_teammates: list[dict],
+) -> dict:
+    """
+    Infer tactical zone from a player's API-Football grid string and formation.
+
+    grid format: "row:col"  (row 1 = GK, higher rows = further forward)
+    Returns: row, col, total_in_row, zone, is_wide, side, formation_rows.
+    """
+    base: dict[str, Any] = {
+        "grid": grid, "formation": formation,
+        "row": None, "col": None, "total_in_row": None,
+        "zone": None, "is_wide": None, "side": None,
+        "formation_rows": None,
+    }
+    if not grid:
+        return base
+    try:
+        row, col = int(grid.split(":")[0]), int(grid.split(":")[1])
+    except Exception:
+        return base
+
+    base["row"] = row
+    base["col"] = col
+    form_rows = _parse_formation_rows(formation)
+    base["formation_rows"] = form_rows
+
+    if row == 1:
+        base["zone"] = "GK"
+        return base
+
+    form_idx = row - 2            # 0-based outfield row index (deepest first)
+    total = form_rows[form_idx] if form_rows and 0 <= form_idx < len(form_rows) else None
+    base["total_in_row"] = total
+
+    if not total or total < 1:
+        return base
+
+    is_wide = total > 2 and col in (1, total)
+    base["is_wide"] = is_wide
+    base["side"]    = "left" if col <= total / 2 else "right"
+
+    n_rows = len(form_rows)
+
+    if form_idx == 0:
+        # ── Defensive row ──────────────────────────────────────────────────
+        if total == 3:
+            base["zone"] = "Wide_CB" if is_wide else "Central_CB"
+        elif total == 4:
+            base["zone"] = "FB" if is_wide else "CB"
+        elif total == 5:
+            base["zone"] = "WB" if col in (1, 5) else "CB"
+        else:
+            base["zone"] = "Wide_CB" if is_wide else "CB"
+
+    elif form_idx == n_rows - 1:
+        # ── Forward row ────────────────────────────────────────────────────
+        if total == 1:
+            base["zone"] = "CF"
+        elif total == 2:
+            base["zone"] = "ST"
+        elif total == 3:
+            base["zone"] = "W" if is_wide else "CF"
+        else:
+            base["zone"] = "W" if is_wide else "SS"
+
+    else:
+        # ── Midfield row(s) ────────────────────────────────────────────────
+        n_mid  = n_rows - 2        # total midfield rows
+        mid_idx = form_idx - 1    # 0 = deepest mid row
+
+        if n_mid == 1:
+            if   total == 1: base["zone"] = "CDM_Pivot"
+            elif total == 2: base["zone"] = "CDM_Pair"
+            elif is_wide and total >= 4: base["zone"] = "WM"
+            else: base["zone"] = "CM"
+        else:
+            if mid_idx == 0:
+                if   total == 1: base["zone"] = "CDM_Pivot"
+                elif total == 2: base["zone"] = "CDM_Pair"
+                elif is_wide and total >= 4: base["zone"] = "WB_Mid"
+                else: base["zone"] = "CDM"
+            elif mid_idx == n_mid - 1:
+                if   total == 1: base["zone"] = "CAM"
+                elif is_wide:    base["zone"] = "W_AM"
+                else:            base["zone"] = "CAM"
+            else:
+                base["zone"] = "WM" if is_wide else "CM"
+
+    return base
+
+
+def _stat_fingerprint_jarvis(specific_position: str, stats: dict) -> str | None:
+    """
+    Derive a JARVIS-taxonomy role from per-game stat ratios.
+    Requires a specific position string (CB, CDM, CM, LB, LW, ST, …).
+    Returns a JARVIS role string or None.
+    """
+    if not stats or not specific_position:
+        return None
+    apps          = max(1, (stats.get("appearances") or 0) or 1)
+    passes_pg     = ((stats.get("passes")     or 0) / apps)
+    key_passes_pg = ((stats.get("key_passes") or 0) / apps)
+    tackles_pg    = ((stats.get("tackles")    or 0) / apps)
+    clearances_pg = ((stats.get("clearances") or 0) / apps)
+    dribbles_pg   = ((stats.get("dribbles")   or 0) / apps)
+    shots_pg      = ((stats.get("shots")      or 0) / apps)
+    crosses_pg    = ((stats.get("crosses")    or 0) / apps)
+    pos = specific_position.upper()
+
+    if pos == "CB":
+        if clearances_pg >= 3.0 or passes_pg >= 55: return "Ball-Playing CB" if passes_pg >= 50 else "Stopper CB"
+        if clearances_pg >= 1.5: return "Stopper CB"
+        if dribbles_pg   >= 1.0: return "Ball-Playing CB"
+        return "Stopper CB"
+    if pos in ("LB", "RB"):
+        if dribbles_pg >= 1.5 and shots_pg >= 0.4:  return "Inverted FB"
+        if crosses_pg  < 0.5  and tackles_pg >= 2.5: return "Defensive FB"
+        return "Overlapping FB"
+    if pos in ("LWB", "RWB"): return "Overlapping FB"
+    if pos == "CDM":
+        if tackles_pg >= 5.5 and passes_pg < 40: return "Destroyer 6"
+        if passes_pg  >= 55  and tackles_pg < 4: return "Deep-Lying Playmaker"
+        if tackles_pg >= 4.0: return "Destroyer 6"
+        return "Single Pivot"
+    if pos == "CM":
+        if passes_pg >= 65 and tackles_pg < 3: return "Deep-Lying Playmaker"
+        if key_passes_pg >= 1.5 and (shots_pg >= 1.2 or dribbles_pg >= 1.2): return "Advanced 8"
+        return "Box-to-Box 8"
+    if pos == "CAM": return "Attacking Midfielder"
+    if pos in ("LM", "RM"):
+        return "Wide Playmaker" if key_passes_pg >= 1.0 else "Touchline Winger"
+    if pos in ("LW", "RW"):
+        if dribbles_pg >= 2.5 and shots_pg >= 1.5: return "Inside Forward"
+        if key_passes_pg >= 1.5:                   return "Wide Playmaker"
+        return "Touchline Winger"
+    if pos in ("CF", "SS"):
+        return "False 9" if (key_passes_pg >= 1.5 and dribbles_pg >= 1.5) else "Second Striker"
+    if pos == "ST":
+        if shots_pg < 1.5 and tackles_pg >= 1.5: return "Pressing Striker"
+        if shots_pg >= 2.5 and dribbles_pg < 1.5: return "Target Striker"
+        return "Pressing Striker"
+    return None
+
+
+def _classify_jarvis_role(
+    base_position: str,
+    base_role: str,
+    role_source: str,
+    grid_info: dict,
+    season_stats: dict,
+    provider_pos: str,
+) -> dict:
+    """
+    Combine cached/grounded role + grid slot + stat fingerprint into a
+    JARVIS granular role with confidence score and evidence chain.
+    """
+    evidence: list[str] = []
+    score = 0
+    jarvis_role: str | None = None
+
+    # ── Step 1: map existing cached/grounded role ──────────────────────────
+    if base_role and base_role in _EXISTING_TO_JARVIS:
+        jarvis_role = _EXISTING_TO_JARVIS[base_role]
+        if role_source == "gemini_web_grounded":
+            score += 55
+            evidence.append(f"Gemini web-grounded: '{base_role}' → {jarvis_role}")
+        elif role_source in ("cache", "manual", "api_sports_lineup_history"):
+            score += 40
+            evidence.append(f"Cached role: '{base_role}' → {jarvis_role}")
+        else:
+            score += 20
+            evidence.append(f"System role: '{base_role}' → {jarvis_role}")
+
+    # ── Step 2: grid-slot refinement ──────────────────────────────────────
+    zone = grid_info.get("zone")
+    if zone:
+        evidence.append(f"Grid {grid_info.get('grid')} in {grid_info.get('formation')} → zone={zone}")
+        score += 12
+
+        if zone == "Wide_CB":
+            jarvis_role = "Wide CB"; evidence.append("Outer slot in 3-man backline → Wide CB")
+        elif zone in ("WB", "WB_Mid"):
+            jarvis_role = "Overlapping FB"; evidence.append(f"{zone} → Wingback (Overlapping FB)")
+        elif zone == "CDM_Pivot":
+            if jarvis_role not in ("Destroyer 6", "Deep-Lying Playmaker"):
+                jarvis_role = "Single Pivot"; evidence.append("Solo CDM slot → Single Pivot")
+            else:
+                evidence.append("Solo CDM slot confirms CDM role")
+        elif zone == "CDM_Pair":
+            if jarvis_role == "Deep-Lying Playmaker":
+                jarvis_role = "Double-Pivot Distributor"; evidence.append("CDM pair + DLP → Double-Pivot Distributor")
+            elif jarvis_role == "Single Pivot":
+                jarvis_role = "Double-Pivot Distributor"; evidence.append("CDM pair slot → Double-Pivot Distributor")
+            elif jarvis_role not in ("Destroyer 6", "Double-Pivot Distributor"):
+                jarvis_role = "Double-Pivot Distributor"; evidence.append("CDM pair slot → Double-Pivot Distributor by grid")
+        elif zone == "CAM" and jarvis_role not in ("Attacking Midfielder", "False 9", "Second Striker"):
+            jarvis_role = "Attacking Midfielder"; evidence.append("CAM slot → Attacking Midfielder by grid")
+        elif zone in ("W", "W_AM", "WM") and jarvis_role not in ("Touchline Winger", "Inside Forward", "Wide Playmaker"):
+            jarvis_role = "Touchline Winger"; evidence.append(f"{zone} slot → Touchline Winger by grid")
+
+    # ── Step 3: stat-based sub-classification ─────────────────────────────
+    if season_stats:
+        apps = max(1, (season_stats.get("appearances") or 0) or 1)
+        crosses_pg = ((season_stats.get("crosses") or 0) / apps)
+        tackles_pg = ((season_stats.get("tackles") or 0) / apps)
+        passes_pg  = ((season_stats.get("passes")  or 0) / apps)
+        if jarvis_role == "Overlapping FB" and zone not in ("WB", "Wide_CB", "WB_Mid"):
+            if crosses_pg < 0.5 and tackles_pg >= 2.5:
+                jarvis_role = "Defensive FB"
+                evidence.append(f"Low crosses ({crosses_pg:.1f}/g) + high tackles ({tackles_pg:.1f}/g) → Defensive FB")
+                score = max(score, 30)
+        if jarvis_role == "Deep-Lying Playmaker" and tackles_pg >= 5.5 and passes_pg < 38:
+            jarvis_role = "Destroyer 6"
+            evidence.append(f"Exceptional tackles ({tackles_pg:.1f}/g) + low passes → Destroyer 6 over DLP")
+
+    # ── Step 4: stat fingerprint fallback ─────────────────────────────────
+    if not jarvis_role:
+        # Normalise long-form provider position ("Defender" → "D") or keep short code
+        _prov_long = {
+            "goalkeeper": "G", "defender": "D", "midfielder": "M",
+            "attacker": "F", "forward": "F",
+        }
+        prov_short = _prov_long.get((provider_pos or "").lower(), (provider_pos or "")[:1].upper())
+
+        # Map API-Football grid zone → specific position for fingerprint
+        _zone_to_pos = {
+            "GK": "GK", "CB": "CB", "Central_CB": "CB", "Wide_CB": "CB",
+            "FB": "LB", "WB": "LWB", "WB_Mid": "LWB",
+            "CDM_Pivot": "CDM", "CDM_Pair": "CDM", "CDM": "CDM",
+            "CM": "CM", "WM": "LM", "CAM": "CAM",
+            "W": "LW", "W_AM": "LW", "CF": "CF", "ST": "ST", "SS": "SS",
+        }
+        inferred_pos = _zone_to_pos.get(zone or "")
+
+        if not inferred_pos:
+            # No grid zone — infer from provider position + stats
+            if prov_short == "D":
+                # Distinguish CB from LB: CBs clear more and pass more
+                _apps = max(1, (season_stats.get("appearances") or 0) or 1)
+                _clr  = ((season_stats.get("clearances") or 0) / _apps)
+                _pas  = ((season_stats.get("passes")     or 0) / _apps)
+                inferred_pos = "CB" if (_clr >= 1.0 or _pas >= 40) else "LB"
+                evidence.append(f"Generic 'Defender' → inferred {inferred_pos} (clr/g={_clr:.1f} pass/g={_pas:.1f})")
+            elif prov_short == "M":
+                _apps = max(1, (season_stats.get("appearances") or 0) or 1)
+                _pas  = ((season_stats.get("passes") or 0) / _apps)
+                _tk   = ((season_stats.get("tackles") or 0) / _apps)
+                inferred_pos = "CDM" if _tk >= 3.5 else ("CAM" if _pas >= 55 else "CM")
+                evidence.append(f"Generic 'Midfielder' → inferred {inferred_pos}")
+            elif prov_short == "F":
+                inferred_pos = "ST"
+                evidence.append("Generic 'Forward/Attacker' → inferred ST")
+            elif prov_short == "G":
+                inferred_pos = "GK"
+
+        fp = _stat_fingerprint_jarvis(inferred_pos or "", season_stats)
+        if fp:
+            jarvis_role = fp; score = max(score, 18)
+            evidence.append(f"Stat fingerprint ({inferred_pos}) → {fp}")
+
+    # ── Step 5: provider-position last resort ──────────────────────────────
+    if not jarvis_role:
+        _prov_long2 = {"goalkeeper": "G", "defender": "D", "midfielder": "M", "attacker": "F", "forward": "F"}
+        prov_short2 = _prov_long2.get((provider_pos or "").lower(), (provider_pos or "")[:1].upper())
+        jarvis_role = {"D": "Stopper CB", "M": "Box-to-Box 8", "F": "Pressing Striker", "G": "Shot-Stopper"}.get(
+            prov_short2, "Role unavailable"
+        )
+        if jarvis_role != "Role unavailable":
+            score = max(score, 8); evidence.append(f"Provider position fallback ({provider_pos}) → {jarvis_role}")
+        else:
+            evidence.append("Insufficient evidence for role classification.")
+
+    conf = "high" if score >= 55 else "medium" if score >= 30 else "low" if score >= 12 else "speculative"
+    return {
+        "jarvis_role":           jarvis_role,
+        "description":           _JARVIS_ROLE_DESC.get(jarvis_role or "", ""),
+        "position_group":        _JARVIS_ROLE_POSITION_GROUP.get(jarvis_role or ""),
+        "confidence_score":      min(100, score),
+        "confidence_label":      conf,
+        "evidence":              evidence,
+        "base_role_from_system": base_role  or None,
+        "base_role_source":      role_source or None,
+        "base_position":         base_position or None,
+    }
+
+
+def _build_teammate_context(teammates: list[dict], formation: str | None) -> dict:
+    """Group starting XI teammates by grid row for formation readability."""
+    if not teammates:
+        return {"_source": "unavailable", "n_teammates": 0}
+    rows: dict[int, list] = {}
+    no_grid: list = []
+    for t in teammates:
+        g = t.get("grid")
+        if not g:
+            no_grid.append({"name": t.get("name"), "pos": t.get("pos")}); continue
+        try:
+            r = int(g.split(":")[0])
+        except Exception:
+            no_grid.append({"name": t.get("name"), "pos": t.get("pos")}); continue
+        rows.setdefault(r, []).append(t)
+
+    all_row_nums = sorted(rows.keys())
+    outfield_nums = [r for r in all_row_nums if r != 1]
+    labels: dict[int, str] = {1: "GK"}
+    for i, rn in enumerate(outfield_nums):
+        if i == 0:               labels[rn] = "Defensive"
+        elif i == len(outfield_nums) - 1: labels[rn] = "Forward"
+        else:                    labels[rn] = f"Midfield_Row{i}"
+
+    by_zone: dict[str, list] = {}
+    for rn, pls in sorted(rows.items()):
+        lbl = labels.get(rn, f"Row{rn}")
+        by_zone[lbl] = sorted(
+            [{"id": p.get("id"), "name": p.get("name"), "pos": p.get("pos"), "grid": p.get("grid")} for p in pls],
+            key=lambda x: int(x.get("grid", "0:0").split(":")[1]) if ":" in (x.get("grid") or "") else 0,
+        )
+    return {"_source": "raw_api_data", "formation": formation, "n_teammates": len(teammates), "rows_by_zone": by_zone, "no_grid": no_grid}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROLE PROFILE — granular tactical identity for one player in one fixture
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/jarvis/role-profile")
+async def jarvis_role_profile(
+    authorization: Optional[str] = Header(default=None),
+    fixture_id: int = Query(..., description="API-Sports fixture ID."),
+    player_id:  int = Query(..., description="API-Sports player ID."),
+):
+    """
+    Granular tactical role for one player in one fixture.
+
+    Returns observed JARVIS role (ball-playing CB, destroyer 6, single pivot,
+    inside forward, etc.), confidence + evidence chain, formation context,
+    grid slot classification, teammate layout by zone, buildup + defensive
+    responsibility indicators, and recent role history from match logs.
+    No AI calls — fully deterministic.
+    """
+    _require_auth(authorization)
+
+    ctx = await _resolve_soccer_context(fixture_id, player_id)
+    fix = await _resolve_fixture(fixture_id)
+
+    team_id      = ctx["team_id"]
+    league_id    = ctx["league_id"]
+    season       = ctx["season"]
+    player_name  = ctx["player_name"]
+    team_name    = ctx["team_name"]
+
+    status_short = fix["status_short"]
+    finished = status_short in ("FT", "AET", "PEN")
+    is_live  = status_short in ("1H", "HT", "2H", "ET", "BT", "P", "INT", "LIVE")
+    ttl = _CACHE_TTL_LIVE if is_live else (_CACHE_TTL_FINISHED if finished else _CACHE_TTL_SCHEDULED)
+
+    player_season_raw, lineups_raw, team_fix_raw = await asyncio.gather(
+        _sports_get_safe("players",          {"id": player_id, "season": season}, cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("fixtures/lineups", {"fixture": fixture_id},             cache_ttl=ttl),
+        _sports_get_safe("fixtures",         {"team": team_id, "last": 10},       cache_ttl=_CACHE_TTL_SCHEDULED),
+    )
+
+    # ── Season stats ───────────────────────────────────────────────────────
+    season_rows  = (player_season_raw or {}).get("response", [])
+    provider_pos = ""
+    sfp: dict    = {}   # stats for fingerprint
+    all_entries: list = []
+
+    if season_rows:
+        sr    = season_rows[0]
+        stats = sr.get("statistics") or []
+        cs    = next((s for s in stats if (s.get("league") or {}).get("id") == league_id), stats[0] if stats else {})
+        gs    = cs.get("games", {})
+        provider_pos = gs.get("position", "")
+        sfp = {
+            "appearances": gs.get("appearences"),
+            "passes":      (cs.get("passes")   or {}).get("total"),
+            "key_passes":  (cs.get("passes")   or {}).get("key"),
+            "crosses":     (cs.get("passes")   or {}).get("cross"),
+            "tackles":     (cs.get("tackles")  or {}).get("total"),
+            "clearances":  (cs.get("tackles")  or {}).get("clearances"),
+            "shots":       (cs.get("shots")    or {}).get("total"),
+            "dribbles":    (cs.get("dribbles") or {}).get("attempts"),
+            "goals":       (cs.get("goals")    or {}).get("total"),
+        }
+        all_entries = [
+            {
+                "league": (s.get("league") or {}).get("name"),
+                "league_id": (s.get("league") or {}).get("id"),
+                "team": (s.get("team") or {}).get("name"),
+                "position": (s.get("games") or {}).get("position"),
+                "appearances": (s.get("games") or {}).get("appearences"),
+                "minutes": (s.get("games") or {}).get("minutes"),
+            }
+            for s in stats
+        ]
+
+    # ── Cached role (DB only, no AI call) ─────────────────────────────────
+    base_position = ""; base_role = ""; role_source = ""
+    try:
+        from backend.ai_positions import resolve_position_deterministic as _rpd
+        cached = await _rpd(player_name) if player_name else {}
+        base_position = cached.get("position", "")
+        base_role     = cached.get("role", "")
+        role_source   = "cache" if (base_position or base_role) else ""
+    except Exception:
+        pass
+
+    # ── Lineup: grid + formation + teammates ──────────────────────────────
+    lineup_rows       = (lineups_raw or {}).get("response", [])
+    formation         = None
+    player_grid       = None
+    player_lineup_pos = None
+    start_xi_teammates: list[dict] = []
+    substitutes: list[dict] = []
+    team_coach = None
+
+    for t in lineup_rows:
+        if (t.get("team") or {}).get("id") == team_id:
+            formation  = t.get("formation")
+            team_coach = (t.get("coach") or {}).get("name")
+            for p in t.get("startXI", []):
+                pl = p.get("player", {})
+                if pl.get("id") == player_id:
+                    player_grid = pl.get("grid"); player_lineup_pos = pl.get("pos")
+                else:
+                    start_xi_teammates.append({"name": pl.get("name"), "id": pl.get("id"), "pos": pl.get("pos"), "grid": pl.get("grid")})
+            for p in t.get("substitutes", []):
+                pl = p.get("player", {})
+                substitutes.append({"name": pl.get("name"), "pos": pl.get("pos")})
+            break
+
+    grid_info   = _classify_grid_slot(player_grid, formation, start_xi_teammates)
+    role_result = _classify_jarvis_role(
+        base_position=base_position, base_role=base_role, role_source=role_source,
+        grid_info=grid_info, season_stats=sfp,
+        provider_pos=player_lineup_pos or provider_pos,
+    )
+
+    # ── Recent role history from match logs ────────────────────────────────
+    _DONE_SET = {"FT", "AET", "PEN"}
+    team_done = [
+        f for f in (team_fix_raw or {}).get("response", [])
+        if (f.get("fixture") or {}).get("status", {}).get("short") in _DONE_SET
+    ][:8]
+    team_fids = [(f["fixture"]["id"]) for f in team_done if (f.get("fixture") or {}).get("id")]
+
+    log_raws: list = []
+    if team_fids:
+        log_raws = list(await asyncio.gather(*[
+            _sports_get_safe("fixtures/players", {"fixture": fid}, cache_ttl=_CACHE_TTL_FINISHED)
+            for fid in team_fids
+        ]))
+
+    role_history: list[dict] = []
+    for i, raw in enumerate(log_raws):
+        if not raw or i >= len(team_done):
+            continue
+        fix_row  = team_done[i]
+        fdate    = ((fix_row.get("fixture") or {}).get("date") or "")[:10]
+        ft       = fix_row.get("teams") or {}
+        home_id  = (ft.get("home") or {}).get("id")
+        opp_side = "away" if home_id == team_id else "home"
+        opp_nm   = ((ft.get(opp_side)) or {}).get("name", "")
+        lname    = ((fix_row.get("league") or {}).get("name") or "")
+        for te in (raw or {}).get("response", []):
+            if (te.get("team") or {}).get("id") != team_id:
+                continue
+            for pl_e in te.get("players", []):
+                if (pl_e.get("player") or {}).get("id") != player_id:
+                    continue
+                s   = ((pl_e.get("statistics") or [{}])[0])
+                gs_ = s.get("games") or {}
+                mins = gs_.get("minutes")
+                if not mins:
+                    continue
+                role_history.append({
+                    "date": fdate, "opponent": opp_nm, "competition": lname,
+                    "venue": "home" if home_id == team_id else "away",
+                    "minutes": mins, "position_played": gs_.get("position"),
+                    "rating": gs_.get("rating"),
+                })
+
+    # ── Buildup + defensive responsibility indicators ─────────────────────
+    def _safe_pg(key):
+        v = sfp.get(key)
+        apps_ = max(1, (sfp.get("appearances") or 0) or 1)
+        try:   return round((v or 0) / apps_, 2)
+        except: return None
+
+    passes_pg    = _safe_pg("passes");    kp_pg     = _safe_pg("key_passes")
+    crosses_pg   = _safe_pg("crosses");   drib_pg   = _safe_pg("dribbles")
+    tackles_pg   = _safe_pg("tackles");   clr_pg    = _safe_pg("clearances")
+
+    buildup = {
+        "_source":             "raw_api_data" if passes_pg is not None else "unavailable",
+        "passes_per_game":     passes_pg, "key_passes_per_game": kp_pg,
+        "crosses_per_game":    crosses_pg, "dribbles_per_game":  drib_pg,
+        "high_pass_volume":    (passes_pg or 0) >= 50,
+        "creative_output":     (kp_pg    or 0) >= 1.0,
+        "crossing_threat":     (crosses_pg or 0) >= 1.0,
+    }
+    defensive = {
+        "_source":              "raw_api_data" if tackles_pg is not None else "unavailable",
+        "tackles_per_game":     tackles_pg, "clearances_per_game": clr_pg,
+        "high_defensive_duty":  (tackles_pg or 0) >= 3.0 or (clr_pg or 0) >= 2.5,
+    }
+
+    return JSONResponse(content={
+        "source": "jarvis_role_profile",
+        "generated_at": int(time.time()),
+        "player_identity": {
+            "player_id": player_id, "player_name": player_name, "team": team_name,
+            "match": f"{fix['home_team']} vs {fix['away_team']}",
+            "date":  (fix.get("date") or "")[:10], "player_venue": ctx.get("player_venue"),
+            "fixture_id": fixture_id,
+        },
+        "base_position":           base_position or provider_pos or None,
+        "provider_position":        provider_pos or player_lineup_pos or None,
+        "all_competition_entries":  all_entries,
+        "observed_tactical_role":   role_result["jarvis_role"],
+        "role_description":         role_result["description"],
+        "role_confidence": {
+            "label": role_result["confidence_label"],
+            "score": role_result["confidence_score"],
+            "note":  "≥55=high (grounded), ≥30=medium, ≥12=low, <12=speculative",
+        },
+        "evidence_used":            role_result["evidence"],
+        "base_role_from_system":    role_result["base_role_from_system"],
+        "base_role_source":         role_result["base_role_source"],
+        "position_group_for_cohort":role_result["position_group"],
+        "recent_role_history": {
+            "_source": "raw_api_data" if role_history else "unavailable",
+            "n": len(role_history),
+            "note": "position_played is provider category (D/M/F/G); use observed_tactical_role for granular role",
+            "matches": role_history,
+        },
+        "formation_context": {
+            "_source":              "raw_api_data" if formation else "unavailable",
+            "team_formation":       formation, "team_coach": team_coach,
+            "player_grid":          player_grid, "lineup_position_tag": player_lineup_pos,
+            **{k: v for k, v in grid_info.items() if k not in ("grid", "formation")},
+        },
+        "teammate_context":         _build_teammate_context(start_xi_teammates, formation),
+        "substitutes_available":    substitutes,
+        "buildup_responsibility":   buildup,
+        "defensive_responsibility": defensive,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROLE OPPONENT COHORT — role-matched players who faced this opponent
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/jarvis/role-opponent-cohort")
+async def jarvis_role_opponent_cohort(
+    authorization: Optional[str] = Header(default=None),
+    fixture_id: int = Query(..., description="API-Sports fixture ID."),
+    player_id:  int = Query(..., description="API-Sports player ID."),
+    prop_type:  Optional[str] = Query(None, description="Optional prop for stat aggregation: pass_attempts | shots | tackles | clearances | key_passes | dribbles | crosses | goals"),
+):
+    """
+    Role-matched opponent cohort for one player in one fixture.
+
+    Identifies the player's JARVIS role, then collects players in the same
+    position group who played against the opponent in their last 6 completed
+    fixtures. Returns per-player match stats and a prop aggregate (when
+    prop_type is provided). Use to benchmark role-similar players against
+    this opponent's current defensive structure.
+    """
+    _require_auth(authorization)
+
+    ctx = await _resolve_soccer_context(fixture_id, player_id)
+    fix = await _resolve_fixture(fixture_id)
+
+    team_id       = ctx["team_id"]
+    opponent_id   = ctx["opponent_id"]
+    league_id     = ctx["league_id"]
+    season        = ctx["season"]
+    player_name   = ctx["player_name"]
+    team_name     = ctx["team_name"]
+    opponent_name = ctx.get("opponent_name", "")
+
+    status_short = fix["status_short"]
+    finished = status_short in ("FT", "AET", "PEN")
+    is_live  = status_short in ("1H", "HT", "2H", "ET", "BT", "P", "INT", "LIVE")
+    ttl = _CACHE_TTL_LIVE if is_live else (_CACHE_TTL_FINISHED if finished else _CACHE_TTL_SCHEDULED)
+
+    player_season_raw, lineups_raw, opp_fix_raw = await asyncio.gather(
+        _sports_get_safe("players",          {"id": player_id, "season": season}, cache_ttl=_CACHE_TTL_FINISHED),
+        _sports_get_safe("fixtures/lineups", {"fixture": fixture_id},             cache_ttl=ttl),
+        _sports_get_safe("fixtures",         {"team": opponent_id, "last": 8},    cache_ttl=_CACHE_TTL_SCHEDULED),
+    )
+
+    # ── Season stats ───────────────────────────────────────────────────────
+    season_rows  = (player_season_raw or {}).get("response", [])
+    provider_pos = ""
+    sfp2: dict   = {}
+
+    if season_rows:
+        sr    = season_rows[0]
+        stats = sr.get("statistics") or []
+        cs    = next((s for s in stats if (s.get("league") or {}).get("id") == league_id), stats[0] if stats else {})
+        gs    = cs.get("games", {})
+        provider_pos = gs.get("position", "")
+        sfp2 = {
+            "appearances": gs.get("appearences"),
+            "passes":      (cs.get("passes")   or {}).get("total"),
+            "key_passes":  (cs.get("passes")   or {}).get("key"),
+            "crosses":     (cs.get("passes")   or {}).get("cross"),
+            "tackles":     (cs.get("tackles")  or {}).get("total"),
+            "clearances":  (cs.get("tackles")  or {}).get("clearances"),
+            "shots":       (cs.get("shots")    or {}).get("total"),
+            "dribbles":    (cs.get("dribbles") or {}).get("attempts"),
+        }
+
+    # ── Cached role ────────────────────────────────────────────────────────
+    base_position2 = ""; base_role2 = ""; role_source2 = ""
+    try:
+        from backend.ai_positions import resolve_position_deterministic as _rpd2
+        c2 = await _rpd2(player_name) if player_name else {}
+        base_position2 = c2.get("position", ""); base_role2 = c2.get("role", "")
+        role_source2   = "cache" if (base_position2 or base_role2) else ""
+    except Exception:
+        pass
+
+    # ── Grid + role ────────────────────────────────────────────────────────
+    lineup_rows       = (lineups_raw or {}).get("response", [])
+    formation2        = None; player_grid2 = None; player_lineup_pos2 = None
+    teammates2: list[dict] = []
+
+    for t in lineup_rows:
+        if (t.get("team") or {}).get("id") == team_id:
+            formation2 = t.get("formation")
+            for p in t.get("startXI", []):
+                pl = p.get("player", {})
+                if pl.get("id") == player_id:
+                    player_grid2 = pl.get("grid"); player_lineup_pos2 = pl.get("pos")
+                else:
+                    teammates2.append({"id": pl.get("id"), "pos": pl.get("pos"), "grid": pl.get("grid"), "name": pl.get("name")})
+            break
+
+    grid_info2   = _classify_grid_slot(player_grid2, formation2, teammates2)
+    role_result2 = _classify_jarvis_role(
+        base_position=base_position2, base_role=base_role2, role_source=role_source2,
+        grid_info=grid_info2, season_stats=sfp2,
+        provider_pos=player_lineup_pos2 or provider_pos,
+    )
+    jarvis_role2   = role_result2["jarvis_role"]
+    position_group = role_result2["position_group"] or "M"
+
+    # ── Opponent completed fixtures ────────────────────────────────────────
+    _DONE2 = {"FT", "AET", "PEN"}
+    opp_done = [
+        f for f in (opp_fix_raw or {}).get("response", [])
+        if (f.get("fixture") or {}).get("status", {}).get("short") in _DONE2
+    ][:6]
+    opp_fids = [f["fixture"]["id"] for f in opp_done if (f.get("fixture") or {}).get("id")]
+    opp_meta = {f["fixture"]["id"]: f for f in opp_done if (f.get("fixture") or {}).get("id")}
+
+    if not opp_fids:
+        return JSONResponse(content={
+            "source": "jarvis_role_opponent_cohort", "generated_at": int(time.time()),
+            "player_identity": {"player_id": player_id, "player_name": player_name, "team": team_name,
+                                 "jarvis_role": jarvis_role2, "position_group": position_group},
+            "opponent": {"opponent_id": opponent_id, "opponent_name": opponent_name, "fixtures_analyzed": 0},
+            "cohort_players": [], "n_cohort_players": 0,
+            "cohort_aggregate": {"_source": "unavailable", "note": "No completed opponent fixtures found."},
+        })
+
+    cohort_raws = list(await asyncio.gather(*[
+        _sports_get_safe("fixtures/players", {"fixture": fid}, cache_ttl=_CACHE_TTL_FINISHED)
+        for fid in opp_fids
+    ]))
+
+    target_codes = _POS_GROUP_TO_PROVIDER.get(position_group, {"M", "D", "F"})
+    prop_path    = _PROP_TO_API_PATH.get(prop_type or "") if prop_type else None
+
+    # ── Build cohort ──────────────────────────────────────────────────────
+    cohort_players: list[dict] = []
+
+    for i, raw in enumerate(cohort_raws):
+        if not raw or i >= len(opp_fids):
+            continue
+        fid         = opp_fids[i]
+        fix_meta_r  = opp_meta.get(fid, {})
+        fdate       = ((fix_meta_r.get("fixture") or {}).get("date") or "")[:10]
+        ft2         = fix_meta_r.get("teams") or {}
+        home_id_f   = (ft2.get("home") or {}).get("id")
+        home_nm_f   = (ft2.get("home") or {}).get("name", "")
+        away_nm_f   = (ft2.get("away") or {}).get("name", "")
+
+        for team_entry in (raw or {}).get("response", []):
+            tid_e  = (team_entry.get("team") or {}).get("id")
+            tnm_e  = (team_entry.get("team") or {}).get("name", "")
+            if tid_e == opponent_id:
+                continue   # want players who FACED the opponent, not the opponent's own players
+
+            for pl_e in team_entry.get("players", []):
+                pl_info = pl_e.get("player") or {}
+                s       = ((pl_e.get("statistics") or [{}])[0])
+                gs_e    = s.get("games") or {}
+                mins    = gs_e.get("minutes") or 0
+                if mins < 45:
+                    continue
+                pl_pos  = gs_e.get("position", "")
+                if pl_pos not in target_codes:
+                    continue
+
+                prop_val = None
+                if prop_path:
+                    cat, sub = prop_path
+                    try:
+                        prop_val = float((s.get(cat) or {}).get(sub)) if (s.get(cat) or {}).get(sub) is not None else None
+                    except (TypeError, ValueError):
+                        prop_val = None
+
+                opp_they_faced = away_nm_f if tid_e == home_id_f else home_nm_f
+
+                cohort_players.append({
+                    "player_id": pl_info.get("id"), "player_name": pl_info.get("name"), "team": tnm_e,
+                    "fixture_id": fid, "date": fdate, "opponent_faced": opp_they_faced,
+                    "minutes": mins, "position_played": pl_pos, "rating": gs_e.get("rating"),
+                    "passes_total":  (s.get("passes")   or {}).get("total"),
+                    "key_passes":    (s.get("passes")   or {}).get("key"),
+                    "crosses":       (s.get("passes")   or {}).get("cross"),
+                    "shots_total":   (s.get("shots")    or {}).get("total"),
+                    "shots_on":      (s.get("shots")    or {}).get("on"),
+                    "tackles_total": (s.get("tackles")  or {}).get("total"),
+                    "clearances":    (s.get("tackles")  or {}).get("clearances"),
+                    "dribbles":      (s.get("dribbles") or {}).get("attempts"),
+                    "duels_won":     (s.get("duels")    or {}).get("won"),
+                    "goals":         (s.get("goals")    or {}).get("total"),
+                    "prop_stat_value": prop_val,
+                })
+
+    # ── Aggregate ─────────────────────────────────────────────────────────
+    stat_vals = [p["prop_stat_value"] for p in cohort_players if p.get("prop_stat_value") is not None]
+
+    if stat_vals and prop_type:
+        sv_sorted = sorted(stat_vals)
+        cohort_agg = {
+            "_source": "raw_api_data", "prop_type": prop_type,
+            "n": len(stat_vals), "avg": round(sum(stat_vals) / len(stat_vals), 2),
+            "max": max(stat_vals), "min": min(stat_vals),
+            "median": sv_sorted[len(sv_sorted) // 2],
+            "values": sorted(stat_vals, reverse=True),
+        }
+    elif prop_type:
+        cohort_agg = {"_source": "unavailable", "note": f"No {prop_type} data in cohort for position group '{position_group}'."}
+    else:
+        cohort_agg = {"_source": "unavailable", "note": "Provide prop_type for aggregate stats."}
+
+    return JSONResponse(content={
+        "source": "jarvis_role_opponent_cohort",
+        "generated_at": int(time.time()),
+        "player_identity": {
+            "player_id": player_id, "player_name": player_name, "team": team_name,
+            "jarvis_role": jarvis_role2, "role_description": role_result2["description"],
+            "role_confidence": role_result2["confidence_label"], "position_group": position_group,
+        },
+        "opponent": {
+            "opponent_id": opponent_id, "opponent_name": opponent_name,
+            "fixtures_analyzed": len(opp_fids), "fixture_ids": opp_fids,
+            "fixture_dates": [(opp_meta.get(fid, {}).get("fixture") or {}).get("date", "")[:10] for fid in opp_fids],
+        },
+        "cohort_filter": {
+            "position_group": position_group,
+            "provider_positions_matched": sorted(target_codes),
+            "min_minutes_threshold": 45,
+            "note": f"Players in '{position_group}' group who played ≥45 min against {opponent_name} in last {len(opp_fids)} fixtures",
+        },
+        "cohort_aggregate": cohort_agg,
+        "n_cohort_players": len(cohort_players),
+        "cohort_players":   cohort_players,
     })
 
 

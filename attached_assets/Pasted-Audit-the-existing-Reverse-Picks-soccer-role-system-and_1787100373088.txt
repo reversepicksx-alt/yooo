@@ -1,0 +1,42 @@
+Audit the existing Reverse Picks soccer role system and make it substantially more granular without changing the production prediction result yet.
+
+Create a reusable tactical-role classification layer that identifies a player’s current observed role from recent lineup grids, formations, teammate positioning, player statistics, and existing Reverse Picks evidence.
+
+Support granular roles where evidence allows, including:
+ball-playing CB, stopper CB, wide CB, overlapping FB, inverted FB, defensive FB, destroyer 6, deep-lying playmaker, single pivot, double-pivot distributor, box-to-box 8, advanced 8, attacking midfielder, wide playmaker, touchline winger, inside forward, second striker, false 9, target striker and pressing striker.
+
+Keep position and tactical role separate.
+
+For each player return:
+base position, observed tactical role, role confidence, evidence used, recent role history, formation context, teammate context, buildup responsibility indicators, and defensive responsibility indicators.
+
+Then create role-matched opponent cohorts so JARVIS compares players with similar tactical roles and responsibilities against the opponent’s current defensive structure instead of only same-position players.
+
+Add:
+GET /api/jarvis/role-profile
+GET /api/jarvis/role-opponent-cohort
+
+Do NOT alter the production prediction algorithm yet.
+These endpoints are for JARVIS research and auditing.
+
+Add both endpoints to /api/jarvis/docs and the OpenAPI schema.
+Keep every OpenAPI operation description under 300 characters.
+Test the endpoints on at least one CB, one #6, one box-to-box midfielder, one winger and one striker.
+
+2. Jarvis GPT — add the behavior rules.
+    In Jarvis → Edit GPT → Instructions, add this underneath the tactical protocol you already have:
+
+Exact-role rule: Never treat generic listed position as sufficient tactical identity. Before making a strong judgment, determine the player’s current observed role and responsibilities. Prefer current role-matched evidence over generic same-position cohorts when reliable.
+
+Reverse-fixture rule: For knockout or two-leg ties, explicitly compare leg-one tactical conditions with the current aggregate score, venue, required result and likely game state. A low-volume first leg must not automatically lower the second-leg projection when tactical incentives are reversed.
+
+Regime-change rule: Historical samples generated under a different manager, formation, CB pairing, midfield structure, role or match objective must be flagged and down-weighted in JARVIS conviction.
+
+Default communication rule: Speak like a human elite football analyst. Be concise by default. Give the pick, what matters most, what could break it, and the JARVIS verdict. Only give the full technical audit when I say “deep dive.”
+
+3. When Replit finishes, re-import the schema.
+    Go to Jarvis → Edit GPT → Actions → Import from URL, paste the updated OpenAPI URL, confirm the two new actions appear, then tap Update.
+
+After that, test with something simple like:
+
+Analyze Gabriel Magalhães pass attempts 55.5. Use exact-role analysis, role-matched opponent cohorts, tactical evidence, and current web research. Keep it conversational unless I say deep dive.
