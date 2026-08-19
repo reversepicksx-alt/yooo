@@ -1,0 +1,795 @@
+"""Independent, auditable JARVIS evidence layer.
+
+This module deliberately sits beside the Reverse Picks predictor.  It stores
+immutable prediction snapshots, computes leakage-conscious calibration summaries,
+and records settlement postmortems without feeding audit values back into RP
+math.  Optional or unavailable evidence is represented explicitly instead of
+being inferred from a nearby metric.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+from datetime import datetime, timezone
+from typing import Any, Iterable
+
+
+AUDIT_SCHEMA_VERSION = "jarvis-audit.v1"
+AUDIT_MODEL_VERSION = "jarvis-shadow-audit.v1"
+
+
+STAT_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "pass_attempts": {
+        "market": "Pass Attempts",
+        "provider_field": "passes",
+        "definition": "All provider-recorded pass attempts used by the RP settlement contract.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "passes": {
+        "market": "Completed Passes",
+        "provider_field": "passes",
+        "definition": "Provider pass total as mapped by the active settlement contract; not silently treated as completed-pass-only.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "key_passes": {
+        "market": "Key Passes",
+        "provider_field": "key_passes",
+        "definition": "Provider-recorded key passes credited to the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "shots": {
+        "market": "Shots",
+        "provider_field": "shots",
+        "definition": "Total shots recorded for the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "shots_on_target": {
+        "market": "Shots on Target",
+        "provider_field": "shots_on_target",
+        "definition": "Shots on target recorded for the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "tackles": {
+        "market": "Tackles",
+        "provider_field": "tackles",
+        "definition": "Tackles recorded by the provider for the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "clearances": {
+        "market": "Clearances",
+        "provider_field": "clearances",
+        "definition": "Clearances recorded by the provider for the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "saves": {
+        "market": "Goalkeeper Saves",
+        "provider_field": "saves",
+        "definition": "Goalkeeper saves credited by the provider.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+    "goals": {
+        "market": "Goals",
+        "provider_field": "goals",
+        "definition": "Goals credited to the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    },
+}
+
+# Keep the audit gate aligned with the broader prop vocabulary already
+# supported by the RP engine. These are provider-mapped definitions, not new
+# production math or a claim that every fixture supplies every field.
+for _prop_key, _market, _provider_field in (
+    ("dribbles", "Dribbles", "dribbles"),
+    ("dribbles_success", "Successful Dribbles", "dribbles_success"),
+    ("crosses", "Crosses", "crosses"),
+    ("interceptions", "Interceptions", "interceptions"),
+    ("blocks", "Blocks", "blocks"),
+    ("fouls_drawn", "Fouls Drawn", "fouls_drawn"),
+    ("fouls_committed", "Fouls Committed", "fouls_committed"),
+    ("duels_won", "Duels Won", "duels_won"),
+    ("assists", "Assists", "assists"),
+    ("offsides", "Offsides", "offsides"),
+    ("yellow_cards", "Yellow Cards", "yellow_cards"),
+    ("red_cards", "Red Cards", "red_cards"),
+):
+    STAT_DEFINITIONS[_prop_key] = {
+        "market": _market,
+        "provider_field": _provider_field,
+        "definition": f"Provider-recorded {_market.lower()} credited to the player.",
+        "verification_status": "repository_contract",
+        "source": "Reverse Picks settlement/provider contract",
+    }
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def audit_mode() -> str:
+    """Return the configured audit mode without changing RP behavior."""
+    value = (os.environ.get("JARVIS_FULL_AUDIT_MODE") or "shadow").strip().lower()
+    if value in {"off", "disabled", "false", "0"}:
+        return "off"
+    if value in {"live", "enabled", "true", "1"}:
+        return "live"
+    return "shadow"
+
+
+def audit_enabled() -> bool:
+    return audit_mode() != "off"
+
+
+def _number(value: Any) -> float | None:
+    try:
+        result = float(value)
+        return result if math.isfinite(result) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _probability(value: Any) -> float | None:
+    number = _number(value)
+    if number is None:
+        return None
+    if 0 <= number <= 1:
+        number *= 100
+    return number if 0 <= number <= 100 else None
+
+
+def _fingerprint(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+
+def _module(
+    status: str,
+    *,
+    source: str,
+    values: dict[str, Any] | None = None,
+    reason: str | None = None,
+    sample_size: int | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": status,
+        "source": source,
+        "values": values or {},
+    }
+    if sample_size is not None:
+        result["sample_size"] = sample_size
+    if reason:
+        result["reason"] = reason
+    return result
+
+
+def _rp_snapshot(prediction: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+    """Keep the exact quantitative inputs needed to reproduce the RP result."""
+    final = prediction.get("final") if isinstance(prediction.get("final"), dict) else {}
+    bayesian = prediction.get("bayesianMetrics") if isinstance(prediction.get("bayesianMetrics"), dict) else {}
+    ledger = prediction.get("factorLedger") if isinstance(prediction.get("factorLedger"), dict) else {}
+    ledger_final = ledger.get("final") if isinstance(ledger.get("final"), dict) else {}
+    selected_keys = (
+        "recommendation",
+        "projectedValue",
+        "projection",
+        "line",
+        "pOver",
+        "pUnder",
+        "confidenceScore",
+        "rawConfidence",
+        "confidenceLevel",
+        "bayesianMetrics",
+        "factorLedger",
+        "factorLedgerVersion",
+        "factorLedgerFingerprint",
+        "modelInputSnapshot",
+        "modelBreakdown",
+        "evidenceQuality",
+        "fusionApplied",
+        "calibrationApplied",
+    )
+    values = {key: prediction.get(key) for key in selected_keys if key in prediction}
+    # JARVIS diagnostic responses expose the same RP values under `final`.
+    # Normalize those aliases into the immutable snapshot without recalculating
+    # or changing the production result.
+    aliases = {
+        "recommendation": ("recommendation", "recommendation"),
+        "projectedValue": ("projectedValue", "projected_value"),
+        "pOver": ("pOver", "p_over"),
+        "pUnder": ("pUnder", "p_under"),
+        "confidenceScore": ("confidenceScore", "confidence_score"),
+        "propHistoricalRate": ("propHistoricalRate", "prop_historical_rate"),
+        "propHistoricalN": ("propHistoricalN", "prop_historical_n"),
+    }
+    for target, (top_key, final_key) in aliases.items():
+        if values.get(target) is None:
+            values[target] = (
+                prediction.get(top_key)
+                if prediction.get(top_key) is not None
+                else final.get(final_key)
+            )
+    for target, key in (("pOver", "pOver"), ("pUnder", "pUnder")):
+        if values.get(target) is None:
+            values[target] = bayesian.get(key)
+        if values.get(target) is None:
+            values[target] = ledger_final.get(key)
+    values["request"] = dict(request)
+    values["captured_at"] = _now()
+    values["model_version"] = (
+        prediction.get("factorLedgerVersion")
+        or (prediction.get("bayesianMetrics") or {}).get("threeLayerModel", {}).get("version")
+        or "rp-version-unspecified"
+    )
+    fingerprint_values = dict(values)
+    fingerprint_values.pop("captured_at", None)
+    values["fingerprint"] = _fingerprint(fingerprint_values)
+    return values
+
+
+def _anomalies(prediction: dict[str, Any], eq: dict[str, Any], stat_definition: dict[str, Any]) -> dict[str, Any]:
+    flags: list[dict[str, Any]] = []
+    p_over = _probability(prediction.get("pOver"))
+    p_under = _probability(prediction.get("pUnder"))
+    if p_over is not None and p_under is not None and abs((p_over + p_under) - 100) > 3:
+        flags.append({
+            "code": "PROBABILITY_SUM_MISMATCH",
+            "severity": "high",
+            "details": {"p_over": p_over, "p_under": p_under},
+        })
+
+    samples = _number((prediction.get("bayesianMetrics") or {}).get("priorSamples"))
+    score = _number(eq.get("score"))
+    if score is not None and score >= 80 and samples is not None and samples < 5:
+        flags.append({
+            "code": "HIGH_QUALITY_TINY_SAMPLE",
+            "severity": "high",
+            "details": {"evidence_quality": score, "prior_samples": samples},
+        })
+    if stat_definition.get("verification_status") not in {"repository_contract", "verified"}:
+        flags.append({
+            "code": "STAT_DEFINITION_UNVERIFIED",
+            "severity": "high",
+            "details": {"prop_type": prediction.get("propType")},
+        })
+    for alert in prediction.get("tacticalAlerts") or []:
+        if isinstance(alert, str) and alert.strip():
+            flags.append({"code": "RP_TACTICAL_ALERT", "severity": "medium", "details": {"message": alert}})
+
+    severe = any(flag["severity"] == "high" for flag in flags)
+    return {
+        "status": "available",
+        "source": "deterministic_snapshot_checks",
+        "flags": flags,
+        "severity": "high" if severe else ("medium" if flags else "none"),
+        "blocks_elite_grade": severe,
+    }
+
+
+def _prediction_value(prediction: dict[str, Any], *keys: str) -> Any:
+    """Read equivalent RP fields from raw and diagnostic response shapes."""
+    final = prediction.get("final") if isinstance(prediction.get("final"), dict) else {}
+    bayesian = prediction.get("bayesianMetrics") if isinstance(prediction.get("bayesianMetrics"), dict) else {}
+    ledger = prediction.get("factorLedger") if isinstance(prediction.get("factorLedger"), dict) else {}
+    ledger_final = ledger.get("final") if isinstance(ledger.get("final"), dict) else {}
+    for key in keys:
+        for source in (prediction, final, bayesian, ledger_final):
+            if source.get(key) is not None:
+                return source[key]
+    return None
+
+
+def build_audit_snapshot(
+    prediction: dict[str, Any],
+    request: dict[str, Any],
+    *,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a shadow audit packet from the already-computed RP response.
+
+    No value returned by this function is used to recalculate RP projection,
+    probabilities, or recommendation.
+    """
+    context = context or {}
+    bm = prediction.get("bayesianMetrics") or {}
+    eq = prediction.get("evidenceQuality") or {}
+    prop_type = str(request.get("prop_type") or prediction.get("propType") or "").strip().lower()
+    stat_definition = STAT_DEFINITIONS.get(prop_type, {
+        "market": prop_type or "unknown",
+        "provider_field": None,
+        "definition": None,
+        "verification_status": "unknown",
+        "source": "unavailable",
+    })
+    role = (
+        prediction.get("exactTacticalRole")
+        or prediction.get("tacticalRole")
+        or prediction.get("role")
+        or prediction.get("playerRole")
+    )
+    position = prediction.get("playerPosition") or prediction.get("position")
+    role_values = {
+        "exact_role": role,
+        "position": position,
+        "confidence": prediction.get("roleConfidence"),
+        "evidence_chain": prediction.get("roleEvidence") or prediction.get("positionalReality"),
+    }
+    role_status = "available" if role else ("partial" if position else "unknown")
+    role_reason = None if role else "The prediction response did not contain an exact observed tactical role."
+
+    venue_values = {
+        "rp_venue_avg": bm.get("venueAvg"),
+        "rp_venue_samples": bm.get("venueSamples"),
+        "opponent_allowed_avg": bm.get("opponentAllowedAvg"),
+        "opponent_allowed_samples": bm.get("opponentAllowedSamples"),
+        "cond_possession_adjustment": bm.get("condPossAdj"),
+    }
+    venue_has_data = any(value is not None for value in venue_values.values())
+    rp_snapshot = _rp_snapshot(prediction, request)
+    p_over = _probability(_prediction_value(prediction, "pOver", "p_over"))
+    p_under = _probability(_prediction_value(prediction, "pUnder", "p_under"))
+    recommendation = str(_prediction_value(prediction, "recommendation") or "").lower()
+    selected_probability = p_over if recommendation == "over" else p_under if recommendation == "under" else None
+    anomaly_input = dict(prediction)
+    if p_over is not None:
+        anomaly_input["pOver"] = p_over
+    if p_under is not None:
+        anomaly_input["pUnder"] = p_under
+    anomalies = _anomalies(anomaly_input, eq, stat_definition)
+    evidence_score = _number(eq.get("score"))
+
+    return {
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "audit_model_version": AUDIT_MODEL_VERSION,
+        "mode": audit_mode(),
+        "captured_at": _now(),
+        "math_unchanged": True,
+        "production_influence": False,
+        "identity": {
+            "fixture_id": request.get("fixture_id") or prediction.get("fixtureId"),
+            "player_id": request.get("player_id") or prediction.get("playerId"),
+            "player_name": context.get("player_name") or prediction.get("playerName") or prediction.get("canonicalPlayerName"),
+            "team_id": context.get("team_id") or prediction.get("fixtureTeamId") or prediction.get("teamId"),
+            "team_name": context.get("team_name") or prediction.get("teamName"),
+            "opponent_id": context.get("opponent_id") or prediction.get("fixtureOpponentId") or prediction.get("opponentId"),
+            "opponent_name": context.get("opponent_name") or prediction.get("opponentName"),
+            "league_id": context.get("league_id") or prediction.get("leagueId"),
+            "season": context.get("season") or prediction.get("season"),
+            "venue": context.get("venue") or prediction.get("resolvedVenue") or prediction.get("venue"),
+            "prop_type": prop_type,
+            "line": request.get("line") if request.get("line") is not None else prediction.get("line"),
+        },
+        "rp_snapshot": rp_snapshot,
+        "probability": {
+            "p_over": p_over,
+            "p_under": p_under,
+            "selected_side": recommendation if recommendation in {"over", "under"} else None,
+            "selected_probability": selected_probability,
+            "source": "rp_prediction",
+        },
+        "conviction": {
+            "probability": selected_probability,
+            "evidence_quality_score": evidence_score,
+            "status": "available" if evidence_score is not None else "unknown",
+            "note": "Probability and evidence conviction are tracked separately.",
+        },
+        "modules": {
+            "stat_definition": _module(
+                "available" if stat_definition.get("verification_status") != "unknown" else "unknown",
+                source=str(stat_definition.get("source") or "unavailable"),
+                values=stat_definition,
+                reason=None if stat_definition.get("verification_status") != "unknown" else "No configured definition for this prop.",
+            ),
+            "exact_role": _module(role_status, source="rp_response_or_role_evidence", values=role_values, reason=role_reason),
+            "rp_possession_context": _module(
+                "partial" if venue_has_data else "unknown",
+                source="rp_prediction",
+                values=venue_values,
+                reason=None if venue_has_data else "RP response did not expose venue possession values.",
+            ),
+            "independent_venue_possession": _module(
+                "not_started",
+                source="feature_flagged_audit_module",
+                reason="Independent same-venue seven-match retrieval is not yet enabled in the shadow audit.",
+            ),
+            "venue_h2h_possession": _module(
+                "not_started",
+                source="feature_flagged_audit_module",
+                reason="Venue-oriented H2H possession aggregation is not yet enabled in the shadow audit.",
+            ),
+            "role_opponent_venue_cohort": _module(
+                "not_started",
+                source="existing_role_endpoints_not_replayed",
+                reason="The existing role cohort endpoint is kept separate until a replay-safe cohort snapshot is wired in.",
+            ),
+            "volume_share": _module("not_started", source="feature_flagged_audit_module", reason="Team/player volume-share replay is not enabled."),
+            "teammate_redistribution": _module("not_started", source="feature_flagged_audit_module", reason="Comparable with/without-teammate samples are unavailable in this snapshot."),
+            "minutes_probability": _module("not_started", source="feature_flagged_audit_module", reason="No independent minutes simulation was run."),
+            "game_state": _module("not_started", source="feature_flagged_audit_module", reason="No independent scenario replay was run."),
+            "market_movement": _module("unknown", source="saved_prediction_input", reason="Timestamped opening/current/closing line history is unavailable unless separately captured."),
+            "anomaly_detection": anomalies,
+            "evidence_quality": _module(
+                "available" if eq else "unknown",
+                source="rp_evidence_quality" if eq else "unavailable",
+                values=eq,
+                reason=None if eq else "RP did not return an evidence-quality packet.",
+            ),
+            "model_disagreement": _module(
+                "unknown",
+                source="independent_layer_registry",
+                reason="Only RP-correlated values are present; independent disagreement cannot be claimed from one prediction run.",
+            ),
+            "counterfactual_robustness": _module(
+                "not_started",
+                source="feature_flagged_audit_module",
+                reason="Counterfactual reruns remain shadow-only until replay inputs are bounded.",
+            ),
+            "calibration": _module(
+                "partial",
+                source="rp_response_and_settled_pick_ledger",
+                values={
+                    "prop_historical_rate": prediction.get("propHistoricalRate"),
+                    "prop_historical_n": prediction.get("propHistoricalN"),
+                    "line_deviation_hit_rate": prediction.get("lineDeviationHitRate"),
+                    "line_deviation_n": prediction.get("lineDeviationHitRateN"),
+                },
+            ),
+        },
+        "verdict": {
+            "rp_recommendation": recommendation or prediction.get("recommendation"),
+            "audit_decision": "RP_RECOMMENDATION_UNCHANGED",
+            "jarvis_is_not_a_probability_override": True,
+            "grade": "BLOCKED" if anomalies.get("blocks_elite_grade") else "OBSERVATIONAL",
+            "confidence_cap": "NO_ELITE_GRADE" if anomalies.get("blocks_elite_grade") else None,
+            "reasons": [
+                "Audit values are observational until walk-forward validation promotes them.",
+                *[flag["code"] for flag in anomalies.get("flags", [])],
+            ],
+        },
+        "status": {
+            "phase_1_snapshot": "partial",
+            "phase_2_calibration": "partial",
+            "phase_17_definition_gate": "partial",
+            "phase_18_anomaly_gate": "complete",
+            "phase_25_evidence_quality": "partial",
+            "phase_26_probability_conviction_split": "complete",
+            "phase_27_disagreement": "not_started",
+            "phase_28_robustness": "not_started",
+            "phase_29_confidence_caps": "partial",
+            "phase_30_orchestration": "partial",
+        },
+    }
+
+
+def prediction_event_key(pick_or_request: dict[str, Any]) -> str:
+    """Canonical identity for one prediction event, independent of user saves."""
+    parts = [
+        pick_or_request.get("sport") or "soccer",
+        pick_or_request.get("fixtureId") or pick_or_request.get("fixture_id") or "",
+        pick_or_request.get("playerId") or pick_or_request.get("player_id") or "",
+        pick_or_request.get("propType") or pick_or_request.get("prop_type") or "",
+        pick_or_request.get("line") or "",
+        str(pick_or_request.get("recommendation") or "").lower(),
+    ]
+    return "|".join(str(part) for part in parts)
+
+
+async def ensure_audit_indexes(db: Any) -> None:
+    await db.jarvis_prediction_audits.create_index("event_key", unique=True, name="jarvis_audit_event_key")
+    await db.jarvis_prediction_audits.create_index(
+        [("identity.fixture_id", 1), ("identity.player_id", 1), ("identity.prop_type", 1), ("captured_at", -1)],
+        name="jarvis_audit_identity_time",
+    )
+    # Calibration reads the durable settled ledger by status and newest
+    # settlement. Keep this query bounded without changing the picks schema.
+    try:
+        await db.picks.create_index(
+            [("status", 1), ("settledAt", -1), ("timestamp", -1)],
+            name="picks_settled_calibration",
+        )
+    except Exception:
+        # The audit index setup is auxiliary; existing deployments may not
+        # permit adding an index while Atlas is under quota pressure.
+        pass
+    await db.jarvis_settlement_postmortems.create_index(
+        [("pick_id", 1), ("settled_at", -1)],
+        name="jarvis_postmortem_pick_time",
+    )
+    await db.jarvis_settlement_postmortems.create_index("settlement_event_key", unique=True, name="jarvis_postmortem_event_key")
+
+
+async def persist_prediction_audit(
+    db: Any,
+    *,
+    pick: dict[str, Any],
+    prediction: dict[str, Any],
+    request: dict[str, Any],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    audit = build_audit_snapshot(prediction, request, context=context)
+    event_key = prediction_event_key(pick)
+    document = {
+        "event_key": event_key,
+        "identity": audit["identity"],
+        "prediction_snapshot": audit["rp_snapshot"],
+        "audit_snapshot": audit,
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "audit_model_version": AUDIT_MODEL_VERSION,
+        "created_at": audit["captured_at"],
+        "immutable": True,
+    }
+    update = {
+        "$setOnInsert": document,
+        "$set": {"last_seen_at": _now()},
+        "$addToSet": {"pick_ids": str(pick.get("pickId") or pick.get("id") or "")},
+    }
+    result = await db.jarvis_prediction_audits.update_one({"event_key": event_key}, update, upsert=True)
+    return {
+        "event_key": event_key,
+        "audit_id": event_key,
+        "created": bool(result.upserted_id),
+        "snapshot": audit,
+    }
+
+
+def _wilson_interval(hits: int, n: int) -> dict[str, float] | None:
+    if n <= 0:
+        return None
+    p = hits / n
+    z = 1.96
+    denominator = 1 + (z * z / n)
+    center = (p + (z * z / (2 * n))) / denominator
+    spread = (z / denominator) * math.sqrt((p * (1 - p) / n) + (z * z / (4 * n * n)))
+    return {"low": round(max(0, center - spread) * 100, 2), "high": round(min(1, center + spread) * 100, 2)}
+
+
+def _row_probability(row: dict[str, Any], direction: str) -> float | None:
+    direct = row.get("pOver" if direction == "over" else "pUnder")
+    if direct is None:
+        direct = (row.get("bayesianMetrics") or {}).get("pOver" if direction == "over" else "pUnder")
+    return _probability(direct)
+
+
+def _row_direction(row: dict[str, Any]) -> str | None:
+    direction = str(row.get("recommendation") or "").lower()
+    if direction in {"over", "under"}:
+        return direction
+    return None
+
+
+def _single_calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    scored = []
+    for row in rows:
+        direction = _row_direction(row)
+        result = str(row.get("result") or "").lower()
+        if direction not in {"over", "under"} or result not in {"hit", "miss"}:
+            continue
+        probability = _row_probability(row, direction)
+        if probability is None:
+            continue
+        scored.append((row, direction, result, probability / 100))
+    n = len(scored)
+    hits = sum(1 for _row, _direction, result, _prob in scored if result == "hit")
+    if not n:
+        return {
+            "sample_size": 0,
+            "hits": 0,
+            "misses": 0,
+            "hit_rate": None,
+            "confidence_interval": None,
+            "brier_score": None,
+            "log_loss": None,
+            "calibration_error": None,
+            "warning": "No verified directional HIT/MISS rows with probabilities.",
+        }
+    brier = sum((prob - (1 if result == "hit" else 0)) ** 2 for _row, _direction, result, prob in scored) / n
+    log_loss = sum(
+        -math.log(max(1e-6, min(1 - 1e-6, prob if result == "hit" else 1 - prob)))
+        for _row, _direction, result, prob in scored
+    ) / n
+    mean_prob = sum(prob for _row, _direction, _result, prob in scored) / n
+    hit_rate = hits / n
+    return {
+        "sample_size": n,
+        "hits": hits,
+        "misses": n - hits,
+        "hit_rate": round(hit_rate * 100, 2),
+        "confidence_interval": _wilson_interval(hits, n),
+        "brier_score": round(brier, 6),
+        "log_loss": round(log_loss, 6),
+        "calibration_error": round(abs(mean_prob - hit_rate) * 100, 2),
+        "mean_predicted_probability": round(mean_prob * 100, 2),
+        "warning": "Small sample; interval is wide and should not be treated as precise." if n < 30 else None,
+    }
+
+
+def calibration_summary(
+    rows: Iterable[dict[str, Any]],
+    *,
+    prop_type: str | None = None,
+    role: str | None = None,
+    position: str | None = None,
+    league_id: int | None = None,
+    venue: str | None = None,
+    side: str | None = None,
+    model_version: str | None = None,
+) -> dict[str, Any]:
+    from model_metrics import dedupe_prediction_rows
+
+    filtered = []
+    for row in dedupe_prediction_rows(list(rows)):
+        if str(row.get("status") or "").lower() != "settled":
+            continue
+        if prop_type and str(row.get("propType") or "").lower() != prop_type.lower():
+            continue
+        if role and str(row.get("role") or row.get("tacticalRole") or "").lower() != role.lower():
+            continue
+        if position and str(row.get("position") or row.get("playerPosition") or "").lower() != position.lower():
+            continue
+        if league_id is not None and str(row.get("leagueId") or "") != str(league_id):
+            continue
+        if venue and str(row.get("venue") or "").lower() != venue.lower():
+            continue
+        direction = _row_direction(row)
+        if side and direction != side.lower():
+            continue
+        if model_version and str(row.get("modelVersion") or row.get("factorLedgerVersion") or "") != model_version:
+            continue
+        filtered.append(row)
+
+    ordered = sorted(filtered, key=lambda row: str(row.get("settledAt") or row.get("timestamp") or ""))
+    latest = ordered[-1:]
+    return {
+        "filters": {
+            "prop_type": prop_type,
+            "role": role,
+            "position": position,
+            "league_id": league_id,
+            "venue": venue,
+            "side": side,
+            "model_version": model_version,
+        },
+        "overall": _single_calibration(ordered),
+        "rolling": {
+            "last_25": _single_calibration(ordered[-25:]),
+            "last_50": _single_calibration(ordered[-50:]),
+            "last_100": _single_calibration(ordered[-100:]),
+            "lifetime": _single_calibration(ordered),
+        },
+        "latest_settlement": {
+            "settled_at": latest[0].get("settledAt") if latest else None,
+            "pick_id": latest[0].get("pickId") if latest else None,
+        },
+        "deduplicated_events": len(ordered),
+        "source": "db.picks settled verified ledger",
+        "no_fake_precision": True,
+    }
+
+
+def _failure_categories(pick: dict[str, Any], settlement: dict[str, Any]) -> list[dict[str, Any]]:
+    categories: list[dict[str, Any]] = []
+    result = str(settlement.get("result") or pick.get("result") or "").lower()
+    actual = _number(settlement.get("actualValue"))
+    projected = _number(pick.get("projectedValue") or pick.get("projection"))
+    minutes = _number(settlement.get("minutesPlayed") or pick.get("minutesPlayed"))
+    expected_minutes = _number(pick.get("minutesProjection") or pick.get("expectedMinutes"))
+    if minutes is not None and expected_minutes is not None and abs(minutes - expected_minutes) > 10:
+        categories.append({"code": "MINUTES_MISS", "confidence": "measured", "details": {"expected": expected_minutes, "actual": minutes}})
+    expected_poss = _number(pick.get("possessionProjection") or pick.get("expectedPossession"))
+    actual_poss = _number(settlement.get("teamPossession") or pick.get("teamPossession"))
+    if expected_poss is not None and actual_poss is not None and abs(expected_poss - actual_poss) >= 5:
+        categories.append({"code": "POSSESSION_MISS", "confidence": "measured", "details": {"expected": expected_poss, "actual": actual_poss}})
+    if result == "miss" and actual is not None and projected is not None:
+        categories.append({"code": "VARIANCE", "confidence": "fallback", "details": {"projected": projected, "actual": actual, "error": actual - projected}})
+    if not categories and result in {"miss", "push"}:
+        categories.append({"code": "UNKNOWN", "confidence": "unresolved", "details": {"reason": "No measured attribution signal was stored."}})
+    return categories
+
+
+async def record_settlement_postmortem(
+    db: Any,
+    *,
+    pick: dict[str, Any],
+    settlement: dict[str, Any],
+    source: str = "settlement_writer",
+) -> dict[str, Any]:
+    settlement_source = settlement.get("settlementSource") or pick.get("settlementSource") or {}
+    settled_at = (
+        settlement.get("settledAt")
+        or pick.get("settledAt")
+        or settlement_source.get("recordedAt")
+        or "unknown"
+    )
+    event_key = _fingerprint({
+        "pick_id": pick.get("pickId"),
+        "result": settlement.get("result") or pick.get("result"),
+        "actual_value": settlement.get("actualValue"),
+        "provider": settlement_source.get("provider"),
+        "fixture_id": settlement_source.get("fixtureId"),
+        "stat_path": settlement_source.get("statPath"),
+    })
+    document = {
+        "settlement_event_key": event_key,
+        "pick_id": str(pick.get("pickId") or ""),
+        "tracking_id": pick.get("trackingId"),
+        "event_key": prediction_event_key(pick),
+        "settled_at": settled_at,
+        "source": source,
+        "result": settlement.get("result") or pick.get("result"),
+        "actual_value": settlement.get("actualValue"),
+        "actual_minutes": settlement.get("minutesPlayed") or pick.get("minutesPlayed"),
+        "settlement_source": settlement_source,
+        "expected": {
+            "line": pick.get("line"),
+            "recommendation": pick.get("recommendation"),
+            "projected_value": pick.get("projectedValue") or pick.get("projection"),
+            "confidence": pick.get("confidenceScore"),
+            "possession": pick.get("possessionProjection") or pick.get("expectedPossession"),
+            "minutes": pick.get("minutesProjection") or pick.get("expectedMinutes"),
+            "role": pick.get("role") or pick.get("tacticalRole") or pick.get("playerRole"),
+        },
+        "actual": {
+            "possession": settlement.get("teamPossession") or settlement.get("homePoss"),
+            "opponent_possession": settlement.get("opponentPossession") or settlement.get("awayPoss"),
+            "role": settlement.get("actualRole"),
+            "closing_line": settlement.get("closingLine") or pick.get("closingLine"),
+            "clv": settlement.get("clv") or pick.get("clv"),
+        },
+        "failure_attribution": _failure_categories(pick, settlement),
+        "created_at": _now(),
+        "immutable": True,
+    }
+    try:
+        await db.jarvis_settlement_postmortems.insert_one(document)
+        created = True
+    except Exception as exc:
+        if "duplicate" not in str(exc).lower():
+            raise
+        created = False
+    return {"event_key": event_key, "created": created, "failure_attribution": document["failure_attribution"]}
+
+
+def implementation_status() -> list[dict[str, Any]]:
+    """Honest status for the 30-phase architecture, exposed to owner tooling."""
+    statuses = {
+        1: ("PARTIAL", "Immutable RP/JARVIS prediction snapshots and settlement audit collection are available; legacy rows need backfill."),
+        2: ("PARTIAL", "Calibration endpoint provides deduplicated hit rate, rolling windows, Brier, log loss, intervals, and warnings."),
+        3: ("PARTIAL", "RP possession context is preserved; independent same-venue seven-match replay is not enabled."),
+        4: ("NOT_STARTED", "Opponent venue effect replay is not enabled."),
+        5: ("PARTIAL", "Existing H2H evidence exists; venue-specific possession aggregation is not enabled in the audit."),
+        6: ("PARTIAL", "RP possession is compared as provenance-labeled context; independent range model is not promoted."),
+        7: ("PARTIAL", "Existing role evidence is surfaced; exact-role audit snapshot is conservative when absent."),
+        8: ("PARTIAL", "Existing role cohort endpoint exists; replay-safe saved cohort snapshots are not yet integrated."),
+        9: ("PARTIAL", "Existing player logs support several props; cohort-wide metadata capture is incomplete."),
+        10: ("NOT_STARTED", "Independent role-cohort statistics are not yet persisted by the audit."),
+        11: ("NOT_STARTED", "Possession-normalized cohort production is not yet enabled."),
+        12: ("NOT_STARTED", "Player/team volume-share baselines are not yet enabled."),
+        13: ("NOT_STARTED", "Teammate redistribution samples are not yet enabled."),
+        14: ("NOT_STARTED", "Independent probabilistic minutes simulation is not yet enabled."),
+        15: ("PARTIAL", "Existing RP game situation fields are preserved; independent learned scenarios are not enabled."),
+        16: ("NOT_STARTED", "Independent scenario-weighted projections are not yet enabled."),
+        17: ("PARTIAL", "Configured stat-definition registry and confidence gate exist; provider reconciliation is incomplete."),
+        18: ("PARTIAL", "Snapshot anomaly checks exist; broad provider anomaly monitoring is not yet complete."),
+        19: ("PARTIAL", "Odds can be stored with picks; timestamped opening/current/closing line tracking is incomplete."),
+        20: ("PARTIAL", "Settlement postmortem records and measured attribution categories exist; all writer paths still need migration."),
+        21: ("PARTIAL", "Machine-readable postmortem storage exists; automated narrative generation is not enabled."),
+        22: ("PARTIAL", "Walk-forward replay utilities exist; complete layer-by-layer audit comparison is not yet orchestrated."),
+        23: ("PARTIAL", "Hierarchical league calibration exists in RP; independent audit coefficients remain shadow-only."),
+        24: ("PARTIAL", "Role/prop calibration exists in RP; independent role models remain disabled."),
+        25: ("PARTIAL", "RP evidence-quality packet is captured with provenance; full component scoring is not yet independent."),
+        26: ("COMPLETE", "Probability and conviction are explicitly separate in the audit contract."),
+        27: ("NOT_STARTED", "Independent multi-layer disagreement index is not yet enabled."),
+        28: ("NOT_STARTED", "Counterfactual robustness reruns are not yet enabled."),
+        29: ("PARTIAL", "Anomaly/stat-definition caps block elite audit grading; full gate matrix remains shadow-only."),
+        30: ("PARTIAL", "Feature-gated full-audit orchestration is available around one RP run; independent modules remain clearly labeled."),
+    }
+    return [{"phase": phase, "status": status, "summary": summary} for phase, (status, summary) in statuses.items()]

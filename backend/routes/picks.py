@@ -315,6 +315,28 @@ def _soccer_settle_lock(pick_id: str) -> aio.Lock:
     return _soccer_settle_locks[pick_id]
 
 
+async def _record_jarvis_settlement(pick: dict, settlement: dict | None) -> None:
+    """Best-effort append-only attribution for verified soccer settlements."""
+    if not settlement or str(pick.get("sport") or "soccer").lower() != "soccer":
+        return
+    source = settlement.get("settlementSource") or {}
+    if source and source.get("verified") is not True:
+        return
+    try:
+        from jarvis_audit import audit_enabled, record_settlement_postmortem
+        if audit_enabled():
+            await record_settlement_postmortem(
+                db,
+                pick=pick,
+                settlement=settlement,
+                source="shared_soccer_settlement",
+            )
+    except Exception as exc:
+        # Attribution is auxiliary and must never block a settlement or cause a
+        # user-visible pick refresh failure.
+        print(f"[JARVIS POSTMORTEM] skipped for {pick.get('pickId')}: {exc}")
+
+
 @router.post("/picks/cs2/admin-manual-settle")
 async def cs2_admin_manual_settle(payload: dict):
     """
@@ -5576,7 +5598,7 @@ async def _settle_soccer_pick(
             )
             return None
         result_str, pass_outcome = _settle_pick_result(actual_value, pick.get("line", 0), pick)
-        return {
+        settlement = {
             "pickId": pick.get("id"), "fixtureId": match.get("match_id") or match.get("id"),
             "status": "settled", "result": result_str,
             "actualValue": actual_value, "minutesPlayed": minutes_played,
@@ -5595,6 +5617,8 @@ async def _settle_soccer_pick(
             ),
             **({"passOutcome": pass_outcome} if pass_outcome else {}),
         }
+        await _record_jarvis_settlement(pick, settlement)
+        return settlement
 
     # ── Legacy API-Football path for non-BDL leagues ──────────────────────────
     if not team_id:
@@ -6002,7 +6026,7 @@ async def _settle_soccer_pick(
         line = pick.get("line", 0)
         recommendation = pick.get("recommendation", "over")
         result_str, pass_outcome = _settle_pick_result(actual_value, line, pick)
-        return {
+        settlement = {
             "pickId": pick.get("id"),
             "fixtureId": fixture_id,
             "status": "settled",
@@ -6021,6 +6045,8 @@ async def _settle_soccer_pick(
             "settlementSource": settlement_source,
             **({"passOutcome": pass_outcome} if pass_outcome else {}),
         }
+        await _record_jarvis_settlement(pick, settlement)
+        return settlement
 
     return None
 

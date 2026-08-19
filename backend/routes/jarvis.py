@@ -56,6 +56,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from config import OWNER_EMAIL, db
+from jarvis_audit import (
+    AUDIT_MODEL_VERSION,
+    AUDIT_SCHEMA_VERSION,
+    STAT_DEFINITIONS,
+    audit_enabled,
+    audit_mode,
+    build_audit_snapshot,
+    calibration_summary,
+    implementation_status,
+    persist_prediction_audit,
+)
 
 router = APIRouter()
 
@@ -293,9 +304,27 @@ async def jarvis_openapi():
                 "Provides fixtures, league tables, team info, player stats, "
                 "match events, lineups, H2H, odds, injuries, and a one-call "
                 "match-context aggregator for AI analysis. "
-                "All data endpoints require Authorization: Bearer <JARVIS_API_KEY>."
+                "All data endpoints require Authorization: Bearer <JARVIS_API_KEY>. "
+                "MANDATORY JARVIS WORKFLOW: for every player analysis call "
+                "POST /api/jarvis/full-audit/soccer exactly once after the "
+                "fixture/player inputs are known; use its rp_prediction as the "
+                "quantitative answer and its audit packet only as provenance-labeled "
+                "evidence. Before presenting the final answer, call GET "
+                "/api/jarvis/calibration. Call GET /api/jarvis/stat-definitions "
+                "when the prop definition is not already known and GET "
+                "/api/jarvis/audit-status when reporting audit coverage. Never "
+                "rerun or override Reverse Picks math with audit values."
             ),
             "version": "3.0.0",
+            "x-jarvis-mandatory-workflow": [
+                "Resolve the fixture and player first.",
+                "Call runFullSoccerAudit exactly once per analysis.",
+                "Use rp_prediction for recommendation, projection, and probabilities.",
+                "Call getCalibration before the final answer.",
+                "Call getStatDefinitions for an unknown or ambiguous prop.",
+                "Call getAuditStatus when reporting which audit phases ran.",
+                "Do not let audit evidence override RP math.",
+            ],
         },
         "servers": [{"url": base}],
         "components": {
@@ -334,7 +363,7 @@ async def jarvis_openapi():
                                     "properties": {
                                         "fixture_id": {"type": "integer", "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."},
                                         "player_id":  {"type": "integer", "description": "API-Sports player ID."},
-                                        "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
+                                        "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals | dribbles | crosses | interceptions | blocks | fouls_drawn | fouls_committed | duels_won", "default": "pass_attempts"},
                                         "line":       {"type": "number",  "description": "Player prop line to predict against."},
                                         "odds":       {"type": "object",  "description": "Optional moneyline: {home: float, away: float, draw: float}."},
                                         "position_override": {"type": "string", "description": "Override detected position (e.g. CB, CM, ST)."},
@@ -352,6 +381,84 @@ async def jarvis_openapi():
                         "422": {"description": "Could not resolve player in fixture, or invalid prop."},
                         "502": {"description": "Prediction or save engine error."},
                         "507": {"description": "Database storage full — free Atlas storage and retry."},
+                    },
+                }
+            },
+            "/api/jarvis/full-audit/soccer": {
+                "post": {
+                    "operationId": "runFullSoccerAudit",
+                    "summary": "MANDATORY: Run RP once and return a separate JARVIS audit packet.",
+                    "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. Audit values never alter RP math. Unavailable modules return UNKNOWN or NOT_STARTED.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["fixture_id", "player_id", "prop_type", "line"],
+                                    "properties": {
+                                        "fixture_id": {"type": "integer", "description": "API-Sports fixture ID."},
+                                        "player_id": {"type": "integer", "description": "API-Sports player ID."},
+                                        "prop_type": {"type": "string", "default": "pass_attempts"},
+                                        "line": {"type": "number"},
+                                        "odds": {"type": "object"},
+                                        "position_override": {"type": "string"},
+                                        "role_override": {"type": "string"},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "RP diagnostic plus independent audit packet."},
+                        "401": {"description": "Invalid or missing JARVIS bearer token."},
+                        "404": {"description": "Audit feature disabled."},
+                        "422": {"description": "Fixture/player could not be resolved."},
+                        "502": {"description": "Prediction engine error."},
+                    },
+                }
+            },
+            "/api/jarvis/calibration": {
+                "get": {
+                    "operationId": "getCalibration",
+                    "summary": "MANDATORY before final answer: return settled-pick calibration.",
+                    "description": "Returns hit rate, rolling last-25/50/100, lifetime metrics, Brier score, log loss, calibration error, Wilson intervals, and sample-size warnings.",
+                    "parameters": [
+                        _param("prop_type", "string", False, "Filter by prop type."),
+                        _param("role", "string", False, "Filter by exact stored role."),
+                        _param("position", "string", False, "Filter by position."),
+                        _param("league_id", "integer", False, "Filter by league."),
+                        _param("venue", "string", False, "Filter by home/away."),
+                        _param("side", "string", False, "Filter by over/under."),
+                        _param("model_version", "string", False, "Filter by immutable model version."),
+                        _param("limit", "integer", False, "Maximum settled rows to inspect."),
+                    ],
+                    "responses": {
+                        "200": {"description": "Calibration summary with no-fake-precision warnings."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                    },
+                }
+            },
+            "/api/jarvis/stat-definitions": {
+                "get": {
+                    "operationId": "getStatDefinitions",
+                    "summary": "MANDATORY for unknown props: return stat definitions.",
+                    "parameters": [
+                        _param("prop_type", "string", False, "Return one prop definition."),
+                    ],
+                    "responses": {
+                        "200": {"description": "Configured definition or explicit UNKNOWN."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                    },
+                }
+            },
+            "/api/jarvis/audit-status": {
+                "get": {
+                    "operationId": "getAuditStatus",
+                    "summary": "Return mandatory audit coverage and 30-phase status.",
+                    "responses": {
+                        "200": {"description": "Audit mode, versions, and phase status."},
+                        "401": {"description": "Invalid or missing bearer token."},
                     },
                 }
             },
@@ -419,7 +526,7 @@ async def jarvis_openapi():
                                     "properties": {
                                         "fixture_id": {"type": "integer", "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."},
                                         "player_id":  {"type": "integer", "description": "API-Sports player ID."},
-                                        "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
+                                        "prop_type":  {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals | dribbles | crosses | interceptions | blocks | fouls_drawn | fouls_committed | duels_won", "default": "pass_attempts"},
                                         "line":       {"type": "number",  "description": "Player prop line to predict against."},
                                         "odds":       {"type": "object",  "description": "Optional moneyline: {home: float, away: float, draw: float}."},
                                         "position_override": {"type": "string", "description": "Override detected position (e.g. CB, CM, ST)."},
@@ -460,7 +567,7 @@ async def jarvis_openapi():
                                         "league_id":     {"type": "integer", "description": "League ID (e.g. 39 = Premier League)."},
                                         "line":          {"type": "number",  "description": "The player prop line to predict against."},
                                         "venue":         {"type": "string",  "description": "home or away (relative to the player's team).", "default": "home"},
-                                        "prop_type":     {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals", "default": "pass_attempts"},
+                                        "prop_type":     {"type": "string",  "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals | dribbles | crosses | interceptions | blocks | fouls_drawn | fouls_committed | duels_won", "default": "pass_attempts"},
                                         "sport":         {"type": "string",  "description": "Sport name.", "default": "soccer"},
                                         "fixture_id":    {"type": "integer", "description": "Optional verified fixture ID — speeds up identity resolution."},
                                         "odds":          {"type": "object",  "description": "Optional moneyline odds: {home: float, away: float, draw: float}."},
@@ -729,7 +836,7 @@ async def jarvis_openapi():
 @router.get("/api/jarvis/docs")
 async def jarvis_docs():
     """Full API reference — no authentication required."""
-    base = "https://7a030359-7bf3-4fa1-8914-cbee61d63eb2-00-1w1w9xi7usfsw.picard.replit.dev"
+    base = "https://reversepicks.com"
     return JSONResponse(content={
         "service": "JARVIS Football API",
         "version": "3.0.0",
@@ -741,10 +848,45 @@ async def jarvis_docs():
             "format": "Authorization: Bearer <JARVIS_API_KEY>",
             "note": "health, docs, and openapi.json endpoints do not require authentication.",
         },
+        "mandatory_workflow": {
+            "per_analysis": [
+                {
+                    "step": 1,
+                    "call": "POST /api/jarvis/full-audit/soccer",
+                    "rule": "Call exactly once after fixture_id, player_id, prop_type, and line are known.",
+                },
+                {
+                    "step": 2,
+                    "call": "GET /api/jarvis/calibration",
+                    "rule": "Call before presenting the final answer; disclose sample warnings and truncation.",
+                },
+                {
+                    "step": 3,
+                    "call": "GET /api/jarvis/stat-definitions",
+                    "rule": "Call when the requested prop is unknown or its provider definition is ambiguous.",
+                },
+                {
+                    "step": 4,
+                    "call": "GET /api/jarvis/audit-status",
+                    "rule": "Call when reporting which of the 30 audit phases are active.",
+                },
+            ],
+            "interpretation": [
+                "Use audit.rp_prediction for the production recommendation, projection, and probabilities.",
+                "Treat audit.modules as provenance-labeled evidence, not a probability override.",
+                "Never rerun Reverse Picks to manufacture disagreement and never let audit values change the saved pick.",
+            ],
+        },
         "endpoint_groups": {
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
             "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
             "save": ["/api/jarvis/save-pick/soccer"],
+            "audit": [
+                "/api/jarvis/full-audit/soccer",
+                "/api/jarvis/calibration",
+                "/api/jarvis/stat-definitions",
+                "/api/jarvis/audit-status",
+            ],
             "screenshots": ["/api/jarvis/prediction-screenshots"],
             "tactical_evidence": ["/api/jarvis/tactical-evidence"],
             "role_analysis": ["/api/jarvis/role-profile", "/api/jarvis/role-opponent-cohort"],
@@ -1300,22 +1442,11 @@ class JarvisSoccerPredictBody(BaseModel):
     role_override:     str   = ""
 
 
-@router.post("/api/jarvis/predict/soccer")
-async def jarvis_predict_soccer(
-    body: JarvisSoccerPredictBody,
-    authorization: Optional[str] = Header(default=None),
-):
-    """
-    Full production soccer prediction. fixture_id + player_id auto-resolve
-    all team, opponent, venue, and league context. Returns the exact same
-    final projection the subscriber app shows plus every intermediate layer.
-    """
-    _require_auth(authorization)
-
+async def _run_soccer_prediction(body: JarvisSoccerPredictBody) -> tuple[dict, dict]:
+    """Run exactly one untouched RP soccer prediction for JARVIS callers."""
     if not _JARVIS_KEY:
         raise HTTPException(503, detail={"error": "JARVIS_API_KEY not configured."})
 
-    # ── 1. Auto-resolve context ───────────────────────────────────────────────
     try:
         ctx = await _resolve_soccer_context(body.fixture_id, body.player_id)
     except HTTPException:
@@ -1323,7 +1454,6 @@ async def jarvis_predict_soccer(
     except Exception as exc:
         raise HTTPException(422, detail={"error": f"Context resolution failed: {exc}"})
 
-    # ── 2. Construct internal PredictionRequest ───────────────────────────────
     from models import PredictionRequest
     from routes.predict import predict as _rp_predict
 
@@ -1347,17 +1477,13 @@ async def jarvis_predict_soccer(
         roleOverride=body.role_override,
     )
 
-    # ── 3. Run the full production pipeline ───────────────────────────────────
-    # The club-transfer guard updates the player cache and then raises HTTP 422
-    # with "Current club changed to X." — a single retry uses the fresh cache.
     try:
         result = await _rp_predict(req)
     except HTTPException as exc:
-        # Club-transfer guard raises 409 with "Current club changed to X."
-        # It updates the player cache then raises — retry once with fresh cache.
+        # Preserve the existing one-retry club-transfer behavior.
         if exc.status_code == 409 and "Current club changed" in str(exc.detail):
             try:
-                result = await _rp_predict(req)   # retry with now-warm cache
+                result = await _rp_predict(req)
             except HTTPException:
                 raise
             except Exception as exc2:
@@ -1370,8 +1496,26 @@ async def jarvis_predict_soccer(
     if hasattr(result, "body"):
         import json as _json
         result = _json.loads(result.body)
+    if not isinstance(result, dict):
+        raise HTTPException(502, detail={"error": "Prediction engine returned an invalid response."})
+    return ctx, result
 
-    # ── 4. Return comprehensive diagnostic ────────────────────────────────────
+
+@router.post("/api/jarvis/predict/soccer")
+async def jarvis_predict_soccer(
+    body: JarvisSoccerPredictBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Full production soccer prediction. fixture_id + player_id auto-resolve
+    all team, opponent, venue, and league context. Returns the exact same
+    final projection the subscriber app shows plus every intermediate layer.
+    """
+    _require_auth(authorization)
+
+    ctx, result = await _run_soccer_prediction(body)
+
+    # ── Return comprehensive diagnostic ───────────────────────────────────────
     diagnostic = _build_soccer_diagnostic(result)
     diagnostic["_resolution"] = {
         "source":     ctx.get("_resolution_source"),
@@ -1447,60 +1591,7 @@ async def jarvis_save_pick_soccer(
     """
     _require_auth(authorization)
 
-    if not _JARVIS_KEY:
-        raise HTTPException(503, detail={"error": "JARVIS_API_KEY not configured."})
-
-    # ── 1. Auto-resolve fixture context ───────────────────────────────────────
-    try:
-        ctx = await _resolve_soccer_context(body.fixture_id, body.player_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(422, detail={"error": f"Context resolution failed: {exc}"})
-
-    # ── 2. Run prediction (JARVIS service account, same as /predict/soccer) ───
-    from models import PredictionRequest
-    from routes.predict import predict as _rp_predict
-
-    req = PredictionRequest(
-        email="_jarvis_service_",
-        token=_JARVIS_KEY,
-        leagueId=ctx["league_id"],
-        playerId=body.player_id,
-        playerName=ctx["player_name"],
-        teamId=ctx["team_id"],
-        teamName=ctx["team_name"],
-        opponentId=ctx["opponent_id"],
-        opponentName=ctx["opponent_name"],
-        venue=ctx["venue"],
-        propType=body.prop_type,
-        line=body.line,
-        sport="soccer",
-        fixtureId=body.fixture_id,
-        odds=body.odds,
-        positionOverride=body.position_override,
-        roleOverride=body.role_override,
-    )
-
-    try:
-        result = await _rp_predict(req)
-    except HTTPException as exc:
-        # Club-transfer guard: update cache then retry once
-        if exc.status_code == 409 and "Current club changed" in str(exc.detail):
-            try:
-                result = await _rp_predict(req)
-            except HTTPException:
-                raise
-            except Exception as exc2:
-                raise HTTPException(502, detail={"error": f"Prediction engine error on retry: {exc2}"})
-        else:
-            raise
-    except Exception as exc:
-        raise HTTPException(502, detail={"error": f"Prediction engine error: {exc}"})
-
-    if hasattr(result, "body"):
-        import json as _json
-        result = _json.loads(result.body)
+    ctx, result = await _run_soccer_prediction(body)
 
     model_metrics = _prediction_metrics(result)
 
@@ -1560,6 +1651,25 @@ async def jarvis_save_pick_soccer(
         },
     }
 
+    audit_request = {
+        "fixture_id": body.fixture_id,
+        "player_id": body.player_id,
+        "prop_type": body.prop_type,
+        "line": body.line,
+        "odds": body.odds,
+        "position_override": body.position_override,
+        "role_override": body.role_override,
+    }
+    audit_snapshot = build_audit_snapshot(result, audit_request, context=ctx)
+    pick_dict.update({
+        # Immutable quantitative snapshot plus an observational audit packet.
+        "modelVersion": audit_snapshot["rp_snapshot"].get("model_version"),
+        "modelFingerprint": audit_snapshot["rp_snapshot"].get("fingerprint"),
+        "jarvisAuditSchemaVersion": AUDIT_SCHEMA_VERSION,
+        "jarvisAuditModelVersion": AUDIT_MODEL_VERSION,
+        "jarvisAudit": audit_snapshot,
+    })
+
     # ── 4. Save with the server-side owner session ────────────────────────────
     from models import SavePickRequest
     from routes.picks import save_pick as _rp_save_pick
@@ -1578,6 +1688,35 @@ async def jarvis_save_pick_soccer(
     except Exception as exc:
         raise HTTPException(502, detail={"error": f"Save failed: {exc}"})
 
+    audit_persistence = {
+        "status": "disabled" if not audit_enabled() else "not_written",
+        "schema_version": AUDIT_SCHEMA_VERSION,
+    }
+    if audit_enabled():
+        try:
+            audit_persistence = await persist_prediction_audit(
+                db,
+                pick={
+                    **pick_dict,
+                    "pickId": save_result.get("pickId"),
+                    "trackingId": save_result.get("trackingId"),
+                },
+                prediction=result,
+                request=audit_request,
+                context=ctx,
+            )
+            audit_persistence["status"] = "written"
+        except Exception as exc:
+            # The audit is auxiliary; an Atlas quota/transient failure must not
+            # turn a successful owner save into a failed pick save.
+            import logging
+            logging.getLogger("jarvis").warning("prediction audit write skipped: %s", exc)
+            audit_persistence = {
+                "status": "write_skipped",
+                "schema_version": AUDIT_SCHEMA_VERSION,
+                "reason": "optional audit persistence failed",
+            }
+
     # ── 5. Return compact summary ──────────────────────────────────────────────
     return JSONResponse(content={
         "source":       "jarvis/save-pick/soccer",
@@ -1585,6 +1724,12 @@ async def jarvis_save_pick_soccer(
         "saved": {
             "pick_id":     save_result.get("pickId"),
             "tracking_id": save_result.get("trackingId"),
+        },
+        "audit": {
+            "status": audit_persistence.get("status"),
+            "schema_version": AUDIT_SCHEMA_VERSION,
+            "audit_model_version": AUDIT_MODEL_VERSION,
+            "event_key": audit_persistence.get("event_key"),
         },
         # Correlation risk warnings (zero-sum pass props, all-under slip, etc.)
         "correlation_warnings": save_result.get("correlationWarnings", []),
@@ -1611,6 +1756,160 @@ async def jarvis_save_pick_soccer(
             "line_deviation_hit_rate": result.get("lineDeviationHitRate"),
         },
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JARVIS AUDIT / CALIBRATION — observational layers around immutable RP output
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _soccer_audit_request(body: JarvisSoccerPredictBody | JarvisSavePickBody) -> dict[str, Any]:
+    return {
+        "fixture_id": body.fixture_id,
+        "player_id": body.player_id,
+        "prop_type": body.prop_type,
+        "line": body.line,
+        "odds": body.odds,
+        "position_override": body.position_override,
+        "role_override": body.role_override,
+    }
+
+
+@router.post("/api/jarvis/full-audit/soccer")
+async def jarvis_full_audit_soccer(
+    body: JarvisSoccerPredictBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Run RP once, then return a provenance-labeled independent audit packet.
+
+    Audit modules are observational and cannot alter the RP projection,
+    probabilities, recommendation, or saved-pick behavior.
+    """
+    _require_auth(authorization)
+    if not audit_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "feature_disabled", "feature": "jarvis_full_audit"},
+        )
+
+    ctx, result = await _run_soccer_prediction(body)
+    audit = build_audit_snapshot(result, _soccer_audit_request(body), context=ctx)
+    rp_diagnostic = _build_soccer_diagnostic(result)
+    return {
+        "source": "jarvis/full-audit/soccer",
+        "generated_at": int(time.time()),
+        "audit_mode": audit_mode(),
+        "math_unchanged": True,
+        "production_influence": False,
+        "jarvis_brief": rp_diagnostic.get("final", {}),
+        "rp_prediction": rp_diagnostic,
+        "audit": audit,
+    }
+
+
+@router.get("/api/jarvis/calibration")
+async def jarvis_calibration(
+    authorization: Optional[str] = Header(default=None),
+    prop_type: Optional[str] = Query(default=None),
+    role: Optional[str] = Query(default=None),
+    position: Optional[str] = Query(default=None),
+    league_id: Optional[int] = Query(default=None),
+    venue: Optional[str] = Query(default=None),
+    side: Optional[str] = Query(default=None),
+    model_version: Optional[str] = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=20000),
+):
+    """Return leakage-conscious settled-pick calibration with sample warnings."""
+    _require_auth(authorization)
+    rows = await db.picks.find(
+        {"status": "settled"},
+        {
+            "_id": 0,
+            "playerName": 1,
+            "playerId": 1,
+            "teamId": 1,
+            "opponentId": 1,
+            "fixtureId": 1,
+            "propType": 1,
+            "line": 1,
+            "recommendation": 1,
+            "result": 1,
+            "pOver": 1,
+            "pUnder": 1,
+            "bayesianMetrics": 1,
+            "role": 1,
+            "tacticalRole": 1,
+            "playerRole": 1,
+            "position": 1,
+            "playerPosition": 1,
+            "leagueId": 1,
+            "venue": 1,
+            "modelVersion": 1,
+            "factorLedgerVersion": 1,
+            "settlementSource": 1,
+            "settledAt": 1,
+            "timestamp": 1,
+        },
+    ).sort([("settledAt", -1), ("timestamp", -1)]).limit(limit).to_list(length=limit)
+    summary = calibration_summary(
+        rows,
+        prop_type=prop_type,
+        role=role,
+        position=position,
+        league_id=league_id,
+        venue=venue,
+        side=side,
+        model_version=model_version,
+    )
+    return {
+        "source": "db.picks settled ledger",
+        "generated_at": int(time.time()),
+        "calibration": summary,
+        "rows_returned": len(rows),
+        "requested_limit": limit,
+        "may_be_truncated": len(rows) >= limit,
+        "note": "Lifetime means the deduplicated settled rows inspected under requested_limit; raise limit for a wider ledger window.",
+    }
+
+
+@router.get("/api/jarvis/stat-definitions")
+async def jarvis_stat_definitions(
+    authorization: Optional[str] = Header(default=None),
+    prop_type: Optional[str] = Query(default=None),
+):
+    """Return the explicit market/provider definition registry."""
+    _require_auth(authorization)
+    if prop_type:
+        key = prop_type.strip().lower()
+        definition = STAT_DEFINITIONS.get(key)
+        if not definition:
+            return {
+                "source": "stat_definition_registry",
+                "status": "unknown",
+                "prop_type": key,
+                "reason": "No configured market/provider definition.",
+            }
+        return {"source": "stat_definition_registry", "status": "configured", "prop_type": key, "definition": definition}
+    return {
+        "source": "stat_definition_registry",
+        "status": "configured",
+        "definitions": STAT_DEFINITIONS,
+    }
+
+
+@router.get("/api/jarvis/audit-status")
+async def jarvis_audit_status(authorization: Optional[str] = Header(default=None)):
+    """Return feature flags and honest status for all 30 architecture phases."""
+    _require_auth(authorization)
+    return {
+        "source": "jarvis/audit-status",
+        "generated_at": int(time.time()),
+        "audit_mode": audit_mode(),
+        "audit_enabled": audit_enabled(),
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "audit_model_version": AUDIT_MODEL_VERSION,
+        "math_unchanged": True,
+        "phases": implementation_status(),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

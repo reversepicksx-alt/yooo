@@ -249,6 +249,17 @@ async def _run_startup_tasks():
     except Exception as _idx_err:
         import logging
         logging.getLogger("server").warning(f"create_index skipped (Atlas transient): {_idx_err}")
+    # Immutable JARVIS audit snapshots and append-only settlement postmortems.
+    # These are auxiliary collections; a transient Atlas/quota failure must not
+    # prevent the main app from binding or serving predictions.
+    try:
+        from jarvis_audit import ensure_audit_indexes
+        await ensure_audit_indexes(db)
+    except Exception as _audit_idx_err:
+        import logging
+        logging.getLogger("server").warning(
+            f"JARVIS audit indexes skipped (Atlas transient): {_audit_idx_err}"
+        )
     # Install TTL indexes on all cache collections to keep Atlas storage under control
     try:
         from ttl_indexes import setup_ttl_indexes

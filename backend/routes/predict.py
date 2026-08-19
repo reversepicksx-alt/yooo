@@ -17322,6 +17322,46 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             )
         prediction["_ts"] = datetime.now(timezone.utc).isoformat()
         safe_prediction = _json_safe_prediction(prediction)
+        # Capture the immutable RP snapshot beside the prediction record. This
+        # is an observational audit field only; it is never read back into the
+        # production math during the same request or future predictions.
+        try:
+            from jarvis_audit import (
+                AUDIT_MODEL_VERSION,
+                AUDIT_SCHEMA_VERSION,
+                audit_enabled,
+                build_audit_snapshot,
+            )
+            if audit_enabled():
+                _audit_request = {
+                    "fixture_id": req.fixtureId,
+                    "player_id": req.playerId,
+                    "prop_type": req.propType,
+                    "line": req.line,
+                    "odds": req.odds,
+                    "position_override": getattr(req, "positionOverride", ""),
+                    "role_override": getattr(req, "roleOverride", ""),
+                }
+                _audit_snapshot = build_audit_snapshot(
+                    prediction,
+                    _audit_request,
+                    context={
+                        "player_name": req.playerName,
+                        "team_id": req.teamId,
+                        "team_name": req.teamName,
+                        "opponent_id": req.opponentId,
+                        "opponent_name": req.opponentName,
+                        "league_id": req.leagueId,
+                        "venue": prediction.get("resolvedVenue") or req.venue,
+                    },
+                )
+                safe_prediction["jarvisAuditSchemaVersion"] = AUDIT_SCHEMA_VERSION
+                safe_prediction["jarvisAuditModelVersion"] = AUDIT_MODEL_VERSION
+                safe_prediction["jarvisAudit"] = _json_safe_prediction(_audit_snapshot)
+        except Exception as _audit_capture_err:
+            # The audit snapshot is auxiliary; never turn a valid RP result
+            # into a prediction failure because an optional module is missing.
+            print(f"[JARVIS AUDIT] snapshot skipped: {_audit_capture_err}")
         try:
             # Persistence is analytics-only. Atlas quota/network stalls must
             # never consume the user-facing prediction response budget.
