@@ -42,7 +42,10 @@ const SETTLEMENT_REFRESH_TIMEOUT_MS = 30_000;
 // The endpoint returns the durable snapshot before settlement work, so this is
 // a bounded database-read window rather than permission to wait on providers.
 const PICKS_LIST_TIMEOUT_MS = 20_000;
-const PICKS_SNAPSHOT_PREFIX = 'reversepicks:picks-snapshot:v2:';
+// v3 invalidates the old 300-row browser snapshot. Older snapshots were only
+// intended as an offline fallback, but listPicks could keep returning them
+// after a save and make the oldest durable picks appear to disappear.
+const PICKS_SNAPSHOT_PREFIX = 'reversepicks:picks-snapshot:v3:';
 const inMemoryPickSnapshots: Record<string, Record<string, unknown>[]> = {};
 const inFlightPickRefreshes: Record<string, Promise<Record<string, unknown>[]>> = {};
 
@@ -67,13 +70,22 @@ function readPickSnapshot(email: string): Record<string, unknown>[] {
 function writePickSnapshot(email: string, rows: Record<string, unknown>[]) {
   if (!rows.length) return;
   const key = picksSnapshotKey(email);
+  // Keep the complete durable response in memory. localStorage is only an
+  // offline fallback and may reject a large history because of browser quota.
   inMemoryPickSnapshots[key] = rows;
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
     window.localStorage.setItem(key, JSON.stringify(rows));
   } catch {
-    // The in-memory snapshot still protects the current session if storage is
-    // unavailable or the browser quota is full.
+    // Keep a bounded recent fallback if the full history exceeds localStorage.
+    // The next listPicks call still refreshes from the server before returning
+    // this fallback, so this must never become the authoritative list.
+    try {
+      window.localStorage.setItem(key, JSON.stringify(rows.slice(0, 300)));
+    } catch {
+      // The in-memory snapshot still protects the current session if storage
+      // is unavailable or the browser quota is full.
+    }
   }
 }
 
@@ -91,7 +103,7 @@ export function cacheSavedPick(email: string, pick: Record<string, unknown>, pic
   const rows = [
     optimistic,
     ...existing.filter((row) => String(row.pickId || row.id || '') !== optimisticId),
-  ].slice(0, 300);
+  ];
   writePickSnapshot(email, rows);
 }
 
@@ -141,9 +153,10 @@ function startPickRefresh(
       // Never replace a known-good snapshot with an empty response while the
       // backend is explicitly reporting a delayed storage read.
       if (rows.length > 0) {
-        // Keep the offline fallback bounded; the server response remains the
-        // complete list, while a browser snapshot only needs recent picks.
-        writePickSnapshot(email, rows.slice(0, 300));
+        // Preserve the complete server response. writePickSnapshot may keep a
+        // smaller localStorage fallback if the browser quota is exhausted, but
+        // the in-memory list and next durable refresh retain every row.
+        writePickSnapshot(email, rows);
       } else if (resp.snapshotComplete === true && resp.settlementDelayed !== true) {
         clearPickSnapshot(email);
       }
@@ -2565,10 +2578,15 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
 
   const snapshot = readPickSnapshot(email);
   if (snapshot.length > 0) {
-    // Paint the last successful list immediately. The server refresh is
-    // deduplicated and the next poll picks up any new settlement.
-    void startPickRefresh(email, token);
-    return normalizeRows(snapshot);
+    // A snapshot is useful while another refresh is already in flight, but it
+    // must not permanently mask the durable server list. The previous logic
+    // returned the snapshot and only refreshed in the background, so a 300-row
+    // cache could hide every older pick indefinitely.
+    const key = picksSnapshotKey(email);
+    const refreshAlreadyInFlight = Boolean(inFlightPickRefreshes[key]);
+    const refreshed = startPickRefresh(email, token);
+    if (refreshAlreadyInFlight) return normalizeRows(snapshot);
+    return normalizeRows(await refreshed);
   }
   return normalizeRows(await startPickRefresh(email, token));
 }
