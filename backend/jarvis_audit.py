@@ -288,6 +288,49 @@ def _prediction_value(prediction: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _first_goal_modules(prediction: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize the RP first-goal packet into audit response modules."""
+    factors = prediction.get("matchFactors") if isinstance(prediction.get("matchFactors"), dict) else {}
+    market = prediction.get("firstGoalMarket") or factors.get("firstGoalMarket") or {}
+    regime = prediction.get("firstGoalRegimeChange") or factors.get("firstGoalRegimeChange") or {}
+    market_available = bool(isinstance(market, dict) and market.get("available"))
+    regime_available = bool(isinstance(regime, dict) and regime.get("available"))
+    unavailable_reason = (
+        (market.get("reason") if isinstance(market, dict) else None)
+        or "No completed-fixture first-goal evidence was available for this fixture."
+    )
+
+    market_module = _module(
+        "available" if market_available else "unavailable",
+        source=str((market or {}).get("source") or "first_goal_engine"),
+        values=market if isinstance(market, dict) else {},
+        reason=None if market_available else unavailable_reason,
+    )
+    regime_module = _module(
+        "available" if regime_available else "unavailable",
+        source=str((regime or {}).get("source") or "first_goal_engine"),
+        values=regime if isinstance(regime, dict) else {},
+        reason=None if regime_available else (
+            (regime.get("reason") if isinstance(regime, dict) else None) or unavailable_reason
+        ),
+    )
+    game_state_module = _module(
+        "available" if market_available and regime_available else "partial",
+        source="first_goal_engine",
+        values={
+            "first_goal_market": market_module["values"],
+            "first_goal_regime_change": regime_module["values"],
+            "projection_influence": "shadow_only",
+        },
+        reason=None if market_available and regime_available else unavailable_reason,
+    )
+    return {
+        "game_state": game_state_module,
+        "first_goal_market": market_module,
+        "first_goal_regime_change": regime_module,
+    }
+
+
 def build_audit_snapshot(
     prediction: dict[str, Any],
     request: dict[str, Any],
@@ -346,6 +389,7 @@ def build_audit_snapshot(
         anomaly_input["pUnder"] = p_under
     anomalies = _anomalies(anomaly_input, eq, stat_definition)
     evidence_score = _number(eq.get("score"))
+    first_goal_modules = _first_goal_modules(prediction)
 
     return {
         "schema_version": AUDIT_SCHEMA_VERSION,
@@ -414,7 +458,9 @@ def build_audit_snapshot(
             "volume_share": _module("not_started", source="feature_flagged_audit_module", reason="Team/player volume-share replay is not enabled."),
             "teammate_redistribution": _module("not_started", source="feature_flagged_audit_module", reason="Comparable with/without-teammate samples are unavailable in this snapshot."),
             "minutes_probability": _module("not_started", source="feature_flagged_audit_module", reason="No independent minutes simulation was run."),
-            "game_state": _module("not_started", source="feature_flagged_audit_module", reason="No independent scenario replay was run."),
+            "game_state": first_goal_modules["game_state"],
+            "first_goal_market": first_goal_modules["first_goal_market"],
+            "first_goal_regime_change": first_goal_modules["first_goal_regime_change"],
             "market_movement": _module("unknown", source="saved_prediction_input", reason="Timestamped opening/current/closing line history is unavailable unless separately captured."),
             "anomaly_detection": anomalies,
             "evidence_quality": _module(
@@ -775,7 +821,7 @@ def implementation_status() -> list[dict[str, Any]]:
         12: ("NOT_STARTED", "Player/team volume-share baselines are not yet enabled."),
         13: ("NOT_STARTED", "Teammate redistribution samples are not yet enabled."),
         14: ("NOT_STARTED", "Independent probabilistic minutes simulation is not yet enabled."),
-        15: ("PARTIAL", "Existing RP game situation fields are preserved; independent learned scenarios are not enabled."),
+        15: ("COMPLETE", "Completed-fixture first-goal profiles expose shadow-only pre-match game-state branches; they never alter RP math."),
         16: ("NOT_STARTED", "Independent scenario-weighted projections are not yet enabled."),
         17: ("PARTIAL", "Configured stat-definition registry and confidence gate exist; provider reconciliation is incomplete."),
         18: ("PARTIAL", "Snapshot anomaly checks exist; broad provider anomaly monitoring is not yet complete."),

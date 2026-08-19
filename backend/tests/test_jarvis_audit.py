@@ -62,6 +62,45 @@ def test_audit_preserves_rp_math_and_separates_conviction():
     assert snapshot["rp_snapshot"]["fingerprint"]
 
 
+def test_audit_promotes_first_goal_modules_without_changing_rp_math():
+    market = {
+        "available": True,
+        "source": "api-football-fixtures-events",
+        "team_scores_first_probability": 0.55,
+        "opponent_scores_first_probability": 0.30,
+        "no_goal_probability": 0.15,
+        "projection_influence": "shadow_only",
+    }
+    regime = {
+        "available": True,
+        "source": "first_goal_market",
+        "classification": "team_first_lean",
+        "best_case": "team_scores_first",
+        "worst_case": "opponent_scores_first",
+        "projection_influence": "shadow_only",
+    }
+    snapshot = build_audit_snapshot(
+        _prediction(firstGoalMarket=market, firstGoalRegimeChange=regime),
+        {"fixture_id": 123, "player_id": 456, "prop_type": "pass_attempts", "line": 57.5},
+    )
+
+    assert snapshot["math_unchanged"] is True
+    assert snapshot["modules"]["game_state"]["status"] == "available"
+    assert snapshot["modules"]["first_goal_market"]["values"] == market
+    assert snapshot["modules"]["first_goal_regime_change"]["values"] == regime
+
+
+def test_audit_labels_missing_first_goal_data_as_unavailable_not_not_started():
+    snapshot = build_audit_snapshot(
+        _prediction(),
+        {"fixture_id": 123, "player_id": 456, "prop_type": "pass_attempts", "line": 57.5},
+    )
+
+    assert snapshot["modules"]["game_state"]["status"] == "partial"
+    assert snapshot["modules"]["first_goal_market"]["status"] == "unavailable"
+    assert snapshot["modules"]["first_goal_regime_change"]["status"] == "unavailable"
+
+
 def test_audit_fingerprint_is_stable_when_capture_time_changes():
     request = {"fixture_id": 123, "player_id": 456, "prop_type": "shots", "line": 2.5}
     first = build_audit_snapshot(_prediction(propType="shots"), request)

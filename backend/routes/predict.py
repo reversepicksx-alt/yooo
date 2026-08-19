@@ -12427,10 +12427,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         _fg_team: dict = {}
         _fg_opp:  dict = {}
         _fg_scenario_weights: dict = {}
+        _fg_market: dict = {}
+        _fg_regime_change: dict = {}
         if not ai_only_mode and actual_team_id and req.opponentId and not _is_bdl_league:
             try:
-                from first_goal_engine import get_first_goal_profile, compute_scenario_weights as _fg_sw
-                _fg_season = 2025
+                from first_goal_engine import (
+                    build_first_goal_market,
+                    compute_scenario_weights as _fg_sw,
+                    get_first_goal_profile,
+                )
+                _fg_season = int(
+                    (match_odds or {}).get("season")
+                    or (match_odds or {}).get("matchSeason")
+                    or datetime.now(timezone.utc).year
+                )
                 _fg_results = await _bounded_prediction_source(
                     aio.gather(
                         get_first_goal_profile(
@@ -12458,8 +12468,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 if _fg_team.get("available"):
                     _fg_scenario_weights = _fg_sw(_fg_team, req.propType)
                     print(f"[FIRST GOAL] {req.playerName}: teamFirst={_fg_team.get('teamScoredFirstPct'):.0%} oppFirst={_fg_team.get('opponentScoredFirstPct'):.0%} n={_fg_team.get('dataPoints')}")
+                _fg_market, _fg_regime_change = build_first_goal_market(
+                    _fg_team, _fg_opp, req.propType
+                )
             except Exception as _fge:
                 print(f"[FIRST GOAL] engine failed: {_fge}")
+
+        # Explicitly preserve the first-goal evidence at the production
+        # response boundary. It is shadow-only and is never read by the RP
+        # projection, probability, recommendation, or save path.
+        if not _fg_market:
+            from first_goal_engine import build_first_goal_market
+            _fg_market, _fg_regime_change = build_first_goal_market(
+                _fg_team, _fg_opp, req.propType
+            )
 
         # Build structured evidence from the fetched data.
         # External narrative generation is retired; keep this compatibility
@@ -12500,6 +12522,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
         _raw_model_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50)) if early_bayes else 50
         prediction = {"projectedValue": pv, "recommendation": "over" if pv > req.line else "under", "confidenceScore": min(_raw_model_conf, 72), "reasoning": "", "sport": req.sport}
+        prediction["firstGoalMarket"] = _fg_market
+        prediction["firstGoalRegimeChange"] = _fg_regime_change
         # Expose current opponent quality tier so the frontend can display it.
         # Standings-based rank only exists when the CURRENT prediction's league_id
         # has a domestic/qualifying-group table — this silently fails for
@@ -12680,6 +12704,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "recencyWeighting": match_dominance.get("recencyWeighting"),
             "firstGoalProfile":     _fg_team if _fg_team.get("available") else None,
             "firstGoalOppProfile":  _fg_opp  if _fg_opp.get("available")  else None,
+            "firstGoalMarket":      prediction.get("firstGoalMarket"),
+            "firstGoalRegimeChange": prediction.get("firstGoalRegimeChange"),
             "scenarioProbabilities": prediction.get("scenarioProbabilities") or _fg_scenario_weights or None,
             "h2hPossAvg":     match_dominance.get("h2hPossAvg"),
             "h2hPossCount":   match_dominance.get("h2hPossCount"),

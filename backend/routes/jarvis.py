@@ -388,7 +388,7 @@ async def jarvis_openapi():
                 "post": {
                     "operationId": "runFullSoccerAudit",
                     "summary": "MANDATORY: Run RP once and return a separate JARVIS audit packet.",
-                    "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. Audit values never alter RP math. Unavailable modules return UNKNOWN or NOT_STARTED.",
+                    "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. `audit.modules.game_state`, `first_goal_market`, and `first_goal_regime_change` expose completed-fixture first-goal evidence when available; all remain shadow-only and never alter RP math.",
                     "requestBody": {
                         "required": True,
                         "content": {
@@ -410,7 +410,7 @@ async def jarvis_openapi():
                         },
                     },
                     "responses": {
-                        "200": {"description": "RP diagnostic plus independent audit packet."},
+                        "200": {"description": "RP diagnostic plus independent audit packet. jarvis_brief includes game_state, first_goal_market, and first_goal_regime_change."},
                         "401": {"description": "Invalid or missing JARVIS bearer token."},
                         "404": {"description": "Audit feature disabled."},
                         "422": {"description": "Fixture/player could not be resolved."},
@@ -1405,6 +1405,14 @@ def _build_soccer_diagnostic(result: dict) -> dict:
 
         # ── Match situation adjustments ───────────────────────────────────────
         "game_situation":     gs,
+        "first_goal_market": (
+            result.get("firstGoalMarket")
+            or (result.get("matchFactors") or {}).get("firstGoalMarket")
+        ),
+        "first_goal_regime_change": (
+            result.get("firstGoalRegimeChange")
+            or (result.get("matchFactors") or {}).get("firstGoalRegimeChange")
+        ),
         "match_dominance":    result.get("matchDominance"),
         "positional_reality": result.get("positionalReality"),
 
@@ -1429,6 +1437,73 @@ def _build_soccer_diagnostic(result: dict) -> dict:
         "reasoning":         result.get("reasoning"),
         "tactical_breakdown": result.get("tacticalBreakdown"),
     }
+
+
+def _audit_first_goal_brief(audit: dict) -> dict:
+    """Expose first-goal audit modules in the compact JARVIS brief."""
+    modules = audit.get("modules") if isinstance(audit.get("modules"), dict) else {}
+    game_state = modules.get("game_state") if isinstance(modules.get("game_state"), dict) else {}
+    market = modules.get("first_goal_market") if isinstance(modules.get("first_goal_market"), dict) else {}
+    regime = (
+        modules.get("first_goal_regime_change")
+        if isinstance(modules.get("first_goal_regime_change"), dict)
+        else {}
+    )
+    return {
+        "game_state": game_state,
+        "first_goal_market": market.get("values") or {},
+        "first_goal_regime_change": regime.get("values") or {},
+    }
+
+
+async def _ensure_full_audit_first_goal_context(
+    result: dict,
+    ctx: dict,
+    prop_type: str,
+) -> None:
+    """Fill the shadow-only audit packet if RP's response budget skipped it."""
+    existing = result.get("firstGoalMarket") or (result.get("matchFactors") or {}).get("firstGoalMarket")
+    if isinstance(existing, dict) and existing.get("available"):
+        return
+
+    from first_goal_engine import build_first_goal_market, get_first_goal_profile
+
+    try:
+        profiles = await asyncio.wait_for(
+            asyncio.gather(
+                get_first_goal_profile(
+                    int(ctx.get("team_id") or 0),
+                    int(ctx.get("season") or 0),
+                    _sports_get,
+                    db,
+                ),
+                get_first_goal_profile(
+                    int(ctx.get("opponent_id") or 0),
+                    int(ctx.get("season") or 0),
+                    _sports_get,
+                    db,
+                ),
+                return_exceptions=True,
+            ),
+            timeout=28.0,
+        )
+    except Exception as exc:
+        market, regime = build_first_goal_market({}, {}, prop_type)
+        market["reason"] = f"First-goal audit retrieval was unavailable: {type(exc).__name__}."
+        regime["reason"] = market["reason"]
+    else:
+        team_profile = profiles[0] if not isinstance(profiles[0], Exception) else {}
+        opponent_profile = profiles[1] if not isinstance(profiles[1], Exception) else {}
+        market, regime = build_first_goal_market(team_profile, opponent_profile, prop_type)
+
+    # The audit-only fallback executes after the immutable RP prediction. These
+    # values are intentionally response metadata, never model inputs.
+    result["firstGoalMarket"] = market
+    result["firstGoalRegimeChange"] = regime
+    factors = result.setdefault("matchFactors", {})
+    if isinstance(factors, dict):
+        factors["firstGoalMarket"] = market
+        factors["firstGoalRegimeChange"] = regime
 
 
 class JarvisSoccerPredictBody(BaseModel):
@@ -1550,6 +1625,19 @@ async def jarvis_predict_soccer(
         "prop_historical_n":       _df.get("prop_historical_n"),
         "line_deviation_hit_rate": _df.get("line_deviation_hit_rate"),
         "line_deviation_n":        _df.get("line_deviation_n"),
+        # Shadow-only first-goal context from the production RP run.
+        "game_state": {
+            "status": (
+                "available"
+                if (diagnostic.get("first_goal_market") or {}).get("available")
+                and (diagnostic.get("first_goal_regime_change") or {}).get("available")
+                else "partial"
+            ),
+            "source": "first_goal_engine",
+            "projection_influence": "shadow_only",
+        },
+        "first_goal_market":       diagnostic.get("first_goal_market") or {},
+        "first_goal_regime_change": diagnostic.get("first_goal_regime_change") or {},
     }
 
     return JSONResponse(content={
@@ -1792,15 +1880,18 @@ async def jarvis_full_audit_soccer(
         )
 
     ctx, result = await _run_soccer_prediction(body)
+    await _ensure_full_audit_first_goal_context(result, ctx, body.prop_type)
     audit = build_audit_snapshot(result, _soccer_audit_request(body), context=ctx)
     rp_diagnostic = _build_soccer_diagnostic(result)
+    jarvis_brief = dict(rp_diagnostic.get("final") or {})
+    jarvis_brief.update(_audit_first_goal_brief(audit))
     return {
         "source": "jarvis/full-audit/soccer",
         "generated_at": int(time.time()),
         "audit_mode": audit_mode(),
         "math_unchanged": True,
         "production_influence": False,
-        "jarvis_brief": rp_diagnostic.get("final", {}),
+        "jarvis_brief": jarvis_brief,
         "rp_prediction": rp_diagnostic,
         "audit": audit,
     }
