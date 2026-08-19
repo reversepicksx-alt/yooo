@@ -49,12 +49,12 @@ def test_one_profile_is_reused_for_each_history_row_of_an_opponent():
 
 
 def test_mobile_does_not_render_unavailable_pressure_as_zero_over_one_hundred():
-    assert "reversePicksPressureScore(pressIntensity)" in ANALYSIS_SOURCE
-    assert "{score != null ? `INDEX ${score}/100 · ${label}` : label}" in ANALYSIS_SOURCE
+    assert "const label = available" in ANALYSIS_SOURCE
+    assert "{label}" in ANALYSIS_SOURCE
     assert "NO VERIFIED OPPONENT SAMPLE" in COMPACT_SOURCE
     assert "N=${Number(pressureProfile?.sampleTarget" in COMPACT_SOURCE
-    assert "Reverse Picks Pressure Index" in COMPACT_SOURCE
-    assert "raw provider statistics are audit inputs, not pressure scores" in COMPACT_SOURCE
-    assert "custom Reverse Picks Pressure Index" in COMPACT_SOURCE
+    assert "qualitative pressure label is based on verified provider inputs" in COMPACT_SOURCE
+    assert "INDEX ${Math.round(Number(selectedPressure?.score100))}/100" not in COMPACT_SOURCE
+    assert "PRESS {pressureLabel}" in COMPACT_SOURCE
     assert "Inputs: ${inputParts}." not in COMPACT_SOURCE
     assert "VERY LOW" in COMPACT_SOURCE

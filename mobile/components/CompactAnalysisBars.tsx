@@ -716,7 +716,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                       : h2hTeamMeetings > 0
                         ? `${h2hTeamMeetings} TEAM MEETINGS · 0 VERIFIED PLAYER APPS`
                         : 'NO FINISHED TEAM MEETINGS IN DIRECT HISTORY'
-                     : `HOME ${venueCounts.home} · AWAY ${venueCounts.away}${homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}${metadataLabel}`}
+                     : `HOME ${venueCounts.home} · AWAY ${venueCounts.away} VERIFIED PLAYER APPEARANCES${homeSplit || awaySplit ? ` · AVG ${homeSplit?.average?.toFixed(1) ?? '—'} / ${awaySplit?.average?.toFixed(1) ?? '—'}` : ''}${metadataLabel}`}
                 </Text>
                 {isH2HFilter && (
                   <Text style={styles.contextWarning} numberOfLines={1}>
@@ -725,7 +725,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                 )}
                 {!isH2HFilter && venueHistoryFallback && (
                   <Text style={styles.contextWarning} numberOfLines={1}>
-                    {Number.isFinite(venueHistorySample) ? venueHistorySample : 0}/{venueHistoryTarget} VERIFIED · FULL HISTORY PRIOR
+                     {Number.isFinite(venueHistorySample) ? venueHistorySample : 0}/{venueHistoryTarget} {String(historyVenue || 'SELECTED VENUE').toUpperCase()} VERIFIED · ALL-VENUE PRIOR USED
                   </Text>
                 )}
               </View>
@@ -782,9 +782,6 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                    const pressureLabel = pressureAvailable
                       ? reversePicksPressureLabel(pressurePacket)
                      : 'UNAVAILABLE';
-                     const pressureScore = reversePicksPressureScore(pressurePacket) != null
-                       ? `INDEX ${reversePicksPressureScore(pressurePacket)}/100`
-                       : '';
                     const pressureSample = pressureAvailable
                       ? `N=${Number(pressureProfile?.sampleTarget || pressurePacket?.sampleTarget || pressurePacket?.sampleSize || 0)} RECENT`
                       : 'NO VERIFIED OPPONENT SAMPLE';
@@ -845,7 +842,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                           </Text>
                           <View style={styles.pressureRow}>
                             <Text style={[styles.pressureLabel, { color: pressureColor }]}>
-                              PRESS {pressureLabel}{pressureScore ? ` · ${pressureScore}` : ''}
+                              PRESS {pressureLabel}
                             </Text>
                             <Text style={[styles.pressureSample, { color: pressureAvailable ? '#8B95A5' : '#667085' }]} numberOfLines={1}>
                               {pressureSample}
@@ -885,25 +882,20 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
                         const selectedLabel = selectedPressure?.available === true
                           ? String(selectedPressure.label || 'Classified').toUpperCase()
                            : 'NO VERIFIED SAMPLE';
-                        const selectedScore = Number.isFinite(Number(selectedPressure?.score100))
-                           ? ` INDEX ${Math.round(Number(selectedPressure?.score100))}/100`
-                          : '';
                         const selectedSample = selectedPressure?.available === true
                            ? ` · N=${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || selectedPressure?.sampleSize || 0)} RECENT`
                           : '';
-                        return ` · PRESS ${selectedLabel}${selectedScore}${selectedSample}`;
+                         return ` · PRESS ${selectedLabel}${selectedSample}`;
                       })()}
                   </Text>
                    {isH2HFilter && (() => {
                      const selectedPressureProfile = pressureProfileFor(selectedGame);
                      const selectedPressure = pressurePacketFor(selectedGame);
                     if (selectedPressure?.available === true) {
-                      const selectedIndex = reversePicksPressureScore(selectedPressure);
                       return (
                         <Text style={styles.pressureExplain} numberOfLines={3}>
-                          {`Reverse Picks Pressure Index${selectedIndex != null ? ` ${selectedIndex}/100` : ''} · `}
-                          {`recent opponent profile using at least ${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || 5)} completed matches. `}
-                          This is the product&apos;s custom 0–100 pressure rating; raw provider statistics are audit inputs, not pressure scores.
+                          {`Recent opponent profile using at least ${Number(selectedPressureProfile?.sampleTarget || selectedPressure?.sampleTarget || 5)} completed matches. `}
+                          The qualitative pressure label is based on verified provider inputs; unavailable inputs are not treated as zero.
                         </Text>
                       );
                     }
