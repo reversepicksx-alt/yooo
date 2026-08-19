@@ -85,6 +85,27 @@ def normalize_response(response: dict) -> dict:
     for field, default in STANDARD_FIELDS.items():
         response.setdefault(field, default)
 
+    # ── Wire confidenceScore ↔ Bayesian probabilities ────────────────────────
+    # Sports that explicitly set confidenceScore keep their value.
+    # Sports that never set it (e.g. soccer/Bayesian pipeline) land at the
+    # default of 50 — override that with the actual probability so both
+    # numbers always agree.
+    p_over  = float(response.get("pOver")  or 50.0)
+    p_under = float(response.get("pUnder") or 50.0)
+    best_prob = max(p_over, p_under)
+    if response.get("confidenceScore") == 50 and best_prob > 50.0:
+        response["confidenceScore"] = round(best_prob)
+
+    # ── Keep confidenceLevel consistent with the final confidenceScore ────────
+    score = response.get("confidenceScore", 50)
+    current_level = response.get("confidenceLevel", "Low")
+    if current_level == "Low":          # only fix if still at the default
+        if score >= 70:
+            response["confidenceLevel"] = "High"
+        elif score >= 60:
+            response["confidenceLevel"] = "Medium"
+        # else stays "Low" — correct
+
     # Normalize gameLogs: ensure every log has a 'venue' string field
     logs = response.get("gameLogs") or []
     for log in logs:
