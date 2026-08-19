@@ -1,0 +1,51 @@
+Each response confirmed:
+
+HTTP 200
+audit_mode: shadow
+math_unchanged: true
+production_influence: false
+RP probabilities and audit probabilities match
+RP recommendation remains unchanged
+Stat-definition status is available, including dribbles
+Immutable RP fingerprints were generated
+I also fixed an integration issue discovered during testing: the live diagnostic exposes probabilities under final.p_over / final.p_under, while the audit builder initially only checked raw top-level fields. The audit now correctly normalizes both shapes, and the full-audit response now includes a top-level jarvis_brief.
+
+Mandatory Action/OpenAPI workflow
+
+The OpenAPI schema now explicitly contains:
+
+runFullSoccerAudit
+getCalibration
+getStatDefinitions
+getAuditStatus
+The schema also includes mandatory instructions:
+
+Resolve fixture and player.
+Call runFullSoccerAudit exactly once per analysis.
+Use jarvis_brief / rp_prediction for the production recommendation and probabilities.
+Call getCalibration before the final answer.
+Call getStatDefinitions for unknown or ambiguous props.
+Call getAuditStatus when reporting phase coverage.
+Never let audit evidence override Reverse Picks math.
+Verification results:
+
+OpenAPI: HTTP 200
+Schema server: https://reversepicks.com
+Mandatory workflow entries: present
+/api/jarvis/docs: mandatory workflow present
+Calibration: HTTP 200 with explicit no-fake-precision handling
+Stat definitions: HTTP 200
+Audit status: HTTP 200 with all 30 phases represented
+Audit tests: 9 passed
+Python compilation: passed
+Important production caveat
+
+The source schema and instructions are now correct, but I cannot truthfully claim the already-imported production JARVIS Action has refreshed itself yet.
+
+The remaining production step is:
+
+Publish the latest source.
+Re-import this schema into the JARVIS Action:
+https://reversepicks.com/api/jarvis/openapi.json
+
+Until that re-import happens, the backend supports the new workflow, but the existing Action configuration may not automatically call the new endpoints. The remaining 30-phase independent evidence work is also intentionally still marked PARTIAL or NOT_STARTED; the current implementation confirms the audit foundation without changing RP math.
