@@ -2491,7 +2491,7 @@ export default function ScanScreen() {
             )}
 
 
-        {phase !== 'result' && phase !== 'saved' && (
+        {sport !== 'nba' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.universalPlayerSection}>
              <Text style={styles.playerFieldLabel}>PLAYER</Text>
             <FuzzySearchInput

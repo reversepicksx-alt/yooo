@@ -412,6 +412,51 @@ def test_locked_customer_correction_is_not_requeried_by_background_settlement():
     assert result is None
 
 
+def test_unverified_customer_refresh_hides_stale_terminal_result(monkeypatch):
+    saved_pick = {
+        "pickId": "oblak-pick",
+        "email": "subscriber@example.com",
+        "sport": "soccer",
+        "playerName": "Jan Oblak",
+        "playerId": 550,
+        "teamId": 165,
+        "fixtureId": 777,
+        "propType": "saves",
+        "line": 3.5,
+        "recommendation": "OVER",
+        "status": "settled",
+        "result": "hit",
+        "actualValue": 5,
+    }
+    fake_db = _FakeDb(saved_pick)
+    monkeypatch.setattr(picks, "db", fake_db)
+
+    async def fake_settle(*_args, force_refresh=False, **_kwargs):
+        assert force_refresh is True
+        return None
+
+    monkeypatch.setattr(picks, "_settle_soccer_pick", fake_settle)
+
+    async def run():
+        with pytest.raises(Exception) as exc_info:
+            await picks.refresh_pick_settlement(
+                "oblak-pick",
+                {
+                    "email": "subscriber@example.com",
+                    "token": "session-token",
+                    "pickId": "oblak-pick",
+                },
+            )
+        return exc_info.value
+
+    error = asyncio.run(run())
+
+    assert getattr(error, "status_code", None) == 409
+    assert fake_db.picks.updated["$set"]["status"] == "pending_review"
+    assert fake_db.picks.updated["$set"]["result"] == "pending_review"
+    assert fake_db.picks.updated["$set"]["settlementReview"]["kind"] == "final_stat_unverified"
+
+
 def test_customer_archive_exposes_a_real_35_game_floor_without_padding():
     source = (Path(__file__).resolve().parents[1] / "routes" / "predict.py").read_text()
 

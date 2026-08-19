@@ -1457,9 +1457,13 @@ export default function PicksScreen() {
         `${pick.playerName}: ${result.actualValue} · ${String(result.result).toUpperCase()}\nFresh provider data was saved.`,
       );
     } catch (e: any) {
+      // The backend deliberately moves an unverified terminal result to
+      // pending_review on a 409, so do not leave the stale HIT/MISS card in
+      // the local query while showing the error.
+      await qc.invalidateQueries({ queryKey: ['picks'] });
       Alert.alert(
         'Confirmation failed',
-        e?.message || 'Fresh provider data was unavailable. The saved result was not changed.',
+        e?.message || 'Fresh provider data was unavailable. This result is now pending review.',
       );
     } finally {
       setRefreshingSettlementId(null);

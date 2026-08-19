@@ -40,6 +40,12 @@ export default {
       bundler: "metro",
       htmlTemplate: "./web/index.html",
     },
+    updates: {
+      url: "https://u.expo.dev/cb70df32-f8c3-4bbd-9190-fb9cfd8b1599",
+    },
+    runtimeVersion: {
+      policy: "appVersion",
+    },
     plugins: [
       "expo-router",
       "expo-secure-store",

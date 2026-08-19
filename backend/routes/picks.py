@@ -2194,7 +2194,7 @@ async def list_picks(req: GetPicksRequest):
                     p.get("settledAt")
                     and (now_utc - datetime.fromisoformat(
                         p["settledAt"].replace("Z", "+00:00")
-                    )).total_seconds() < 8 * 3600
+                    )).total_seconds() < 48 * 3600
                 )
             )
         ]
@@ -2315,6 +2315,48 @@ async def list_picks(req: GetPicksRequest):
                             except Exception as _we:
                                 _settlement_write_fails += 1
                                 print(f"[PICKS-LIST WRITE FAIL] final-refresh {p.get('playerName','')}: {_we}")
+                    elif (
+                        p.get("status") in {"settled", "pending_review"}
+                        or str(p.get("result") or "").lower() in {"hit", "miss", "push", "dnp"}
+                    ):
+                        # A prior terminal outcome is not trustworthy when the
+                        # exact finished fixture/player refresh is unavailable
+                        # or unverified. Hide it from subscribers instead of
+                        # leaving a stale HIT/MISS/PUSH visible indefinitely.
+                        review_at = datetime.now(timezone.utc).isoformat()
+                        review_reason = (
+                            "Fresh exact-fixture/player data was unavailable or "
+                            "failed verification; retrying final-stat settlement."
+                        )
+                        review = {
+                            "kind": "final_stat_unverified",
+                            "reason": review_reason,
+                            "createdAt": review_at,
+                            "retryable": True,
+                        }
+                        p.update({
+                            "status": "pending_review",
+                            "result": "pending_review",
+                            "settlementReview": review,
+                            "settlementReviewReason": review_reason,
+                            "settlementReviewAt": review_at,
+                        })
+                        try:
+                            await db.picks.update_one(
+                                {"pickId": p["pickId"], "email": pick_email},
+                                {"$set": {
+                                    "status": "pending_review",
+                                    "result": "pending_review",
+                                    "settlementReview": review,
+                                    "settlementReviewReason": review_reason,
+                                    "settlementReviewAt": review_at,
+                                }},
+                            )
+                        except Exception as _we:
+                            _settlement_write_fails += 1
+                            print(
+                                f"[PICKS-LIST WRITE FAIL] review {p.get('playerName','')}: {_we}"
+                            )
                 except Exception as _re:
                     _re_is_quota = _is_storage_quota_error(_re)
                     print(
@@ -5493,11 +5535,35 @@ async def refresh_pick_settlement(pick_id: str, payload: dict):
             or confirmed.get("actualValue") is None
             or source.get("verified") is not True
         ):
+            review_at = datetime.now(timezone.utc).isoformat()
+            review = {
+                "kind": "final_stat_unverified",
+                "reason": (
+                    "Fresh exact-fixture/player data was unavailable or failed "
+                    "verification; the prior terminal result is hidden until "
+                    "the final stat can be confirmed."
+                ),
+                "createdAt": review_at,
+                "retryable": True,
+            }
+            await db.picks.update_one(
+                {"email": email, "pickId": str(pick_id)},
+                {
+                    "$set": {
+                        "status": "pending_review",
+                        "result": "pending_review",
+                        "settlementReview": review,
+                        "settlementReviewReason": review["reason"],
+                        "settlementReviewAt": review_at,
+                    },
+                },
+            )
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "Fresh provider data did not contain a verified finished "
-                    "fixture/player stat. The saved result was not changed."
+                    "fixture/player stat. The prior result was moved to "
+                    "PENDING REVIEW and will not be displayed as final."
                 ),
             )
 
