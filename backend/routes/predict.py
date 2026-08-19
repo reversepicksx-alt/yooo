@@ -25,6 +25,7 @@ from sportsgameodds_client import lookup_soccer_market_context
 from prop_safety_cache import (
     get_prop_safety as _get_prop_safety,
     get_recent_prop_safety as _get_recent_prop_safety,
+    ensure_prop_safety_loaded as _ensure_prop_safety_loaded,
 )
 import soccer_bdl_client as _bdl_soc
 from tactical_evidence import (
@@ -14730,6 +14731,14 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 f"[POS CAP] {prediction.get('position')} {req.propType} "
                 f"{prediction.get('recommendation')}: {_pre_pos_cap}% → {_pos_cap}%"
             )
+
+        # The empirical cache is built asynchronously at startup and the first
+        # Atlas aggregation can take several seconds.  Do not let an early
+        # request turn a populated prop history into a false null result.
+        try:
+            await _ensure_prop_safety_loaded(db)
+        except Exception as _prop_safety_load_err:
+            print(f"[PROP SAFETY] prediction load unavailable: {_prop_safety_load_err}")
 
         # MATH LOCK removed — pure math analysis is built below, no AI text to patch.
         _lock_final_rec = str(prediction.get("recommendation", "")).upper()  # PASS, OVER, or UNDER

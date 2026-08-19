@@ -156,3 +156,4 @@
 - [Retired integration secrets](retired-integration-secrets.md) — removing an integration from code does not remove its secret inventory entry; verify no runtime reads and handle secret deletion separately.
 - [Live NBA provider authorization](bdl-nba-auth.md) — cached player identities can mask BallDontLie stats authorization failures; validate `/stats` before claiming live NBA predictions.
 - [JARVIS audit calibration reads](jarvis-audit-calibration.md) — use inclusion-only, indexed bounded settled-ledger reads and expose truncation instead of implying partial data is lifetime truth.
+- [Settlement prop aliases](settlement-prop-aliases.md) — empirical history must canonicalize labels that share one provider settlement field or valid samples appear unavailable.

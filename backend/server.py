@@ -315,14 +315,15 @@ async def _run_startup_tasks():
     # hit rates per (propType, direction) bucket from settled picks so the
     # edge/safety rating on every prediction is always data-driven, never hardcoded.
     async def _prop_safety_loop():
-        from prop_safety_cache import refresh_prop_safety
+        from prop_safety_cache import ensure_prop_safety_loaded, refresh_prop_safety
         import asyncio as _a
+        await ensure_prop_safety_loaded(db)
         while True:
+            await _a.sleep(6 * 60 * 60)
             try:
                 await refresh_prop_safety(db)
             except Exception as _e:
                 print(f"[PROP SAFETY] refresh failed: {_e}")
-            await _a.sleep(6 * 60 * 60)
     asyncio.create_task(_prop_safety_loop())
 
     # Calibration alerts: scan per-sport/per-prop walk-forward Brier score

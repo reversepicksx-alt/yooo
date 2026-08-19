@@ -43,6 +43,25 @@ _RATE_AVOID       = 44
 #   "pass_attempts|UNDER|262|midfielder" -> { ... }
 _CACHE: Dict[str, dict] = {}
 _CACHE_LOCK = asyncio.Lock()
+_REFRESH_LOCK = asyncio.Lock()
+_CACHE_INITIALIZED = False
+
+# These labels are separate in the request vocabulary but share the same
+# provider settlement field.  Keep their empirical history under one key so a
+# prediction cannot report "no history" merely because the caller used the
+# legacy/display alias.
+_PROP_TYPE_ALIASES = {
+    "pass_attempts": "pass_attempts",
+    "passes": "pass_attempts",
+    "saves": "saves",
+    "goalie_saves": "saves",
+}
+
+
+def canonical_prop_type(prop_type: Optional[str]) -> str:
+    """Return the settlement-history key for a request/display prop label."""
+    normalized = str(prop_type or "").strip().lower()
+    return _PROP_TYPE_ALIASES.get(normalized, normalized)
 
 
 def _safety_from_rate(hit_rate: float, n: int, child_min_n: int = _MIN_N_AVOID) -> str:
@@ -59,7 +78,7 @@ def _safety_from_rate(hit_rate: float, n: int, child_min_n: int = _MIN_N_AVOID) 
     return "RISKY"
 
 
-async def refresh_prop_safety(db) -> dict:
+async def _refresh_prop_safety_unlocked(db) -> dict:
     """
     Recompute the prop safety table from all settled picks.
     Deduplicates so each unique (player, prop, line, direction, date) = 1 event.
@@ -134,7 +153,9 @@ async def refresh_prop_safety(db) -> dict:
 
     for r in rows:
         event_id = r.get("_id") or {}
-        prop      = (r.get("propType") or event_id.get("propType") or "").strip()
+        prop      = canonical_prop_type(
+            r.get("propType") or event_id.get("propType") or ""
+        )
         direction = (r.get("recommendation") or event_id.get("recommendation") or "").upper().strip()
         if not prop or direction not in ("OVER", "UNDER"):
             continue
@@ -202,13 +223,41 @@ async def refresh_prop_safety(db) -> dict:
     _finalize(league_stats, _MIN_N_LEAGUE, recent_league_stats)
     _finalize(pos_stats, _MIN_N_POSITION, recent_pos_stats)
 
+    global _CACHE_INITIALIZED
     async with _CACHE_LOCK:
         _CACHE.clear()
         _CACHE.update(new_cache)
+        _CACHE_INITIALIZED = True
 
     summary = {k: f"{v['hitRate']}% ({v['n']}n) -> {v['safety']}" for k, v in sorted(new_cache.items())}
     print(f"[PROP SAFETY] refreshed {len(new_cache)} buckets: {summary}")
     return {"buckets": len(new_cache), "data": new_cache}
+
+
+async def refresh_prop_safety(db) -> dict:
+    """Refresh the cache, serializing concurrent refreshes."""
+    async with _REFRESH_LOCK:
+        return await _refresh_prop_safety_unlocked(db)
+
+
+async def ensure_prop_safety_loaded(db, timeout_seconds: float = 20.0) -> bool:
+    """Ensure the first prediction does not read an empty startup cache."""
+    global _CACHE_INITIALIZED
+    if _CACHE_INITIALIZED:
+        return True
+
+    async with _REFRESH_LOCK:
+        if _CACHE_INITIALIZED:
+            return True
+        try:
+            await asyncio.wait_for(
+                _refresh_prop_safety_unlocked(db),
+                timeout=timeout_seconds,
+            )
+        except Exception as exc:
+            print(f"[PROP SAFETY] initial load unavailable: {type(exc).__name__}: {exc}")
+            return False
+    return _CACHE_INITIALIZED
 
 
 def get_prop_safety(
@@ -222,6 +271,7 @@ def get_prop_safety(
     optionally league-aware and position-aware.
     Direction should be 'OVER' or 'UNDER'.
     """
+    prop_type = canonical_prop_type(prop_type)
     direction = direction.upper()
 
     # Try most specific first
@@ -249,6 +299,7 @@ def get_recent_prop_safety(
     min_n: int = _MIN_N_RECENT_PASS,
 ) -> Optional[dict]:
     """Return the most specific bucket with enough recent settled events."""
+    prop_type = canonical_prop_type(prop_type)
     direction = direction.upper()
     keys = []
     if league_id is not None and position:
