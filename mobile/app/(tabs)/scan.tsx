@@ -3878,6 +3878,11 @@ export default function ScanScreen() {
                        ? 'RETRY REQUIRED'
                        : modelProbPct != null ? 'FINAL MATH' : prediction.confidenceLevel?.toUpperCase() || 'SCORE'}
                   </Text>
+                   {!predictionUnavailable && prediction.propHistoricalRate != null && (prediction.propHistoricalN ?? 0) > 0 && (
+                     <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 3, textAlign: 'center', letterSpacing: 0.3 }}>
+                       {`HIST ${String(prediction.recommendation ?? '').toUpperCase()} ${prediction.propHistoricalRate}% · ${prediction.propHistoricalN}`}
+                     </Text>
+                   )}
                 </View>
               </View>
               {modelProbPct != null && (
@@ -5710,12 +5715,21 @@ export default function ScanScreen() {
                       const pO = prediction.pOver ?? 0;
                       const pU = prediction.pUnder ?? 0;
                       const showUnder = prediction.recommendation === 'UNDER' || pU > pO;
+                      const histRate = (prediction as any).propHistoricalRate;
+                      const histN    = (prediction as any).propHistoricalN;
                       return (
-                        <Text style={styles.rfProjectionProb}>
-                          {showUnder
-                            ? `P(UNDER) ${safeFixed(pU)}%`
-                            : `P(OVER) ${safeFixed(pO)}%`}
-                        </Text>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={styles.rfProjectionProb}>
+                            {showUnder
+                              ? `P(UNDER) ${safeFixed(pU)}%`
+                              : `P(OVER) ${safeFixed(pO)}%`}
+                          </Text>
+                          {histRate != null && (histN ?? 0) > 0 && (
+                            <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 1 }}>
+                              {`HIST ${histRate}% · ${histN}`}
+                            </Text>
+                          )}
+                        </View>
                       );
                     })()}
                   </View>
