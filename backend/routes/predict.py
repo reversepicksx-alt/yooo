@@ -17201,6 +17201,74 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 _final_hist_rate = (_final_safety_data or {}).get("hitRate")
                 _final_hist_n = (_final_safety_data or {}).get("n", 0)
 
+            # If the rolling bucket is unavailable, do not publish a direction
+            # that the sufficiently sampled all-time safety bucket already
+            # classifies as AVOID. This is a fallback only for soccer passing
+            # props, and it preserves the original side as context rather than
+            # flipping it into the opposite wager.
+            if (
+                _final_rec_upper in {"OVER", "UNDER"}
+                and str(req.sport or "").lower() == "soccer"
+                and req.propType in {"pass_attempts", "passes"}
+                and _final_safety == "AVOID"
+            ):
+                try:
+                    from prop_safety_cache import should_suppress_avoided_direction
+                    if should_suppress_avoided_direction({
+                        "hitRate": _final_hist_rate,
+                        "n": _final_hist_n,
+                    }):
+                        _avoided_dir = _final_rec_upper
+                        _avoided_rate = float(_final_hist_rate)
+                        _avoided_n = int(_final_hist_n)
+                        _avoided_reason = (
+                            f"Historical {_avoided_dir} pass-attempt evidence is "
+                            f"{_avoided_rate:.0f}% across {_avoided_n} settled events. "
+                            "This direction is suppressed until its safety record improves."
+                        )
+                        prediction["recommendation"] = "PASS"
+                        _final_bm["recommendation"] = "PASS"
+                        prediction["passLeaning"] = _avoided_dir
+                        prediction["passReason"] = _avoided_reason
+                        prediction["confidenceScore"] = 50
+                        prediction["confidenceLevel"] = "Low"
+                        prediction["coinFlip"] = True
+                        prediction["recentPropSafety"] = {
+                            "direction": _avoided_dir,
+                            "hitRate": _avoided_rate,
+                            "sampleSize": _avoided_n,
+                            "windowDays": "all",
+                            "minSampleSize": 10,
+                            "action": "suppress_avoided_direction",
+                        }
+                        prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                            f"PASS {_avoided_dir} SUPPRESSION: {_avoided_reason}"
+                        ]
+                        _factor_ledger.append({
+                            "id": "avoided_pass_direction_suppression",
+                            "title": "Avoided pass-direction suppression",
+                            "status": "applied",
+                            "before": _avoided_dir,
+                            "after": "PASS",
+                            "direction": "neutral",
+                            "sampleSize": _avoided_n,
+                            "inputs": {
+                                "hitRate": _avoided_rate,
+                                "windowDays": "all",
+                                "minSampleSize": 10,
+                            },
+                            "reason": _avoided_reason,
+                            "kind": "decision",
+                        })
+                        _final_rec_upper = "PASS"
+                        _final_safety = "AVOID"
+                        print(
+                            f"[AVOID PASS SUPPRESSION] {req.playerName}/{req.propType}: "
+                            f"{_avoided_dir} {_avoided_rate:.1f}% ({_avoided_n}n) → PASS"
+                        )
+                except Exception as _avoided_pass_err:
+                    print(f"[AVOID PASS SUPPRESSION] unavailable: {_avoided_pass_err}")
+
             _final_margin = abs(_final_pv_num - _final_line_num) if _final_line_num > 0 else 0
             _final_gap_pct = (
                 abs(_final_pv_num - _final_line_num) / _final_line_num * 100

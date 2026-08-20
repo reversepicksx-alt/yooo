@@ -339,6 +339,19 @@ def should_suppress_recent_direction(
         return False
 
 
+def should_suppress_avoided_direction(
+    bucket: Optional[dict],
+    min_n: int = 10,
+) -> bool:
+    """Return whether a sufficiently sampled all-time AVOID bucket is publishable."""
+    if not bucket or bucket.get("hitRate") is None:
+        return False
+    try:
+        return int(bucket.get("n") or 0) >= min_n and float(bucket["hitRate"]) <= _RATE_AVOID
+    except (TypeError, ValueError):
+        return False
+
+
 def get_all() -> Dict[str, dict]:
     """Return the full cache snapshot (for debug / admin endpoints)."""
     return dict(_CACHE)
