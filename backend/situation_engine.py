@@ -23,8 +23,11 @@ from config import CURRENT_SEASON
 
 # ── lazy import to avoid circular deps ──────────────────────────────────────
 def _af():
-    from cache import api_football_request
-    return api_football_request
+    # Knockout aggregate context is required for an exact-fixture prediction.
+    # Use the priority provider path so background cache traffic cannot consume
+    # the request before the previous leg is verified.
+    from utils import priority_api_football_request
+    return priority_api_football_request
 
 
 # ═══════════════════════════════════════════════════════════════════════════

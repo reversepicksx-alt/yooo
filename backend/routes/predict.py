@@ -6455,6 +6455,21 @@ async def predict(req: PredictionRequest):
         # projection sees the same evidence as before. StatsBomb is optional
         # explanation-only enrichment and must not hold the result hostage.
         async def _bounded_required(coro, label: str, timeout: float):
+            # Exact-fixture situation context is a required input for knockout
+            # math, not optional enrichment.  A long cache/provider wave can
+            # otherwise consume the shared response budget before this task is
+            # awaited, silently turning a verified second leg into a generic
+            # knockout match.  When the caller supplied an exact fixture ID,
+            # give this source its own bounded window.
+            if label == "match situation" and req.fixtureId:
+                try:
+                    return await aio.wait_for(coro, timeout=float(timeout))
+                except Exception as _situation_err:
+                    print(
+                        f"[PREDICTION SOURCE] Wave 2 {label} unavailable within "
+                        f"{float(timeout):.1f}s: {type(_situation_err).__name__}"
+                    )
+                    return None
             return await _bounded_prediction_source(
                 coro,
                 f"Wave 2 {label}",
@@ -6911,6 +6926,53 @@ async def predict(req: PredictionRequest):
                 print(f"[MANAGER POSS DRIFT] error: {_pd_err}")
         if not game_situation:
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
+        # The Wave-1 direct H2H query is already verified and may finish even
+        # when the separate situation-engine provider call is unavailable.
+        # Reuse it here so an exact knockout fixture cannot regress to 1ST LEG
+        # merely because the optional aggregate request timed out or hit the
+        # provider breaker.
+        if (
+            req.fixtureId
+            and game_situation.get("isKnockout")
+            and not game_situation.get("isSecondLeg")
+            and isinstance(h2h_data, list)
+        ):
+            try:
+                from situation_engine import (
+                    _compute_pressure_multipliers,
+                    _parse_aggregate,
+                )
+                _wave1_aggregate = _parse_aggregate(
+                    h2h_data,
+                    _sit_home_id,
+                    _sit_away_id,
+                    req.fixtureId,
+                )
+                if _wave1_aggregate.get("firstLegFound"):
+                    game_situation["isSecondLeg"] = True
+                    game_situation["aggregate"] = _wave1_aggregate
+                    game_situation["multipliers"] = _compute_pressure_multipliers(
+                        _wave1_aggregate,
+                        True,
+                        True,
+                        _sit_is_home,
+                        req.propType,
+                    )
+                    game_situation["contextBlock"] = (
+                        f"[KNOCKOUT MATCH — {_sit_match_round}]\n"
+                        f"** THIS IS A 2ND LEG **\n"
+                        f"First leg result: {_wave1_aggregate.get('firstLegScore', '')}"
+                    )
+                    print(
+                        f"[SITUATION REPAIR] exact fixture={req.fixtureId}: "
+                        f"2ND LEG recovered from Wave-1 H2H "
+                        f"({ _wave1_aggregate.get('firstLegScore', '') })"
+                    )
+            except Exception as _wave1_situation_err:
+                print(
+                    f"[SITUATION REPAIR] exact fixture={req.fixtureId} failed: "
+                    f"{type(_wave1_situation_err).__name__}"
+                )
 
         # =============================================
         # BDL SOCCER STAGE: For BDL-covered leagues (EPL, La Liga, Serie A, Bundesliga,
@@ -17474,6 +17536,13 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 f"Confidence: {_display_conf_final:.0f}% ({prediction.get('confidenceLevel', 'Medium')})\n"
                 f"Ledger: {_ledger_fingerprint} | Factors recorded: {len(_factor_ledger)}"
             )
+            if _frec == "PASS" and prediction.get("passReason"):
+                # Preserve the raw Bayesian distribution for auditability, but
+                # make clear that a suppressed direction is not an actionable
+                # high-probability recommendation.
+                _final_math_footer += (
+                    f"\nActionability: PASS — {prediction['passReason']}"
+                )
             # Keep the math ledger structured for the UI/owner audit trail.
             # Do not append it to the customer paragraph; that was the source
             # of the oversized Turner-style explanation.
