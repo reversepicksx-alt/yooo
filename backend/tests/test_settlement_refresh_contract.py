@@ -217,6 +217,66 @@ def test_forced_settlement_rejects_api_football_value_when_fotmob_conflicts(monk
     assert all(force_refresh for _endpoint, _params, force_refresh in calls)
 
 
+def test_background_pass_settlement_requires_independent_exact_source(monkeypatch):
+    """A background poll must not publish API-Football-only pass totals."""
+    fixture = {
+        "fixture": {
+            "id": 1550929,
+            "date": "2026-08-18T03:06:00+00:00",
+            "status": {"short": "FT"},
+        },
+        "teams": {
+            "home": {"id": 2292, "name": "Pachuca"},
+            "away": {"id": 2291, "name": "Puebla"},
+        },
+        "goals": {"home": 2, "away": 3},
+    }
+
+    async def fake_request(endpoint, params=None, *, force_refresh=False):
+        if endpoint == "fixtures":
+            return [fixture]
+        if endpoint == "fixtures/players":
+            return [{
+                "team": {"id": 2292},
+                "players": [{
+                    "player": {"id": 6077, "name": "Carles Gil"},
+                    "statistics": [{
+                        "games": {"minutes": 90},
+                        "passes": {"total": 66, "accuracy": 95},
+                    }],
+                }],
+            }]
+        if endpoint == "fixtures/statistics":
+            return []
+        raise AssertionError(endpoint)
+
+    async def no_independent_source(**_kwargs):
+        return None
+
+    monkeypatch.setattr(soccer_bdl_client, "is_bdl_league", lambda _league: False)
+    monkeypatch.setattr(picks, "api_football_request", fake_request)
+    monkeypatch.setattr(picks._fotmob_client, "fetch_exact_player_stat", no_independent_source)
+
+    result = asyncio.run(picks._settle_soccer_pick(
+        {
+            "id": "carles-pick",
+            "playerName": "Carles Gil",
+            "playerId": 6077,
+            "teamId": 2292,
+            "fixtureId": 1550929,
+            "fixtureDate": "2026-08-18T03:06:00+00:00",
+            "homeTeam": "Pachuca",
+            "awayTeam": "Puebla",
+            "line": 66.5,
+            "recommendation": "UNDER",
+            "propType": "pass_attempts",
+            "venue": "home",
+        },
+        2292, 6077, "Puebla", "pass_attempts", 262,
+    ))
+    assert result is None
+
+
 def test_forced_settlement_uses_saved_fixture_identity_when_api_fixture_is_unavailable(monkeypatch):
     calls = []
 

@@ -236,6 +236,16 @@ def test_settle_result_under_hit():
     assert _settle_pick_result(30, 35.5, {"recommendation": "under"}) == ("hit", None)
 
 
+def test_sofascore_style_pass_total_72_beats_conflicting_provider_value_66():
+    """A pass prop must settle from the independent exact-match total.
+
+    SofaScore displays this as 63 accurate out of 72 attempted. The
+    denominator is the player prop value, not the accurate-pass numerator.
+    """
+    assert _settle_pick_result(72, 66.5, {"recommendation": "under"}) == ("miss", None)
+    assert _settle_pick_result(66, 66.5, {"recommendation": "under"}) == ("hit", None)
+
+
 def test_settle_result_over_miss():
     assert _settle_pick_result(3, 4.5, {"recommendation": "over"}) == ("miss", None)
 

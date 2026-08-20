@@ -6010,15 +6010,18 @@ async def _settle_soccer_pick(
                 break
 
     # API-Football can return a stale/incomplete finished player row even
-    # after a forced request.  For an authenticated customer confirmation,
-    # corroborate the exact finished match with FotMob's player-level match
-    # packet.  If the two providers disagree, the independent exact-match
-    # packet wins and the disagreement is retained in provenance for audit.
+    # after a forced request.  Pass props are especially sensitive because a
+    # one-pass discrepancy changes the outcome around a half-line. Always
+    # corroborate them with the independent exact-match player packet before
+    # allowing a terminal settlement. If the providers disagree, the
+    # independent exact-match packet wins and the disagreement is retained in
+    # provenance for audit.
     home_team_name = recent.get("teams", {}).get("home", {}).get("name", "") or ""
     away_team_name = recent.get("teams", {}).get("away", {}).get("name", "") or ""
     home_team_id = recent.get("teams", {}).get("home", {}).get("id")
     away_team_id = recent.get("teams", {}).get("away", {}).get("id")
-    if force_refresh and pick.get("playerName"):
+    _requires_independent_pass_source = prop_type in {"pass_attempts", "passes"}
+    if (force_refresh or _requires_independent_pass_source) and pick.get("playerName"):
         source_team_name = (
             home_team_name
             if str(team_id) == str(home_team_id)
@@ -6059,21 +6062,15 @@ async def _settle_soccer_pick(
                     settlement_source["crossProviderCheck"][
                         "apiFootballAvailable"
                     ] = False
-        elif (
-            prop_type in {"pass_attempts", "passes"}
-            and settlement_source
-            and actual_value is not None
-        ):
-            # Do not tell the subscriber that API-Football is verified for
-            # pass props when the independent exact-match read is unavailable
-            # during this explicit confirmation.  Normal background
-            # settlement remains API-Football-backed; this guard only protects
-            # the customer-triggered correction path.
-            settlement_source = dict(settlement_source)
-            settlement_source["verified"] = False
-            settlement_source["verificationMethod"] = (
-                "api_football_only_no_independent_corroboration"
+        elif _requires_independent_pass_source:
+            # A provider-only pass total is not safe to publish as terminal.
+            # The exact independent source is the authority for this prop
+            # family; defer instead of recreating the 66-vs-72 failure.
+            print(
+                f"[SETTLE-DEFER] {pick.get('playerName','')} {prop_type} — "
+                "independent exact pass source unavailable"
             )
+            return None
 
     home_goals = recent.get("goals", {}).get("home", 0) or 0
     away_goals = recent.get("goals", {}).get("away", 0) or 0

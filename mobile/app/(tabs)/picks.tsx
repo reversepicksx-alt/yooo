@@ -74,6 +74,17 @@ function normalizedStatus(p: Pick) {
 function normalizedMatchStatus(p: Pick) {
   return String(p.matchStatus || '').toLowerCase();
 }
+function mathOutcome(p: Pick): 'hit' | 'miss' | 'push' | null {
+  if (p.actualValue == null) return null;
+  const line = Number(p.line);
+  const actual = Number(p.actualValue);
+  const rec = String(p.recommendation || '').toLowerCase();
+  if (!Number.isFinite(line) || !Number.isFinite(actual) || !['over', 'under'].includes(rec)) {
+    return null;
+  }
+  if (Number.isInteger(line) && actual === line) return 'push';
+  return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
+}
 function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const result = normalizedResult(p);
   const status = normalizedStatus(p);
@@ -86,6 +97,18 @@ function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
     || (p.actualValue == null && Number.isFinite(lineNumber) && !Number.isInteger(lineNumber))
   );
   if ((hasVerifiedSource || isExplicitFinal) && (result === 'dnp' || legacyVoid)) return 'dnp';
+  const computed = mathOutcome(p);
+  if (computed && (result === 'hit' || result === 'miss' || result === 'won' || result === 'lost' || result === 'push')) {
+    // Never render a persisted terminal label that contradicts the saved
+    // line/direction and displayed final value. The backend will move an
+    // unverified contradiction to review; this is the client-side fail-closed
+    // guard for already-cached/legacy records.
+    if (result === 'push' && computed !== 'push') return null;
+    if (result !== 'push' && computed !== result && !(result === 'won' && computed === 'hit') && !(result === 'lost' && computed === 'miss')) {
+      return null;
+    }
+    return computed;
+  }
   if ((hasVerifiedSource || isExplicitFinal) && (result === 'hit' || result === 'won')) return 'hit';
   if ((hasVerifiedSource || isExplicitFinal) && (result === 'miss' || result === 'lost')) return 'miss';
   if ((hasVerifiedSource || isExplicitFinal) && result === 'push') return 'push';
@@ -99,13 +122,7 @@ function derivedOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
     if (p.passOutcome === 'push') return 'push';
   }
   if ((p.status === 'settled' || p.matchStatus === 'final') && p.actualValue != null) {
-    const line = Number(p.line);
-    const actual = Number(p.actualValue);
-    const rec = String(p.recommendation || '').toLowerCase();
-    if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
-      if (Number.isInteger(line) && actual === line) return 'push';
-      return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
-    }
+    return mathOutcome(p);
   }
   return null;
 }

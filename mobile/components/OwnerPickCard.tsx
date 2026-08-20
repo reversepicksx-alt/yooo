@@ -74,6 +74,24 @@ function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
   const raw = String(p.result || '').toLowerCase();
   const hasVerifiedSource = p.settlementSource?.verified === true;
   const isExplicitFinal = p.status === 'settled' || p.matchStatus === 'final';
+  if (p.actualValue != null) {
+    const line = Number(p.line);
+    const actual = Number(p.actualValue);
+    const rec = String(p.recommendation || '').toLowerCase();
+    if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
+      const computed = Number.isInteger(line) && actual === line
+        ? 'push'
+        : (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
+      if (['hit', 'miss', 'push', 'won', 'lost'].includes(raw)) {
+        if (
+          (raw === 'hit' || raw === 'won') && computed !== 'hit'
+          || (raw === 'miss' || raw === 'lost') && computed !== 'miss'
+          || raw === 'push' && computed !== 'push'
+        ) return null;
+      }
+      return computed;
+    }
+  }
   if ((hasVerifiedSource || isExplicitFinal) && (raw === 'hit' || raw === 'won')) return 'hit';
   if ((hasVerifiedSource || isExplicitFinal) && (raw === 'miss' || raw === 'lost')) return 'miss';
   if ((hasVerifiedSource || isExplicitFinal) && raw === 'push') return 'push';
@@ -94,7 +112,7 @@ function getSettledOutcome(p: Pick): 'hit' | 'miss' | 'push' | 'dnp' | null {
     const actual = Number(p.actualValue);
     const rec = String(p.recommendation || '').toLowerCase();
     if (Number.isFinite(line) && Number.isFinite(actual) && (rec === 'over' || rec === 'under')) {
-      if (actual === line) return 'push';
+      if (Number.isInteger(line) && actual === line) return 'push';
       return (rec === 'over' ? actual > line : actual < line) ? 'hit' : 'miss';
     }
   }
