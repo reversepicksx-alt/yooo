@@ -4,6 +4,7 @@ import asyncio
 import os as _os
 from datetime import datetime, timezone, timedelta
 from config import db
+from settlement_invariants import settle_numeric_result
 
 
 def _line_allows_push(line) -> bool:
@@ -15,13 +16,8 @@ def _line_allows_push(line) -> bool:
 
 
 def _settle_numeric_result(actual, line, recommendation):
-    """Resolve a numeric result without allowing half-line pushes."""
-    rec = (recommendation or "").upper()
-    if _line_allows_push(line) and actual == float(line):
-        return "push"
-    if rec == "OVER":
-        return "hit" if actual > float(line) else "miss"
-    return "hit" if actual < float(line) else "miss"
+    """Compatibility wrapper around the canonical settlement invariant."""
+    return settle_numeric_result(actual, line, recommendation)
 
 
 def _parse_json(raw: str) -> dict | list | None:

@@ -22,6 +22,7 @@ from routes.picks import (
     _pass_lean,
 )
 import routes.picks as picks_routes
+from settlement_invariants import settle_numeric_result, validate_numeric_outcome
 
 
 # ── SOCCER_STAT_MAP correctness ───────────────────────────────────────────────
@@ -234,6 +235,15 @@ def test_settle_result_over_hit():
 
 def test_settle_result_under_hit():
     assert _settle_pick_result(30, 35.5, {"recommendation": "under"}) == ("hit", None)
+
+
+def test_canonical_numeric_invariant_handles_half_lines_and_rejects_contradictions():
+    assert settle_numeric_result(66, 66.5, "UNDER") == "hit"
+    assert settle_numeric_result(67, 66.5, "UNDER") == "miss"
+    assert settle_numeric_result(66, 66, "UNDER") == "push"
+    assert validate_numeric_outcome(66, 66.5, "UNDER", "hit") is True
+    assert validate_numeric_outcome(66, 66.5, "UNDER", "miss") is False
+    assert validate_numeric_outcome(67, 66.5, "UNDER", "hit") is False
 
 
 def test_sofascore_style_pass_total_72_beats_conflicting_provider_value_66():

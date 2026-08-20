@@ -21,6 +21,7 @@ import fotmob_client as _fotmob_client
 import httpx as _httpx
 import os as _os
 import time as _time_mod
+from settlement_invariants import settle_numeric_result
 
 # ── BDL live cooldown (shared across NBA/NHL/WNBA/NFL) ────────────────────
 _bdl_live_last_attempt: dict[str, float] = {}
@@ -365,13 +366,7 @@ async def cs2_admin_manual_settle(payload: dict):
     line        = float(pick.get("line", 0))
     rec         = pick.get("recommendation", "over")
     actual_value = float(actual_value)
-    diff = actual_value - line
-    if float(line).is_integer() and abs(diff) < 0.001:
-        result_str = "push"
-    elif rec == "over":
-        result_str = "hit" if actual_value > line else "miss"
-    else:
-        result_str = "hit" if actual_value < line else "miss"
+    result_str = settle_numeric_result(actual_value, line, rec)
 
     hit_pct  = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
     now_iso  = datetime.now(timezone.utc).isoformat()
@@ -3314,12 +3309,12 @@ async def correct_pick(req: CorrectPickRequest):
         raise HTTPException(status_code=404, detail="Pick not found")
     line = pick.get("line", 0)
     rec = pick.get("recommendation", "over")
-    if float(line).is_integer() and abs(req.actualValue - line) < 0.001:
-        result_str = "push"
-    elif (rec == "over" and req.actualValue > line) or (rec == "under" and req.actualValue < line):
-        result_str = "hit"
-    else:
-        result_str = "miss"
+    result_str, _ = _settle_pick_result(req.actualValue, line, pick)
+    if result_str == "pass":
+        raise HTTPException(
+            status_code=409,
+            detail="This pick has no saved direction and cannot be manually settled.",
+        )
     await db.picks.update_one(
         {"pickId": req.pickId, "email": req.email.lower()},
         {"$set": {
@@ -3697,14 +3692,9 @@ async def _process_bdl_live(picks: list, email: str) -> list:
         """Settle a BDL pick and persist to DB."""
         line = pick.get("line", 0)
         rec  = pick.get("recommendation", "over")
-        if float(line).is_integer() and current_value == line:
-            result_str = "push"
-        elif current_value > line:
-            result_str = "hit" if rec == "over" else "miss"
-        elif current_value < line:
-            result_str = "miss" if rec == "over" else "hit"
-        else:
-            result_str = "hit" if rec == "under" else "miss"
+        result_str, _ = _settle_pick_result(current_value, line, pick)
+        if result_str == "pass":
+            raise ValueError("cannot settle a PASS pick without a saved direction")
 
         venue = (pick.get("venue") or "home").lower()
         p_score = home_score if venue == "home" else away_score
@@ -5320,14 +5310,7 @@ def _settle_result(current_value, line, recommendation):
     Count-stat player props settle to integer actuals. A half-line such as
     30.5 therefore can never be a push; only whole-number lines can push.
     """
-    rec = (recommendation or "").lower()
-    if float(line).is_integer() and current_value == line:
-        return "push"
-    elif (current_value > line and rec == "over") or \
-         (current_value < line and rec == "under"):
-        return "hit"
-    else:
-        return "miss"
+    return settle_numeric_result(current_value, line, recommendation)
 
 
 def _settle_pick_result(current_value, line, pick):
