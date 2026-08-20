@@ -354,7 +354,7 @@ def _fallback(section: Section, prediction: dict[str, Any]) -> str:
     )
     h2h = prediction.get("h2hPlayerStats") or {}
     h2h_text = (
-        f" The player has a {_fmt(h2h.get('avgVsOpponent'))} average in "
+        f" Display-only H2H context: the player has a {_fmt(h2h.get('avgVsOpponent'))} average in "
         f"{_fmt(h2h.get('sampleSize'))} verified appearances against {opponent}."
         if h2h.get("avgVsOpponent") is not None
         else ""

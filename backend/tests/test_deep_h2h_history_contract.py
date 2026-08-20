@@ -84,8 +84,7 @@ def test_h2h_line_signal_preserves_over_and_under_direction_rates():
     assert 'real_bayes["h2hLineOverRate"]' in PREDICT_SOURCE
     assert 'real_bayes["h2hLineUnderRate"]' in PREDICT_SOURCE
     assert 'real_bayes["h2hLineDirectionalHitRate"]' in PREDICT_SOURCE
-    assert "_ldir_n" in PREDICT_SOURCE
-    assert "_ldir_pct" in PREDICT_SOURCE
+    assert 'real_bayes["h2hLineWeight"] = 0' in PREDICT_SOURCE
 
 
 def test_h2h_fanout_retains_completed_player_evidence_at_deadline():
