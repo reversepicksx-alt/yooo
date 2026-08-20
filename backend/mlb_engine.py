@@ -1347,11 +1347,9 @@ def compute_mlb_projection(
         rest_mult   = rest_table.get(capped_days, 1.0)
         posterior_mean *= rest_mult
 
-    # ── LAYER 12: HEAD-TO-HEAD (H2H) ADJUSTMENT ──────────────────────────────
-    # Blends historical performance vs this specific opponent into the posterior.
-    # Uses venue-specific split (home/away) when available and large enough;
-    # falls back to the overall H2H aggregate.
-    # Weight scales with sample size (5% at 2 games → 20% at 10+ games).
+    # ── LAYER 12: HEAD-TO-HEAD (H2H) DISPLAY EVIDENCE ─────────────────────────
+    # H2H is retained in the response for analysis, but is intentionally
+    # excluded from the posterior because direct-opponent samples are noisy.
     h2h_mean_val   = None
     h2h_weight_val = 0.0
     h2h_gp         = 0
@@ -1379,18 +1377,7 @@ def compute_mlb_projection(
         if h2h_gp >= 2:
             h2h_mean_val = _compute_h2h_mean(raw, prop_type, h2h_gp)
             if h2h_mean_val is not None and h2h_mean_val >= 0:
-                h2h_weight_val = _H2H_WEIGHT_TABLE.get(min(h2h_gp, 9), _H2H_WEIGHT_MAX)
-                pre_h2h = posterior_mean
-                posterior_mean = (
-                    (1.0 - h2h_weight_val) * posterior_mean
-                    + h2h_weight_val       * h2h_mean_val
-                )
-                import logging as _log
-                _log.getLogger("mlb_engine").info(
-                    f"[H2H] venue={h2h_venue_used}, gp={h2h_gp} ({h2h_source}), "
-                    f"h2h_mean={h2h_mean_val:.2f}, weight={h2h_weight_val:.0%}, "
-                    f"{pre_h2h:.2f} → {posterior_mean:.2f}"
-                )
+                h2h_weight_val = 0.0
 
     # ── EFFECTIVE STD ────────────────────────────────────────────────────────
     posterior_std = math.sqrt(max(0.1, 1.0 / total_precision))

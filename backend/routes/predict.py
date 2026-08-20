@@ -12950,13 +12950,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 )(),
             )
 
-            # ─── OPPONENT H2H PRIOR ADJUSTMENT ────────────────────────────────────
-            # Blend player's historical stats vs THIS specific opponent into the prior.
-            # Captures opponent-specific patterns season averages can't see:
-            # e.g., a player who averages 70 passes/game but only 55 vs this opponent.
-            # Weight is proportional to H2H sample size, capped at 25% max influence —
-            # season average always holds at least 75% authority.
-            # Venue-filtered when enough same-venue H2H games exist (home vs home, away vs away).
+            # ─── OPPONENT H2H EVIDENCE (DISPLAY ONLY) ────────────────────────────
+            # Keep collecting verified H2H for the analysis/UI, but do not let it
+            # influence the prediction posterior. Direct opponent history is too
+            # noisy and sparse to be a predictive input.
             _h2h_summary = historical_data.get("h2hPlayerStats", {})
             _h2h_avg = _h2h_summary.get("avgVsOpponent")
             _h2h_n = _h2h_summary.get("sampleSize", 0)
@@ -12976,51 +12973,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     _h2h_n_use = _h2h_n
                     _venue_note = "all venues"
 
-                # Weight: 5% per H2H game, max 25% — season data always dominates
-                _h2h_weight = min(_h2h_n_use * 0.05, 0.25)
-                # HIGH-TRUST H2H WEIGHT (13% per game, cap 40%):
-                # Opponent-specific history dominates over season baseline for
-                # defensive volume props where press shape is highly predictive.
-                # GK pass_attempts: opponent pressing style is the single most predictive
-                # factor after venue. CB/CDM pass props: specific opponent's press
-                # intensity and block depth are highly repeatable patterns.
-                _is_gk_h2h = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or \
-                              (player_position or "").lower() == "goalkeeper"
-                _DEF_VOL_ROLES = {"CB", "CDM", "DM", "LB", "RB", "LWB", "RWB", "SW"}
-                _DEF_VOL_PROPS = {"pass_attempts", "passes", "tackles", "interceptions", "blocks", "clearances"}
-                _is_def_vol_h2h = (
-                    req.propType in _DEF_VOL_PROPS and
-                    ((specific_position or "").upper() in _DEF_VOL_ROLES or
-                     (player_role or "").upper() in _DEF_VOL_ROLES)
-                )
-                if (_is_gk_h2h and req.propType in {"pass_attempts", "passes"}) or _is_def_vol_h2h:
-                    _h2h_weight = min(_h2h_n_use * 0.13, 0.40)  # 13% per game, cap 40%
-                _old_bp = bayesian_posterior
-                bayesian_posterior = round(
-                    _old_bp * (1 - _h2h_weight) + _h2h_avg_use * _h2h_weight, 1
-                )
-                _record_projection_factor(
-                    "opponent_h2h_blend",
-                    "Direct player H2H blend",
-                    _old_bp,
-                    bayesian_posterior,
-                    inputs={"h2hAverage": _h2h_avg_use, "weightPct": round(_h2h_weight * 100), "venue": _venue_note},
-                    sample_size=_h2h_n_use,
-                    multiplier=1 - _h2h_weight,
-                    reason="Blended the player's verified appearances against this opponent into the posterior.",
-                )
+                _h2h_weight = 0.0
                 real_bayes["opponentH2HAvg"] = _h2h_avg_use
                 real_bayes["opponentH2HSamples"] = _h2h_n_use
-                real_bayes["opponentH2HWeight"] = round(_h2h_weight * 100)
-                real_bayes["posteriorMean"] = bayesian_posterior
-
-                if abs(bayesian_posterior - _old_bp) >= 0.3:
-                    direction = "▲" if bayesian_posterior > _old_bp else "▼"
-                    print(
-                        f"[H2H ADJ] {req.playerName} vs {req.opponentName}: "
-                        f"H2H avg={_h2h_avg_use} ({_h2h_n_use} games, {_venue_note}, "
-                        f"weight={_h2h_weight:.0%}) {direction} {_old_bp:.1f} → {bayesian_posterior:.1f}"
-                    )
+                real_bayes["opponentH2HWeight"] = 0
 
                 # ── H2H LINE HIT RATE — UNANIMOUS SIGNAL ─────────────────────────
                 # Separate from the avg-blend above. When ALL same-venue H2H games
@@ -13052,26 +13008,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             # ≥75% went UNDER → target below the line
                             _h2h_line_target = min(_h2h_avg_use, req.line - 1.5)
 
-                        _h2h_line_weight = min(_h2h_line_n * 0.20, 0.55)
-                        _old_bp2 = bayesian_posterior
-                        bayesian_posterior = round(
-                            _old_bp2 * (1 - _h2h_line_weight) + _h2h_line_target * _h2h_line_weight, 1
-                        )
-                        _record_projection_factor(
-                            "h2h_line_signal",
-                            "Unanimous same-venue H2H line signal",
-                            _old_bp2,
-                            bayesian_posterior,
-                            inputs={
-                                "target": _h2h_line_target,
-                                "overPct": round(_h2h_over_pct * 100),
-                                "line": req.line,
-                                "weightPct": round(_h2h_line_weight * 100),
-                            },
-                            sample_size=_h2h_line_n,
-                            multiplier=1 - _h2h_line_weight,
-                            reason="Same-venue H2H appearances consistently cleared one side of the line.",
-                        )
+                        _h2h_line_weight = 0.0
                         real_bayes["h2hLineHitRate"]   = round(_h2h_over_pct * 100)
                         real_bayes["h2hLineOverRate"]  = round(_h2h_over_pct * 100)
                         real_bayes["h2hLineUnderRate"] = round(_h2h_under_pct * 100)
@@ -13082,27 +13019,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                             max(_h2h_over_pct, _h2h_under_pct) * 100
                         )
                         real_bayes["h2hLineSampleN"]   = _h2h_line_n
-                        real_bayes["posteriorMean"]    = bayesian_posterior
-
-                        if abs(bayesian_posterior - _old_bp2) >= 0.3:
-                            _ldir = "▲" if bayesian_posterior > _old_bp2 else "▼"
-                            _ldir_word = "OVER" if _h2h_over_pct >= 0.75 else "UNDER"
-                            _ldir_n = (
-                                _h2h_over_n
-                                if _ldir_word == "OVER"
-                                else _h2h_under_n
-                            )
-                            _ldir_pct = (
-                                _h2h_over_pct
-                                if _ldir_word == "OVER"
-                                else _h2h_under_pct
-                            )
-                            print(
-                                f"[H2H LINE SIGNAL] {req.playerName} vs {req.opponentName}: "
-                                f"{_ldir_n}/{_h2h_line_n} same-venue H2H {_ldir_word} {req.line} "
-                                f"({_ldir_pct:.0%}) → target={_h2h_line_target:.1f} "
-                                f"weight={_h2h_line_weight:.0%} {_ldir} {_old_bp2:.1f} → {bayesian_posterior:.1f}"
-                            )
+                        real_bayes["h2hLineWeight"] = 0
                 # ─────────────────────────────────────────────────────────────────
 
             # ─────────────────────────────────────────────────────────────────────

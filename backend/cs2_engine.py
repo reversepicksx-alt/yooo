@@ -1026,13 +1026,9 @@ def compute_cs2_projection(
     ot_bonus = _overtime_boost(map_logs, prop_type)
     projection += ot_bonus
 
-    # 4e. H2H form multiplier
-    h2h_form_mult = _h2h_form_multiplier(map_logs, opponent_name, prop_type)
-    projection   *= h2h_form_mult
-
-    # 4f. H2H kill trend
-    h2h_trend_mult = _h2h_kill_trend(map_logs, opponent_name, prop_type)
-    projection    *= h2h_trend_mult
+    # 4e/4f. H2H is display-only; direct-opponent history has zero projection weight.
+    h2h_form_mult = 1.0
+    h2h_trend_mult = 1.0
 
     # ── NEW v4 Layers ─────────────────────────────────────────────────────────
 

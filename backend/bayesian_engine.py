@@ -1380,9 +1380,9 @@ def compute_bayesian_projection(
         # Threshold: team expects >58% possession → skip all direct-play penalties.
         _team_exp_poss = float(match_stakes.get("teamExpectedPoss") or
                                (match_dominance or {}).get("expectedPoss") or 50.0)
-        _h2h_poss_override = float(match_stakes.get("h2hPossAvg") or 0)
-        # Use the more reliable of blended H2H or expected possession
-        _effective_poss = max(_team_exp_poss, _h2h_poss_override)
+        # H2H possession is display/context evidence only; it cannot alter
+        # match-stakes prediction math.
+        _effective_poss = _team_exp_poss
         _poss_dominant = _effective_poss > 58.0  # team controls the ball vs this opponent
 
         if _ms_team_level == "MUST_WIN_RELEGATION":

@@ -183,16 +183,8 @@ def _opp_rank_mult(opp_rank: Optional[int], subject_rank: Optional[int], prop_ty
 
 
 def _h2h_mult(h2h: Optional[dict], subject_is_p1: bool, prop_type: str) -> float:
-    if not h2h or prop_type not in ("player_games_won", "match_winner", "first_set_winner"):
-        return 1.0
-    p1w = h2h.get("p1Wins", 0)
-    p2w = h2h.get("p2Wins", 0)
-    total = p1w + p2w
-    if total < 2:
-        return 1.0
-    subj_w = p1w if subject_is_p1 else p2w
-    win_rate = subj_w / total
-    return 0.92 + win_rate * 0.16
+    # H2H remains available for tactical metrics/UI, but is not predictive.
+    return 1.0
 
 
 def _serve_profile_signals(
