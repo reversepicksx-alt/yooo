@@ -320,6 +320,25 @@ def get_recent_prop_safety(
     return None
 
 
+def should_suppress_recent_direction(
+    bucket: Optional[dict],
+    min_n: int = _MIN_N_RECENT_PASS,
+) -> bool:
+    """Return whether recent evidence is too weak to publish this direction.
+
+    This is intentionally a conservative, direction-only control: it requires
+    a meaningful rolling sample and a hit rate at or below break-even. It does
+    not flip the direction or change the projection; callers should publish
+    PASS with the original direction as context.
+    """
+    if not bucket or bucket.get("hitRate") is None:
+        return False
+    try:
+        return int(bucket.get("n") or 0) >= min_n and float(bucket["hitRate"]) <= 50.0
+    except (TypeError, ValueError):
+        return False
+
+
 def get_all() -> Dict[str, dict]:
     """Return the full cache snapshot (for debug / admin endpoints)."""
     return dict(_CACHE)

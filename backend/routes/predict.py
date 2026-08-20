@@ -17086,6 +17086,90 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 )
                 _final_bm["recommendation"] = prediction["recommendation"]
 
+            # The earlier rolling pass guard used to cap confidence but still
+            # publish the direction. That left a direction with a rolling
+            # break-even-or-worse record actionable, especially after late
+            # projection calibration reasserted OVER/UNDER. Convert only this
+            # evidence-backed direction to PASS at the final boundary so no
+            # later projection stage can undo the control. The original side
+            # remains visible as passLeaning/context for auditability.
+            if (
+                str(req.sport or "").lower() == "soccer"
+                and req.propType in {"pass_attempts", "passes"}
+                and str(prediction.get("recommendation") or "").upper() in {"OVER", "UNDER"}
+            ):
+                try:
+                    from prop_safety_cache import (
+                        get_recent_prop_safety as _get_recent_final_pass,
+                        should_suppress_recent_direction as _should_suppress_final_pass,
+                    )
+                    _final_pass_dir = str(prediction["recommendation"]).upper()
+                    _final_pass_position = (
+                        prediction.get("player", {}).get("position")
+                        or prediction.get("position")
+                        or specific_position
+                        or req.positionOverride
+                        or ""
+                    )
+                    _final_recent_pass = _get_recent_final_pass(
+                        req.propType,
+                        _final_pass_dir,
+                        league_id=req.leagueId,
+                        position=_final_pass_position,
+                    )
+                    if _should_suppress_final_pass(_final_recent_pass):
+                        _final_pass_rate = float(_final_recent_pass["hitRate"])
+                        _final_pass_n = int(_final_recent_pass["n"])
+                        _final_pass_reason = (
+                            f"Recent {_final_pass_dir} pass-attempt evidence is "
+                            f"{_final_pass_rate:.0f}% across {_final_pass_n} settled events. "
+                            "The direction is temporarily suppressed until the rolling "
+                            "sample recovers above break-even."
+                        )
+                        prediction["recommendation"] = "PASS"
+                        _final_bm["recommendation"] = "PASS"
+                        prediction["passLeaning"] = _final_pass_dir
+                        prediction["passReason"] = _final_pass_reason
+                        prediction["confidenceScore"] = 50
+                        prediction["confidenceLevel"] = "Low"
+                        prediction["coinFlip"] = True
+                        prediction["recentPropSafety"] = {
+                            "direction": _final_pass_dir,
+                            "hitRate": _final_pass_rate,
+                            "sampleSize": _final_pass_n,
+                            "windowDays": 45,
+                            "minSampleSize": 10,
+                            "action": "suppress_direction",
+                        }
+                        prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                            f"PASS {_final_pass_dir} SUPPRESSION: {_final_pass_reason}"
+                        ]
+                        _factor_ledger.append({
+                            "id": "recent_pass_direction_suppression",
+                            "title": "Recent pass-direction suppression",
+                            "status": "applied",
+                            "before": _final_pass_dir,
+                            "after": "PASS",
+                            "direction": "neutral",
+                            "sampleSize": _final_pass_n,
+                            "inputs": {
+                                "hitRate": _final_pass_rate,
+                                "windowDays": 45,
+                                "minSampleSize": 10,
+                            },
+                            "reason": _final_pass_reason,
+                            "kind": "decision",
+                        })
+                        print(
+                            f"[FINAL PASS SUPPRESSION] {req.playerName}/{req.propType}: "
+                            f"{_final_pass_dir} {_final_pass_rate:.1f}% ({_final_pass_n}n) → PASS"
+                        )
+                except Exception as _final_pass_err:
+                    # Recent calibration is protective metadata; an unavailable
+                    # cache must never turn a valid deterministic prediction into
+                    # a failed request.
+                    print(f"[FINAL PASS SUPPRESSION] unavailable: {_final_pass_err}")
+
             # Recompute edge and safety after all late projection stages. The
             # normal edge/safety block runs before pass-projection calibration,
             # so using its values here could describe an earlier projection or
@@ -17127,6 +17211,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 _final_edge_rating = "NO EDGE"
                 if _final_rec_upper == "PASS":
                     _final_edge_reason = "Evidence-quality control converted a thin or unsupported edge to PASS."
+                if prediction.get("passReason"):
+                    _final_edge_reason = prediction["passReason"]
                 elif prediction.get("coinFlip"):
                     _final_edge_reason = "Projection probabilities are too close to call."
                 else:

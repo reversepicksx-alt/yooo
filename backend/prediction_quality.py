@@ -258,11 +258,28 @@ def apply_prediction_quality_controls(
         changed = True
         current_conf = float(prediction["confidenceScore"])
 
-    # Evidence quality controls confidence, not direction. The displayed
-    # recommendation must remain the deterministic OVER/UNDER decision from
-    # the final projection ledger; a thin edge is disclosed through the
-    # confidence cap and evidence packet instead of creating a third customer
-    # facing "PASS — SKIP THIS PROP" state.
+    # PASS only when both the edge and the evidence are weak. Strong
+    # projections are not suppressed solely because one optional data source
+    # is unavailable.
+    if (
+        recommendation in {"OVER", "UNDER"}
+        and edge_pct is not None
+        and edge_pct < 2.0
+        and quality.get("score", 0) < 58
+        and current_conf <= 62
+    ):
+        prediction["passLeaning"] = recommendation
+        prediction["recommendation"] = "PASS"
+        prediction["passReason"] = (
+            f"PASS — the final edge is only {edge_pct:.1f}% and the "
+            f"independent evidence quality is {quality.get('score', 0)}/100."
+        )
+        prediction["skipReason"] = "THIN_EDGE_LOW_EVIDENCE"
+        prediction["confidenceScore"] = 50
+        prediction["rawConfidence"] = 50
+        prediction["confidenceLevel"] = "Low"
+        prediction["coinFlip"] = False
+        changed = True
 
     prediction["evidenceQuality"] = quality
     if changed:
