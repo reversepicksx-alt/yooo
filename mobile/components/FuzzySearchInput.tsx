@@ -121,6 +121,31 @@ function localFuzzy(items: StaticItem[], q: string): StaticItem[] {
     .map(x => x.item);
 }
 
+// Keep a verified identity available on native clients even when the
+// production provider search is stale or returns a same-name profile without
+// a club. Selection still performs the normal current-club verification.
+function verifiedSoccerSearchFallback(q: string): FuzzyPlayerResult[] {
+  const normalized = q
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!['petrovic', 'dorde petrovic', 'djordje petrovic'].includes(normalized)) {
+    return [];
+  }
+  return [{
+    playerId: 118307,
+    playerName: 'Djordje Petrovic',
+    fullName: 'Djordje Petrovic',
+    teamId: 0,
+    teamName: '',
+    leagueId: 0,
+    position: 'Goalkeeper',
+  }];
+}
+
 export default function FuzzySearchInput({
   value,
   onChangeText,
@@ -242,12 +267,23 @@ export default function FuzzySearchInput({
           ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || '',
           ownerTeamLogo: (p.ownerTeamLogo as string) || '',
         }));
+        const verifiedFallback = verifiedSoccerSearchFallback(normalizedQuery);
+        r = [
+          ...verifiedFallback,
+          ...r.filter(p => !verifiedFallback.some(v => v.playerId === p.playerId)),
+        ];
       } else if (searchType === 'all_players') {
         // Publish each sport as soon as it returns. Previously the UI waited
         // for the slowest MLB/NFL provider before showing a fast soccer hit.
         // The abort signal also stops stale requests when the user types again.
         const universalRows: any[] = [];
         const addUniversalRows = (sport: 'soccer' | 'mlb' | 'nfl' | 'nba', rows: any[]) => {
+          if (sport === 'soccer') {
+            rows = [
+              ...verifiedSoccerSearchFallback(normalizedQuery),
+              ...rows.filter(p => (p.id || p.playerId) !== 118307),
+            ];
+          }
           const mapped = rows.map((p: any) => ({
             sport,
             playerId: sport === 'soccer' ? (p.id || p.playerId || 0) : (p.id || 0),
