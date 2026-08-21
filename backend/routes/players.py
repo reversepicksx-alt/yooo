@@ -1029,13 +1029,20 @@ async def search_players(req: PlayerSearchRequest):
                     continue
                 name_norm = _strip(name.lower())
                 name_words = set(name_norm.split())
-                # A provider/cached canonical name may omit middle or surname
-                # components typed by the user. Require the stored first name
-                # and every stored name token to be present in the query.
-                if not name_words.issubset(set(query_parts)):
-                    continue
-                if query_parts[0] != name_norm.split()[0] and not name_norm.startswith(query_parts[0]):
-                    continue
+                if len(query_parts) == 1:
+                    # Surname-only searches must recover a verified durable
+                    # player without treating every same-surname provider row
+                    # as the same identity.
+                    if query_parts[0] not in name_words:
+                        continue
+                else:
+                    # A provider/cached canonical name may omit middle or
+                    # surname components typed by the user. Require the stored
+                    # first name and every stored name token to be present.
+                    if not name_words.issubset(set(query_parts)):
+                        continue
+                    if query_parts[0] != name_norm.split()[0] and not name_norm.startswith(query_parts[0]):
+                        continue
                 seen_ids.add(pid)
                 context = context_by_id.get(pid) or {}
                 recovered.append({
@@ -1094,6 +1101,16 @@ async def search_players(req: PlayerSearchRequest):
     # Durable identity recovery is a last-resort fallback, not part of the
     # keystroke path. Its Atlas lookup can take hundreds of milliseconds even
     # when the warm identity index already has the answer.
+    if len(query_parts) == 1:
+        # For surname-only lookup, verified durable identities are more useful
+        # than an arbitrary provider page of same-surname players. This also
+        # lets a player whose provider name contains diacritics survive ASCII
+        # mobile/OCR input.
+        durable_players = await _durable_identity_fallback()
+        if durable_players:
+            _remember_hot_players(durable_players)
+            _remember_hot_query(req.query, hot_league_id, durable_players)
+            return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
     durable_players: list[dict] = []
 
     async def _resolve_club_for_intl_player(p: dict) -> dict:
