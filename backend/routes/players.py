@@ -16,6 +16,44 @@ _SEARCH_HOT_QUERIES: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
 _SEARCH_HOT_TTL_SECONDS = 15 * 60
 _SEARCH_HOT_MAX_PLAYERS = 5000
 
+# API-Football's global profile search can return a different player with the
+# same ASCII name and no current-team statistics. Keep only corrections that
+# have been independently verified by the current-club context endpoint. This
+# is an identity repair, not a club display source; selection still verifies
+# the live club before a matchup is chosen.
+_VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
+    {
+        "id": 118307,
+        "name": "Djordje Petrovic",
+        "fullName": "Djordje Petrovic",
+        "firstname": "Djordje",
+        "lastname": "Petrovic",
+        "position": "Goalkeeper",
+        "teamId": 35,
+        "teamName": "Bournemouth",
+        "leagueId": 39,
+        "aliases": {
+            "djordje petrovic",
+            "dorde petrovic",
+            "petrovic",
+        },
+    },
+)
+
+
+def _verified_identity_search_override(query: str) -> list[dict]:
+    """Return exact known-good identity repairs for a normalized user query."""
+    normalized = _hot_query_key(query, None)[0]
+    if not normalized:
+        return []
+    for override in _VERIFIED_IDENTITY_SEARCH_OVERRIDES:
+        aliases = override.get("aliases") or set()
+        if normalized not in aliases:
+            continue
+        result = {key: value for key, value in override.items() if key != "aliases"}
+        return [result]
+    return []
+
 
 def _hot_query_key(query: str, league_id: int | None) -> tuple[str, int | None]:
     clean = unicodedata.normalize("NFD", query.lower().strip())
@@ -858,6 +896,16 @@ async def search_players(req: PlayerSearchRequest):
         return player_list[:15]
 
     hot_league_id = None if req.league_id in _TOURNAMENT_LEAGUES else req.league_id
+    verified_identity_override = _verified_identity_search_override(req.query)
+    if verified_identity_override:
+        _remember_hot_players(verified_identity_override)
+        _remember_hot_query(req.query, hot_league_id, verified_identity_override)
+        return {
+            "players": _mask_unverified_team(
+                await _attach_owner_media(verified_identity_override)
+            )
+        }
+
     hot_results = _hot_exact_query(req.query, hot_league_id)
     # A hot exact result with no team is often a provider profile collision
     # rather than a resolved identity (for example, API-Football can return a
