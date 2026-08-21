@@ -859,13 +859,27 @@ async def search_players(req: PlayerSearchRequest):
 
     hot_league_id = None if req.league_id in _TOURNAMENT_LEAGUES else req.league_id
     hot_results = _hot_exact_query(req.query, hot_league_id)
-    if hot_results:
+    # A hot exact result with no team is often a provider profile collision
+    # rather than a resolved identity (for example, API-Football can return a
+    # different "Djordje Petrovic" record for the same two-word query). Let
+    # the durable identity/context path disambiguate those rows instead of
+    # locking the wrong player into the selection UI.
+    hot_identity_only = (
+        len(query_parts) >= 2
+        and hot_results
+        and all(not (p.get("teamId") or p.get("teamName")) for p in hot_results)
+    )
+    if hot_results and not hot_identity_only:
         return {"players": _mask_unverified_team(await _attach_owner_media(hot_results))}
 
     hot_results = _hot_player_matches(req.query, hot_league_id)
     if hot_results:
         hot_results = _apply_sort_and_quality(hot_results)
-        if hot_results:
+        hot_identity_only = (
+            len(query_parts) >= 2
+            and all(not (p.get("teamId") or p.get("teamName")) for p in hot_results)
+        )
+        if hot_results and not hot_identity_only:
             return {"players": _mask_unverified_team(await _attach_owner_media(hot_results))}
 
     async def _durable_identity_fallback() -> list[dict]:
@@ -881,10 +895,26 @@ async def search_players(req: PlayerSearchRequest):
         try:
             first_word = re.escape(query_parts[0])
             last_word = re.escape(query_parts[-1])
+            # Search both display names and normalized names.  The provider
+            # and saved ledger can retain diacritics (Đorđe Petrović), while
+            # mobile OCR/search commonly sends the ASCII form (Djordje
+            # Petrovic).  nameClean is the accent-insensitive index when it
+            # exists; the display-name clauses preserve compatibility with
+            # older durable rows.
+            clean_first = re.escape(query_parts[0])
+            clean_last = re.escape(query_parts[-1])
+            # A display-name regex cannot match the accented suffix in
+            # "Petrović" when the query is ASCII "Petrovic". Use a bounded
+            # five-character prefix as a candidate filter, then apply the
+            # accent-stripped exact-name check below.
+            display_last_prefix = re.escape(query_parts[-1][:5])
             name_filter = {
                 "$or": [
                     {"playerName": {"$regex": rf"(^|\s){first_word}", "$options": "i"}},
                     {"playerName": {"$regex": last_word, "$options": "i"}},
+                    {"playerName": {"$regex": display_last_prefix, "$options": "i"}},
+                    {"nameClean": {"$regex": rf"(^|\s){clean_first}", "$options": "i"}},
+                    {"nameClean": {"$regex": clean_last, "$options": "i"}},
                 ]
             }
             try:
@@ -914,8 +944,15 @@ async def search_players(req: PlayerSearchRequest):
                 pick_filter = {
                     "sport": "soccer",
                     "$and": [
-                        {"playerName": {"$regex": rf"(^|\s){first_word}", "$options": "i"}},
-                        {"playerName": {"$regex": last_word, "$options": "i"}},
+                        {"$or": [
+                            {"playerName": {"$regex": rf"(^|\s){first_word}", "$options": "i"}},
+                            {"nameClean": {"$regex": rf"(^|\s){clean_first}", "$options": "i"}},
+                        ]},
+                        {"$or": [
+                            {"playerName": {"$regex": last_word, "$options": "i"}},
+                            {"playerName": {"$regex": display_last_prefix, "$options": "i"}},
+                            {"nameClean": {"$regex": clean_last, "$options": "i"}},
+                        ]},
                     ],
                 }
                 pick_docs = await aio.wait_for(
@@ -1398,6 +1435,22 @@ async def search_players(req: PlayerSearchRequest):
         p for p in live_players
         if p.get("id") and not (p["id"] in seen_live_ids or seen_live_ids.add(p["id"]))
     ]
+
+    # Before accepting an unscoped provider profile, give an exact durable
+    # identity with a verified context a chance to disambiguate it. This is
+    # especially important when API-Football returns a same-name profile with
+    # no statistics/team (the selected ID would otherwise make the context
+    # endpoint correctly report "unavailable" for the wrong person).
+    if (
+        len(query_parts) >= 2
+        and live_players
+        and all(not (p.get("teamId") or p.get("teamName")) for p in live_players)
+    ):
+        durable_players = await _durable_identity_fallback()
+        if durable_players:
+            _remember_hot_players(durable_players)
+            _remember_hot_query(req.query, hot_league_id, durable_players)
+            return {"players": _mask_unverified_team(await _attach_owner_media(durable_players))}
 
     # The search response intentionally masks club fields: the selected player
     # is verified by /players/{id}/contexts. Do not spend another 900ms on
