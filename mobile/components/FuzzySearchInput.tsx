@@ -202,7 +202,13 @@ export default function FuzzySearchInput({
     // A rate-limited upstream search must not leave the control looking
     // permanently busy.  The request itself is ignored if it completes after
     // this timeout; the user gets an explicit retry affordance instead.
-    const searchTimeoutMs = searchType === 'all_players' ? 5_000 : 2_900;
+    // The native universal control uses the same soccer search endpoint as
+    // web, but an iPhone may be coming from a cold API/provider connection.
+    // Five seconds aborts the request before the verified durable result can
+    // arrive, producing the misleading "Search unavailable" state seen on
+    // native while the warmed web cache succeeds. Keep the retry bounded, but
+    // allow the player-search API's 10-second budget to complete.
+    const searchTimeoutMs = searchType === 'all_players' ? 15_000 : 2_900;
     searchTimeoutRef.current = setTimeout(() => {
       if (searchIdRef.current !== myId) return;
       requestController.abort();
