@@ -633,6 +633,21 @@ async def search_players(req: PlayerSearchRequest):
         except Exception as exc:
             print(f"[PLAYER SEARCH] owner media skipped: {exc}")
         return player_list
+
+    def _mask_unverified_team(player_list):
+        """Keep search useful without presenting cache data as current club.
+
+        Search is an identity step. The selected player gets a synchronous
+        current-club verification from /players/{id}/contexts. Until then,
+        cache/provider team fields are intentionally hidden so an old club
+        cannot be mistaken for a confirmed transfer destination.
+        """
+        for player in player_list:
+            player["teamId"] = 0
+            player["teamName"] = ""
+            player["leagueId"] = 0
+            player["teamVerified"] = False
+        return player_list
     # This endpoint is called directly while a user is typing. Background
     # maintenance may consume the local soft budget, but that must not make an
     # uncached player look like a genuine no-result. Priority bypasses only the
@@ -845,13 +860,13 @@ async def search_players(req: PlayerSearchRequest):
     hot_league_id = None if req.league_id in _TOURNAMENT_LEAGUES else req.league_id
     hot_results = _hot_exact_query(req.query, hot_league_id)
     if hot_results:
-        return {"players": await _attach_owner_media(hot_results)}
+        return {"players": _mask_unverified_team(await _attach_owner_media(hot_results))}
 
     hot_results = _hot_player_matches(req.query, hot_league_id)
     if hot_results:
         hot_results = _apply_sort_and_quality(hot_results)
         if hot_results:
-            return {"players": await _attach_owner_media(hot_results)}
+            return {"players": _mask_unverified_team(await _attach_owner_media(hot_results))}
 
     async def _durable_identity_fallback() -> list[dict]:
         """Recover known player identities when provider/cache search is empty.
@@ -1032,21 +1047,6 @@ async def search_players(req: PlayerSearchRequest):
         except Exception as exc:
             print(f"[PLAYER SEARCH] durable identity fallback failed: {exc}")
             return []
-
-    def _mask_unverified_team(player_list):
-        """Keep search useful without presenting cache data as current club.
-
-        Search is an identity step. The selected player gets a synchronous
-        current-club verification from /players/{id}/contexts. Until then,
-        cache/provider team fields are intentionally hidden so an old club
-        cannot be mistaken for a confirmed transfer destination.
-        """
-        for player in player_list:
-            player["teamId"] = 0
-            player["teamName"] = ""
-            player["leagueId"] = 0
-            player["teamVerified"] = False
-        return player_list
 
     # A previously resolved soccer player remains a bounded fallback when
     # disposable search cache rows are missing. Do not return it before the
@@ -1326,7 +1326,7 @@ async def search_players(req: PlayerSearchRequest):
 
             _remember_hot_players(sorted_results)
             _remember_hot_query(req.query, hot_league_id, sorted_results)
-            return {"players": await _attach_owner_media(sorted_results)}
+            return {"players": _mask_unverified_team(await _attach_owner_media(sorted_results))}
     except (aio.TimeoutError, TimeoutError):
         print(f"[PLAYER SEARCH] cache lookup exceeded 850ms for {req.query!r}; using fast provider path")
     except Exception as exc:

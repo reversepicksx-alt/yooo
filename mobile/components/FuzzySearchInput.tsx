@@ -497,7 +497,7 @@ export default function FuzzySearchInput({
       );
     }
     if (searchType === 'players') {
-      const sub = [item.teamName, item.position].filter(Boolean).join(' · ');
+      const sub = [item.teamName || 'Club verified after selection', item.position].filter(Boolean).join(' · ');
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectPlayer(item)} activeOpacity={0.7}>
           {item.ownerPlayerPhoto ? (

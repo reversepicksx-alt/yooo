@@ -47,3 +47,16 @@ wrong team look authoritative.
 search team fields blank until verification, use current-squad confirmation when
 season labels span calendar years, and re-check the player/team pair at
 prediction time so stale clients cannot bypass the guard.
+
+When a completed transfer predates the new competition season, the provider's
+transfer-history feed can be the only current-club evidence available. Sort its
+events by date, ignore free-agent rows without an incoming team, and use the
+result to supersede last-season statistics.
+
+**Why:** A player can have no current-season stats yet while the transfer is
+already official; treating the prior-season club as current misroutes the next
+match and player props.
+
+**How to apply:** Use transfer history as a bounded verification fallback,
+never as an unverified search-cache label, and preserve explicit provenance in
+the returned club context.

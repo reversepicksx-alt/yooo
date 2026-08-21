@@ -239,6 +239,45 @@ async def _resolve_club_evidence(player_id: int):
                 if last_known is None:
                     last_known = club
                 break
+
+    # A summer transfer can be complete before the new competition season has
+    # produced any player statistics. In that window, the latest provider
+    # transfer record is stronger current-club evidence than the prior-season
+    # statistics row. The transfer feed is not ordered contractually, so sort
+    # by date and ignore free-agent rows without an incoming team.
+    try:
+        transfer_rows = await priority_api_football_request(
+            "transfers", {"player": player_id}, force_refresh=True
+        )
+        transfer_events = []
+        for row in transfer_rows or []:
+            for event in row.get("transfers") or []:
+                incoming = event.get("teams", {}).get("in") or {}
+                incoming_id = incoming.get("id")
+                incoming_name = (incoming.get("name") or "").strip()
+                if incoming_id and incoming_name and event.get("date"):
+                    transfer_events.append((str(event["date"]), incoming))
+        if transfer_events:
+            _, incoming = max(transfer_events, key=lambda item: item[0])
+            transfer_club = {
+                "teamId": int(incoming["id"]),
+                "teamName": incoming["name"],
+                # Keep the known competition when the transfer feed does not
+                # include league metadata; current-club identity is the key
+                # decision here and the league is re-resolved on matchup setup.
+                "leagueId": int((last_known or {}).get("leagueId") or 0),
+                "verifiedSeason": verification_season,
+                "verificationSource": "provider_transfer_history",
+            }
+            if (
+                not last_known
+                or transfer_club["teamId"] != last_known.get("teamId")
+                or transfer_club["teamName"] != last_known.get("teamName")
+            ):
+                return {"status": "verified", "club": transfer_club}
+    except Exception as exc:
+        print(f"[CLUB TRANSFER VERIFY] pid={player_id} err={exc}")
+
     if last_known and await _is_player_on_current_squad(player_id, last_known["teamId"]):
         # The current squad feed is stronger evidence than the season label.
         # This matters during offseason: a player may have current squad status
