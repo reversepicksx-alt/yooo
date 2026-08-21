@@ -7,10 +7,13 @@ const getApiBase = (): string => {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     return '';
   }
-  // For native app builds: use EXPO_PUBLIC_API_URL or localhost fallback
+  // For native app builds: use the configured API URL. The production
+  // fallback is important for installed preview/dev binaries: localhost is
+  // the iPhone itself, not the Reverse Picks backend, and turns valid club
+  // verification into a misleading "unavailable" state.
   const env = process.env.EXPO_PUBLIC_API_URL;
   if (env) return env;
-  return 'http://localhost:8000';
+  return 'https://reversepicks.com';
 };
 
 // Endpoints that involve structured synthesis — give them a generous timeout.
