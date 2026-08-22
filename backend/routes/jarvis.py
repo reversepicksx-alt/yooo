@@ -638,14 +638,6 @@ async def jarvis_openapi():
         },
         "security": [{"BearerAuth": []}],
         "paths": {
-            "/api/jarvis/health": {
-                "get": {
-                    "operationId": "getHealth",
-                    "summary": "Server health check (no auth)",
-                    "security": [],
-                    "responses": {"200": {"description": "Health status"}},
-                }
-            },
             # ── PREDICT ───────────────────────────────────────────────────────
             "/api/jarvis/save-pick/soccer": {
                 "post": {
@@ -747,16 +739,6 @@ async def jarvis_openapi():
                     ],
                     "responses": {
                         "200": {"description": "Configured definition or explicit UNKNOWN."},
-                        "401": {"description": "Invalid or missing bearer token."},
-                    },
-                }
-            },
-            "/api/jarvis/audit-status": {
-                "get": {
-                    "operationId": "getAuditStatus",
-                    "summary": "Return mandatory audit coverage and 30-phase status.",
-                    "responses": {
-                        "200": {"description": "Audit mode, versions, and phase status."},
                         "401": {"description": "Invalid or missing bearer token."},
                     },
                 }
