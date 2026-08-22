@@ -68,6 +68,7 @@ from jarvis_audit import (
     line_deviation_ledger_coverage,
     persist_prediction_audit,
 )
+from sportsgameodds_client import list_market_board
 
 router = APIRouter()
 
@@ -671,6 +672,33 @@ async def jarvis_openapi():
                     },
                 }
             },
+            "/api/jarvis/prizepicks/board": {
+                "post": {
+                    "operationId": "refreshPrizePicksBoard",
+                    "summary": "Fetch and save the current PrizePicks board",
+                    "description": "Queries SportsGameOdds for currently available PrizePicks player markets, saves the latest snapshot for JARVIS, and returns it immediately.",
+                    "parameters": [
+                        _param("sport", "string", False, "Provider sport filter, such as SOCCER or ALL."),
+                        _param("hours", "integer", False, "Upcoming board window in hours, from 6 to 168."),
+                        _param("limit", "integer", False, "Maximum markets to return, from 1 to 100."),
+                    ],
+                    "responses": {
+                        "200": {"description": "Current PrizePicks market board and save status."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "503": {"description": "SportsGameOdds is not configured."},
+                    },
+                },
+                "get": {
+                    "operationId": "getSavedPrizePicksBoard",
+                    "summary": "Read the last saved PrizePicks board",
+                    "description": "Returns the most recently saved board snapshot without calling SportsGameOdds.",
+                    "responses": {
+                        "200": {"description": "Saved PrizePicks market board."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "No PrizePicks board has been saved yet."},
+                    },
+                },
+            },
             # ── FIXTURE DETAIL ────────────────────────────────────────────────
             "/api/jarvis/fixture/stats": {
                 "get": {
@@ -895,6 +923,7 @@ async def jarvis_docs():
             "tactical_evidence": ["/api/jarvis/tactical-evidence"],
             "role_analysis": ["/api/jarvis/role-profile", "/api/jarvis/role-opponent-cohort"],
             "aggregator": ["/api/jarvis/match-context"],
+            "market_board": ["/api/jarvis/prizepicks/board"],
             "fixture_detail": [
                 "/api/jarvis/fixture/stats",
                 "/api/jarvis/fixture/events",
@@ -924,6 +953,98 @@ async def jarvis_docs():
             "FIFA World Cup": 1,
         },
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRIZEPICKS BOARD — live SportsGameOdds board for JARVIS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _saved_market_board_response(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": snapshot.get("source", "SportsGameOdds"),
+        "bookmaker": "PrizePicks",
+        "fetched_at": snapshot.get("fetched_at"),
+        "market_count": len(snapshot.get("markets") or []),
+        "markets": snapshot.get("markets") or [],
+        "saved": True,
+    }
+
+
+@router.post("/api/jarvis/prizepicks/board")
+async def jarvis_refresh_prizepicks_board(
+    authorization: Optional[str] = Header(default=None),
+    sport: str = Query(default="SOCCER", description="SportsGameOdds sport ID, or ALL."),
+    hours: int = Query(default=72, ge=6, le=168),
+    limit: int = Query(default=100, ge=1, le=100),
+):
+    """Fetch the live PrizePicks board and save its latest snapshot for JARVIS."""
+    _require_auth(authorization)
+    if not os.environ.get("SPORTSGAMEODDS_API_KEY", "").strip():
+        raise HTTPException(
+            503,
+            detail={"error": "SportsGameOdds is not configured on the server."},
+        )
+
+    markets = await list_market_board(
+        hours=hours,
+        limit=limit,
+        sport_id=sport.strip().upper() or "SOCCER",
+    )
+    snapshot = {
+        "_id": "latest",
+        "source": "SportsGameOdds",
+        "bookmaker": "PrizePicks",
+        "fetched_at": int(time.time()),
+        "sport": sport.strip().upper() or "SOCCER",
+        "hours": hours,
+        "markets": markets,
+    }
+    save_status = "saved"
+    try:
+        await db.jarvis_prizepicks_board.replace_one(
+            {"_id": "latest"},
+            snapshot,
+            upsert=True,
+        )
+    except Exception as exc:
+        # A provider response is still useful during a transient Atlas write
+        # outage, but JARVIS must be told that persistence did not complete.
+        save_status = "save_unavailable"
+        import logging
+        logging.getLogger("jarvis").warning(
+            "PrizePicks board snapshot write skipped: %s", type(exc).__name__
+        )
+
+    response = _saved_market_board_response(snapshot)
+    response["saved"] = save_status == "saved"
+    response["save_status"] = save_status
+    return JSONResponse(content=response)
+
+
+@router.get("/api/jarvis/prizepicks/board")
+async def jarvis_get_saved_prizepicks_board(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the latest saved PrizePicks board without a provider request."""
+    _require_auth(authorization)
+    try:
+        snapshot = await db.jarvis_prizepicks_board.find_one(
+            {"_id": "latest"},
+            {"_id": 0},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            detail={"error": "Saved PrizePicks board is temporarily unavailable."},
+        ) from exc
+    if not snapshot:
+        raise HTTPException(
+            404,
+            detail={"error": "No PrizePicks board has been saved yet."},
+        )
+    response = _saved_market_board_response(snapshot)
+    response["save_status"] = "saved"
+    return JSONResponse(content=response)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
