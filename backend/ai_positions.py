@@ -53,6 +53,15 @@ _MANUAL_EXACT_PROFILES = {
             "Player identity is keyed to API-Football player ID 198",
         ],
     },
+    554362: {
+        "specificPosition": "LW",
+        "role": "Traditional Winger",
+        "source": "manual_override",
+        "evidence": [
+            "Iñigo Vicente is identified as a left winger in the verified player profile",
+            "Player identity is keyed to API-Football player ID 554362",
+        ],
+    },
 }
 
 

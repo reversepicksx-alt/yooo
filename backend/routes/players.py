@@ -38,6 +38,22 @@ _VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
             "petrovic",
         },
     },
+    {
+        "id": 554362,
+        "name": "Iñigo Vicente",
+        "fullName": "Iñigo Vicente",
+        "firstname": "Iñigo",
+        "lastname": "Vicente",
+        "position": "Midfielder",
+        "teamId": 717,
+        "teamName": "Racing Santander",
+        "leagueId": 141,
+        "aliases": {
+            "inigo vicente",
+            "iñigo vicente",
+            "i vicente",
+        },
+    },
 )
 
 
@@ -1378,15 +1394,36 @@ async def search_players(req: PlayerSearchRequest):
                     )
                 ][:20]
                 if abbreviated:
-                    async def _background_abbrev_enrichment(items):
-                        try:
-                            await aio.gather(
-                                *[_enrich_abbreviated_player(p) for p in items],
-                                return_exceptions=True,
-                            )
-                        except Exception:
-                            pass
-                    aio.ensure_future(_background_abbrev_enrichment(abbreviated))
+                    # An exact full-name query must not return the abbreviated
+                    # squad label first.  That label can also carry a stale
+                    # broad position (for example "I. Vicente" as Defender),
+                    # while the provider profile has the canonical name and
+                    # current position.  Enrich the small exact-match set
+                    # before rendering; unrelated abbreviated rows remain
+                    # bounded and are left alone.
+                    async def _enrich_exact_abbreviated(items):
+                        enriched_rows = await aio.gather(
+                            *[
+                                aio.wait_for(_enrich_abbreviated_player(p), timeout=1.2)
+                                for p in items
+                            ],
+                            return_exceptions=True,
+                        )
+                        return [
+                            row if isinstance(row, dict) else original
+                            for original, row in zip(items, enriched_rows)
+                        ]
+
+                    enriched_abbreviated = await _enrich_exact_abbreviated(abbreviated)
+                    by_id = {
+                        p.get("id"): p
+                        for p in enriched_abbreviated
+                        if p.get("id")
+                    }
+                    cache_results = [
+                        by_id.get(p.get("id"), p)
+                        for p in cache_results
+                    ]
             sorted_results = _apply_sort_and_quality(cache_results)
             # Do not enrich nationality/photo on the typing path. Identity,
             # club, and position are already available from the warm index;

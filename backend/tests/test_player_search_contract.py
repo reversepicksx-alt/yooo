@@ -37,3 +37,11 @@ def test_durable_identity_fallback_survives_disposable_cache_timeouts():
     assert '"sport": "soccer"' in PLAYERS_SOURCE
     assert "durable_players = await _durable_identity_fallback()" in PLAYERS_SOURCE
     assert "if durable_players:" in PLAYERS_SOURCE
+
+
+def test_known_provider_identity_correction_precedes_stale_abbreviated_cache_rows():
+    """Iñigo Vicente must not be returned as the cached Defender ``I. Vicente``."""
+    assert '"id": 554362' in PLAYERS_SOURCE
+    assert '"name": "Iñigo Vicente"' in PLAYERS_SOURCE
+    assert '"position": "Midfielder"' in PLAYERS_SOURCE
+    assert '"inigo vicente"' in PLAYERS_SOURCE
