@@ -153,3 +153,4 @@
 - [History identity and H2H coverage](history-identity-h2h.md) — dedupe player logs by fixture identity before math/display, normalize provider envelopes, and expose unavailable H2H explicitly.
 - [PrizePicks line history](prizepicks-line-history.md) — JARVIS board refreshes persist per-market timestamped PrizePicks lines and expose movement plus saved history.
 - [Plain pytest async convention](plain-pytest-async.md) — backend tests should use asyncio.run unless an async pytest plugin is explicitly configured.
+- [Manifest validation](manifest-validation.md) — large machine-readable exports need strict parsing, schema-key checks, and patchable formatting.
