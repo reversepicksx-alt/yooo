@@ -10333,13 +10333,70 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
             async def fetch_h2h_player_stat(fid, fixture_info):
                 """Fetch the target player's stats from a specific H2H fixture"""
                 try:
+                    # Exact fixture/player cache rows are durable historical
+                    # evidence and should be preferred for H2H. The provider
+                    # endpoint is frequently rate-limited after the main
+                    # prediction fan-out, even though the same appearance was
+                    # already hydrated for recent-history/calibration work.
+                    _cached_h2h = await db.fixture_player_cache.find_one(
+                        {"_k": f"fxp_{fid}_{req.playerId}"},
+                        {"_id": 0, "d": 1},
+                    )
+                    _cached_h2h_data = (_cached_h2h or {}).get("d") or {}
+                    _cached_minutes = _cached_h2h_data.get("minutes") or 0
+                    _cached_target = _cached_h2h_data.get(
+                        STAT_FIELD_MAP.get(req.propType, "")
+                    )
+                    if _cached_minutes > 0 and _cached_target is not None:
+                        _cached_stats = {
+                            "games": {
+                                "minutes": _cached_minutes,
+                                "position": _cached_h2h_data.get("providerPosition"),
+                            },
+                            "passes": {
+                                "total": _cached_h2h_data.get("passes_total"),
+                                "key": _cached_h2h_data.get("passes_key"),
+                                "cross": _cached_h2h_data.get("passes_crosses"),
+                            },
+                            "shots": {
+                                "total": _cached_h2h_data.get("shots_total"),
+                                "on": _cached_h2h_data.get("shots_on"),
+                            },
+                            "tackles": {
+                                "total": _cached_h2h_data.get("tackles_total"),
+                                "interceptions": _cached_h2h_data.get("tackles_interceptions"),
+                                "blocks": _cached_h2h_data.get("tackles_blocks"),
+                                "clearances": _cached_h2h_data.get("tackles_clearances"),
+                            },
+                            "dribbles": {
+                                "attempts": _cached_h2h_data.get("dribbles_attempts"),
+                            },
+                            "fouls": {
+                                "drawn": _cached_h2h_data.get("fouls_drawn"),
+                                "committed": _cached_h2h_data.get("fouls_committed"),
+                            },
+                            "goals": {
+                                "saves": _cached_h2h_data.get("goals_saves"),
+                                "total": _cached_h2h_data.get("goals_total"),
+                                "assists": _cached_h2h_data.get("goals_assists"),
+                            },
+                            "duels": {"won": _cached_h2h_data.get("duels_won")},
+                            "cards": {"yellow": _cached_h2h_data.get("cards_yellow")},
+                        }
+                        pstats = [{
+                            "players": [{
+                                "player": {"id": req.playerId},
+                                "statistics": [_cached_stats],
+                            }]
+                        }]
+                    else:
+                        pstats = _api_response_list(await api_football_request(
+                            "fixtures/players", {"fixture": fid}
+                        ))
                     # Fetch only the player packet in the first pass. Optional
                     # lineup enrichment runs after every candidate fixture had a
                     # chance to return, so the first three lineup calls cannot
                     # starve older verified appearances behind the semaphore.
-                    pstats = _api_response_list(await api_football_request(
-                        "fixtures/players", {"fixture": fid}
-                    ))
                     if not pstats:
                         return None
 
@@ -10455,8 +10512,12 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         lambda fid=fid, fi=fi: _bounded_h2h_player_stat(fid, fi)
                         for fid, fi in h2h_fixture_ids
                     ],
-                    started=_prediction_started,
-                    budget=_PREDICTION_RESPONSE_BUDGET,
+                    # H2H is explanatory UI evidence. It gets an independent
+                    # bounded window after the core result rather than being
+                    # silently skipped when optional prediction enrichment
+                    # consumed the main response budget.
+                    started=aio.get_running_loop().time(),
+                    budget=3.0,
                     timeout=3.0,
                     label="player H2H evidence",
                 )
@@ -10510,6 +10571,63 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                 enriched_h2h_rows,
                             )
                         ]
+
+            # Provider fan-out can be rate-limited after the core history
+            # loader has already fetched the same exact player/fixture row.
+            # Recover only from a verified recent-history row whose opponent
+            # team ID is one of the direct H2H fixtures. This is still
+            # player-level evidence: positive minutes and an exact target
+            # statistic are required; names alone are never sufficient.
+            if not h2h_player_stats and player_game_logs:
+                _direct_h2h_fixture_ids = {
+                    str((fixture.get("fixture") or {}).get("id"))
+                    for fixture in h2h_data
+                    if isinstance(fixture, dict)
+                    and (fixture.get("fixture") or {}).get("id")
+                }
+                _h2h_target_field = STAT_FIELD_MAP.get(req.propType, "")
+                _history_h2h_rows = []
+                for _history_row in player_game_logs:
+                    _history_fixture_id = str(
+                        _history_row.get("fixtureId")
+                        or _history_row.get("_fid")
+                        or ""
+                    )
+                    if (
+                        not _history_fixture_id
+                        or _history_fixture_id not in _direct_h2h_fixture_ids
+                        or _history_row.get("fixtureOpponentId") != req.opponentId
+                        or (_history_row.get("minutes") or 0) <= 0
+                        or _history_row.get(_h2h_target_field) is None
+                    ):
+                        continue
+                    _history_value = _history_row.get(_h2h_target_field)
+                    _history_h2h_rows.append({
+                        "fixtureId": _history_row.get("fixtureId"),
+                        "date": _history_row.get("date"),
+                        "opponent": _history_row.get("opponent") or req.opponentName,
+                        "venue": _history_row.get("venue"),
+                        "minutes": _history_row.get("minutes"),
+                        "minutesPlayed": _history_row.get("minutes"),
+                        "observedPosition": _history_row.get("providerPosition"),
+                        "positionSource": "fixture_player_cache",
+                        "statValues": {req.propType: _history_value},
+                        "targetStat": _history_value,
+                        "targetStatPer90": _history_row.get("targetStatPer90"),
+                        "matchScore": _history_row.get("score") or "",
+                        "teamPossession": _history_row.get("teamPossession"),
+                        "opponentPossession": _history_row.get("opponentPossession"),
+                    })
+                if _history_h2h_rows:
+                    h2h_player_stats = _newest_first_rows(
+                        _dedupe_player_history_logs(_history_h2h_rows),
+                        H2H_PLAYER_RESULT_LIMIT,
+                    )
+                    print(
+                        f"[H2H PLAYER] recovered "
+                        f"{len(h2h_player_stats)} exact appearance(s) "
+                        f"from verified player history"
+                    )
         print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
         # Team meetings are useful even when the player did not appear in any
