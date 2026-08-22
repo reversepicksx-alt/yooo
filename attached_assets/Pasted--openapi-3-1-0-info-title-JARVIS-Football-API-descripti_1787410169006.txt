@@ -1,0 +1,1748 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "JARVIS Football API",
+    "description": "Secure proxy to real-time football data via API-Sports. Provides fixtures, league tables, team info, player stats, match events, lineups, H2H, odds, injuries, and a one-call match-context aggregator for AI analysis. All data endpoints require Authorization: Bearer <JARVIS_API_KEY>. MANDATORY JARVIS WORKFLOW: for every player analysis call POST /api/jarvis/full-audit/soccer exactly once after the fixture/player inputs are known; use its rp_prediction as the quantitative answer and its audit packet only as provenance-labeled evidence. Before presenting the final answer, call GET /api/jarvis/calibration. Call GET /api/jarvis/stat-definitions when the prop definition is not already known and GET /api/jarvis/audit-status when reporting audit coverage. Never rerun or override Reverse Picks math with audit values.",
+    "version": "3.1.0",
+    "x-jarvis-mandatory-workflow": [
+      "Resolve the fixture and player first.",
+      "Call runFullSoccerAudit exactly once per analysis.",
+      "Use rp_prediction for recommendation, projection, and probabilities.",
+      "Review jarvis_brief.news_intelligence for current lineup, availability, contradiction, and rerun warnings without overriding RP math.",
+      "Call getCalibration before the final answer.",
+      "Call getStatDefinitions for an unknown or ambiguous prop.",
+      "Call getAuditStatus when reporting which audit phases ran.",
+      "Do not let audit evidence override RP math."
+    ]
+  },
+  "servers": [
+    {
+      "url": "https://reversepicks.com"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "PrizePicksLineHistoryPoint": {
+        "type": "object",
+        "required": [
+          "line",
+          "observed_at"
+        ],
+        "properties": {
+          "line": {
+            "type": "number"
+          },
+          "observed_at": {
+            "type": "integer"
+          }
+        }
+      },
+      "PrizePicksMarket": {
+        "type": "object",
+        "required": [
+          "marketKey",
+          "eventId",
+          "eventStart",
+          "sport",
+          "sportName",
+          "leagueId",
+          "leagueName",
+          "homeTeam",
+          "awayTeam",
+          "playerName",
+          "playerProviderId",
+          "propType",
+          "propLabel",
+          "statId",
+          "marketLine",
+          "current_line",
+          "previous_line",
+          "movement",
+          "first_seen",
+          "last_seen",
+          "line_history",
+          "bookmakers",
+          "providerCoverage",
+          "analysisSupported"
+        ],
+        "properties": {
+          "marketKey": {
+            "type": "string"
+          },
+          "eventId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "eventStart": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sport": {
+            "type": "string"
+          },
+          "sportName": {
+            "type": "string"
+          },
+          "leagueId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "leagueName": {
+            "type": "string"
+          },
+          "homeTeam": {
+            "type": "string"
+          },
+          "awayTeam": {
+            "type": "string"
+          },
+          "playerName": {
+            "type": "string"
+          },
+          "playerProviderId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "propType": {
+            "type": "string"
+          },
+          "propLabel": {
+            "type": "string"
+          },
+          "statId": {
+            "type": "string"
+          },
+          "marketLine": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "current_line": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "previous_line": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "movement": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "first_seen": {
+            "type": "integer"
+          },
+          "last_seen": {
+            "type": "integer"
+          },
+          "line_history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrizePicksLineHistoryPoint"
+            }
+          },
+          "bookmakers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            }
+          },
+          "providerCoverage": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "analysisSupported": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PrizePicksBoardResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "bookmaker",
+          "fetched_at",
+          "market_count",
+          "saved",
+          "save_status",
+          "history_status",
+          "markets"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "const": "SportsGameOdds"
+          },
+          "bookmaker": {
+            "type": "string",
+            "const": "PrizePicks"
+          },
+          "fetched_at": {
+            "type": "integer"
+          },
+          "market_count": {
+            "type": "integer"
+          },
+          "saved": {
+            "type": "boolean"
+          },
+          "save_status": {
+            "type": "string"
+          },
+          "history_status": {
+            "type": "string"
+          },
+          "markets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrizePicksMarket"
+            }
+          }
+        }
+      },
+      "PrizePicksLineHistoryResponse": {
+        "type": "object",
+        "required": [
+          "market_key",
+          "event_id",
+          "player_provider_id",
+          "player_name",
+          "prop_type",
+          "first_seen",
+          "last_seen",
+          "previous_line",
+          "current_line",
+          "movement",
+          "line_history"
+        ],
+        "properties": {
+          "market_key": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "player_provider_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "player_name": {
+            "type": "string"
+          },
+          "prop_type": {
+            "type": "string"
+          },
+          "first_seen": {
+            "type": "integer"
+          },
+          "last_seen": {
+            "type": "integer"
+          },
+          "previous_line": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "current_line": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "movement": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "line_history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrizePicksLineHistoryPoint"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Enter your JARVIS_API_KEY as the bearer token."
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/api/jarvis/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Server health check (no auth)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Health status"
+          }
+        }
+      }
+    },
+    "/api/jarvis/save-pick/soccer": {
+      "post": {
+        "operationId": "saveSoccerPick",
+        "summary": "Predict AND save a soccer prop pick to the owner's My Picks ledger.",
+        "description": "Runs the full 13-stage production pipeline and saves the result to the private owner's My Picks ledger. The owner account is resolved server-side; the request contains only prediction inputs. Returns pick_id, tracking_id, warnings, and the model summary.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fixture_id",
+                  "player_id",
+                  "prop_type",
+                  "line"
+                ],
+                "properties": {
+                  "fixture_id": {
+                    "type": "integer",
+                    "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."
+                  },
+                  "player_id": {
+                    "type": "integer",
+                    "description": "API-Sports player ID."
+                  },
+                  "prop_type": {
+                    "type": "string",
+                    "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals | dribbles | crosses | interceptions | blocks | fouls_drawn | fouls_committed | duels_won",
+                    "default": "pass_attempts"
+                  },
+                  "line": {
+                    "type": "number",
+                    "description": "Player prop line to predict against."
+                  },
+                  "odds": {
+                    "type": "object",
+                    "description": "Optional moneyline: {home: float, away: float, draw: float}."
+                  },
+                  "position_override": {
+                    "type": "string",
+                    "description": "Override detected position (e.g. CB, CM, ST)."
+                  },
+                  "role_override": {
+                    "type": "string",
+                    "description": "Override detected role."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "saved.pick_id, saved.tracking_id, correlation_warnings, and summary with recommendation, p_over, p_under, prop_historical_rate, prop_historical_n, confidence_score, edge_rating, safety_rating."
+          },
+          "401": {
+            "description": "Invalid or missing JARVIS bearer token."
+          },
+          "404": {
+            "description": "Fixture or player not found."
+          },
+          "409": {
+            "description": "Pick already saved for this player/prop/fixture. Delete it first."
+          },
+          "422": {
+            "description": "Could not resolve player in fixture, or invalid prop."
+          },
+          "502": {
+            "description": "Prediction or save engine error."
+          },
+          "507": {
+            "description": "Database storage full — free Atlas storage and retry."
+          }
+        }
+      }
+    },
+    "/api/jarvis/full-audit/soccer": {
+      "post": {
+        "operationId": "runFullSoccerAudit",
+        "summary": "MANDATORY: Run RP once and return a separate JARVIS audit packet.",
+        "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. `audit.modules.game_state`, `first_goal_market`, and `first_goal_regime_change` expose completed-fixture first-goal evidence when available. The mandatory `audit.modules.news_intelligence` packet dynamically researches current club and competition sources, confirmed lineups, injuries, role/tactical changes, teammate availability, contradictions, and confirmed-lineup drift. Every news finding keeps source URL/name, timestamp, source tier, fact/analysis/speculation classification, and confidence. Missing evidence is `UNKNOWN`; material confirmed-lineup differences flag a rerun but never alter RP math.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fixture_id",
+                  "player_id",
+                  "prop_type",
+                  "line"
+                ],
+                "properties": {
+                  "fixture_id": {
+                    "type": "integer",
+                    "description": "API-Sports fixture ID."
+                  },
+                  "player_id": {
+                    "type": "integer",
+                    "description": "API-Sports player ID."
+                  },
+                  "prop_type": {
+                    "type": "string",
+                    "default": "pass_attempts"
+                  },
+                  "line": {
+                    "type": "number"
+                  },
+                  "odds": {
+                    "type": "object"
+                  },
+                  "position_override": {
+                    "type": "string"
+                  },
+                  "role_override": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "RP diagnostic plus independent audit packet. jarvis_brief includes game_state, first_goal_market, first_goal_regime_change, news_intelligence, news_brief, news_warnings, and lineup_rerun_required."
+          },
+          "401": {
+            "description": "Invalid or missing JARVIS bearer token."
+          },
+          "404": {
+            "description": "Audit feature disabled."
+          },
+          "422": {
+            "description": "Fixture/player could not be resolved."
+          },
+          "502": {
+            "description": "Prediction engine error."
+          }
+        }
+      }
+    },
+    "/api/jarvis/calibration": {
+      "get": {
+        "operationId": "getCalibration",
+        "summary": "MANDATORY before final answer: return settled-pick calibration.",
+        "description": "Returns hit rate, rolling last-25/50/100, lifetime metrics, Brier score, log loss, calibration error, Wilson intervals, and sample-size warnings.",
+        "parameters": [
+          {
+            "name": "prop_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by prop type."
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by exact stored role."
+          },
+          {
+            "name": "position",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by position."
+          },
+          {
+            "name": "league_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter by league."
+          },
+          {
+            "name": "venue",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by home/away."
+          },
+          {
+            "name": "side",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by over/under."
+          },
+          {
+            "name": "model_version",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by immutable model version."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum settled rows to inspect."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calibration summary with no-fake-precision warnings."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          }
+        }
+      }
+    },
+    "/api/jarvis/stat-definitions": {
+      "get": {
+        "operationId": "getStatDefinitions",
+        "summary": "MANDATORY for unknown props: return stat definitions.",
+        "parameters": [
+          {
+            "name": "prop_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Return one prop definition."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configured definition or explicit UNKNOWN."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          }
+        }
+      }
+    },
+    "/api/jarvis/audit-status": {
+      "get": {
+        "operationId": "getAuditStatus",
+        "summary": "Return mandatory audit coverage and 30-phase status.",
+        "responses": {
+          "200": {
+            "description": "Audit mode, versions, and phase status."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          }
+        }
+      }
+    },
+    "/api/jarvis/prediction-screenshots": {
+      "post": {
+        "operationId": "getPredictionScreenshots",
+        "summary": "Render prediction sections and return short-lived screenshot URLs.",
+        "description": "Runs the production soccer prediction, renders a server-side report with the same model values, and captures selected sections with Chromium. Returns opaque temporary image URLs; no app credentials are accepted or returned.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fixture_id",
+                  "player_id",
+                  "prop_type",
+                  "line"
+                ],
+                "properties": {
+                  "fixture_id": {
+                    "type": "integer",
+                    "description": "API-Sports fixture ID."
+                  },
+                  "player_id": {
+                    "type": "integer",
+                    "description": "API-Sports player ID."
+                  },
+                  "prop_type": {
+                    "type": "string",
+                    "description": "Player prop type.",
+                    "default": "pass_attempts"
+                  },
+                  "line": {
+                    "type": "number",
+                    "description": "Player prop line."
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "form",
+                        "matchup",
+                        "context",
+                        "picks"
+                      ]
+                    },
+                    "description": "Sections to capture. Defaults to read, form, matchup, context."
+                  },
+                  "pick_id": {
+                    "type": "string",
+                    "description": "Optional saved pick ID. When supplied, the owner My Picks card is included in the picks section."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Opaque temporary image URLs keyed by section, plus summary. URLs expire after 10 minutes and require the JARVIS bearer token."
+          },
+          "401": {
+            "description": "Invalid or missing JARVIS bearer token."
+          },
+          "404": {
+            "description": "Fixture, player, or saved pick not found."
+          },
+          "422": {
+            "description": "Invalid section or prediction input."
+          },
+          "502": {
+            "description": "Prediction or browser rendering error."
+          }
+        }
+      }
+    },
+    "/api/jarvis/prediction-screenshots/{handle}/{section}": {
+      "get": {
+        "operationId": "getPredictionScreenshotFile",
+        "summary": "Fetch one authenticated temporary prediction screenshot.",
+        "description": "Downloads one PNG returned by getPredictionScreenshots. The opaque handle expires after 10 minutes and the JARVIS bearer token is required.",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "section",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "read",
+                "form",
+                "matchup",
+                "context",
+                "picks"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PNG image bytes."
+          },
+          "401": {
+            "description": "Invalid or missing JARVIS bearer token."
+          },
+          "404": {
+            "description": "Screenshot expired or not found."
+          }
+        }
+      }
+    },
+    "/api/jarvis/predict/soccer": {
+      "post": {
+        "operationId": "runSoccerPredict",
+        "summary": "Full soccer prediction from fixture + player ID. Auto-resolves team, opponent, venue, league.",
+        "description": "Runs the complete 13-stage pipeline. Returns final recommendation, every Bayesian layer, each covariate, calibration, Monte Carlo, evidence quality, and the full factor ledger. Identical to the subscriber app.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fixture_id",
+                  "player_id",
+                  "prop_type",
+                  "line"
+                ],
+                "properties": {
+                  "fixture_id": {
+                    "type": "integer",
+                    "description": "API-Sports fixture ID — auto-resolves team, opponent, venue, league."
+                  },
+                  "player_id": {
+                    "type": "integer",
+                    "description": "API-Sports player ID."
+                  },
+                  "prop_type": {
+                    "type": "string",
+                    "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals | dribbles | crosses | interceptions | blocks | fouls_drawn | fouls_committed | duels_won",
+                    "default": "pass_attempts"
+                  },
+                  "line": {
+                    "type": "number",
+                    "description": "Player prop line to predict against."
+                  },
+                  "odds": {
+                    "type": "object",
+                    "description": "Optional moneyline: {home: float, away: float, draw: float}."
+                  },
+                  "position_override": {
+                    "type": "string",
+                    "description": "Override detected position (e.g. CB, CM, ST)."
+                  },
+                  "role_override": {
+                    "type": "string",
+                    "description": "Override detected role."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Diagnostic: jarvis_brief.p_over/p_under (Bayesian %, 0-100) + jarvis_brief.prop_historical_rate/prop_historical_n (system hit rate). Also in diagnostic.final. p_over+p_under sum to ~100; prop_historical_rate null when <10 settled picks for this bucket."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "Fixture not found."
+          },
+          "422": {
+            "description": "Could not resolve player in fixture, or invalid prop."
+          },
+          "502": {
+            "description": "Prediction engine error."
+          }
+        }
+      }
+    },
+    "/api/jarvis/predict": {
+      "post": {
+        "operationId": "runPredict",
+        "summary": "Full Reverse Picks prediction from player + prop inputs",
+        "description": "Runs all 13 pipeline stages: Bayesian projection, situation engine, hierarchical calibration, evidence quality gate, and AI narrative. Returns the same output as the subscriber app.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "player_id",
+                  "player_name",
+                  "team_id",
+                  "team_name",
+                  "opponent_id",
+                  "opponent_name",
+                  "league_id",
+                  "line"
+                ],
+                "properties": {
+                  "player_id": {
+                    "type": "integer",
+                    "description": "API-Sports player ID."
+                  },
+                  "player_name": {
+                    "type": "string",
+                    "description": "Player display name."
+                  },
+                  "team_id": {
+                    "type": "integer",
+                    "description": "Player's team API-Sports ID."
+                  },
+                  "team_name": {
+                    "type": "string",
+                    "description": "Player's team name."
+                  },
+                  "opponent_id": {
+                    "type": "integer",
+                    "description": "Opposing team API-Sports ID."
+                  },
+                  "opponent_name": {
+                    "type": "string",
+                    "description": "Opposing team name."
+                  },
+                  "league_id": {
+                    "type": "integer",
+                    "description": "League ID (e.g. 39 = Premier League)."
+                  },
+                  "line": {
+                    "type": "number",
+                    "description": "The player prop line to predict against."
+                  },
+                  "venue": {
+                    "type": "string",
+                    "description": "home or away (relative to the player's team).",
+                    "default": "home"
+                  },
+                  "prop_type": {
+                    "type": "string",
+                    "description": "pass_attempts | passes | key_passes | shots | shots_on_target | tackles | clearances | saves | goals | dribbles | crosses | interceptions | blocks | fouls_drawn | fouls_committed | duels_won",
+                    "default": "pass_attempts"
+                  },
+                  "sport": {
+                    "type": "string",
+                    "description": "Sport name.",
+                    "default": "soccer"
+                  },
+                  "fixture_id": {
+                    "type": "integer",
+                    "description": "Optional verified fixture ID — speeds up identity resolution."
+                  },
+                  "odds": {
+                    "type": "object",
+                    "description": "Optional moneyline odds: {home: float, away: float, draw: float}."
+                  },
+                  "position_override": {
+                    "type": "string",
+                    "description": "Override detected position (e.g. CB, CM, ST)."
+                  },
+                  "role_override": {
+                    "type": "string",
+                    "description": "Override detected role."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "jarvis_brief contains p_over, p_under (Bayesian direction probability, 0-100), prop_historical_rate (settled hit rate %, null if no data), prop_historical_n (sample count). Also has confidence_score, edge_rating, recommendation, projection, and tactical summaries."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "422": {
+            "description": "Invalid prop type or parameter."
+          },
+          "502": {
+            "description": "Prediction engine error."
+          }
+        }
+      }
+    },
+    "/api/jarvis/role-profile": {
+      "get": {
+        "operationId": "getRoleProfile",
+        "summary": "Granular tactical role for one player in one fixture",
+        "description": "Returns observed JARVIS role (ball-playing CB, destroyer 6, single pivot, inside forward, etc.), confidence + evidence chain, grid slot, formation context, teammate layout by zone, buildup/defensive indicators, and recent role history. No AI calls — fully deterministic.",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID — auto-resolves both teams, venue, league, season.",
+            "required": true
+          },
+          {
+            "name": "player_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Sports player ID.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Role profile: observed_tactical_role, role_confidence, evidence_used, formation_context, teammate_context, buildup_responsibility, defensive_responsibility, recent_role_history, position_group_for_cohort."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "Fixture not found."
+          },
+          "422": {
+            "description": "Could not resolve player in fixture."
+          }
+        }
+      }
+    },
+    "/api/jarvis/role-opponent-cohort": {
+      "get": {
+        "operationId": "getRoleOpponentCohort",
+        "summary": "Role-matched players who faced this opponent recently",
+        "description": "Identifies the player's JARVIS role, then finds players in the same position group who played ≥45min against the opponent in their last 6 fixtures. Returns per-player match stats and a prop aggregate when prop_type is provided.",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID — auto-resolves opponent.",
+            "required": true
+          },
+          {
+            "name": "player_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Sports player ID.",
+            "required": true
+          },
+          {
+            "name": "prop_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "pass_attempts | shots | shots_on_target | tackles | clearances | key_passes | dribbles | crosses | goals | interceptions | blocks"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cohort with player_identity, opponent info, cohort_filter, n_cohort_players, cohort_players (per-match stats), and cohort_aggregate (avg/max/min/median/values for prop)."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "Fixture not found."
+          },
+          "422": {
+            "description": "Could not resolve player in fixture."
+          }
+        }
+      }
+    },
+    "/api/jarvis/tactical-evidence": {
+      "get": {
+        "operationId": "getTacticalEvidence",
+        "summary": "Raw + derived evidence for one player in one fixture",
+        "description": "Raw evidence for one player/fixture — does NOT run the prediction pipeline. Sections: match logs, per-90s, home/away splits, lineup grid, season stats, press intensity, concession profile, possession, buildup proxies, rest days, injuries, H2H, odds. Every section carries a _source label.",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID — auto-resolves both teams, venue, league, season.",
+            "required": true
+          },
+          {
+            "name": "player_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Sports player ID.",
+            "required": true
+          },
+          {
+            "name": "prop_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "pass_attempts | shots | shots_on_target | tackles | clearances | saves | goals | key_passes | dribbles | interceptions | blocks | crosses | fouls_drawn | fouls_committed | duels_won"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tactical evidence bundle with _source labels on every section."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "Fixture not found."
+          },
+          "422": {
+            "description": "Could not resolve player in fixture."
+          }
+        }
+      }
+    },
+    "/api/jarvis/match-context": {
+      "get": {
+        "operationId": "getMatchContext",
+        "summary": "Full match brief from a single fixture ID",
+        "description": "One fixture ID returns a complete match brief: teams, season stats, H2H, lineups, injuries, odds, and live events bundled for AI analysis. Null sections mean data is unavailable.",
+        "parameters": [
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full match context bundle"
+          },
+          "401": {
+            "description": "Invalid or missing bearer token"
+          },
+          "404": {
+            "description": "Fixture not found"
+          }
+        }
+      }
+    },
+    "/api/jarvis/prizepicks/board": {
+      "post": {
+        "operationId": "refreshPrizePicksBoard",
+        "summary": "Fetch and save the current PrizePicks board",
+        "description": "Queries SportsGameOdds for currently available PrizePicks player markets, saves the latest snapshot for JARVIS, and returns it immediately.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sport",
+            "in": "query",
+            "required": false,
+            "description": "Provider sport filter.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "SOCCER",
+                "NBA",
+                "MLB",
+                "NFL",
+                "NHL",
+                "WTA",
+                "ALL"
+              ],
+              "default": "SOCCER"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "description": "Upcoming board window in hours.",
+            "schema": {
+              "type": "integer",
+              "default": 72,
+              "minimum": 6,
+              "maximum": 168
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum markets to return.",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current PrizePicks market board and save status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrizePicksBoardResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid board query parameters."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "No matching markets were found."
+          },
+          "503": {
+            "description": "SportsGameOdds is not configured."
+          }
+        }
+      },
+      "get": {
+        "operationId": "getPrizePicksBoard",
+        "summary": "Read the last saved PrizePicks board",
+        "description": "Returns the most recently saved board snapshot without calling SportsGameOdds.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved PrizePicks market board.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrizePicksBoardResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "No PrizePicks board has been saved yet."
+          }
+        }
+      }
+    },
+    "/api/jarvis/prizepicks/line-history": {
+      "get": {
+        "operationId": "getPrizePicksLineHistory",
+        "summary": "Get timestamped line movement for one market",
+        "description": "Returns previous_line, current_line, first_seen, last_seen, movement, and up to 50 timestamped observations for a saved market.",
+        "parameters": [
+          {
+            "name": "market_key",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Market key returned in the board market object.",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete saved line history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrizePicksLineHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid market_key."
+          },
+          "401": {
+            "description": "Invalid or missing bearer token."
+          },
+          "404": {
+            "description": "No history exists for this market."
+          }
+        }
+      }
+    },
+    "/api/jarvis/fixture/stats": {
+      "get": {
+        "operationId": "getFixtureStats",
+        "summary": "Team statistics for a specific match",
+        "description": "Returns possession, shots, passes, cards, xG and other match stats for both teams.",
+        "parameters": [
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Match statistics"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/fixture/events": {
+      "get": {
+        "operationId": "getFixtureEvents",
+        "summary": "Match events (goals, cards, substitutions)",
+        "description": "Returns all in-match events with minute, team, player, and event type.",
+        "parameters": [
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Match events"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/fixture/lineups": {
+      "get": {
+        "operationId": "getFixtureLineups",
+        "summary": "Starting lineups, formations, and substitutes",
+        "description": "Returns confirmed starting XI, formation, bench, and coach for both teams.",
+        "parameters": [
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lineups"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/injuries": {
+      "get": {
+        "operationId": "getInjuries",
+        "summary": "Injury and absence report for a fixture",
+        "description": "Returns players marked as injured or suspended ahead of the fixture.",
+        "parameters": [
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter to a specific team."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter by league ID."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Injury list"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/odds": {
+      "get": {
+        "operationId": "getOdds",
+        "summary": "Pre-match odds for a fixture",
+        "description": "Returns available bookmaker odds including 1X2, Asian handicap, and over/under markets.",
+        "parameters": [
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Fixture ID.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Odds data"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/team/stats": {
+      "get": {
+        "operationId": "getTeamStats",
+        "summary": "Season-level team statistics",
+        "description": "Returns a team's season stats: matches played, goals, form, home/away splits, clean sheets, average goals, and more.",
+        "parameters": [
+          {
+            "name": "team",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Team ID.",
+            "required": true
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "League ID.",
+            "required": true
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Team season stats"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/h2h": {
+      "get": {
+        "operationId": "getH2H",
+        "summary": "Head-to-head fixture history between two teams",
+        "description": "Returns recent meetings between two teams including scores, venues, and dates.",
+        "parameters": [
+          {
+            "name": "team1",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "First team ID.",
+            "required": true
+          },
+          {
+            "name": "team2",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Second team ID.",
+            "required": true
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Number of most recent meetings to return (default 10)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "H2H history"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/fixtures": {
+      "get": {
+        "operationId": "getFixtures",
+        "summary": "Search / filter football fixtures",
+        "description": "Retrieve fixtures by date, league, team, live status, or fixture ID. At least one parameter required.",
+        "parameters": [
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "League ID."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year, e.g. 2025."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Date in YYYY-MM-DD format."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Team ID."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Specific fixture ID."
+          },
+          {
+            "name": "next",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Next N upcoming fixtures (max 20)."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Last N completed fixtures (max 20)."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "'all' or a league ID for live fixtures."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fixture list"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/leagues": {
+      "get": {
+        "operationId": "getLeagues",
+        "summary": "Look up league IDs",
+        "description": "Search leagues by name or country. Use search OR country, not both.",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Partial league name."
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Country name (use search OR country)."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Specific league ID."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "true = active seasons only."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "League list"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/teams": {
+      "get": {
+        "operationId": "getTeams",
+        "summary": "Look up team IDs",
+        "description": "Search for teams by name or within a league.",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Partial team name."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "League ID."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Specific team ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Team list"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/standings": {
+      "get": {
+        "operationId": "getStandings",
+        "summary": "League standings table",
+        "parameters": [
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "League ID.",
+            "required": true
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year.",
+            "required": true
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter to one team's row."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Standings"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/players": {
+      "get": {
+        "operationId": "getPlayerStats",
+        "summary": "Player season statistics",
+        "parameters": [
+          {
+            "name": "player",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Player ID.",
+            "required": true
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year.",
+            "required": true
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter to a league."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Player stats"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/jarvis/player/fixtures": {
+      "get": {
+        "operationId": "getPlayerFixtures",
+        "summary": "Player's recent match history",
+        "description": "Resolves the player's team automatically, then returns last 10 fixtures.",
+        "parameters": [
+          {
+            "name": "player",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Player ID.",
+            "required": true
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "League ID.",
+            "required": true
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Season year.",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent fixtures"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    }
+  }
+}
