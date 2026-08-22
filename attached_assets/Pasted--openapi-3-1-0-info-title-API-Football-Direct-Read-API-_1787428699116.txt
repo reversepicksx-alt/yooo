@@ -1,0 +1,2138 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "API-Football Direct Read API",
+    "version": "1.0.0",
+    "description": "Raw read-only API-Football access for JARVIS evidence reproduction. Credentials belong in Action authentication."
+  },
+  "servers": [
+    {
+      "url": "https://v3.football.api-sports.io"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiSportsKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-apisports-key",
+        "description": "API-Football credential supplied by Action authentication."
+      }
+    }
+  },
+  "paths": {
+    "/fixtures": {
+      "get": {
+        "operationId": "apiFootball_fixtures",
+        "summary": "Raw API-Football fixtures data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/fixtures/statistics": {
+      "get": {
+        "operationId": "apiFootball_fixtures_statistics",
+        "summary": "Raw API-Football fixtures/statistics data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/fixtures/players": {
+      "get": {
+        "operationId": "apiFootball_fixtures_players",
+        "summary": "Raw API-Football fixtures/players data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/fixtures/lineups": {
+      "get": {
+        "operationId": "apiFootball_fixtures_lineups",
+        "summary": "Raw API-Football fixtures/lineups data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/fixtures/events": {
+      "get": {
+        "operationId": "apiFootball_fixtures_events",
+        "summary": "Raw API-Football fixtures/events data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/injuries": {
+      "get": {
+        "operationId": "apiFootball_injuries",
+        "summary": "Raw API-Football injuries data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/odds": {
+      "get": {
+        "operationId": "apiFootball_odds",
+        "summary": "Raw API-Football odds data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/teams": {
+      "get": {
+        "operationId": "apiFootball_teams",
+        "summary": "Raw API-Football teams data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/teams/statistics": {
+      "get": {
+        "operationId": "apiFootball_teams_statistics",
+        "summary": "Raw API-Football teams/statistics data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/players": {
+      "get": {
+        "operationId": "apiFootball_players",
+        "summary": "Raw API-Football players data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/players/squads": {
+      "get": {
+        "operationId": "apiFootball_players_squads",
+        "summary": "Raw API-Football players/squads data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/standings": {
+      "get": {
+        "operationId": "apiFootball_standings",
+        "summary": "Raw API-Football standings data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/leagues": {
+      "get": {
+        "operationId": "apiFootball_leagues",
+        "summary": "Raw API-Football leagues data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    },
+    "/fixtures/headtohead": {
+      "get": {
+        "operationId": "apiFootball_fixtures_headtohead",
+        "summary": "Raw API-Football fixtures/headtohead data",
+        "description": "Direct read-only API-Football resource. Query parameters are provider-defined; use the provider's documented parameters for this resource.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football id filter."
+          },
+          {
+            "name": "fixture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football fixture filter."
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football team filter."
+          },
+          {
+            "name": "player",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football player filter."
+          },
+          {
+            "name": "league",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football league filter."
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football season filter."
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football date filter."
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football last filter."
+          },
+          {
+            "name": "h2h",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football h2h filter."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football search filter."
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football current filter."
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API-Football live filter."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football page filter."
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "API-Football per_page filter."
+          }
+        ],
+        "security": [
+          {
+            "ApiSportsKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw API-Football response."
+          },
+          "401": {
+            "description": "Invalid or missing x-apisports-key."
+          },
+          "429": {
+            "description": "Provider quota exceeded."
+          }
+        }
+      }
+    }
+  }
