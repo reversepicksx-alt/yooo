@@ -25,6 +25,7 @@ Catalogue / search:
   GET /api/jarvis/standings
   GET /api/jarvis/players
   GET /api/jarvis/player/fixtures
+  GET /api/jarvis/resolve-soccer-prop
 
 Per-fixture detail:
   GET /api/jarvis/fixture/stats
@@ -265,6 +266,212 @@ async def _resolve_fixture(fixture_id: int) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# IDENTITY RESOLUTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _identity_text(value: Any) -> str:
+    raw = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(ch for ch in raw if not unicodedata.combining(ch)).casefold().strip()
+
+
+def _identity_name_matches(query: str, candidate: Any) -> bool:
+    wanted = _identity_text(query)
+    actual = _identity_text(candidate)
+    return bool(wanted and actual and (wanted == actual or wanted in actual))
+
+
+def _unknown_resolution(reason: str, message: str, **context: Any) -> HTTPException:
+    return HTTPException(422, detail={
+        "status": "UNKNOWN", "resolution": "unresolved", "reason": reason,
+        "message": message, **context,
+    })
+
+
+def _player_search_identity(row: dict[str, Any]) -> dict[str, Any]:
+    player = row.get("player") if isinstance(row.get("player"), dict) else row
+    stats = row.get("statistics") if isinstance(row.get("statistics"), list) else []
+    teams, seen = [], set()
+    for stat in stats:
+        team = (stat or {}).get("team") or {}
+        if team.get("id") is not None and team["id"] not in seen:
+            seen.add(team["id"])
+            teams.append({"team_id": team["id"], "team_name": team.get("name")})
+    return {
+        "player_id": player.get("id"),
+        "player_name": (
+            f"{player.get('firstname')} {player.get('lastname')}".strip()
+            if player.get("firstname") and player.get("lastname")
+            else player.get("name")
+        ),
+        "teams": teams,
+    }
+
+
+def _fixture_identity(row: dict[str, Any]) -> dict[str, Any]:
+    fixture, teams, league = row.get("fixture") or {}, row.get("teams") or {}, row.get("league") or {}
+    home, away = teams.get("home") or {}, teams.get("away") or {}
+    return {
+        "fixture_id": fixture.get("id"),
+        "date": str(fixture.get("date") or "")[:10],
+        "status": (fixture.get("status") or {}).get("short") or "UNKNOWN",
+        "home_team_id": home.get("id"), "home_team": home.get("name"),
+        "away_team_id": away.get("id"), "away_team": away.get("name"),
+        "league_id": league.get("id"), "league_name": league.get("name"),
+        "season": league.get("season"), "round": league.get("round"),
+    }
+
+
+async def _resolve_soccer_prop_identity(
+    *, player_name: str, team: str | None = None, opponent: str | None = None,
+    requested_date: str | None = None, season: int | None = None,
+) -> dict[str, Any]:
+    """Resolve one natural-language soccer prop to one verified fixture."""
+    query = str(player_name or "").strip()
+    if len(query) < 2:
+        raise _unknown_resolution("player_name_required", "Provide a player name.")
+    target_date = None
+    if requested_date:
+        try:
+            target_date = datetime.strptime(requested_date, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise _unknown_resolution("invalid_date", "date must use YYYY-MM-DD.") from exc
+
+    search_season = int(season or datetime.now(timezone.utc).year)
+    player_data = await _sports_get(
+        "players", {"search": query, "season": search_season},
+        cache_ttl=_CACHE_TTL_SCHEDULED,
+    )
+    players = [
+        _player_search_identity(row) for row in (player_data.get("response") or [])
+    ]
+    players = [
+        row for row in players
+        if row.get("player_id") is not None
+        and _identity_name_matches(query, row.get("player_name"))
+    ]
+    if not players:
+        raise _unknown_resolution("player_not_found", f"No verified player matched {query}.",
+                                   query=query, season=search_season)
+
+    resolved_team = None
+    if team:
+        team_query = str(team).strip()
+        data = await _sports_get(
+            "teams",
+            {"id": int(team_query)} if team_query.isdigit() else {"search": team_query},
+            cache_ttl=_CACHE_TTL_SCHEDULED,
+        )
+        teams = {}
+        for row in data.get("response") or []:
+            item = row.get("team") if isinstance(row.get("team"), dict) else row
+            if item.get("id") is not None and (
+                team_query.isdigit() or _identity_name_matches(team_query, item.get("name"))
+            ):
+                teams[item["id"]] = {"team_id": item["id"], "team_name": item.get("name")}
+        if len(teams) != 1:
+            raise _unknown_resolution(
+                "team_ambiguous" if teams else "team_not_found",
+                f"Team context {team_query} did not resolve to exactly one team.",
+                query=team_query, candidates=list(teams.values()),
+            )
+        resolved_team = next(iter(teams.values()))
+        players = [
+            row for row in players
+            if resolved_team["team_id"] in {item["team_id"] for item in row["teams"]}
+        ]
+
+    if len(players) != 1:
+        raise _unknown_resolution(
+            "player_ambiguous",
+            "Player name did not resolve to exactly one verified player.",
+            query=query, team=resolved_team, candidates=players[:10],
+        )
+    player = players[0]
+    player_team_ids = {item["team_id"] for item in player["teams"]}
+    if resolved_team:
+        player_team_ids = {resolved_team["team_id"]}
+    if not player_team_ids:
+        raise _unknown_resolution(
+            "player_team_unavailable",
+            "The provider returned no verified team for this player.",
+            player_id=player["player_id"],
+        )
+
+    rows = []
+    for team_id in sorted(player_team_ids):
+        params = {"team": team_id}
+        params["date" if target_date else "next"] = (
+            target_date.isoformat() if target_date else 20
+        )
+        data = await _sports_get("fixtures", params, cache_ttl=_CACHE_TTL_SCHEDULED)
+        rows.extend(data.get("response") or [])
+    fixtures = {
+        item["fixture_id"]: item for item in (_fixture_identity(row) for row in rows)
+        if item.get("fixture_id") is not None
+    }
+    fixtures = list(fixtures.values())
+    if target_date:
+        fixtures = [item for item in fixtures if item["date"] == target_date.isoformat()]
+    else:
+        today = datetime.now(timezone.utc).date().isoformat()
+        terminal = {"FT", "AET", "PEN", "CANC", "PST", "ABD", "AWD", "WO"}
+        fixtures = [
+            item for item in fixtures
+            if item["date"] >= today and item["status"] not in terminal
+        ]
+    if opponent:
+        filtered = []
+        for item in fixtures:
+            opponent_name = (
+                item["away_team"] if item["home_team_id"] in player_team_ids
+                else item["home_team"] if item["away_team_id"] in player_team_ids
+                else None
+            )
+            if opponent_name and _identity_name_matches(opponent, opponent_name):
+                filtered.append(item)
+        fixtures = filtered
+    if len(fixtures) != 1:
+        raise _unknown_resolution(
+            "fixture_ambiguous" if fixtures else "fixture_not_found",
+            "The request did not resolve to exactly one verified fixture.",
+            player_id=player["player_id"], player_name=player["player_name"],
+            team=resolved_team, opponent=opponent,
+            date=target_date.isoformat() if target_date else None,
+            candidates=fixtures[:10],
+        )
+
+    fixture = fixtures[0]
+    if fixture["home_team_id"] in player_team_ids:
+        team_id, team_name, opponent_id, opponent_name, venue = (
+            fixture["home_team_id"], fixture["home_team"], fixture["away_team_id"],
+            fixture["away_team"], "home"
+        )
+    elif fixture["away_team_id"] in player_team_ids:
+        team_id, team_name, opponent_id, opponent_name, venue = (
+            fixture["away_team_id"], fixture["away_team"], fixture["home_team_id"],
+            fixture["home_team"], "away"
+        )
+    else:
+        raise _unknown_resolution("fixture_team_conflict",
+                                  "The verified player team is not one of the fixture teams.",
+                                  player_id=player["player_id"], fixture_id=fixture["fixture_id"])
+    return {
+        "status": "resolved", "resolution": "verified",
+        "fixture_id": fixture["fixture_id"], "player_id": player["player_id"],
+        "player_name": player["player_name"], "team_id": team_id, "team_name": team_name,
+        "opponent_id": opponent_id, "opponent_name": opponent_name,
+        "league_id": fixture["league_id"], "league_name": fixture["league_name"],
+        "venue": venue, "season": fixture["season"], "date": fixture["date"],
+        "fixture_status": fixture["status"],
+        "evidence": {
+            "source": "api-football", "player_search_season": search_season,
+            "fixture_date": fixture["date"],
+            "identity_match": "verified_provider_name_and_fixture_team",
+        },
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PUBLIC endpoints (no auth)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -312,14 +519,11 @@ async def jarvis_openapi():
             ),
             "version": "3.1.0",
             "x-jarvis-mandatory-workflow": [
-                "Resolve the fixture and player first.",
-                "Call runFullSoccerAudit exactly once per analysis.",
-                "Use rp_prediction for recommendation, projection, and probabilities.",
-                "Review jarvis_brief.news_intelligence for current lineup, availability, contradiction, and rerun warnings without overriding RP math.",
-                "Call getCalibration before the final answer.",
-                "Call getStatDefinitions for an unknown or ambiguous prop.",
-                "Call getAuditStatus when reporting which audit phases ran.",
-                "Do not let audit evidence override RP math.",
+                "JARVIS DIRECT ORCHESTRATION MODE: resolve identity first.",
+                "Run immutable Reverse Picks production prediction first.",
+                "Then call relevant primitive evidence endpoints directly; do not depend exclusively on full-audit.",
+                "Audit role, fixture, lineup, stats, events, injuries, odds, history, venue possession, calibration, current line, and line history.",
+                "RP math remains immutable. Use UNKNOWN rather than invented data.",
             ],
         },
         "servers": [{"url": base}],
@@ -681,6 +885,26 @@ async def jarvis_openapi():
                     },
                 }
             },
+            "/api/jarvis/resolve-soccer-prop": {
+                "get": {
+                    "operationId": "resolveSoccerProp",
+                    "summary": "Resolve a soccer prop to verified player and fixture IDs.",
+                    "description": "Resolves player name, team, opponent, and date to one verified fixture identity. Ambiguous or unavailable data returns UNKNOWN; no IDs are guessed.",
+                    "parameters": [
+                        _param("player_name", "string", True, "Player name."),
+                        _param("team", "string", False, "Player team name or team ID."),
+                        _param("opponent", "string", False, "Opponent name."),
+                        _param("date", "string", False, "Fixture date in YYYY-MM-DD format."),
+                        _param("season", "integer", False, "API-Sports season year."),
+                    ],
+                    "security": [{"BearerAuth": []}],
+                    "responses": {
+                        "200": {"description": "Verified fixture, player, team, opponent, league, venue, season, and evidence."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "422": {"description": "Identity or fixture is UNKNOWN, ambiguous, stale, or unavailable."},
+                    },
+                }
+            },
             # ── ROLE PROFILE ──────────────────────────────────────────────────
             "/api/jarvis/role-profile": {
                 "get": {
@@ -1039,31 +1263,28 @@ async def jarvis_docs():
             "per_analysis": [
                 {
                     "step": 1,
-                    "call": "POST /api/jarvis/full-audit/soccer",
-                    "rule": "Call exactly once after fixture_id, player_id, prop_type, and line are known.",
+                    "call": "GET /api/jarvis/resolve-soccer-prop",
+                    "rule": "Resolve player, fixture, teams, venue, league, and season before prediction.",
                 },
                 {
                     "step": 2,
-                    "call": "GET /api/jarvis/calibration",
-                    "rule": "Call before presenting the final answer; disclose sample warnings and truncation.",
+                    "call": "POST /api/jarvis/predict/soccer",
+                    "rule": "Run immutable Reverse Picks production prediction first.",
                 },
                 {
                     "step": 3,
-                    "call": "GET /api/jarvis/stat-definitions",
-                    "rule": "Call when the requested prop is unknown or its provider definition is ambiguous.",
+                    "call": "Primitive evidence endpoints",
+                    "rule": "Build the independent audit directly; do not depend exclusively on full-audit.",
                 },
                 {
                     "step": 4,
-                    "call": "GET /api/jarvis/audit-status",
-                    "rule": "Call when reporting which of the 30 audit phases are active.",
+                    "call": "GET /api/jarvis/calibration",
+                    "rule": "Call before the final answer and use UNKNOWN rather than invented data.",
                 },
             ],
             "interpretation": [
-                "Use audit.rp_prediction for the production recommendation, projection, and probabilities.",
-                "Treat audit.modules as provenance-labeled evidence, not a probability override.",
-                "Review audit.modules.news_intelligence for current sources, UNKNOWN fields, contradictions, and confirmed-lineup drift.",
-                "If lineup_rerun_required is true, flag the prediction for review or rerun; the current response remains unchanged.",
-                "Never rerun Reverse Picks to manufacture disagreement and never let audit values change the saved pick.",
+                "Audit role, fixture, lineup, stats, events, injuries, odds, history, venue possession, current line, and line history.",
+                "RP math remains immutable; direct audit evidence never changes the production prediction.",
             ],
         },
         "endpoint_groups": {
@@ -1100,6 +1321,7 @@ async def jarvis_docs():
                 "/api/jarvis/players",
                 "/api/jarvis/player/fixtures",
             ],
+            "identity_resolution": ["/api/jarvis/resolve-soccer-prop"],
         },
         "common_league_ids": {
             "Premier League (England)": 39,
@@ -3276,6 +3498,26 @@ def _build_teammate_context(teammates: list[dict], formation: str | None) -> dic
 # ─────────────────────────────────────────────────────────────────────────────
 # ROLE PROFILE — granular tactical identity for one player in one fixture
 # ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/jarvis/resolve-soccer-prop")
+async def jarvis_resolve_soccer_prop(
+    player_name: str = Query(..., min_length=2, description="Player name as entered by the user."),
+    team: Optional[str] = Query(default=None, description="Player team name or API-Sports team ID."),
+    opponent: Optional[str] = Query(default=None, description="Opponent name to disambiguate the fixture."),
+    date: Optional[str] = Query(default=None, description="Fixture date in YYYY-MM-DD format."),
+    season: Optional[int] = Query(default=None, description="Optional API-Sports season year."),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Resolve a player prop to one verified fixture and player identity."""
+    _require_auth(authorization)
+    return JSONResponse(content=await _resolve_soccer_prop_identity(
+        player_name=player_name,
+        team=team,
+        opponent=opponent,
+        requested_date=date,
+        season=season,
+    ))
+
 
 @router.get("/api/jarvis/role-profile")
 async def jarvis_role_profile(

@@ -152,3 +152,4 @@
 - [EAS OTA configuration](eas-ota-config.md) — dynamic Expo config needs explicit Updates URL/runtime policy; rebuild local web dist after publishing native OTA bundles.
 - [History identity and H2H coverage](history-identity-h2h.md) — dedupe player logs by fixture identity before math/display, normalize provider envelopes, and expose unavailable H2H explicitly.
 - [PrizePicks line history](prizepicks-line-history.md) — JARVIS board refreshes persist per-market timestamped PrizePicks lines and expose movement plus saved history.
+- [Plain pytest async convention](plain-pytest-async.md) — backend tests should use asyncio.run unless an async pytest plugin is explicitly configured.
