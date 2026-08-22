@@ -302,20 +302,11 @@ async def jarvis_openapi():
         "info": {
             "title": "JARVIS Football API",
             "description": (
-                "Secure proxy to real-time football data via API-Sports. "
-                "Provides fixtures, league tables, team info, player stats, "
-                "match events, lineups, H2H, odds, injuries, and a one-call "
-                "match-context aggregator for AI analysis. "
-                "All data endpoints require Authorization: Bearer <JARVIS_API_KEY>. "
-                "MANDATORY JARVIS WORKFLOW: for every player analysis call "
-                "POST /api/jarvis/full-audit/soccer exactly once after the "
-                "fixture/player inputs are known; use its rp_prediction as the "
-                "quantitative answer and its audit packet only as provenance-labeled "
-                "evidence. Before presenting the final answer, call GET "
-                "/api/jarvis/calibration. Call GET /api/jarvis/stat-definitions "
-                "when the prop definition is not already known and GET "
-                "/api/jarvis/audit-status when reporting audit coverage. Never "
-                "rerun or override Reverse Picks math with audit values."
+                "Secure football data and Reverse Picks analysis API. "
+                "All data operations require the JARVIS bearer key. "
+                "For player analysis, run the full soccer audit once and use "
+                "its RP prediction for the quantitative answer; audit data is "
+                "provenance only."
             ),
             "version": "3.1.0",
             "x-jarvis-mandatory-workflow": [
@@ -490,7 +481,7 @@ async def jarvis_openapi():
                 "post": {
                     "operationId": "runFullSoccerAudit",
                     "summary": "MANDATORY: Run RP once and return a separate JARVIS audit packet.",
-                    "description": "Runs the unchanged Reverse Picks prediction once, then returns immutable RP values beside provenance-labeled audit modules. `audit.modules.game_state`, `first_goal_market`, and `first_goal_regime_change` expose completed-fixture first-goal evidence when available. The mandatory `audit.modules.news_intelligence` packet dynamically researches current club and competition sources, confirmed lineups, injuries, role/tactical changes, teammate availability, contradictions, and confirmed-lineup drift. Every news finding keeps source URL/name, timestamp, source tier, fact/analysis/speculation classification, and confidence. Missing evidence is `UNKNOWN`; material confirmed-lineup differences flag a rerun but never alter RP math.",
+                    "description": "Runs Reverse Picks once and returns immutable RP values beside provenance-labeled audit modules. Includes available game-state, first-goal, news, lineup, injury, role, and contradiction evidence. Missing evidence is UNKNOWN; audit evidence never overrides RP math.",
                     "requestBody": {
                         "required": True,
                         "content": {
