@@ -1056,6 +1056,41 @@ async def jarvis_openapi():
                     },
                 },
             },
+            "/api/jarvis/prizepicks/markets": {
+                "get": {
+                    "operationId": "searchPrizePicksMarkets",
+                    "summary": "Search the latest saved PrizePicks markets",
+                    "description": "Reads only the latest saved PrizePicks snapshot and returns at most 100 matching markets without calling SportsGameOdds.",
+                    "parameters": [
+                        _param("home_team", "string", False, "Home team name, substring match."),
+                        _param("away_team", "string", False, "Away team name, substring match."),
+                        _param("team", "string", False, "Either team name, substring match."),
+                        _param("player_name", "string", False, "Player name, substring match."),
+                        _param("prop_type", "string", False, "Prop type, substring match."),
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "description": "Maximum matching markets to return.",
+                            "schema": {"type": "integer", "default": 25, "minimum": 1, "maximum": 100},
+                        },
+                    ],
+                    "security": [{"BearerAuth": []}],
+                    "responses": {
+                        "200": {
+                            "description": "Bounded matching markets from the saved snapshot.",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/PrizePicksBoardResponse"},
+                                },
+                            },
+                        },
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "No PrizePicks board has been saved yet."},
+                        "503": {"description": "Saved PrizePicks board is temporarily unavailable."},
+                    },
+                }
+            },
             "/api/jarvis/prizepicks/line-history": {
                 "get": {
                     "operationId": "getPrizePicksLineHistory",
@@ -1291,6 +1326,11 @@ async def jarvis_docs():
             "public": ["/api/jarvis/health", "/api/jarvis/docs", "/api/jarvis/openapi.json"],
             "predict": ["/api/jarvis/predict/soccer", "/api/jarvis/predict"],
             "save": ["/api/jarvis/save-pick/soccer"],
+            "prizepicks": [
+                "/api/jarvis/prizepicks/board",
+                "/api/jarvis/prizepicks/markets",
+                "/api/jarvis/prizepicks/line-history",
+            ],
             "audit": [
                 "/api/jarvis/full-audit/soccer",
                 "/api/jarvis/calibration",
@@ -1523,6 +1563,91 @@ async def jarvis_get_saved_prizepicks_board(
         )
     response = _saved_market_board_response(snapshot)
     response["save_status"] = "saved"
+    return JSONResponse(content=response)
+
+
+def _filter_saved_prizepicks_markets(
+    markets: list[dict[str, Any]],
+    *,
+    home_team: str | None = None,
+    away_team: str | None = None,
+    team: str | None = None,
+    player_name: str | None = None,
+    prop_type: str | None = None,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Filter one already-saved board without contacting SportsGameOdds."""
+    def contains(value: Any, query: str | None) -> bool:
+        return not query or str(query).casefold().strip() in str(value or "").casefold()
+
+    filtered = []
+    for market in markets:
+        if not contains(market.get("homeTeam"), home_team):
+            continue
+        if not contains(market.get("awayTeam"), away_team):
+            continue
+        if team and not (
+            contains(market.get("homeTeam"), team)
+            or contains(market.get("awayTeam"), team)
+        ):
+            continue
+        if not contains(market.get("playerName"), player_name):
+            continue
+        if not contains(market.get("propType"), prop_type):
+            continue
+        filtered.append(market)
+        if len(filtered) >= limit:
+            break
+    return filtered
+
+
+@router.get("/api/jarvis/prizepicks/markets")
+async def jarvis_search_saved_prizepicks_markets(
+    home_team: Optional[str] = Query(default=None),
+    away_team: Optional[str] = Query(default=None),
+    team: Optional[str] = Query(default=None),
+    player_name: Optional[str] = Query(default=None),
+    prop_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return a bounded subset of the latest saved PrizePicks board."""
+    _require_auth(authorization)
+    try:
+        snapshot = await db.jarvis_prizepicks_board.find_one(
+            {"_id": "latest"},
+            {"_id": 0},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            detail={"error": "Saved PrizePicks board is temporarily unavailable."},
+        ) from exc
+    if not snapshot:
+        raise HTTPException(
+            404,
+            detail={"error": "No PrizePicks board has been saved yet."},
+        )
+
+    markets = _filter_saved_prizepicks_markets(
+        snapshot.get("markets") or [],
+        home_team=home_team,
+        away_team=away_team,
+        team=team,
+        player_name=player_name,
+        prop_type=prop_type,
+        limit=limit,
+    )
+    response = _saved_market_board_response({**snapshot, "markets": markets})
+    response["save_status"] = "saved"
+    response["filters"] = {
+        "home_team": home_team,
+        "away_team": away_team,
+        "team": team,
+        "player_name": player_name,
+        "prop_type": prop_type,
+        "limit": limit,
+    }
     return JSONResponse(content=response)
 
 
