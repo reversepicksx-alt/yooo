@@ -72,6 +72,10 @@ from jarvis_audit import (
     persist_prediction_audit,
 )
 from sportsgameodds_client import list_market_board
+from prop_safety_cache import (
+    canonical_prop_type,
+    get_prop_safety,
+)
 
 router = APIRouter()
 
@@ -92,6 +96,7 @@ _CACHE: dict[str, tuple[Any, float]] = {}
 _CACHE_TTL_LIVE      = 90     # seconds — in-progress match
 _CACHE_TTL_SCHEDULED = 300    # seconds — upcoming fixture
 _CACHE_TTL_FINISHED  = 1800   # seconds — completed fixture
+_RUNTIME_ROW_LIMIT   = 200
 
 
 def _cache_get(key: str) -> Any | None:
@@ -115,6 +120,300 @@ def _require_auth(authorization: Optional[str]) -> None:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or token.strip() != _JARVIS_KEY:
         raise HTTPException(401, detail={"error": "Invalid JARVIS API key."})
+
+
+def _runtime_status(value: Any, *, source: str, reason: str | None = None) -> dict:
+    """Common envelope for read-only runtime inputs.
+
+    UNKNOWN is intentional: these routes are an audit surface and must not
+    synthesize inputs from the production prediction path.
+    """
+    out = {
+        "status": "available" if value is not None else "UNKNOWN",
+        "value": value,
+        "provenance": {"source": source, "read_only": True},
+    }
+    if reason:
+        out["reason"] = reason
+    return out
+
+
+def _pick_runtime_packet(doc: dict, *names: str) -> Any:
+    for name in names:
+        value = doc.get(name)
+        if value is not None:
+            return value
+        snapshot = doc.get("modelInputSnapshot") or {}
+        if isinstance(snapshot, dict) and snapshot.get(name) is not None:
+            return snapshot[name]
+        audit = doc.get("jarvisAudit") or {}
+        if isinstance(audit, dict) and audit.get(name) is not None:
+            return audit[name]
+    return None
+
+
+# ── READ-ONLY RUNTIME INPUTS ─────────────────────────────────────────────────
+# These endpoints deliberately inspect stored snapshots and already-loaded
+# calibration caches. They never call predict(), save a pick, or refresh a
+# provider/cache. This keeps JARVIS audit/reproduction independent.
+
+@router.get("/api/jarvis/runtime/dominance-inputs")
+async def jarvis_runtime_dominance_inputs(
+    authorization: Optional[str] = Header(default=None),
+    fixture_id: int = Query(..., ge=1),
+    team_id: int = Query(..., ge=1),
+):
+    _require_auth(authorization)
+    doc = await db.picks.find_one(
+        {"fixtureId": fixture_id, "teamId": team_id},
+        {
+            "_id": 0, "fixtureId": 1, "teamId": 1, "opponentId": 1,
+            "leagueId": 1, "venue": 1, "matchDominance": 1,
+            "modelInputSnapshot": 1, "jarvisAudit": 1,
+        },
+        sort=[("settledAt", -1), ("timestamp", -1)],
+    )
+    packet = _pick_runtime_packet(doc or {}, "matchDominance", "dominanceInputs")
+    if not isinstance(packet, dict):
+        return {
+            "source": "db.picks persisted runtime snapshot",
+            "fixture_id": fixture_id,
+            "team_id": team_id,
+            "status": "UNKNOWN",
+            "inputs": None,
+            "provenance": {
+                "read_only": True,
+                "exact_fixture": True,
+                "reason": "No persisted exact-fixture dominance packet is available.",
+            },
+        }
+    return {
+        "source": "db.picks persisted runtime snapshot",
+        "fixture_id": fixture_id,
+        "team_id": team_id,
+        "status": "available",
+        "inputs": packet,
+        "provenance": {
+            "read_only": True,
+            "exact_fixture": True,
+            "stored_snapshot": True,
+        },
+    }
+
+
+@router.get("/api/jarvis/runtime/hyperprior")
+async def jarvis_runtime_hyperprior(
+    authorization: Optional[str] = Header(default=None),
+    prop_type: str = Query(..., min_length=1, max_length=64),
+    league_id: int = Query(..., ge=1),
+    position: Optional[str] = Query(None, max_length=32),
+    role: Optional[str] = Query(None, max_length=64),
+):
+    _require_auth(authorization)
+    # The production hyperprior is opponent-fixture-stat dependent and is
+    # intentionally not reconstructed here. A saved exact runtime snapshot is
+    # the only authoritative caller-supplied value this route may expose.
+    query: dict = {
+        "leagueId": league_id,
+        "modelInputSnapshot.request.propType": prop_type,
+    }
+    if position:
+        query["$or"] = [
+            {"position": position},
+            {"playerPosition": position},
+            {"modelInputSnapshot.position": position},
+        ]
+    if role:
+        query.setdefault("$and", []).append({
+            "$or": [
+                {"role": role}, {"tacticalRole": role},
+                {"playerRole": role},
+                {"modelInputSnapshot.role": role},
+            ]
+        })
+    doc = await db.picks.find_one(
+        query,
+        {"_id": 0, "bayesianMetrics": 1, "modelInputSnapshot": 1,
+         "fixtureId": 1, "playerId": 1, "leagueId": 1},
+        sort=[("timestamp", -1), ("settledAt", -1)],
+    )
+    metrics = (doc or {}).get("bayesianMetrics") or {}
+    value = metrics.get("hyperpriorMean")
+    if value is None:
+        value = metrics.get("hyperprior_mean")
+    return {
+        "source": "db.picks persisted runtime snapshot",
+        "query": {
+            "prop_type": prop_type, "league_id": league_id,
+            "position": position, "role": role,
+        },
+        **_runtime_status(
+            value,
+            source="saved exact runtime bayesian metrics",
+            reason="No exact caller-supplied hyperprior was persisted for this context."
+            if value is None else None,
+        ),
+        "sample_context": {
+            "fixture_id": (doc or {}).get("fixtureId"),
+            "player_id": (doc or {}).get("playerId"),
+            "league_id": (doc or {}).get("leagueId"),
+        },
+    }
+
+
+@router.get("/api/jarvis/runtime/prop-safety")
+async def jarvis_runtime_prop_safety(
+    authorization: Optional[str] = Header(default=None),
+    prop_type: str = Query(..., min_length=1, max_length=64),
+    side: str = Query(..., alias="side", pattern="^(OVER|UNDER|over|under)$"),
+    line: Optional[float] = Query(None),
+    league_id: Optional[int] = Query(None, ge=1),
+    position: Optional[str] = Query(None, max_length=32),
+    role: Optional[str] = Query(None, max_length=64),
+):
+    _require_auth(authorization)
+    canonical = canonical_prop_type(prop_type)
+    bucket = get_prop_safety(canonical, side, league_id, position)
+    return {
+        "source": "prop_safety_cache loaded snapshot",
+        "query": {
+            "prop_type": prop_type, "canonical_prop_type": canonical,
+            "side": side.lower(), "direction": side.upper(), "line": line,
+            "league_id": league_id, "position": position, "role": role,
+        },
+        **_runtime_status(
+            bucket,
+            source="derived settled-pick safety cache",
+            reason="Safety cache is not loaded or has no eligible bucket."
+            if bucket is None else None,
+        ),
+        "sample": {
+            "n": bucket.get("n") if bucket else 0,
+            "hit_rate": bucket.get("hitRate") if bucket else None,
+            "wins": bucket.get("wins") if bucket else None,
+            "losses": bucket.get("losses") if bucket else None,
+        },
+        "decision": {
+            "safety": bucket.get("safety") if bucket else "UNKNOWN",
+            "thresholds_are_data_derived": True,
+            "thresholds": {
+                "safe_hit_rate": 65,
+                "safe_min_n": 10,
+                "safe_high_hit_rate": 80,
+                "safe_high_min_n": 5,
+                "moderate_hit_rate": 57,
+                "moderate_min_n": 8,
+                "avoid_max_hit_rate": 44,
+                "avoid_min_n": 5,
+            },
+            "cap_or_block": (
+                "AVOID direction is blocked/suppressed by production safeguards."
+                if bucket and bucket.get("safety") == "AVOID"
+                else "No AVOID block in this loaded bucket."
+                if bucket else "UNKNOWN — no loaded bucket."
+            ),
+        },
+    }
+
+
+@router.get("/api/jarvis/runtime/calibration-rows")
+async def jarvis_runtime_calibration_rows(
+    authorization: Optional[str] = Header(default=None),
+    prop_type: Optional[str] = Query(None, max_length=64),
+    direction: Optional[str] = Query(None, max_length=16),
+    line_band: Optional[str] = Query(None, max_length=32),
+    league_id: Optional[int] = Query(None, ge=1),
+    position: Optional[str] = Query(None, max_length=32),
+    role: Optional[str] = Query(None, max_length=64),
+    venue: Optional[str] = Query(None, pattern="^(home|away)$"),
+    model_version: Optional[str] = Query(None, max_length=64),
+    date_from: Optional[str] = Query(None, max_length=10),
+    date_to: Optional[str] = Query(None, max_length=10),
+    limit: int = Query(50, ge=1, le=_RUNTIME_ROW_LIMIT),
+):
+    _require_auth(authorization)
+    projection = {
+        "_id": 0, "pickId": 1, "trackingId": 1, "fixtureId": 1,
+        "playerId": 1, "playerName": 1, "propType": 1, "line": 1,
+        "projectedValue": 1, "actualValue": 1, "recommendation": 1,
+        "result": 1, "status": 1, "leagueId": 1, "position": 1,
+        "playerPosition": 1, "role": 1, "tacticalRole": 1,
+        "playerRole": 1, "venue": 1, "modelVersion": 1,
+        "settledAt": 1, "timestamp": 1,
+    }
+    # Fetch a bounded superset, then apply aliases/deduplication in Python so
+    # the response cannot claim an exact sample from duplicate saves.
+    raw = await db.picks.find(
+        {"status": "settled", "result": {"$exists": True}},
+        projection,
+    ).sort([("settledAt", -1), ("timestamp", -1)]).limit(_RUNTIME_ROW_LIMIT).to_list(
+        length=_RUNTIME_ROW_LIMIT
+    )
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for row in raw:
+        result = str(row.get("result") or "").lower()
+        if result not in {"hit", "miss", "win", "loss"}:
+            continue
+        prop = canonical_prop_type(row.get("propType"))
+        side = str(row.get("recommendation") or "").upper()
+        row_position = row.get("position") or row.get("playerPosition")
+        row_role = row.get("role") or row.get("tacticalRole") or row.get("playerRole")
+        if prop_type and prop != canonical_prop_type(prop_type):
+            continue
+        if direction and side != direction.upper():
+            continue
+        if line_band:
+            try:
+                parts = [float(p.strip()) for p in line_band.split("-", 1)]
+                if len(parts) != 2 or not parts[0] <= float(row.get("line")) < parts[1]:
+                    continue
+            except (TypeError, ValueError):
+                raise HTTPException(400, detail={"error": "line_band must be formatted as lower-upper."})
+        if league_id is not None and row.get("leagueId") != league_id:
+            continue
+        if position and str(row_position or "").lower() != position.lower():
+            continue
+        if role and str(row_role or "").lower() != role.lower():
+            continue
+        if venue and row.get("venue") != venue:
+            continue
+        if model_version and row.get("modelVersion") != model_version:
+            continue
+        row_date = str(row.get("settledAt") or row.get("timestamp") or "")[:10]
+        if date_from and row_date < date_from:
+            continue
+        if date_to and row_date > date_to:
+            continue
+        key = str(row.get("pickId") or row.get("trackingId") or (
+            row.get("playerId"), prop, row.get("line"), side,
+            str(row.get("settledAt") or row.get("timestamp") or "")[:10],
+        ))
+        if key in seen:
+            continue
+        seen.add(key)
+        row["canonicalPropType"] = prop
+        row["direction"] = side
+        row["position"] = row_position
+        row["role"] = row_role
+        rows.append(row)
+        if len(rows) >= limit:
+            break
+    return {
+        "source": "db.picks settled ledger",
+        "status": "available" if rows else "UNKNOWN",
+        "rows": rows,
+        "rows_returned": len(rows),
+        "requested_limit": limit,
+        "bounded_scan": _RUNTIME_ROW_LIMIT,
+        "deduplicated": True,
+        "settlement_valid": True,
+        "provenance": {
+            "read_only": True,
+            "excluded_results": ["push", "dnp", "void", "pending"],
+            "may_be_truncated": len(raw) >= _RUNTIME_ROW_LIMIT or len(rows) >= limit,
+        },
+    }
 
 
 async def _resolve_owner_session() -> tuple[str, str]:
@@ -506,7 +805,7 @@ async def jarvis_openapi():
     fixture_param   = _param("fixture", "integer", True,  "Fixture ID.")
     fixture_param_o = _param("fixture", "integer", False, "Fixture ID.")
 
-    return JSONResponse(content={
+    schema = {
         "openapi": "3.1.0",
         "info": {
             "title": "JARVIS Football API",
@@ -527,6 +826,25 @@ async def jarvis_openapi():
             ],
         },
         "servers": [{"url": base}],
+        "x-direct-api-football-action": {
+            "description": (
+                "Optional direct Action schema for JARVIS. Use this server for raw "
+                "API-Football reads; do not route those calls through Reverse Picks."
+            ),
+            "servers": [{"url": _API_SPORTS_BASE}],
+            "authentication": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "x-apisports-key",
+                "description": "Supply the API-Football key through Action authentication. Never place it in prompts or responses.",
+            },
+            "resources": [
+                "fixtures", "fixtures/statistics", "fixtures/players",
+                "fixtures/lineups", "fixtures/events", "injuries", "odds",
+                "teams", "teams/statistics", "players", "players/squads",
+                "standings", "leagues", "fixtures/headtohead",
+            ],
+        },
         "components": {
             "schemas": {
                 "PrizePicksLineHistoryPoint": {
@@ -1097,6 +1415,73 @@ async def jarvis_openapi():
                     },
                 },
             },
+            "/api/jarvis/runtime/dominance-inputs": {
+                "get": {
+                    "operationId": "getRuntimeDominanceInputs",
+                    "summary": "Read persisted exact-fixture dominance inputs",
+                    "description": "Read-only audit lookup. Returns the stored match-dominance packet for an exact fixture/team pair, or UNKNOWN when no exact snapshot exists. Never runs prediction.",
+                    "parameters": [
+                        _param("fixture_id", "integer", True, "Exact API-Sports fixture ID."),
+                        _param("team_id", "integer", True, "Player team API-Sports ID."),
+                    ],
+                    "security": [{"BearerAuth": []}],
+                    "responses": {"200": {"description": "Dominance inputs or explicit UNKNOWN."}, "401": {"description": "Unauthorized"}},
+                },
+            },
+            "/api/jarvis/runtime/hyperprior": {
+                "get": {
+                    "operationId": "getRuntimeHyperprior",
+                    "summary": "Read persisted runtime hyperprior",
+                    "description": "Read-only lookup of an exact caller-supplied hyperprior already persisted with runtime Bayesian metrics. It does not recreate or apply a prior.",
+                    "parameters": [
+                        _param("prop_type", "string", True, "Canonical prop type."),
+                        _param("league_id", "integer", True, "League ID."),
+                        _param("position", "string", False, "Player position."),
+                        _param("role", "string", False, "Tactical role."),
+                    ],
+                    "security": [{"BearerAuth": []}],
+                    "responses": {"200": {"description": "Hyperprior value or explicit UNKNOWN."}, "401": {"description": "Unauthorized"}},
+                },
+            },
+            "/api/jarvis/runtime/prop-safety": {
+                "get": {
+                    "operationId": "getRuntimePropSafety",
+                    "summary": "Read current empirical prop-safety bucket",
+                    "description": "Read-only loaded safety-cache lookup with sample, hit rate, thresholds, and safety state. Missing buckets are UNKNOWN, never estimated.",
+                    "parameters": [
+                        _param("prop_type", "string", True, "Prop type."),
+                        _param("side", "string", True, "over or under."),
+                        _param("line", "number", False, "Requested line, retained as query context."),
+                        _param("league_id", "integer", False, "League ID."),
+                        _param("position", "string", False, "Player position."),
+                        _param("role", "string", False, "Tactical role context."),
+                    ],
+                    "security": [{"BearerAuth": []}],
+                    "responses": {"200": {"description": "Safety bucket or explicit UNKNOWN."}, "401": {"description": "Unauthorized"}},
+                },
+            },
+            "/api/jarvis/runtime/calibration-rows": {
+                "get": {
+                    "operationId": "getRuntimeCalibrationRows",
+                    "summary": "Read bounded deduplicated settled calibration rows",
+                    "description": "Read-only settled ledger sample filtered by prop, direction, league, position, role, venue, and model version. Push, DNP, void, and pending rows are excluded.",
+                    "parameters": [
+                        _param("prop_type", "string", False, "Prop type."),
+                        _param("direction", "string", False, "OVER or UNDER."),
+                        _param("line_band", "string", False, "Half-open line range formatted lower-upper, e.g. 55-70."),
+                        _param("league_id", "integer", False, "League ID."),
+                        _param("position", "string", False, "Player position."),
+                        _param("role", "string", False, "Tactical role."),
+                        _param("venue", "string", False, "home or away."),
+                        _param("model_version", "string", False, "Exact model version."),
+                        _param("date_from", "string", False, "Inclusive settlement date YYYY-MM-DD."),
+                        _param("date_to", "string", False, "Inclusive settlement date YYYY-MM-DD."),
+                        {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 50, "minimum": 1, "maximum": _RUNTIME_ROW_LIMIT}, "description": "Maximum returned rows."},
+                    ],
+                    "security": [{"BearerAuth": []}],
+                    "responses": {"200": {"description": "Bounded settled calibration rows with provenance."}, "401": {"description": "Unauthorized"}},
+                },
+            },
             # ── FIXTURE DETAIL ────────────────────────────────────────────────
             "/api/jarvis/fixture/stats": {
                 "get": {
@@ -1258,7 +1643,18 @@ async def jarvis_openapi():
                 }
             },
         },
-    })
+    }
+    # ChatGPT Actions reject schemas over 30 operations. These remain live
+    # routes, but are diagnostic/download helpers rather than orchestration
+    # primitives and are intentionally omitted from the importer schema.
+    for diagnostic_path in (
+        "/api/jarvis/stat-definitions",
+        "/api/jarvis/prediction-screenshots",
+        "/api/jarvis/prediction-screenshots/{handle}/{section}",
+        "/api/jarvis/full-audit/soccer",
+    ):
+        schema["paths"].pop(diagnostic_path, None)
+    return JSONResponse(content=schema)
 
 
 @router.get("/api/jarvis/docs")
@@ -1270,6 +1666,7 @@ async def jarvis_docs():
         "version": "3.1.0",
         "base_url": base,
         "openapi_schema": f"{base}/api/jarvis/openapi.json",
+        "direct_api_football_schema": f"{base}/api/jarvis/api-football/openapi.json",
         "authentication": {
             "type": "Bearer token",
             "header": "Authorization",
@@ -1356,6 +1753,78 @@ async def jarvis_docs():
             "MLS (USA)": 253,
             "FIFA World Cup": 1,
         },
+    })
+
+
+@router.get("/api/jarvis/api-football/openapi.json", include_in_schema=False)
+async def jarvis_direct_api_football_openapi():
+    """Importable raw API-Football Action schema.
+
+    This is intentionally a separate schema from the 30-operation JARVIS
+    orchestration schema. The credential is supplied by the Action caller via
+    the x-apisports-key security scheme and is never held in this response.
+    """
+    resources = [
+        "fixtures", "fixtures/statistics", "fixtures/players",
+        "fixtures/lineups", "fixtures/events", "injuries", "odds",
+        "teams", "teams/statistics", "players", "players/squads",
+        "standings", "leagues", "fixtures/headtohead",
+    ]
+    paths = {}
+    for resource in resources:
+        paths[f"/{resource}"] = {
+            "get": {
+                "operationId": "apiFootball_" + resource.replace("/", "_"),
+                "summary": f"Raw API-Football {resource} data",
+                "description": (
+                    "Direct read-only API-Football resource. Query parameters "
+                    "are provider-defined; use the provider's documented "
+                    "parameters for this resource."
+                ),
+                "parameters": [
+                    {
+                        "name": name,
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string" if name in {"date", "search", "live", "h2h"} else "integer"},
+                        "description": f"API-Football {name} filter.",
+                    }
+                    for name in (
+                        "id", "fixture", "team", "player", "league", "season",
+                        "date", "last", "h2h", "search", "current", "live",
+                        "page", "per_page",
+                    )
+                ],
+                "security": [{"ApiSportsKey": []}],
+                "responses": {
+                    "200": {"description": "Raw API-Football response."},
+                    "401": {"description": "Invalid or missing x-apisports-key."},
+                    "429": {"description": "Provider quota exceeded."},
+                },
+            }
+        }
+    return JSONResponse(content={
+        "openapi": "3.1.0",
+        "info": {
+            "title": "API-Football Direct Read API",
+            "version": "1.0.0",
+            "description": (
+                "Raw read-only API-Football access for JARVIS evidence "
+                "reproduction. Credentials belong in Action authentication."
+            ),
+        },
+        "servers": [{"url": _API_SPORTS_BASE}],
+        "components": {
+            "securitySchemes": {
+                "ApiSportsKey": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "x-apisports-key",
+                    "description": "API-Football credential supplied by Action authentication.",
+                }
+            }
+        },
+        "paths": paths,
     })
 
 
