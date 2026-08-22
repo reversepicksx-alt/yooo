@@ -331,7 +331,106 @@ async def jarvis_openapi():
         },
         "servers": [{"url": base}],
         "components": {
-            "schemas": {},
+            "schemas": {
+                "PrizePicksLineHistoryPoint": {
+                    "type": "object",
+                    "required": ["line", "observed_at"],
+                    "properties": {
+                        "line": {"type": "number"},
+                        "observed_at": {"type": "integer"},
+                    },
+                },
+                "PrizePicksMarket": {
+                    "type": "object",
+                    "required": [
+                        "marketKey", "eventId", "eventStart", "sport", "sportName",
+                        "leagueId", "leagueName", "homeTeam", "awayTeam",
+                        "playerName", "playerProviderId", "propType", "propLabel",
+                        "statId", "marketLine", "current_line", "previous_line",
+                        "movement", "first_seen", "last_seen", "line_history",
+                        "bookmakers", "providerCoverage", "analysisSupported",
+                    ],
+                    "properties": {
+                        "marketKey": {"type": "string"},
+                        "eventId": {"type": ["string", "null"]},
+                        "eventStart": {"type": ["string", "null"], "format": "date-time"},
+                        "sport": {"type": "string"},
+                        "sportName": {"type": "string"},
+                        "leagueId": {"type": ["integer", "null"]},
+                        "leagueName": {"type": "string"},
+                        "homeTeam": {"type": "string"},
+                        "awayTeam": {"type": "string"},
+                        "playerName": {"type": "string"},
+                        "playerProviderId": {"type": ["string", "null"]},
+                        "propType": {"type": "string"},
+                        "propLabel": {"type": "string"},
+                        "statId": {"type": "string"},
+                        "marketLine": {"type": ["number", "null"]},
+                        "current_line": {"type": ["number", "null"]},
+                        "previous_line": {"type": ["number", "null"]},
+                        "movement": {"type": ["number", "null"]},
+                        "first_seen": {"type": "integer"},
+                        "last_seen": {"type": "integer"},
+                        "line_history": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/PrizePicksLineHistoryPoint"},
+                        },
+                        "bookmakers": {
+                            "type": "object",
+                            "additionalProperties": {"type": "object"},
+                        },
+                        "providerCoverage": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "analysisSupported": {"type": "boolean"},
+                    },
+                },
+                "PrizePicksBoardResponse": {
+                    "type": "object",
+                    "required": [
+                        "source", "bookmaker", "fetched_at", "market_count",
+                        "saved", "save_status", "history_status", "markets",
+                    ],
+                    "properties": {
+                        "source": {"type": "string", "const": "SportsGameOdds"},
+                        "bookmaker": {"type": "string", "const": "PrizePicks"},
+                        "fetched_at": {"type": "integer"},
+                        "market_count": {"type": "integer"},
+                        "saved": {"type": "boolean"},
+                        "save_status": {"type": "string"},
+                        "history_status": {"type": "string"},
+                        "markets": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/PrizePicksMarket"},
+                        },
+                    },
+                },
+                "PrizePicksLineHistoryResponse": {
+                    "type": "object",
+                    "required": [
+                        "market_key", "event_id", "player_provider_id",
+                        "player_name", "prop_type", "first_seen", "last_seen",
+                        "previous_line", "current_line", "movement", "line_history",
+                    ],
+                    "properties": {
+                        "market_key": {"type": "string"},
+                        "event_id": {"type": ["string", "null"]},
+                        "player_provider_id": {"type": ["string", "null"]},
+                        "player_name": {"type": "string"},
+                        "prop_type": {"type": "string"},
+                        "first_seen": {"type": "integer"},
+                        "last_seen": {"type": "integer"},
+                        "previous_line": {"type": ["number", "null"]},
+                        "current_line": {"type": ["number", "null"]},
+                        "movement": {"type": ["number", "null"]},
+                        "line_history": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/PrizePicksLineHistoryPoint"},
+                        },
+                    },
+                },
+            },
             "securitySchemes": {
                 "BearerAuth": {
                     "type": "http",
@@ -683,17 +782,35 @@ async def jarvis_openapi():
                         _param("limit", "integer", False, "Maximum markets to return, from 1 to 100."),
                     ],
                     "responses": {
-                        "200": {"description": "Current PrizePicks market board and save status."},
+                        "200": {
+                            "description": "Current PrizePicks market board and save status.",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/PrizePicksBoardResponse"},
+                                },
+                            },
+                        },
+                        "400": {"description": "Invalid board query parameters."},
                         "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "No matching markets were found."},
                         "503": {"description": "SportsGameOdds is not configured."},
                     },
                 },
                 "get": {
-                    "operationId": "getSavedPrizePicksBoard",
+                    "operationId": "getPrizePicksBoard",
                     "summary": "Read the last saved PrizePicks board",
                     "description": "Returns the most recently saved board snapshot without calling SportsGameOdds.",
+                    "security": [{"BearerAuth": []}],
                     "responses": {
-                        "200": {"description": "Saved PrizePicks market board."},
+                        "200": {
+                            "description": "Saved PrizePicks market board.",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/PrizePicksBoardResponse"},
+                                },
+                            },
+                        },
+                        "400": {"description": "Invalid request."},
                         "401": {"description": "Invalid or missing bearer token."},
                         "404": {"description": "No PrizePicks board has been saved yet."},
                     },
@@ -707,8 +824,17 @@ async def jarvis_openapi():
                     "parameters": [
                         _param("market_key", "string", True, "Market key returned in the board market object."),
                     ],
+                    "security": [{"BearerAuth": []}],
                     "responses": {
-                        "200": {"description": "Complete saved line history."},
+                        "200": {
+                            "description": "Complete saved line history.",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/PrizePicksLineHistoryResponse"},
+                                },
+                            },
+                        },
+                        "400": {"description": "Missing or invalid market_key."},
                         "401": {"description": "Invalid or missing bearer token."},
                         "404": {"description": "No history exists for this market."},
                     },
