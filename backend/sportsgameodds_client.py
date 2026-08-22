@@ -528,13 +528,22 @@ def _board_player_name(market_name: str, stat_id: str) -> str:
     label = _BOARD_PROP_LABELS.get(prop_type or stat_id, "")
     text = str(market_name or "").strip()
     if label:
-        suffix = re.compile(
-            rf"\s+{re.escape(label)}\s+Over/Under(?:\s+\([^)]*\))?$",
-            flags=re.IGNORECASE,
-        )
-        cleaned = suffix.sub("", text).strip()
-        if cleaned and cleaned != text:
-            return cleaned
+        # SportsGameOdds uses both "Pass Attempts" and the PrizePicks-style
+        # "Passes Attempted" wording for the same soccer market. Strip either
+        # form, with or without the optional Over/Under suffix, so the board
+        # returns a real player name instead of "Name Passes Attempted".
+        labels = [label]
+        if prop_type == "pass_attempts":
+            labels.append("Passes Attempted")
+        for market_label in labels:
+            suffix = re.compile(
+                rf"\s+{re.escape(market_label)}"
+                rf"(?:\s+Over/Under(?:\s+\([^)]*\))?)?$",
+                flags=re.IGNORECASE,
+            )
+            cleaned = suffix.sub("", text).strip()
+            if cleaned and cleaned != text:
+                return cleaned
     # Some provider markets are not Over/Under props (for example
     # "Player To Record First Basket Yes/No"). Keep the player-facing part
     # readable rather than exposing the whole market sentence as the name.
