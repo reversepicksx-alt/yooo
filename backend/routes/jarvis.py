@@ -1815,6 +1815,7 @@ async def jarvis_direct_api_football_openapi():
         },
         "servers": [{"url": _API_SPORTS_BASE}],
         "components": {
+            "schemas": {},
             "securitySchemes": {
                 "ApiSportsKey": {
                     "type": "apiKey",
