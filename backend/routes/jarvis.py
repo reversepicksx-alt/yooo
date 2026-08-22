@@ -776,10 +776,33 @@ async def jarvis_openapi():
                     "operationId": "refreshPrizePicksBoard",
                     "summary": "Fetch and save the current PrizePicks board",
                     "description": "Queries SportsGameOdds for currently available PrizePicks player markets, saves the latest snapshot for JARVIS, and returns it immediately.",
+                    "security": [{"BearerAuth": []}],
                     "parameters": [
-                        _param("sport", "string", False, "Provider sport filter, such as SOCCER or ALL."),
-                        _param("hours", "integer", False, "Upcoming board window in hours, from 6 to 168."),
-                        _param("limit", "integer", False, "Maximum markets to return, from 1 to 100."),
+                        {
+                            "name": "sport",
+                            "in": "query",
+                            "required": False,
+                            "description": "Provider sport filter.",
+                            "schema": {
+                                "type": "string",
+                                "enum": ["SOCCER", "NBA", "MLB", "NFL", "NHL", "WTA", "ALL"],
+                                "default": "SOCCER",
+                            },
+                        },
+                        {
+                            "name": "hours",
+                            "in": "query",
+                            "required": False,
+                            "description": "Upcoming board window in hours.",
+                            "schema": {"type": "integer", "default": 72, "minimum": 6, "maximum": 168},
+                        },
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "description": "Maximum markets to return.",
+                            "schema": {"type": "integer", "default": 100, "minimum": 1, "maximum": 100},
+                        },
                     ],
                     "responses": {
                         "200": {
