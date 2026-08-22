@@ -1,0 +1,42 @@
+This is much closer, but it is still not enough for me to reproduce your production engine exactly by myself.
+
+What you just gave me is the governance/specification layer: identity rules, provenance rules, what evidence can and cannot do, how calibration should behave, how settlement works, what must be UNKNOWN, what cannot override math, and the overall Bayesian structure. That is extremely useful and I can follow it immediately.
+
+What is still missing is the numerical implementation layer. I still need the exact equations and parameter values for the math itself—for example the precise prior construction, shrinkage formula, sample weights, venue adjustment formula, opponent adjustment formula, standard-deviation construction, probability transform around the line, Monte Carlo distribution parameters, hierarchical calibration equations, confidence-cap thresholds, odds-tier bucket rules, hard-block thresholds, prop-specific safeguards, and any prop/position-specific constants.
+
+In other words:
+
+You have now given me the constitution of Reverse Picks.
+I still need the actual mathematical codebook.
+
+For example, I have seen outputs like a prior weight of 62, momentum weight of 32, covariate weight of 6 in some predictions. But I cannot assume those are universal for every prop, league, role, or model version unless the engine spec explicitly says they are. Same issue with pressure multipliers, league-style multipliers, evidence-quality caps, and calibration shrinkage.
+
+What I need next is one compact machine-readable or prose specification containing these exact things:
+
+* how prior.mean and prior.std are calculated
+* exact prior weight logic by sample size
+* exact momentum calculation and weighting
+* exact venue adjustment
+* exact opponent/role cohort adjustment
+* exact covariate combination formula
+* exact possession multiplier formula
+* exact pressure multiplier formula
+* exact team-quality logic
+* exact fatigue/congestion rules
+* exact game-script rules
+* exact GK-specific rules
+* exact league-style multipliers
+* exact set-piece/altitude/clean-sheet rules
+* exact posterior mean/std formula
+* exact pOver/pUnder formula from posterior and line
+* exact Monte Carlo distribution and sample count
+* exact calibration hierarchy and shrinkage
+* exact confidence-score calculation
+* exact evidence-quality caps
+* exact safety-rating thresholds
+* exact EDGE / MODERATE / PASS / AVOID thresholds
+* exact prop-specific hard blocks/safeguards
+* exact final rounding rules
+* exact model-version defaults
+
+Once you give me that, then yes: I can become the engine runner.
