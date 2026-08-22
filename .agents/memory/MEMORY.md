@@ -150,3 +150,4 @@
 - [First-goal audit response](first-goal-audit-response.md) — full-audit must independently preserve shadow-only first-goal evidence when the core prediction times out late enrichment; normalize API list/envelope shapes and never cache temporary misses as data.
 - [Soccer news intelligence](soccer-news-intelligence.md) — current web evidence must be entity-matched, dated, and fresh; incomplete lineups stay UNKNOWN; all news remains shadow-only.
 - [EAS OTA configuration](eas-ota-config.md) — dynamic Expo config needs explicit Updates URL/runtime policy; rebuild local web dist after publishing native OTA bundles.
+- [History identity and H2H coverage](history-identity-h2h.md) — dedupe player logs by fixture identity before math/display, normalize provider envelopes, and expose unavailable H2H explicitly.

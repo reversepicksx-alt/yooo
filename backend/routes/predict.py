@@ -241,6 +241,62 @@ def _filter_usable_soccer_history_logs(
     return usable
 
 
+def _dedupe_player_history_logs(logs: list[dict] | None) -> list[dict]:
+    """Keep one best row per real fixture before history math or display.
+
+    Stage-0 cache rows and Stage-1 fixture rows can describe the same
+    appearance, and older rows may not carry the internal ``_fid`` marker.
+    Prefer the row with the richest verified context rather than allowing
+    duplicates to inflate samples and hit rates.
+    """
+    if not isinstance(logs, list):
+        return []
+
+    def _key(log: dict):
+        fixture_id = log.get("fixtureId") or log.get("_fid")
+        if fixture_id not in (None, ""):
+            return ("fixture", str(fixture_id))
+        date = str(log.get("date") or "")[:10]
+        team_id = log.get("fixtureTeamId") or log.get("teamId") or ""
+        opponent_id = log.get("fixtureOpponentId") or log.get("opponentId") or ""
+        opponent = str(log.get("opponent") or "").strip().casefold()
+        venue = str(log.get("venue") or "").strip().casefold()
+        target = log.get("targetStat")
+        if target is None:
+            target = tuple(
+                (field, log.get(field))
+                for field in (
+                    "passes_total", "shots_total", "shots_on",
+                    "tackles_total", "goals_saves",
+                )
+                if log.get(field) is not None
+            )
+        return ("fallback", date, str(team_id), str(opponent_id), venue, opponent, str(target))
+
+    def _quality(log: dict) -> tuple:
+        return (
+            bool(log.get("date")),
+            bool(log.get("fixtureTeamId") and log.get("fixtureOpponentId")),
+            bool(log.get("opponent")),
+            bool(log.get("fixtureContextStatus") == "verified"),
+            bool(log.get("teamPossession") is not None),
+            len(log),
+        )
+
+    best_by_key = {}
+    for log in logs:
+        if not isinstance(log, dict):
+            continue
+        key = _key(log)
+        existing = best_by_key.get(key)
+        if existing is None or _quality(log) > _quality(existing):
+            best_by_key[key] = log
+    deduped = list(best_by_key.values())
+    if len(deduped) != len(logs):
+        print(f"[DEDUP] player history removed {len(logs) - len(deduped)} duplicate rows")
+    return deduped
+
+
 def _json_safe_prediction(value, *, _active=None, _depth=0):
     """Detach a prediction graph before MongoDB/HTTP serialization.
 
@@ -1284,7 +1340,13 @@ async def predict(req: PredictionRequest):
                 [],
                 timeout=4.0,
             )
-            merged = _merge_h2h_fixtures(direct_response, limit=pair_limit)
+            # The provider helper normally returns a list, but legacy/mocked
+            # clients may still return the API envelope. Normalize at this
+            # boundary so a valid direct pairing is not discarded as empty.
+            merged = _merge_h2h_fixtures(
+                _api_response_list(direct_response),
+                limit=pair_limit,
+            )
             coverage = _h2h_history_coverage(merged, pair_limit)
             year_range = (
                 f"{coverage['oldestYear']}-{coverage['newestYear']}"
@@ -2191,7 +2253,11 @@ async def predict(req: PredictionRequest):
                                                 if _fv2 == "home"
                                                 else fix.get("homeGoals", 0))
                     return result
-                except Exception:
+                except Exception as _h2h_player_err:
+                    print(
+                        f"[H2H PLAYER] fixture={fid} lookup unavailable: "
+                        f"{type(_h2h_player_err).__name__}"
+                    )
                     return None
 
             tasks = [
@@ -4021,7 +4087,9 @@ async def predict(req: PredictionRequest):
                             f"[CACHE-STAGE0] Returning {len(collected)} real (cached) "
                             f"game logs — skipping API{_poss_note}{_coverage_note}"
                         )
-                        return _newest_first_rows(collected)
+                        return _newest_first_rows(
+                            _dedupe_player_history_logs(collected)
+                        )
                     elif collected:
                         print(
                             f"[CACHE-STAGE0] Only {len(collected)} games "
@@ -4502,7 +4570,9 @@ async def predict(req: PredictionRequest):
                 current_fixture_count = len(team_fixtures_raw or [])
                 collected.extend(await _fetch_fixture_batch(_history_fetch_rows))
                 if _fixture_batch_cancelled:
-                    return _newest_first_rows(collected)
+                    return _newest_first_rows(
+                        _dedupe_player_history_logs(collected)
+                    )
 
                 # A 100-fixture feed can still contain only a handful of
                 # selected-venue appearances. Search older seasons, across all
@@ -4714,29 +4784,10 @@ async def predict(req: PredictionRequest):
             # from fixture_player_cache for the same fixture IDs — the same game
             # can appear twice: once without date/score (Stage 0) and once with
             # date/score/possession (Stage 1). Keep Stage 1's richer entry.
-            if collected:
-                _fid_index: dict = {}   # fid_str -> index in _deduped
-                _deduped: list = []
-                for _g in collected:
-                    _g_fid = _g.get("_fid")
-                    if not _g_fid:
-                        _deduped.append(_g)
-                    elif _g_fid not in _fid_index:
-                        _fid_index[_g_fid] = len(_deduped)
-                        _deduped.append(_g)
-                    else:
-                        # If the new entry has a real date and the existing one doesn't,
-                        # replace — Stage 1 (with date) beats Stage 0 (empty date).
-                        _existing = _deduped[_fid_index[_g_fid]]
-                        if _g.get("date") and not _existing.get("date"):
-                            _deduped[_fid_index[_g_fid]] = _g
-                if len(_deduped) < len(collected):
-                    print(f"[DEDUP] {req.playerName}: removed {len(collected) - len(_deduped)} duplicate fixture(s)")
-                collected = _deduped
-                # Strip internal marker before handing off
-                for _g in collected:
-                    _g.pop("_fid", None)
-
+            collected = _dedupe_player_history_logs(collected)
+            # Strip internal marker before handing off.
+            for _g in collected:
+                _g.pop("_fid", None)
             return _newest_first_rows(collected)
 
         # =============================================
@@ -10286,9 +10337,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     # lineup enrichment runs after every candidate fixture had a
                     # chance to return, so the first three lineup calls cannot
                     # starve older verified appearances behind the semaphore.
-                    pstats = await api_football_request(
+                    pstats = _api_response_list(await api_football_request(
                         "fixtures/players", {"fixture": fid}
-                    )
+                    ))
                     if not pstats:
                         return None
 
@@ -10414,7 +10465,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     if isinstance(r, dict) and r
                 ]
                 h2h_player_stats = _newest_first_rows(
-                    h2h_player_stats,
+                    _dedupe_player_history_logs(h2h_player_stats),
                     H2H_PLAYER_RESULT_LIMIT,
                 )
                 if h2h_player_stats:
@@ -10659,6 +10710,9 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "matches": h2h_player_stats,
                 "targetProp": req.propType,
                 "sampleSize": len(h2h_values),
+                "evidenceStatus": (
+                    "available" if h2h_values else "no_player_appearances"
+                ),
                 "searchedFixtureCount": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
                 "playerAppearanceCoverage": {
                     "searchedFixtures": min(len(h2h_fixture_ids), H2H_PLAYER_SCAN_LIMIT),
@@ -10772,6 +10826,27 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 "teamMeetings": len(h2h_data),
                 "teamMeetingsByVenue": _meetings_by_venue,
                 "trendDirection": "stable",
+                **_h2h_summary_coverage,
+            }
+        else:
+            # Keep the contract present when the direct pairing provider is
+            # unavailable or returned no finished meetings. The UI can
+            # distinguish unavailable history from a valid zero-appearance
+            # player sample instead of rendering a misleading blank H2H tab.
+            historical_data["h2hPlayerStats"] = {
+                "matches": [],
+                "targetProp": req.propType,
+                "sampleSize": 0,
+                "searchedFixtureCount": 0,
+                "playerAppearanceCoverage": {
+                    "searchedFixtures": 0,
+                    "verifiedAppearances": 0,
+                    "targetStatAppearances": 0,
+                },
+                "teamMeetings": 0,
+                "teamMeetingsByVenue": {"home": [], "away": []},
+                "trendDirection": "stable",
+                "evidenceStatus": "unavailable",
                 **_h2h_summary_coverage,
             }
 
