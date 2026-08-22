@@ -699,6 +699,21 @@ async def jarvis_openapi():
                     },
                 },
             },
+            "/api/jarvis/prizepicks/line-history": {
+                "get": {
+                    "operationId": "getPrizePicksLineHistory",
+                    "summary": "Get timestamped line movement for one market",
+                    "description": "Returns previous_line, current_line, first_seen, last_seen, movement, and up to 50 timestamped observations for a saved market.",
+                    "parameters": [
+                        _param("market_key", "string", True, "Market key returned in the board market object."),
+                    ],
+                    "responses": {
+                        "200": {"description": "Complete saved line history."},
+                        "401": {"description": "Invalid or missing bearer token."},
+                        "404": {"description": "No history exists for this market."},
+                    },
+                },
+            },
             # ── FIXTURE DETAIL ────────────────────────────────────────────────
             "/api/jarvis/fixture/stats": {
                 "get": {
@@ -923,7 +938,10 @@ async def jarvis_docs():
             "tactical_evidence": ["/api/jarvis/tactical-evidence"],
             "role_analysis": ["/api/jarvis/role-profile", "/api/jarvis/role-opponent-cohort"],
             "aggregator": ["/api/jarvis/match-context"],
-            "market_board": ["/api/jarvis/prizepicks/board"],
+            "market_board": [
+                "/api/jarvis/prizepicks/board",
+                "/api/jarvis/prizepicks/line-history",
+            ],
             "fixture_detail": [
                 "/api/jarvis/fixture/stats",
                 "/api/jarvis/fixture/events",
@@ -970,6 +988,100 @@ def _saved_market_board_response(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _market_history_key(market: dict[str, Any]) -> str:
+    """Stable identity for one provider event/player/stat market."""
+    return "|".join(
+        str(market.get(key) or "")
+        for key in ("eventId", "playerProviderId", "statId", "propType")
+    )
+
+
+async def _save_market_history(market: dict[str, Any], observed_at: int) -> dict[str, Any]:
+    """Append one market observation and return its complete line history."""
+    history_key = _market_history_key(market)
+    prizepicks = (market.get("bookmakers") or {}).get("prizepicks") or {}
+    current_line = prizepicks.get("line")
+    if current_line is None:
+        current_line = market.get("marketLine")
+
+    collection = db.jarvis_prizepicks_market_history
+    existing = await collection.find_one({"_id": history_key}, {"_id": 0})
+    previous_line = (existing or {}).get("current_line")
+    first_seen = (existing or {}).get("first_seen") or observed_at
+    line_history = list((existing or {}).get("line_history") or [])
+    observation = {
+        "line": current_line,
+        "observed_at": observed_at,
+    }
+    # Do not create repeated observations when JARVIS refreshes the same
+    # provider board multiple times during one second.
+    if not line_history or line_history[-1] != observation:
+        line_history.append(observation)
+    line_history = line_history[-50:]
+    await collection.replace_one(
+        {"_id": history_key},
+        {
+            "_id": history_key,
+            "market_key": history_key,
+            "event_id": market.get("eventId"),
+            "player_provider_id": market.get("playerProviderId"),
+            "player_name": market.get("playerName"),
+            "stat_id": market.get("statId"),
+            "prop_type": market.get("propType"),
+            "market_name": market.get("marketName"),
+            "first_seen": first_seen,
+            "last_seen": observed_at,
+            "previous_line": previous_line,
+            "current_line": current_line,
+            "line_history": line_history,
+        },
+        upsert=True,
+    )
+    movement = None
+    if previous_line is not None and current_line is not None:
+        movement = round(float(current_line) - float(previous_line), 2)
+    return {
+        "marketKey": history_key,
+        "previous_line": previous_line,
+        "current_line": current_line,
+        "first_seen": first_seen,
+        "last_seen": observed_at,
+        "movement": movement,
+        "line_history": line_history,
+    }
+
+
+async def _attach_market_history(
+    markets: list[dict[str, Any]],
+    observed_at: int,
+) -> tuple[list[dict[str, Any]], str]:
+    """Persist and attach line movement without making board fetch fragile."""
+    semaphore = asyncio.Semaphore(10)
+
+    async def save_one(market: dict[str, Any]):
+        async with semaphore:
+            return market, await _save_market_history(market, observed_at)
+
+    try:
+        results = await asyncio.gather(*(save_one(market) for market in markets))
+    except Exception as exc:
+        import logging
+        logging.getLogger("jarvis").warning(
+            "PrizePicks line-history write skipped: %s", type(exc).__name__
+        )
+        return markets, "history_save_unavailable"
+
+    for market, history in results:
+        market["marketKey"] = history["marketKey"]
+        market["previous_line"] = history["previous_line"]
+        market["current_line"] = history["current_line"]
+        market["first_seen"] = history["first_seen"]
+        market["last_seen"] = history["last_seen"]
+        market["movement"] = history["movement"]
+        market["line_history"] = history["line_history"]
+    return markets, "saved"
+
+
 @router.post("/api/jarvis/prizepicks/board")
 async def jarvis_refresh_prizepicks_board(
     authorization: Optional[str] = Header(default=None),
@@ -990,11 +1102,13 @@ async def jarvis_refresh_prizepicks_board(
         limit=limit,
         sport_id=sport.strip().upper() or "SOCCER",
     )
+    observed_at = int(time.time())
+    markets, history_status = await _attach_market_history(markets, observed_at)
     snapshot = {
         "_id": "latest",
         "source": "SportsGameOdds",
         "bookmaker": "PrizePicks",
-        "fetched_at": int(time.time()),
+        "fetched_at": observed_at,
         "sport": sport.strip().upper() or "SOCCER",
         "hours": hours,
         "markets": markets,
@@ -1018,6 +1132,7 @@ async def jarvis_refresh_prizepicks_board(
     response = _saved_market_board_response(snapshot)
     response["saved"] = save_status == "saved"
     response["save_status"] = save_status
+    response["history_status"] = history_status
     return JSONResponse(content=response)
 
 
@@ -1045,6 +1160,31 @@ async def jarvis_get_saved_prizepicks_board(
     response = _saved_market_board_response(snapshot)
     response["save_status"] = "saved"
     return JSONResponse(content=response)
+
+
+@router.get("/api/jarvis/prizepicks/line-history")
+async def jarvis_get_prizepicks_line_history(
+    market_key: str = Query(..., min_length=3),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the complete timestamped line history for one saved market."""
+    _require_auth(authorization)
+    try:
+        history = await db.jarvis_prizepicks_market_history.find_one(
+            {"_id": market_key},
+            {"_id": 0},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            detail={"error": "PrizePicks line history is temporarily unavailable."},
+        ) from exc
+    if not history:
+        raise HTTPException(
+            404,
+            detail={"error": "No saved line history exists for that market."},
+        )
+    return JSONResponse(content=history)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
