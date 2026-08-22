@@ -10517,8 +10517,13 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     # silently skipped when optional prediction enrichment
                     # consumed the main response budget.
                     started=aio.get_running_loop().time(),
-                    budget=3.0,
-                    timeout=3.0,
+                    # Older player-vs-opponent history is worth a slightly
+                    # larger bounded window. Three seconds was enough to
+                    # recover one or two cached rows, but it systematically
+                    # undercounted players with many meetings against the
+                    # opponent when the provider was busy.
+                    budget=10.0,
+                    timeout=10.0,
                     label="player H2H evidence",
                 )
                 h2h_player_stats = [
