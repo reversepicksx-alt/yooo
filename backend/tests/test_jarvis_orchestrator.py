@@ -24,6 +24,24 @@ def test_run_player_parses_plays_as_venue_not_prop():
     assert args["prop_type"] is None
 
 
+def test_natural_language_prop_request_extracts_typed_fields():
+    action, args = classify_action("Rongier 52.5 passes vs PSG")
+    assert action == "run_player"
+    assert args == {
+        "player_query": "Rongier",
+        "opponent_query": "PSG",
+        "venue": None,
+        "line": 52.5,
+        "prop_type": "pass_attempts",
+    }
+
+
+def test_vague_prediction_request_is_conversational():
+    action, args = classify_action("Run a prediction for a player")
+    assert action == "general"
+    assert args["needs_clarification"] is True
+
+
 def test_run_player_infers_prop_from_one_matching_board_market():
     async def empty():
         return []

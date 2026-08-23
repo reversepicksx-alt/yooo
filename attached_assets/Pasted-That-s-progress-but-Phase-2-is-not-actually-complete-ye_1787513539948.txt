@@ -1,0 +1,75 @@
+That’s progress, but Phase 2 is not actually complete yet.
+
+The good part is the owner cutover itself: the real chat is using the shared orchestrator, session state is preserved, follow-up intents are first-class, UNKNOWN behavior is honest, and subscriber routes are untouched.
+
+The remaining blocker is exactly the one that matters most: Script Hunt still does not perform the intelligence step. Right now it is:
+
+discover fixtures → check board → stop partial
+
+What we need is:
+
+discover fixtures → gather venue/control evidence → classify home-control matches → reject weak/unknown cases → inspect board for qualifying fixtures → rank players → run deeper audits on survivors.
+
+So tell Replit this next:
+
+PHASE 2 SCRIPT HUNT COMPLETION — NO MORE PROVISIONAL-ONLY OUTPUT
+
+Keep the current owner-only Phase 2 architecture and subscriber isolation exactly as-is. Do not redesign the chat or replace the working session-state flow.
+
+The remaining Phase 2 blocker is Script Hunt depth. Script hunt must not stop after fixture discovery and market-board lookup.
+
+For each discovered fixture, autonomously gather enough evidence to determine whether the HOME team qualifies as a genuine home-control environment.
+
+Required evidence chain:
+
+1. Verify exact fixture identity, league, season, and home/away orientation.
+2. Pull the home team’s recent matching-home fixtures.
+3. Pull the away team’s recent corresponding-away fixtures.
+4. Retrieve fixture statistics for those samples, especially possession, passes, shots, SOT, xG when available, and score states.
+5. Estimate whether the home side reliably controls possession/territory at home.
+6. Estimate whether the away side tends to concede possession/territory away.
+7. Retrieve odds or other available strength evidence only as supporting context, not as a substitute for possession/control evidence.
+8. Retrieve current tactical context when available: buildup style, directness, central-vs-wide progression, press/block behavior, and likely first-goal direction.
+9. Grade each fixture:
+    * VERIFIED_HOME_CONTROL
+    * PARTIAL_HOME_CONTROL
+    * NEUTRAL
+    * CONTRADICTED
+    * UNKNOWN
+10. Do not rank UNKNOWN or CONTRADICTED fixtures as Script Hunt candidates.
+11. Query the current PrizePicks board only for fixtures that survive the home-control filter.
+12. Map live board players to verified fixture/player identities.
+13. Rank props by exact workload pathway:
+
+* dominant-home GK pass UNDER candidates,
+* away advanced-player pass UNDER candidates,
+* away hub/CB/GK circulation traps to avoid,
+* keeper saves only when opponent SOT threat supports it.
+
+14. Run deeper audits on the top candidates before returning the final Script Hunt result.
+
+The response must include:
+
+* qualified fixtures
+* rejected fixtures and reasons
+* evidence quality
+* current board candidates
+* role classification
+* line/current movement when available
+* top ranked props
+* why each prop fits the script
+* major trap warnings
+* which candidates were rejected after deeper audit
+
+Add a live acceptance test from a blank owner chat with only:
+
+Script hunt
+
+It passes only if at least one fixture is actually evaluated with venue/control evidence and the system does NOT return all discovered home fixtures as provisional candidates.
+
+If possession or tactical evidence is unavailable for a fixture, leave it UNKNOWN and exclude it from the final ranked shortlist rather than promoting it.
+
+Also expose owner diagnostics for the test:
+provider_used, model_used, tool_call_count, tool_call_names, orchestration_rounds, fallback_used, and fallback_reason.
+
+Do not declare Phase 2 complete until the deployed owner chat can execute this live end-to-end.

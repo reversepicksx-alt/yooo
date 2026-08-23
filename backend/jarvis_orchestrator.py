@@ -29,6 +29,31 @@ ACTION_SPECS = {
 def classify_action(message: str) -> tuple[str, dict[str, Any]]:
     text = str(message or "").strip()
     lowered = text.lower()
+    # Natural-language prop requests are valid without a command verb. Keep
+    # this deliberately narrow: it extracts obvious typed fields, while
+    # verified identity and all quantitative work remain tool-owned.
+    natural_prop = re.match(
+        r"^\s*(?P<player>.+?)\s+(?P<line>\d+(?:\.\d+)?)\s+"
+        r"(?P<prop>pass(?:\s+attempts?)?|passes|shots?|clearances?|tackles?)\s+"
+        r"(?:vs\.?|versus|against)\s+(?P<opponent>.+?)\s*$",
+        text,
+        re.IGNORECASE,
+    )
+    if natural_prop:
+        raw_prop = natural_prop.group("prop").lower().replace(" ", "_")
+        return "run_player", {
+            "player_query": natural_prop.group("player").strip(),
+            "opponent_query": natural_prop.group("opponent").strip(),
+            "venue": None,
+            "line": float(natural_prop.group("line")),
+            "prop_type": {
+                "pass": "pass_attempts", "passes": "pass_attempts",
+                "pass_attempts": "pass_attempts", "shot": "shots",
+                "shots": "shots", "clearance": "clearances",
+                "clearances": "clearances", "tackle": "tackles",
+                "tackles": "tackles",
+            }.get(raw_prop),
+        }
     line_update = re.match(
         r"\s*(?:actually\s+)?(?:use|set|make\s+it)\s+(?:line\s+)?(\d+(?:\.\d+)?)\.?\s*$",
         text,
@@ -61,6 +86,8 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
     run = re.search(r"\b(?:run|analyze|analyse|check)\s+(.+)$", text, re.IGNORECASE)
     if run and len(run.group(1).strip()) >= 3:
         query = run.group(1).strip()
+        if re.fullmatch(r"(?:a\s+)?prediction\s+for\s+(?:a\s+)?player", query, re.IGNORECASE):
+            return "general", {"needs_clarification": True}
         # "plays at home" is natural-language venue context, not a prop
         # called "plays". Leave the prop unresolved until the live board
         # supplies the canonical provider market.
@@ -229,6 +256,19 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
             "tool_definitions": len(TOOL_DEFINITIONS),
             "deterministic_engine_authoritative": True,
         },
+        # This is intentionally explicit: the current named-action path is
+        # deterministic orchestration. A configured provider is not reported
+        # as having handled a turn unless its Responses adapter actually ran.
+        "owner_brain_diagnostic": {
+            "provider_used": "deterministic-fallback",
+            "model_used": configured_provider().model if configured_provider() else None,
+            "response_id": None,
+            "tool_call_count": len(tools),
+            "tool_call_names": [str(tool.get("name")) for tool in tools],
+            "orchestration_rounds": 0,
+            "fallback_used": True,
+            "fallback_reason": "named_action_orchestrator_path_did_not_call_responses",
+        },
         "data": data or {},
         "pipeline": [{"name": name, "status": stage_status[name]} for name in stage_names],
         "response": response,
@@ -268,6 +308,8 @@ async def execute_action(
     prior_prop_type: str | None = None,
     resolve_player_fixture: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     run_player_analysis: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    evaluate_script_fixture: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    audit_script_candidate: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     action, args = classify_action(message)
     session_state = (context or {}).get("_jarvis_state") if isinstance(context, dict) else {}
@@ -287,6 +329,18 @@ async def execute_action(
                 args[key] = value
     tools: list[dict[str, Any]] = []
     data: dict[str, Any] = {"action_spec": ACTION_SPECS[action]}
+    if action == "general" and args.get("needs_clarification"):
+        return _result(
+            action,
+            status="available",
+            tools=[],
+            data=data,
+            response=(
+                "Sure. Tell me the player, prop, line, and opponent you want to check. "
+                "For example: “Rongier 52.5 passes vs PSG.” I’ll resolve the fixture "
+                "and venue before running the read-only analysis."
+            ),
+        )
 
     if action == "board":
         tool, board = await _safe_tool("search_market_board", load_board)
@@ -309,7 +363,8 @@ async def execute_action(
         rows = fixtures if isinstance(fixtures, list) else []
         candidates: list[dict[str, Any]] = []
         rejected: list[dict[str, Any]] = []
-        for fixture in rows[:100]:
+        evaluated: list[dict[str, Any]] = []
+        for fixture in rows[:50]:
             fixture_data = fixture.get("fixture") if isinstance(fixture, dict) else {}
             teams = fixture.get("teams") if isinstance(fixture, dict) else {}
             home = teams.get("home") if isinstance(teams, dict) else {}
@@ -324,18 +379,28 @@ async def execute_action(
                 "homeControl": {"status": "UNKNOWN", "reason": "Requires possession, shape, and opponent-control evidence."},
                 "scriptStrength": "UNKNOWN",
             }
-            # Only home-side candidates enter Script Hunt. Away-control
-            # scenarios are retained as transparent rejections, never ranked.
-            if away.get("id") if isinstance(away, dict) else False:
+            if not (away.get("id") if isinstance(away, dict) else False):
+                rejected.append({"fixture": fixture, "reason": "missing_verified_away_identity"})
+                continue
+            if not evaluate_script_fixture:
+                rejected.append({"fixture": fixture, "reason": "home_control_evaluator_unavailable", "status": "UNKNOWN"})
+                continue
+            evaluation = await evaluate_script_fixture(fixture)
+            item["homeControl"] = evaluation
+            evaluated.append(item)
+            grade = evaluation.get("grade")
+            if grade in {"VERIFIED_HOME_CONTROL", "PARTIAL_HOME_CONTROL"}:
+                item["scriptStrength"] = grade
                 candidates.append(item)
             else:
-                rejected.append({"fixture": fixture, "reason": "missing_verified_away_identity"})
+                rejected.append({"fixture": fixture, "reason": evaluation.get("reason") or grade or "home_control_not_qualified", "homeControl": evaluation})
         data.update({
             "slate": rows[:100],
             "fixtures": candidates[:30],
             "rejectedFixtures": rejected[:30],
-            "home_control_filter": {"status": "partial", "kept": len(candidates), "rejected": len(rejected)},
-            "tactical_matchup": {"status": "UNKNOWN", "reason": "Requires exact fixture lineup and tactical evidence."},
+            "evaluatedFixtures": evaluated[:30],
+            "home_control_filter": {"status": "available" if evaluated else "UNKNOWN", "kept": len(candidates), "rejected": len(rejected), "qualification_required": True},
+            "tactical_matchup": {"status": "partial" if candidates else "UNKNOWN", "reason": "Deeper fixture/player audits run only for surviving qualified fixtures."},
             "markets": (board or [])[:50] if isinstance(board, list) else [],
         })
         board_rows = board if isinstance(board, list) else []
@@ -366,6 +431,11 @@ async def execute_action(
             ), "scriptStrength": item.get("scriptStrength", "UNKNOWN")}
             for item in candidates[:30]
         ]
+        if audit_script_candidate and board_candidates:
+            audited_candidates = []
+            for candidate in board_candidates[:10]:
+                audited_candidates.append(await audit_script_candidate(candidate))
+            data["deepAudits"] = audited_candidates
         if candidates:
             response = f"I discovered {len(rows)} upcoming fixtures, kept {len(candidates)} provisional home-side Script Hunt candidates, rejected {len(rejected)} incomplete/away-side cases, and checked the current board. Home-control qualification remains UNKNOWN until possession and matchup evidence is available; I did not treat formation alone as proof."
             status = "partial" if board_tool["status"] != "UNKNOWN" else "partial"

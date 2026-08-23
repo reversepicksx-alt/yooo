@@ -861,9 +861,55 @@ async def _resolve_soccer_prop_identity(
         if row.get("player_id") is not None
         and _identity_name_matches(query, row.get("player_name"))
     ]
+    if not players:
+        # API-Football season search can be empty for otherwise valid cached
+        # identities. Reuse the bounded project player cache, then verify the
+        # club and fixture below rather than trusting cache team metadata.
+        try:
+            from routes.players import _search_players_cache
+            cached_rows = await _search_players_cache(query, relaxed=True, fast=True)
+            players = [{
+                "player_id": row.get("id") or row.get("playerId"),
+                "player_name": row.get("fullName") or row.get("name"),
+                "teams": [{
+                    "team_id": row.get("teamId"),
+                    "team_name": row.get("teamName"),
+                }] if row.get("teamId") else [],
+            } for row in (cached_rows or []) if row.get("id") or row.get("playerId")]
+            players = [
+                row for row in players
+                if _identity_name_matches(query, row.get("player_name"))
+            ]
+        except Exception:
+            players = []
+    if players and not any(row.get("teams") for row in players):
+        # Some cached identities intentionally omit club metadata. Recover it
+        # from the provider's stable player ID across the current and prior
+        # season before attempting fixture selection.
+        for candidate in players[:3]:
+            player_id = candidate.get("player_id")
+            if player_id is None:
+                continue
+            for candidate_season in (search_season, search_season - 1, search_season - 2):
+                profile = await _sports_get_safe(
+                    "players", {"id": int(player_id), "season": candidate_season},
+                    # Do not reuse a cached empty season lookup here: this is
+                    # the identity-recovery path for an otherwise valid ID.
+                    cache_ttl=0,
+                )
+                profile_rows = (profile or {}).get("response") or []
+                for row in profile_rows:
+                    identity = _player_search_identity(row)
+                    if identity.get("player_id") == player_id and identity.get("teams"):
+                        candidate["teams"] = identity["teams"]
+                        break
+                if candidate.get("teams"):
+                    break
     graph_fixture: dict[str, Any] | None = None
     rows: list[dict[str, Any]] = []
-    if not players and opponent and not team:
+    if opponent and not team and (
+        not players or not any(row.get("teams") for row in players)
+    ):
         # Prefer the project's existing alias-aware team resolver before
         # asking API-Football to search an abbreviation such as PSG.
         resolved_opponent = None
