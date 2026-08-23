@@ -14,6 +14,43 @@ def test_classifies_named_commands():
     assert classify_action("Postmortem")[0] == "postmortem"
 
 
+def test_run_player_parses_plays_as_venue_not_prop():
+    action, args = classify_action("Run Rongier plays at home vs PSG line 52.5")
+    assert action == "run_player"
+    assert args["player_query"] == "Rongier"
+    assert args["opponent_query"] == "PSG"
+    assert args["venue"] == "home"
+    assert args["line"] == 52.5
+    assert "prop_type" not in args
+
+
+def test_run_player_infers_prop_from_one_matching_board_market():
+    async def empty():
+        return []
+
+    async def board():
+        return [{
+            "playerName": "Valentin Rongier",
+            "line": 52.5,
+            "propType": "pass_attempts",
+        }]
+
+    result = asyncio.run(execute_action(
+        "Run Rongier plays at home vs PSG line 52.5",
+        context=None,
+        load_picks=empty,
+        find_team=lambda _: empty(),
+        fetch_fixtures=lambda _: empty(),
+        discover_slate=empty,
+        load_board=board,
+        load_memory=empty,
+    ))
+    assert result["data"]["player_query"] == "Rongier"
+    assert result["data"]["venue"] == "home"
+    assert result["data"]["opponent_query"] == "PSG"
+    assert result["data"]["inferred_prop_type"] == "pass_attempts"
+
+
 def test_script_hunt_dispatches_fixture_and_board_tools():
     calls = []
 
