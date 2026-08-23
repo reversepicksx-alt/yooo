@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
-from jarvis_brain import BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS
+from jarvis_brain import BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS, configured_provider
 
 ACTION_SPECS = {
     "script_hunt": "fixture discovery, home-control filtering, tactical matchup, and board candidates",
@@ -90,7 +90,8 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
         ],
         "brain": {
             "schema_version": BRAIN_SCHEMA_VERSION,
-            "provider": "deterministic-fallback",
+            "provider": "openai-responses" if configured_provider() else "deterministic-fallback",
+            "model": configured_provider().model if configured_provider() else None,
             "reasoning_effort": "high" if action in {"script_hunt", "opposite_case", "run_player"} else "medium",
             "tool_calling": True,
             "tool_definitions": len(TOOL_DEFINITIONS),

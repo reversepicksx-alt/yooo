@@ -16,7 +16,10 @@ import httpx
 
 
 BRAIN_SCHEMA_VERSION = "jarvis-brain.v1"
-DEFAULT_MODEL = "gpt-5.6-sol"
+# Replit's current documented OpenAI reasoning choice for this orchestration
+# workload. Keep it configurable so a later provider update does not require
+# changing the adapter contract.
+DEFAULT_MODEL = "o5"
 MAX_TOOL_ROUNDS = 8
 
 
