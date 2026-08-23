@@ -1,0 +1,106 @@
+Send Replit this exact instruction:
+
+SESSION CONTEXT HYDRATION — REQUIRED FOR REAL JARVIS BEHAVIOR
+
+The full_player_audit intent is now correct. The remaining failure is that the owner JARVIS API is treating each turn as stateless. Fix this by making verified conversational state persistent and automatically hydrated into every new JARVIS turn.
+
+JARVIS must maintain a canonical session state object containing the latest verified values for:
+
+player_name
+player_id
+team_name
+team_id
+opponent_name
+opponent_id
+fixture_id
+fixture_date
+league_id
+season
+venue
+prop_type
+line
+line_source
+market_key
+current_line
+saved_line
+last_intent
+last_analysis_id
+
+Only VERIFIED or explicitly USER_SUPPLIED values may be persisted as canonical session context. UNKNOWN or inferred-but-unverified values must not overwrite previously verified state.
+
+Every incoming JARVIS message must execute this order:
+
+1. Load the existing session state for the authenticated owner/chat conversation.
+2. Parse the new user message.
+3. Merge explicit new information over prior verified state.
+4. Preserve omitted fields from prior context.
+5. Resolve only fields that remain missing or conflicting.
+6. Run the requested workflow using the hydrated canonical context.
+7. Save newly verified context back to the session after successful resolution.
+
+Example conversation:
+
+Turn 1: Run Rongier pass attempts at home vs PSG line 52.5
+
+Persist:
+Valentin Rongier / Rennes / PSG / home / pass_attempts / 52.5 / verified fixture.
+
+Turn 2: Full audit Rongier under 52.5
+
+JARVIS must automatically hydrate:
+prop_type=pass_attempts
+venue=home
+opponent=PSG
+team=Rennes
+fixture_id=<verified prior fixture>
+
+and run the full audit immediately.
+
+Turn 3: What if PSG score first?
+
+JARVIS must reuse the same audit/session context and answer the score-state branch without re-resolving the entire player.
+
+Turn 4: What’s the strongest opposite case?
+
+Reuse the same audit result/state.
+
+Context precedence must be:
+
+new explicit user input > newly verified provider evidence > existing verified session state > unresolved inference
+
+If the user changes one element, such as Actually line is 49.5, update only that field and preserve the verified player/fixture/prop context.
+
+If the user says Now run Rusnák 42.5, invalidate player-specific fields but preserve slate/date/session context where safe.
+
+If fixture/date changes materially, invalidate fixture-dependent context.
+
+Session state must be keyed by authenticated user + conversation/session ID and must not leak between users.
+
+Add tests for these exact sequential turns:
+
+1. Run Rongier pass attempts at home vs PSG line 52.5
+2. Full audit Rongier under 52.5
+3. What if PSG score first?
+4. What is the strongest opposite case?
+
+The second through fourth turns must execute without asking again for prop, opponent, team, venue, or fixture.
+
+Also test:
+
+Actually use 49.5
+
+JARVIS should rerun at 49.5 while preserving Rongier/PSG/home/pass_attempts.
+
+The goal is for the JARVIS tab to behave like an actual conversation, not a sequence of isolated API commands.
+
+That is the missing architectural piece.
+
+Once this works, the app stops feeling like:
+
+“Tell me everything again every turn.”
+
+and starts feeling like:
+
+“I know exactly who we’re talking about—what do you want me to do next?”
+
+That’s when it starts to feel like me.

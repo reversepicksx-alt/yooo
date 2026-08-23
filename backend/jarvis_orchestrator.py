@@ -124,6 +124,34 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
     return "general", {}
 
 
+def merge_session_state(previous: dict[str, Any] | None, result: dict[str, Any]) -> dict[str, Any]:
+    """Keep only verified or explicitly user-supplied conversation facts."""
+    state = dict(previous or {})
+    data = result.get("data") if isinstance(result, dict) else {}
+    resolution = data.get("resolution") if isinstance(data, dict) else {}
+    if isinstance(resolution, dict) and resolution.get("status") == "resolved":
+        for source, target in (
+            ("player_name", "player_name"), ("player_id", "player_id"),
+            ("team_name", "team_name"), ("team_id", "team_id"),
+            ("opponent_name", "opponent_name"), ("opponent_id", "opponent_id"),
+            ("fixture_id", "fixture_id"), ("date", "fixture_date"),
+            ("league_id", "league_id"), ("season", "season"), ("venue", "venue"),
+        ):
+            if resolution.get(source) is not None:
+                state[target] = resolution[source]
+    if isinstance(data, dict):
+        if data.get("inferred_prop_type") not in {None, "", "UNKNOWN"}:
+            state["prop_type"] = data["inferred_prop_type"]
+        if data.get("line") is not None:
+            state["line"] = data["line"]
+        if data.get("line_source") in {"USER_SUPPLIED_LINE", "board"}:
+            state["line_source"] = data["line_source"]
+        if data.get("current_market_status") is not None:
+            state["current_line"] = data.get("current_market_status")
+    state["last_intent"] = result.get("action")
+    return state
+
+
 def _result(action: str, *, status: str, response: str, tools: list[dict[str, Any]],
             data: dict[str, Any] | None = None,
             stage_overrides: dict[str, str] | None = None) -> dict[str, Any]:
@@ -220,6 +248,13 @@ async def execute_action(
     run_player_analysis: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     action, args = classify_action(message)
+    session_state = (context or {}).get("_jarvis_state") if isinstance(context, dict) else {}
+    if isinstance(session_state, dict) and action in {"run_player", "full_player_audit"}:
+        # New explicit values already occupy args; omitted fields inherit only
+        # from the authenticated conversation's canonical state.
+        for key in ("opponent_query", "venue", "line", "prop_type"):
+            if args.get(key) in {None, ""} and session_state.get(key) is not None:
+                args[key] = session_state[key]
     tools: list[dict[str, Any]] = []
     data: dict[str, Any] = {"action_spec": ACTION_SPECS[action]}
 

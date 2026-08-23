@@ -21,10 +21,15 @@ from config import OWNER_EMAIL, db
 from routes.admin import verify_owner
 from compact_explanation import _generate as _generate_explanation
 from compact_explanation import _within_daily_limit as _within_explanation_budget
-from lissa_memory import load_recent_turns, remember_turn
+from lissa_memory import (
+    load_recent_turns,
+    remember_turn,
+    load_session_state,
+    save_session_state,
+)
 from team_resolver import find_team
 from utils import priority_api_football_request
-from jarvis_orchestrator import execute_action
+from jarvis_orchestrator import execute_action, merge_session_state
 
 
 router = APIRouter(prefix="/api/lissa", tags=["lissa"])
@@ -1190,6 +1195,9 @@ async def lissa_message(req: LissaMessageRequest):
     await _authorize(req)
     message = req.message.strip()
     session_id = _session_id(req)
+    session_state = await load_session_state(req.email, session_id)
+    action_context = dict(req.context or {})
+    action_context["_jarvis_state"] = session_state
 
     # Named commands use the shared action orchestrator instead of the retired
     # ledger-only chat path. Each tool is bounded, read-only, and provenance
@@ -1277,16 +1285,21 @@ async def lissa_message(req: LissaMessageRequest):
 
     action_result = await execute_action(
         message,
-        context=req.context,
+        context=action_context,
         load_picks=_load_owner_picks_cached,
         find_team=find_team,
         fetch_fixtures=_fixtures_for_team,
         discover_slate=_discover_slate,
         load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
         load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
-        prior_prop_type=prior_prop_type,
+        prior_prop_type=prior_prop_type or session_state.get("prop_type"),
         resolve_player_fixture=_resolve_player_fixture,
         run_player_analysis=_run_player_analysis,
+    )
+    await save_session_state(
+        req.email,
+        session_id,
+        merge_session_state(session_state, action_result),
     )
     if action_result.get("action") != "general":
         try:

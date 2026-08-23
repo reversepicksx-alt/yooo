@@ -13,6 +13,31 @@ from typing import Any
 from config import db
 
 _COLLECTION = "lissa_turns"
+_STATE_COLLECTION = "lissa_session_state"
+
+
+async def load_session_state(email: str, session_id: str) -> dict[str, Any]:
+    try:
+        row = await db[_STATE_COLLECTION].find_one(
+            {"email": str(email).lower(), "sessionId": session_id},
+            {"_id": 0, "state": 1},
+        )
+        state = row.get("state") if isinstance(row, dict) else {}
+        return state if isinstance(state, dict) else {}
+    except Exception as exc:
+        print(f"[LISSA MEMORY] state read skipped: {type(exc).__name__}: {exc}")
+        return {}
+
+
+async def save_session_state(email: str, session_id: str, state: dict[str, Any]) -> None:
+    try:
+        await db[_STATE_COLLECTION].update_one(
+            {"email": str(email).lower(), "sessionId": session_id},
+            {"$set": {"state": state, "updatedAt": datetime.now(timezone.utc)}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"[LISSA MEMORY] state write skipped: {type(exc).__name__}: {exc}")
 
 
 async def load_recent_turns(email: str, session_id: str, limit: int = 6) -> list[dict[str, Any]]:

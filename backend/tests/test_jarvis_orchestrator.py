@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from jarvis_orchestrator import classify_action, execute_action
+from jarvis_orchestrator import classify_action, execute_action, merge_session_state
 
 
 def test_classifies_named_commands():
@@ -57,6 +57,32 @@ def test_full_audit_is_first_class_intent():
     assert args["player_query"] == "Rongier"
     assert args["line"] == 52.5
     assert args["audit_direction"] == "UNDER"
+
+
+def test_session_state_preserves_verified_context_and_user_line():
+    state = merge_session_state({}, {
+        "action": "run_player",
+        "data": {
+            "line": 52.5,
+            "line_source": "USER_SUPPLIED_LINE",
+            "inferred_prop_type": "pass_attempts",
+            "resolution": {
+                "status": "resolved",
+                "player_name": "V. Rongier",
+                "player_id": 21102,
+                "team_name": "Rennes",
+                "team_id": 94,
+                "opponent_name": "Paris Saint Germain",
+                "opponent_id": 85,
+                "fixture_id": 1552735,
+                "venue": "home",
+            },
+        },
+    })
+    assert state["player_id"] == 21102
+    assert state["fixture_id"] == 1552735
+    assert state["prop_type"] == "pass_attempts"
+    assert state["line_source"] == "USER_SUPPLIED_LINE"
 
 
 def test_script_hunt_dispatches_fixture_and_board_tools():
