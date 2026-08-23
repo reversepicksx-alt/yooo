@@ -18,6 +18,7 @@ ACTION_SPECS = {
     "run_player": "exact player and matchup analysis",
     "full_player_audit": "full deterministic prediction plus independent tactical and adversarial audit",
     "opposite_case": "strongest opposite-case stress test",
+    "score_state": "score-state branch against the current audit",
     "refresh_lines": "current line and movement check",
     "postmortem": "settled-pick postmortem and lessons",
     "general": "read-only owner intelligence question",
@@ -27,6 +28,15 @@ ACTION_SPECS = {
 def classify_action(message: str) -> tuple[str, dict[str, Any]]:
     text = str(message or "").strip()
     lowered = text.lower()
+    line_update = re.match(
+        r"\s*(?:actually\s+)?(?:use|set|make\s+it)\s+(?:line\s+)?(\d+(?:\.\d+)?)\.?\s*$",
+        text,
+        re.IGNORECASE,
+    )
+    if line_update:
+        return "run_player", {"player_query": "", "line": float(line_update.group(1))}
+    if re.search(r"\b(?:what\s+if|if)\b.*\b(?:score|scores)\s+first\b", lowered):
+        return "score_state", {"score_state": "opponent_scores_first"}
     full_audit = re.match(
         r"\s*(?:full\s+audit|deep\s+dive|audit\s+this|run\s+the\s+full\s+pipeline|analyze\s+fully)\s+(.+)$",
         text,
@@ -253,6 +263,7 @@ async def execute_action(
         # New explicit values already occupy args; omitted fields inherit only
         # from the authenticated conversation's canonical state.
         inherited = {
+            "player_query": session_state.get("player_name"),
             "opponent_query": session_state.get("opponent_query")
             or session_state.get("opponent_name"),
             "venue": session_state.get("venue"),
@@ -367,8 +378,13 @@ async def execute_action(
         data["matching_picks"] = (picks or [])[:30] if isinstance(picks, list) else []
         if action == "opposite_case":
             packet = (context or {}).get("analysis") if isinstance(context, dict) else None
-            data["opposite_case"] = (packet or {}).get("strongestOppositeCase") if isinstance(packet, dict) else None
-            response = "I ran the read-only opposite-case stage against the available analysis. The strongest counterargument is shown in the structured result; missing stress-test evidence remains UNKNOWN."
+            packet = packet or (session_state or {}).get("last_audit")
+            data["opposite_case"] = (
+                (packet or {}).get("strongestOppositeCase")
+                if isinstance(packet, dict) else None
+            )
+            data["reused_audit"] = bool(packet)
+            response = "I reused the current verified audit packet for the strongest opposite-case stress test; missing evidence remains UNKNOWN."
         elif action == "refresh_lines":
             board_tool, board = await _safe_tool("refresh_market_lines", load_board)
             tools.append(board_tool)
