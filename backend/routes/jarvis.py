@@ -76,6 +76,13 @@ from prop_safety_cache import (
     canonical_prop_type,
     get_prop_safety,
 )
+from tactical_memory import (
+    MAX_RESULTS as TACTICAL_MEMORY_MAX_RESULTS,
+    TacticalMemoryInput,
+    retrieve_tactical_memory,
+    invalidate_regime,
+    upsert_tactical_memory,
+)
 
 router = APIRouter()
 
@@ -3163,6 +3170,24 @@ async def jarvis_full_audit_soccer(
             detail={"error": "feature_disabled", "feature": "jarvis_full_audit"},
         )
 
+    # Advisory only. Retrieve before the existing audit work, but never pass
+    # this packet into RP prediction or provider refresh code.
+    try:
+        tactical_memory = await retrieve_tactical_memory(
+            db,
+            player_id=body.player_id,
+            prop_type=body.prop_type,
+            role=body.role_override,
+            limit=20,
+        )
+        tactical_memory_status = "available"
+        tactical_memory_reason = None
+    except Exception as exc:
+        # Tactical memory is auxiliary. Preserve the pre-existing full-audit
+        # contract if its isolated store is unavailable.
+        tactical_memory = []
+        tactical_memory_status = "UNKNOWN"
+        tactical_memory_reason = f"Advisory memory unavailable: {type(exc).__name__}."
     ctx, result = await _run_soccer_prediction(body)
     await asyncio.gather(
         _ensure_full_audit_first_goal_context(result, ctx, body.prop_type),
@@ -3201,6 +3226,139 @@ async def jarvis_full_audit_soccer(
         "news_warnings": news_brief.get("news_warnings") or [],
         "rp_prediction": rp_diagnostic,
         "audit": audit,
+        "tactical_memory": {
+            "status": tactical_memory_status,
+            "records": tactical_memory,
+            "production_influence": False,
+            "precedence": "current verified fixture, lineup, news, and provider evidence wins",
+            "provenance": "owner-authenticated tactical memory; advisory historical context",
+            **({"reason": tactical_memory_reason} if tactical_memory_reason else {}),
+        },
+    }
+
+
+@router.get("/api/jarvis/tactical-memory")
+async def get_tactical_memory(
+    authorization: Optional[str] = Header(default=None),
+    memory_type: Optional[str] = Query(None),
+    team_id: Optional[int] = Query(None, ge=1),
+    opponent_id: Optional[int] = Query(None, ge=1),
+    player_id: Optional[int] = Query(None, ge=1),
+    role: Optional[str] = Query(None, max_length=80),
+    manager_regime: Optional[str] = Query(None, max_length=120),
+    venue: Optional[str] = Query(None, max_length=20),
+    prop_type: Optional[str] = Query(None, max_length=80),
+    since: Optional[str] = Query(None, max_length=40),
+    until: Optional[str] = Query(None, max_length=40),
+    include_stale: bool = Query(False),
+    limit: int = Query(20, ge=1, le=TACTICAL_MEMORY_MAX_RESULTS),
+):
+    """Bounded owner-only retrieval of advisory tactical memory."""
+    _require_auth(authorization)
+    if memory_type and memory_type not in {"team_fingerprint", "player_role", "matchup_interaction", "postmortem"}:
+        raise HTTPException(422, detail={"error": "invalid_memory_type"})
+    return {
+        "source": "jarvis tactical memory",
+        "read_only": True,
+        "records": await retrieve_tactical_memory(
+            db, memory_type=memory_type, team_id=team_id, opponent_id=opponent_id,
+            player_id=player_id, role=role, manager_regime=manager_regime,
+            venue=venue, prop_type=prop_type, since=since, until=until,
+            include_stale=include_stale, limit=limit,
+        ),
+    }
+
+
+@router.get("/api/jarvis/tactical-memory/team-fingerprint")
+async def get_team_fingerprint(
+    authorization: Optional[str] = Header(default=None),
+    team_id: int = Query(..., ge=1),
+    opponent_id: Optional[int] = Query(None, ge=1),
+    venue: Optional[str] = Query(None, max_length=20),
+    limit: int = Query(20, ge=1, le=TACTICAL_MEMORY_MAX_RESULTS),
+):
+    _require_auth(authorization)
+    return {"records": await retrieve_tactical_memory(
+        db, memory_type="team_fingerprint", team_id=team_id,
+        opponent_id=opponent_id, venue=venue, limit=limit,
+    )}
+
+
+@router.get("/api/jarvis/tactical-memory/player-role")
+async def get_player_role_memory(
+    authorization: Optional[str] = Header(default=None),
+    player_id: int = Query(..., ge=1),
+    role: Optional[str] = Query(None, max_length=80),
+    limit: int = Query(20, ge=1, le=TACTICAL_MEMORY_MAX_RESULTS),
+):
+    _require_auth(authorization)
+    return {"records": await retrieve_tactical_memory(
+        db, memory_type="player_role", player_id=player_id, role=role, limit=limit,
+    )}
+
+
+@router.get("/api/jarvis/tactical-memory/postmortem")
+async def get_postmortem_memory(
+    authorization: Optional[str] = Header(default=None),
+    team_id: Optional[int] = Query(None, ge=1),
+    player_id: Optional[int] = Query(None, ge=1),
+    prop_type: Optional[str] = Query(None, max_length=80),
+    limit: int = Query(20, ge=1, le=TACTICAL_MEMORY_MAX_RESULTS),
+):
+    _require_auth(authorization)
+    return {"records": await retrieve_tactical_memory(
+        db, memory_type="postmortem", team_id=team_id, player_id=player_id,
+        prop_type=prop_type, limit=limit,
+    )}
+
+
+@router.post("/api/jarvis/tactical-memory")
+async def upsert_tactical_memory_route(
+    body: TacticalMemoryInput,
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_auth(authorization)
+    try:
+        record = await upsert_tactical_memory(db, body)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"error": str(exc)})
+    return {"record": record, "production_influence": False}
+
+
+@router.post("/api/jarvis/tactical-memory/postmortem")
+async def save_postmortem_memory(
+    body: TacticalMemoryInput,
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_auth(authorization)
+    if body.memory_type != "postmortem":
+        raise HTTPException(422, detail={"error": "memory_type_must_be_postmortem"})
+    try:
+        record = await upsert_tactical_memory(db, body)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"error": str(exc)})
+    return {"record": record, "production_influence": False}
+
+
+@router.post("/api/jarvis/tactical-memory/invalidate")
+async def invalidate_tactical_memory(
+    authorization: Optional[str] = Header(default=None),
+    team_id: Optional[int] = Query(None, ge=1),
+    player_id: Optional[int] = Query(None, ge=1),
+    manager_regime: Optional[str] = Query(None, max_length=120),
+    reason: str = Query("regime_changed", max_length=120),
+):
+    """Stale-mark related observations without deleting their audit history."""
+    _require_auth(authorization)
+    if team_id is None and player_id is None:
+        raise HTTPException(422, detail={"error": "team_id_or_player_id_required"})
+    return {
+        "staled": await invalidate_regime(
+            db, team_id=team_id, player_id=player_id,
+            manager_regime=manager_regime, reason=reason,
+        ),
+        "deleted": 0,
+        "production_influence": False,
     }
 
 
