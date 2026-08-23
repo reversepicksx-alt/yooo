@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from jarvis_brain import (
-    BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS, BrainTurn, configured_provider,
+    BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS, BrainTurn, ResponsesAPIError, configured_provider,
     run_reasoning_turn,
 )
 
@@ -32,6 +32,13 @@ ACTION_SPECS = {
     "postmortem": "settled-pick postmortem and lessons",
     "general": "read-only owner intelligence question",
 }
+
+
+def _same_identity(requested: Any, verified: Any) -> bool:
+    """Allow a short natural name to match a verified full identity."""
+    left = re.sub(r"[^a-z0-9]+", " ", str(requested or "").casefold()).strip()
+    right = re.sub(r"[^a-z0-9]+", " ", str(verified or "").casefold()).strip()
+    return bool(left and right and (left == right or left in right or right in left))
 
 
 def classify_action(message: str) -> tuple[str, dict[str, Any]]:
@@ -178,6 +185,14 @@ def merge_session_state(previous: dict[str, Any] | None, result: dict[str, Any])
     data = result.get("data") if isinstance(result, dict) else {}
     resolution = data.get("resolution") if isinstance(data, dict) else {}
     if isinstance(resolution, dict) and resolution.get("status") == "resolved":
+        state["verified_resolution"] = {
+            key: value for key, value in resolution.items()
+            if key in {
+                "status", "resolution", "fixture_id", "player_id", "player_name",
+                "team_id", "team_name", "opponent_id", "opponent_name", "league_id",
+                "league_name", "venue", "season", "date", "fixture_status", "evidence",
+            }
+        }
         for source, target in (
             ("player_name", "player_name"), ("player_id", "player_id"),
             ("team_name", "team_name"), ("team_id", "team_id"),
@@ -349,6 +364,7 @@ async def execute_action(
                 "response_id": None,
                 "events": [],
                 "reason": f"{type(exc).__name__} while calling Responses API",
+                "provider_error": getattr(exc, "diagnostics", None),
             }
     else:
         brain_result = await run_reasoning_turn(
@@ -371,11 +387,14 @@ async def execute_action(
         "orchestration_rounds": sum(1 for event in brain_events if event.get("name") == "reasoning"),
         "fallback_used": brain_result.get("provider") != "openai-responses",
         "fallback_reason": brain_result.get("reason") if brain_result.get("provider") != "openai-responses" else None,
+        "provider_error": brain_result.get("provider_error") if brain_result.get("provider") != "openai-responses" else None,
     }
     _ACTIVE_BRAIN_DIAGNOSTIC.set(brain_diagnostic)
     action, args = classify_action(message)
     session_state = (context or {}).get("_jarvis_state") if isinstance(context, dict) else {}
     if isinstance(session_state, dict) and action in {"run_player", "full_player_audit"}:
+        if str(args.get("player_query") or "").casefold() in {"him", "her", "them", "it"}:
+            args["player_query"] = None
         # New explicit values already occupy args; omitted fields inherit only
         # from the authenticated conversation's canonical state.
         inherited = {
@@ -671,7 +690,23 @@ async def execute_action(
             data["line_source"] = request["line_source"]
             data["current_market_status"] = request["current_market_status"]
             if prop_type not in {None, "", "UNKNOWN"} and resolve_player_fixture:
-                resolution = await resolve_player_fixture(request)
+                verified = (session_state or {}).get("verified_resolution")
+                can_reuse_resolution = (
+                    isinstance(verified, dict)
+                    and verified.get("status") == "resolved"
+                    and _same_identity(args.get("player_query"), verified.get("player_name"))
+                    and (
+                        not args.get("opponent_query")
+                        or _same_identity(args.get("opponent_query"), verified.get("opponent_name"))
+                    )
+                    and (
+                        not args.get("venue")
+                        or args.get("venue") == verified.get("venue")
+                    )
+                )
+                resolution = dict(verified) if can_reuse_resolution else await resolve_player_fixture(request)
+                if can_reuse_resolution:
+                    resolution["reused_from_session"] = True
                 data["resolution"] = resolution
                 if resolution.get("status") == "resolved" and run_player_analysis:
                     analysis = await run_player_analysis({**request, **resolution})

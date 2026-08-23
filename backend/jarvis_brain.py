@@ -20,6 +20,17 @@ DEFAULT_MODEL = "gpt-5.6-sol"
 MAX_TOOL_ROUNDS = 8
 
 
+class ResponsesAPIError(RuntimeError):
+    """Safe, structured provider failure without credential-bearing details."""
+
+    def __init__(self, *, diagnostics: dict[str, Any]) -> None:
+        self.diagnostics = diagnostics
+        super().__init__(
+            f"Responses API HTTP {diagnostics.get('http_status', 'unknown')}: "
+            f"{diagnostics.get('error_type') or 'provider_error'}"
+        )
+
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {"type": "function", "name": "discover_slate", "description": "Read the bounded upcoming verified soccer slate.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"type": "function", "name": "filter_home_control", "description": "Keep only verified home-side script candidates and record rejections.", "parameters": {"type": "object", "properties": {"fixtures": {"type": "array"}}, "required": ["fixtures"], "additionalProperties": False}},
@@ -74,6 +85,7 @@ class ResponsesProvider:
         instructions: str,
         input_items: list[dict[str, Any]],
         reasoning_effort: str,
+        previous_response_id: str | None = None,
     ) -> dict[str, Any]:
         payload = {
             "model": self.model,
@@ -83,13 +95,37 @@ class ResponsesProvider:
             "reasoning": {"effort": reasoning_effort},
             "text": {"format": {"type": "json_object"}},
         }
+        if previous_response_id:
+            payload["previous_response_id"] = previous_response_id
         async with httpx.AsyncClient(timeout=35.0) as client:
             response = await client.post(
                 "https://api.openai.com/v1/responses",
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                 json=payload,
             )
-            response.raise_for_status()
+            if response.is_error:
+                try:
+                    body = response.json()
+                except (TypeError, ValueError):
+                    body = {}
+                error = body.get("error") if isinstance(body, dict) else {}
+                error = error if isinstance(error, dict) else {}
+                raise ResponsesAPIError(diagnostics={
+                    "http_status": response.status_code,
+                    "error_type": error.get("type"),
+                    "error_code": error.get("code"),
+                    "error_message": error.get("message"),
+                    "request_id": response.headers.get("x-request-id"),
+                    "model_sent": self.model,
+                    "endpoint": "https://api.openai.com/v1/responses",
+                    "authorization_present": bool(self.api_key),
+                    "request_shape": {
+                        "input_item_roles": [item.get("role") for item in input_items if isinstance(item, dict)],
+                        "tool_names": [tool.get("name") for tool in TOOL_DEFINITIONS],
+                        "reasoning_effort": reasoning_effort,
+                        "text_format": "json_object",
+                    },
+                })
             return response.json()
 
 
@@ -135,7 +171,19 @@ async def run_reasoning_turn(
         if on_event:
             await on_event(event)
 
-    items: list[dict[str, Any]] = [{"role": "user", "content": message}]
+    # Responses json_object mode requires an explicit JSON instruction in an
+    # input message (instructions alone are not sufficient). Preserve the
+    # bounded owner conversation state so the provider can orchestrate
+    # follow-up turns without redefining verified identity.
+    items: list[dict[str, Any]] = [
+        item for item in state.turns[-12:]
+        if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+    ]
+    items.append({
+        "role": "user",
+        "content": f"Return JSON. Owner request: {message}",
+    })
+    previous_response_id: str | None = None
     for _ in range(MAX_TOOL_ROUNDS):
         await emit(BrainEvent("progress", "reasoning", "running"))
         payload = await provider.respond(
@@ -146,8 +194,10 @@ async def run_reasoning_turn(
             ),
             input_items=items,
             reasoning_effort=reasoning_effort,
+            previous_response_id=previous_response_id,
         )
         state.response_id = payload.get("id") or state.response_id
+        previous_response_id = payload.get("id") or previous_response_id
         calls = [item for item in _response_items(payload) if item.get("type") == "function_call"]
         if not calls:
             output_text = payload.get("output_text")

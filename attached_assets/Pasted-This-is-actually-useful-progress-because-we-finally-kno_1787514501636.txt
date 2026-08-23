@@ -1,0 +1,95 @@
+This is actually useful progress because we finally know where it is failing instead of guessing.
+
+One correction first: gpt-5.6-sol is a real current API model. OpenAI’s official platform lists GPT-5.6 Sol, and the Responses API itself is correct.  So Replit should not change models blindly. The next job is to expose the actual HTTP error body.
+
+Send Replit this:
+
+STOP FEATURE DEVELOPMENT — DEBUG THE TWO FAILED ACCEPTANCE BLOCKERS
+
+We are not adding anything else until these pass.
+
+1. Diagnose the OpenAI Responses HTTP failure
+
+Do NOT report only HTTPStatusError.
+
+On the failed Responses request, capture and expose owner-only diagnostics:
+
+* HTTP status code
+* OpenAI error type
+* OpenAI error code
+* OpenAI error message
+* request ID if returned
+* model actually sent
+* endpoint actually called
+* whether Authorization header was present — never expose the key
+* sanitized request structure: input/tools/reasoning configuration names, not private content
+
+First run the smallest possible Responses smoke test with NO RP tools:
+
+POST /v1/responses
+
+model = gpt-5.6-sol
+
+input = Reply with OK
+
+If that fails, stop. The problem is OpenAI credentials/account/model/request configuration, not JARVIS.
+
+If that succeeds, progressively test:
+
+minimal response → one dummy function tool → JARVIS tool schemas → full owner orchestration.
+
+Identify the first exact payload that fails.
+
+Do not fall back during this diagnostic test and hide the original error.
+
+2. Fix fixture resolution independently of OpenAI
+
+OpenAI should NOT be responsible for knowing that Rongier plays for Rennes.
+
+Test the deterministic resolver independently with:
+
+Rongier 52.5 passes vs PSG
+
+Starting from the verified opponent, traverse:
+
+PSG → verified upcoming/relevant fixtures → identify fixtures where PSG is away → home team → squad/player search → Valentin Rongier.
+
+Do not require Rongier’s cached team ID to begin this traversal.
+
+Do not hard-code Rennes, Rongier, PSG, or fixture 1552735.
+
+Log every graph step during the acceptance test:
+
+opponent_resolution
+
+fixture_candidates
+
+venue_filter
+
+home_team_candidates
+
+squad_search
+
+player_match
+
+final_fixture_identity
+
+If it fails, tell me the exact graph edge that returned zero/invalid data, not fixture_not_found.
+
+Acceptance
+
+Do not say Phase 2 works until BOTH independent tests pass:
+
+Resolver test: Rongier → Rennes vs PSG → home → correct verified fixture → pass_attempts 52.5 → RP prediction.
+
+OpenAI test: actual Responses request returns a non-null response ID without fallback.
+
+Only after those pass, combine them and run the full owner-chat acceptance chain.
+
+Do not work on UI, Script Hunt, Tactical Memory, market movement, new intents, or anything else.
+
+The most important thing here is the minimal OpenAI smoke test. OpenAI’s current official quickstart shows the Responses endpoint being called with just a model and input, so this gives us a clean baseline before any of your JARVIS tool schemas are involved. 
+
+If Reply with OK fails, we immediately know the problem isn’t Reverse Picks. If it succeeds but adding JARVIS tools fails, we’ve isolated the problem to the tool schema/request construction.
+
+And separately, the football resolver must work without GPT. GPT should orchestrate your tools; it shouldn’t be the thing rescuing broken fixture identity. That’s the architecture we want for the real JARVIS.

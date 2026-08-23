@@ -142,18 +142,13 @@
 - [Passing correlation diagnostics](passing-correlation-diagnostics.md) — same-fixture picks are correlated evidence; exact-time settlement ties need deterministic ordering, not false leakage violations.
 - [JARVIS predict pipeline bypass](jarvis-predict-bypass.md) — internal service bypass uses email="_jarvis_service_" + JARVIS_API_KEY to skip MongoDB session; predict() response field names for correct extraction.
 - [JARVIS owner save and screenshots](jarvis-owner-save-screenshots.md) — private actions resolve the owner session server-side; screenshot URLs are authenticated opaque handles with short expiry, never credential-bearing request fields.
-- [Lissa voice lifecycle](lissa-voice-lifecycle.md) — supervise segmented recognition and wait for speech completion before restarting so Lissa does not freeze or hear her own answer.
-- [Sport selector visibility](sport-selector-visibility.md) — keep sport selection for setup, but hide the selector once a player prediction enters analysis/results.
-- [Retired integration secrets](retired-integration-secrets.md) — removing an integration from code does not remove its secret inventory entry; verify no runtime reads and handle secret deletion separately.
 - [Live NBA provider authorization](bdl-nba-auth.md) — cached player identities can mask BallDontLie stats authorization failures; validate `/stats` before claiming live NBA predictions.
 - [JARVIS audit calibration reads](jarvis-audit-calibration.md) — use inclusion-only, indexed bounded settled-ledger reads and expose truncation instead of implying partial data is lifetime truth.
 - [Settlement prop aliases](settlement-prop-aliases.md) — empirical history must canonicalize labels that share one provider settlement field or valid samples appear unavailable.
 - [First-goal audit response](first-goal-audit-response.md) — full-audit must independently preserve shadow-only first-goal evidence when the core prediction times out late enrichment; normalize API list/envelope shapes and never cache temporary misses as data.
 - [Soccer news intelligence](soccer-news-intelligence.md) — current web evidence must be entity-matched, dated, and fresh; incomplete lineups stay UNKNOWN; all news remains shadow-only.
-- [EAS OTA configuration](eas-ota-config.md) — dynamic Expo config needs explicit Updates URL/runtime policy; rebuild local web dist after publishing native OTA bundles.
 - [History identity and H2H coverage](history-identity-h2h.md) — dedupe player logs by fixture identity before math/display, normalize provider envelopes, and expose unavailable H2H explicitly.
 - [PrizePicks line history](prizepicks-line-history.md) — JARVIS board refreshes persist per-market timestamped PrizePicks lines and expose movement plus saved history.
-- [Plain pytest async convention](plain-pytest-async.md) — backend tests should use asyncio.run unless an async pytest plugin is explicitly configured.
-- [Manifest validation](manifest-validation.md) — large machine-readable exports need strict parsing, schema-key checks, and patchable formatting.
 - [JARVIS identity resolution](jarvis-identity-resolution.md) — contextual team, fixture, orientation, and squad fallbacks are required before stopping conversational predictions.
 - [JARVIS Script Hunt evidence gate](jarvis-script-hunt-evidence.md) — fixture discovery never creates candidates; measured home/away control evidence gates board lookup and ranking.
+- [JARVIS Responses continuations](jarvis-responses-continuations.md) — JSON mode needs an input instruction; tool continuations use previous_response_id, never replay hidden reasoning items.

@@ -1,0 +1,64 @@
+Good. That’s the right narrowing now.
+
+Script Hunt’s evidence gate is behaving correctly. If all 10 evaluated fixtures lack sufficient verified control evidence, rejecting all 10 is better than manufacturing candidates. So I would leave that path alone for the moment.
+
+The only two things that matter next are exactly what Replit identified: wire the live owner conversation through the actual OpenAI Responses path, and make the Rongier identity flow resolve through opponent → fixture → home team → squad → player instead of relying on a stale cache.
+
+I’d tell Replit to finish with this exact acceptance contract:
+
+FINAL PHASE 2 CORE ACCEPTANCE
+
+Do not modify Script Hunt further right now. The evidence gate is accepted.
+
+Focus only on:
+
+A. Live OpenAI orchestration
+
+The deployed owner JARVIS turn must call the Responses API and return diagnostics proving it:
+
+* provider_used = openai
+* model_used = gpt-5.6-sol
+* response_id != null
+* orchestration_rounds >= 1
+* fallback_used = false
+
+The model must receive the current conversation state plus typed tools and decide which tools to call. Deterministic Python remains authoritative for verified identity, projections, calibration, safety, and settlement.
+
+B. Rongier graph-based identity resolution
+
+For the exact user input:
+
+Rongier 52.5 passes vs PSG
+
+Resolve in this order when needed:
+
+PSG name → PSG team ID → nearest relevant PSG-away fixture → home team → home squad/current players → Valentin Rongier → player ID → verified fixture orientation
+
+Expected resolved state:
+
+* player = Valentin Rongier
+* team = Rennes
+* opponent = Paris Saint-Germain
+* venue = home
+* fixture = 1552735
+* prop = pass_attempts
+* line = 52.5
+* line source = USER_SUPPLIED_LINE
+
+Then run the deterministic prediction and return projection, probabilities, recommendation, plus the OpenAI owner diagnostics above.
+
+Do not use hard-coded Rongier/Rennes/PSG logic to make the test pass.
+
+After that passes, immediately test the same live conversation with:
+
+Full audit him
+
+What if PSG score first?
+
+Actually use 49.5
+
+Those turns must reuse the verified session state and must not rediscover identity unless something materially conflicts.
+
+Do not add new features or polish anything else until this live chain passes through the actual deployed owner chat.
+
+Once those two blockers pass, I’d consider the core of Phase 2 real. Then we can go back to deepening Script Hunt and broader prop coverage.

@@ -1194,6 +1194,8 @@ async def predict(req: PredictionRequest):
     # remaining at Liverpool after moving to another club. Explicit national
     # team contexts remain allowed.
     if (
+        not _is_jarvis_call
+        and
         req.sport == "soccer"
         and req.playerId
         and req.teamId
