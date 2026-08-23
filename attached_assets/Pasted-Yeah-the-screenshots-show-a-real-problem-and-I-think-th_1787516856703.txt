@@ -1,0 +1,103 @@
+Yeah — the screenshots show a real problem, and I think the reports from Replit are mixing backend acceptance tests with what the deployed UI is actually running.
+
+Look at the contradiction:
+
+* One screenshot has the old Script Hunt behavior: “discovered 50… kept 50 provisional…”
+* Another has the new behavior: “evaluated 10… rejected 10…”
+* The generic “Run a prediction for a player” still responds like the old deterministic parser: “I need only the prop type.”
+* Your current JARVIS page is therefore not behaving consistently like the supposedly verified Phase-2 OpenAI conversation path.
+
+So I would stop accepting backend test summaries entirely. From now on, acceptance means the exact browser/app you use passes the test.
+
+Send Replit this:
+
+STOP. THE DEPLOYED JARVIS UI IS STILL FAILING DESPITE YOUR ACCEPTANCE REPORTS.
+
+I am no longer accepting unit tests, direct backend endpoint tests, localhost tests, or statements that a route “should” work as proof.
+
+My screenshots show that the actual deployed JARVIS UI is still producing old/deterministic behavior.
+
+We need a DEPLOYED-CLIENT TRACE.
+
+Start from the exact JARVIS page I am using and trace ONE message end-to-end:
+
+Rongier 52.5 passes vs PSG
+
+Record:
+
+1. exact frontend build/version/hash loaded by the browser;
+2. exact API URL the browser POSTs to;
+3. request body sent by the browser;
+4. authenticated owner/session identity state;
+5. backend route that receives it;
+6. orchestration implementation/version handling it;
+7. OpenAI response_id;
+8. model actually used;
+9. every tool selected by the model, in order;
+10. verified fixture/player resolution;
+11. deterministic RP prediction result;
+12. exact response returned to the browser.
+
+Give the request a unique trace_id generated at the client and preserve that SAME ID through frontend → API → OpenAI orchestration → tools → RP → response.
+
+Display an owner-only debug drawer in JARVIS containing:
+
+frontend_build
+backend_build
+trace_id
+provider_used
+model_used
+response_id
+fallback_used
+orchestration_rounds
+tools_called
+fixture_id
+player_id
+
+This will make it impossible for us to confuse a test against one deployment with the UI running another.
+
+DO NOT FIX ANY NEW FEATURES YET.
+
+First determine why the deployed UI shown in my screenshots is not consistently hitting the Phase-2 path that supposedly passed acceptance.
+
+Then test FROM THE DEPLOYED UI, not by calling the backend manually.
+
+Required browser acceptance:
+
+Turn 1: Rongier 52.5 passes vs PSG
+
+Must resolve Valentin Rongier → Rennes → PSG → home → fixture 1552735 → pass_attempts 52.5 → RP prediction, with provider_used=openai, non-null response_id, and fallback_used=false.
+
+Turn 2: Full audit him
+
+Must reuse Turn 1 context.
+
+Turn 3: What if PSG score first?
+
+Must reuse the audit and answer that scenario.
+
+Turn 4: Actually use 49.5
+
+Must preserve everything except the line and rerun RP.
+
+Turn 5: Which matchups did you reject in that Script Hunt?
+
+Must know what “that Script Hunt” refers to and list the evaluated/rejected fixtures from the previous Script Hunt result. It must NOT rediscover the slate just to answer.
+
+I want the actual response text from all five turns plus the trace/debug data for each.
+
+Do not tell me Phase 2 passed until this exact deployed-client sequence passes.
+
+Also investigate whether:
+
+* stale frontend bundles/service-worker/browser cache are serving old code;
+* preview and production point to different backends;
+* multiple JARVIS endpoints still exist;
+* the UI is calling an old /jarvis route while tests call the new owner route;
+* session state differs between direct API tests and browser requests;
+* an old deterministic handler executes before the OpenAI orchestrator;
+* deployment did not actually include the tested commit.
+
+Do not paper over these with additional parser rules. Find the routing/deployment inconsistency first.
+
+And there’s another important issue your screenshot exposed: “Which matchups were they?” should be trivial conversational memory. JARVIS already produced the ten rejected fixtures. A real conversation shouldn’t need to discover them again. The previous tool result needs to remain part of the conversation state.

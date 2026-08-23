@@ -127,7 +127,7 @@ async def _load_owner_picks(limit: int = 250) -> list[dict[str, Any]]:
         )
     except Exception as exc:
         print(f"[LISSA] owner ledger read skipped: {type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=503, detail="Lissa could not read the owner ledger right now.")
+        raise HTTPException(status_code=503, detail="JARVIS could not read the owner ledger right now.")
 
 
 import time as _time

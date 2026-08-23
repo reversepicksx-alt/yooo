@@ -253,7 +253,7 @@ export default function LissaVoiceAssistant({
       if (!permission.granted) {
         armedRef.current = false;
         setArmed(false);
-        setError('Microphone and speech permission are required for .2 voice mode.');
+        setError('Microphone and speech permission are required for JARVIS voice mode.');
         return;
       }
       armedRef.current = true;
@@ -294,7 +294,7 @@ export default function LissaVoiceAssistant({
         }
       } catch {
         if (!cancelled && Platform.OS !== 'web') {
-          setError('Voice mode is reconnecting. Tap Activate .2 if needed.');
+          setError('Voice mode is reconnecting. Tap Activate JARVIS if needed.');
         }
       }
     };
@@ -362,7 +362,7 @@ export default function LissaVoiceAssistant({
       const isTimeout = err instanceof Error && err.message.toLowerCase().includes('timed out');
       const errText = isTimeout
         ? "Took too long. Try again."
-        : '.2 is temporarily unavailable.';
+        : 'JARVIS is temporarily unavailable.';
       setError(errText);
       busyRef.current = false;
       setBusy(false);
@@ -433,7 +433,7 @@ export default function LissaVoiceAssistant({
     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
       armedRef.current = false;
       setArmed(false);
-      setError('Voice permission is unavailable. Tap Activate .2 to try again.');
+      setError('Voice permission is unavailable. Tap Activate JARVIS to try again.');
       return;
     }
     if (armedRef.current) {
@@ -457,7 +457,7 @@ export default function LissaVoiceAssistant({
       return (
         <View style={styles.minimalUnavailable}>
           <Ionicons name="mic-off-outline" size={14} color={Colors.textTertiary} />
-          <Text style={styles.minimalText}>.2 unavailable</Text>
+      <Text style={styles.minimalText}>JARVIS unavailable</Text>
         </View>
       );
     }
@@ -474,7 +474,7 @@ export default function LissaVoiceAssistant({
       <View style={styles.minimalWrap}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={armed ? 'Enable .2 spoken answers' : 'Enable .2 microphone and spoken answers'}
+          accessibilityLabel={armed ? 'Enable JARVIS spoken answers' : 'Enable JARVIS microphone and spoken answers'}
           style={styles.minimalButton}
           onPress={() => {
             if (armed) void primeSpeech();
@@ -484,7 +484,7 @@ export default function LissaVoiceAssistant({
         >
           <View style={[styles.minimalDot, armed && listening && styles.minimalDotLive]} />
           <Ionicons name="mic" size={15} color={armed ? Colors.primary : Colors.textSecondary} />
-          <Text style={styles.minimalName}>.2</Text>
+        <Text style={styles.minimalName}>JARVIS</Text>
           <Text style={styles.minimalStatus}>
           {busy ? (voiceMode === 'thinking' ? 'thinking…' : 'speaking…') : armed && !speechReady ? 'tap for voice' : armed && awaitingQuestion ? 'ask now' : armed && listening ? 'say "Reverse"' : 'tap to enable'}
           </Text>
@@ -500,7 +500,7 @@ export default function LissaVoiceAssistant({
             style={styles.hearButton}
             onPress={() => speakNow(pendingSpeak)}
             accessibilityRole="button"
-            accessibilityLabel="Tap to hear .2's answer"
+          accessibilityLabel="Tap to hear JARVIS's answer"
           >
             <Ionicons name="volume-high-outline" size={13} color={Colors.primary} />
             <Text style={styles.hearButtonText}>Tap to hear</Text>
@@ -519,14 +519,14 @@ export default function LissaVoiceAssistant({
       <View style={styles.controlRow}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={armed ? 'Turn off .2 wake mode' : 'Activate .2 wake mode'}
+          accessibilityLabel={armed ? 'Turn off JARVIS wake mode' : 'Activate JARVIS wake mode'}
           style={[styles.voiceButton, armed && styles.voiceButtonActive]}
           onPress={() => (armed ? stopListening() : activate())}
           disabled={busy}
         >
           <Ionicons name={armed ? 'mic' : 'mic-outline'} size={16} color={armed ? '#06110d' : Colors.primary} />
           <Text style={[styles.voiceButtonText, armed && styles.voiceButtonTextActive]}>
-            {armed ? (listening ? 'Listening for "Reverse"' : 'Reconnecting…') : 'Activate .2'}
+            {armed ? (listening ? 'Listening for "JARVIS"' : 'Reconnecting…') : 'Activate JARVIS'}
           </Text>
         </TouchableOpacity>
         {armed && (
