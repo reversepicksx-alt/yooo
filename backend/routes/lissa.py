@@ -190,7 +190,7 @@ def _summary_text(summary: dict[str, Any]) -> str:
     hit_rate = "not available yet" if summary["hitRate"] is None else f"{summary['hitRate']:.1f}%"
     sports = ", ".join(f"{name.upper()} {count}" for name, count in sorted(summary["sports"].items()))
     return (
-        f"Jossel, I'm point two — your personal Reverse Picks analyst. I can read the full ledger, "
+        f"JARVIS is your personal Reverse Picks analyst. I can read the full ledger, "
         f"but I'm read-only: I won't change projections or publish picks.\n\n"
         f"The ledger has {summary['total']} picks: {counts['HIT']} HIT, {counts['MISS']} MISS, "
         f"{counts['LIVE']} LIVE, and {counts['PENDING']} pending. "
@@ -214,8 +214,8 @@ def _address_owner(response: str) -> str:
     """Keep the assistant's owner-facing voice consistent across all paths."""
     text = str(response or "").strip()
     if not text:
-        return "Jossel, I don't have a safe answer for that yet."
-    return text if re.search(r"\bjossel\b", text, re.IGNORECASE) else f"Jossel, {text}"
+        return "JARVIS doesn't have a safe answer for that yet."
+    return text if re.search(r"\bjarvis\b", text, re.IGNORECASE) else f"JARVIS: {text}"
 
 
 _SCREEN_QUESTION_RE = re.compile(
@@ -245,7 +245,7 @@ def _fast_response(message: str, context: dict[str, Any] | None) -> str | None:
 
     # Identity
     if any(term in lowered for term in ("your name", "who are you", "are you lisa", "are you lissa", "what are you", "point two")):
-        return "I'm point two — Jossel's personal analyst inside Reverse Picks. Ask me anything."
+        return "I'm JARVIS, your personal analyst inside Reverse Picks. Ask me anything."
 
     # Screen / page questions — broad pattern match
     screen_match = (
@@ -604,20 +604,20 @@ async def _smart_ledger_response(
         "savedPicks": [_pick_snapshot(pick) for pick in picks[:160]],
         "rules": [
             "Answer the owner's exact ledger question using only the supplied saved picks.",
-            "Your name is Lissa (pronounced Lisa), and address the owner as Reverse.",
+            "Your name is JARVIS, and address the owner as Jossel only when appropriate.",
             "Speak as a calm, highly intelligent, well-spoken woman inside the app.",
             "Do not claim a prediction exists when no matching saved pick is present.",
             "Distinguish exact line/fixture matches from nearby lines or different matchups.",
             "Name unavailable, pending, duplicate, or thin evidence explicitly.",
             "Do not invent provider statistics, injuries, roles, or future results.",
-            "Lissa is read-only and must not suggest that she changed or settled anything.",
+            "JARVIS is read-only and must not suggest that he changed or settled anything.",
             "Sound like a smart friend, not a report. Use contractions and plain language.",
             "Answer the question directly in one to three short spoken paragraphs. No headings, bullets, disclaimers, or robotic phrases.",
             "Use recent conversation only to understand follow-ups; never treat a prior assistant statement as new evidence.",
         ],
     }
     prompt = (
-        "You are Lissa (pronounced Lisa), the owner-only intelligence assistant inside Reverse Picks.\n"
+        "You are JARVIS, the owner-only intelligence assistant inside Reverse Picks.\n"
         "You are a calm, well-spoken woman. Address the owner as Reverse when speaking directly to him.\n"
         "The owner is asking about the saved prediction ledger, not asking for a new wager.\n"
         "Use the durable records below. Be precise, but do not dump the whole record when one sentence answers the question.\n"
@@ -675,7 +675,7 @@ async def _smart_analysis_response(
         "recentConversation": (recent_turns or [])[-4:],
     }
     prompt = (
-        "You are Lissa (pronounced Lisa), the owner-only assistant inside Reverse Picks.\n"
+        "You are JARVIS, the owner-only assistant inside Reverse Picks.\n"
         "You are a calm, intelligent woman. Speak like a smart friend who knows the data — "
         "direct, no fluff, no bullet points, no headings, no markdown.\n"
         "Address the owner as 'Reverse' when speaking to him directly.\n\n"
@@ -705,7 +705,7 @@ async def _authorize(req: LissaMessageRequest | LissaOverviewRequest) -> None:
 
 
 def _session_id(req: LissaMessageRequest) -> str:
-    return req.session_id or f"lissa-{uuid.uuid4().hex[:12]}"
+    return req.session_id or f"jarvis-{uuid.uuid4().hex[:12]}"
 
 
 def _screen_name(context: dict[str, Any] | None) -> str | None:
@@ -739,13 +739,13 @@ async def _finish_turn(
     except Exception as exc:
         print(f"[LISSA MEMORY] turn save skipped: {type(exc).__name__}: {exc}")
     response = {
-        "assistant": ".2",
+        "assistant": "JARVIS",
         "sessionId": session_id,
         "response": text,
         "readOnly": True,
         "mode": mode,
         "summary": summary,
-        "owner_cutover": "phase2" if _phase2_owner_cutover_enabled() else "legacy",
+        "assistant_version": "jarvis",
     }
     if orchestration:
         response["orchestration"] = orchestration
@@ -760,7 +760,7 @@ async def lissa_overview(req: LissaOverviewRequest):
     picks = await _load_owner_picks()
     summary = _ledger_summary(picks)
     return {
-        "assistant": ".2",
+        "assistant": "JARVIS",
         "readOnly": True,
         "summary": summary,
         "message": _address_owner(
@@ -768,7 +768,7 @@ async def lissa_overview(req: LissaOverviewRequest):
             "Opposite Case, Refresh Lines, or Postmortem. I’m read-only and will "
             "show what each workflow can verify."
         ),
-        "sessionId": f"lissa-{uuid.uuid4().hex[:12]}",
+        "sessionId": f"jarvis-{uuid.uuid4().hex[:12]}",
     }
 
 
@@ -1046,7 +1046,7 @@ async def _build_gemini_prompt(
         extra_block += f"\n--- ACCOUNT ---\n{acc_summary}\n--- END ---"
 
     return (
-        "You are .2 (pronounced 'point two') — Jossel's personal AI inside Reverse Picks.\n"
+        "You are JARVIS — the owner-only intelligence system inside Reverse Picks.\n"
         "The owner's name is Jossel (pronounced 'joe-cel'). Use it naturally in every response, like a close friend would.\n\n"
         "YOU SEE EVERYTHING on Jossel's screen right now. The data below is exactly what he's looking at.\n"
         "Never say your access is limited. If data exists below, use it. If something genuinely isn't there, say so in one sentence and keep going.\n\n"
@@ -1336,7 +1336,7 @@ async def lissa_message(req: LissaMessageRequest):
         run_player_analysis=_run_player_analysis,
             evaluate_script_fixture=__import__("routes.jarvis", fromlist=["_evaluate_script_fixture"])._evaluate_script_fixture,
     )
-    action_result["owner_cutover"] = "phase2"
+    action_result["assistant_version"] = "jarvis"
     await save_session_state(
         req.email,
         session_id,

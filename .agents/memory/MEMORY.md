@@ -152,3 +152,4 @@
 - [JARVIS identity resolution](jarvis-identity-resolution.md) — contextual team, fixture, orientation, and squad fallbacks are required before stopping conversational predictions.
 - [JARVIS Script Hunt evidence gate](jarvis-script-hunt-evidence.md) — fixture discovery never creates candidates; measured home/away control evidence gates board lookup and ranking.
 - [JARVIS Responses continuations](jarvis-responses-continuations.md) — JSON mode needs an input instruction; tool continuations use previous_response_id, never replay hidden reasoning items.
+- [JARVIS branding](jarvis-branding.md) — owner intelligence surfaces use JARVIS only; legacy names are compatibility-only and never user-facing.

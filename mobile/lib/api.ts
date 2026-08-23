@@ -21,7 +21,7 @@ const getApiBase = (): string => {
 // request can populate verified fixture/history caches, so a short client
 // timer creates the false "retry" pattern where the second attempt succeeds.
 const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview', '/api/prediction-explanation'];
-const LISSA_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
+const OWNER_CHAT_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
@@ -230,13 +230,13 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const url = `${base}${endpoint}`;
   const isCs2Predict = endpoint.startsWith(CS2_PREDICT_PATH);
   const isPlayerSearch = endpoint.startsWith(PLAYER_SEARCH_PATH);
-  const isLissa = endpoint.startsWith('/api/lissa/');
+  const isOwnerChat = endpoint.startsWith('/api/lissa/');
   const isPicksList = endpoint === '/api/picks/list';
   const isSettlementRefresh = endpoint.includes('/refresh-settlement');
   const isLong   = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
   const isMedium = MEDIUM_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
-  const timeoutMs = isLissa
-    ? LISSA_TIMEOUT_MS
+  const timeoutMs = isOwnerChat
+    ? OWNER_CHAT_TIMEOUT_MS
     : isPicksList
       ? PICKS_LIST_TIMEOUT_MS
     : isSettlementRefresh
@@ -319,7 +319,7 @@ export interface AuthResponse {
   access_type?: string;
 }
 
-export interface LissaSummary {
+export interface JarvisSummary {
   total: number;
   settled: number;
   hitRate: number | null;
@@ -327,14 +327,14 @@ export interface LissaSummary {
   sports: Record<string, number>;
 }
 
-export interface LissaResponse {
-  assistant: 'Lissa';
+export interface JarvisResponse {
+  assistant: 'JARVIS';
   sessionId: string;
   response?: string;
   message?: string;
   readOnly: boolean;
   mode?: string;
-  summary: LissaSummary;
+  summary: JarvisSummary;
   action?: string;
   tools?: Array<{ name: string; status: string; reason?: string }>;
   orchestration?: {
@@ -345,7 +345,7 @@ export interface LissaResponse {
   };
 }
 
-export interface LissaContext {
+export interface JarvisContext {
   screen?: Record<string, unknown>;
   pick?: Record<string, unknown>;
   analysis?: Record<string, unknown>;
@@ -353,21 +353,21 @@ export interface LissaContext {
   ledger?: Record<string, unknown>;
 }
 
-export async function startLissa(email: string, token: string): Promise<LissaResponse> {
-  return apiCall<LissaResponse>('/api/lissa/overview', {
+export async function startJarvis(email: string, token: string): Promise<JarvisResponse> {
+  return apiCall<JarvisResponse>('/api/lissa/overview', {
     method: 'POST',
     body: JSON.stringify({ email, token }),
   });
 }
 
-export async function sendLissaMessage(
+export async function sendJarvisMessage(
   email: string,
   token: string,
   sessionId: string,
   message: string,
-  context?: LissaContext,
-): Promise<LissaResponse> {
-  return apiCall<LissaResponse>('/api/lissa/message', {
+  context?: JarvisContext,
+): Promise<JarvisResponse> {
+  return apiCall<JarvisResponse>('/api/lissa/message', {
     method: 'POST',
     body: JSON.stringify({ email, token, session_id: sessionId, message, context }),
   });

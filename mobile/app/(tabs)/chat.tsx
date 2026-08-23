@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { startLissa, sendLissaMessage } from '@/lib/api';
+import { startJarvis, sendJarvisMessage } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Msg {
@@ -21,7 +21,7 @@ interface Msg {
 }
 
 async function loadChatHistory(email: string): Promise<Msg[]> {
-  const key = `jarvis-chat:${email.toLowerCase()}`;
+  const key = `jarvis-chat-v3:${email.toLowerCase()}`;
   try {
     const raw = Platform.OS === 'web'
       ? localStorage.getItem(key)
@@ -34,7 +34,7 @@ async function loadChatHistory(email: string): Promise<Msg[]> {
 }
 
 async function saveChatHistory(email: string, messages: Msg[]) {
-  const key = `jarvis-chat:${email.toLowerCase()}`;
+  const key = `jarvis-chat-v3:${email.toLowerCase()}`;
   try {
     const raw = JSON.stringify(messages.slice(-100));
     if (Platform.OS === 'web') localStorage.setItem(key, raw);
@@ -62,7 +62,7 @@ export default function ChatScreen() {
     (async () => {
       try {
         const history = await loadChatHistory(session.email);
-        const resp = await startLissa(session.email, session.token);
+        const resp = await startJarvis(session.email, session.token);
         if (cancelled) return;
         setSessionId(resp.sessionId);
         setMessages(history.length ? history : [{
@@ -104,7 +104,7 @@ export default function ChatScreen() {
     try {
       const sid = sessionId;
       if (!session?.email || !session.token) throw new Error('Owner session required');
-      const resp = await sendLissaMessage(session.email, session.token, sid, text);
+       const resp = await sendJarvisMessage(session.email, session.token, sid, text);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',

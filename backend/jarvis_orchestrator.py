@@ -256,7 +256,7 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
     return {
         "schema_version": "jarvis-conversation.v1",
         "action": action,
-        "owner_cutover": "phase2",
+        "assistant_version": "jarvis",
         "status": status,
         "read_only": True,
         "production_influence": False,

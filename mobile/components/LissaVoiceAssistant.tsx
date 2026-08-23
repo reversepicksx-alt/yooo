@@ -14,13 +14,13 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import Colors from '@/constants/colors';
-import { LissaContext, sendLissaMessage } from '@/lib/api';
+import { JarvisContext, sendJarvisMessage } from '@/lib/api';
 
 type Props = {
   email?: string;
   token?: string;
   sessionId?: string;
-  context?: LissaContext;
+  context?: JarvisContext;
   compact?: boolean;
   minimal?: boolean;
   requireWakeWord?: boolean;
@@ -28,7 +28,7 @@ type Props = {
   onAnswer?: (text: string) => void;
 };
 
-const WAKE_WORD = /\b(?:reverse|lissa|lisa|point\s*two|point\s*2)\b/i;
+const WAKE_WORD = /\bjarvis\b/i;
 
 function stripWakeWord(text: string): string {
   return text.replace(WAKE_WORD, '').replace(/^[,.:;!?-\s]+/, '').trim();
@@ -43,7 +43,7 @@ function immediateResponse(question: string): string | null {
     .trim();
   if (
     /\b(can you hear me|do you hear me|are you there|are you listening)\b/.test(normalized)
-    || /^(hello|hi|hey)( reverse| lissa| lisa)?$/.test(normalized)
+    || /^(hello|hi|hey)( jarvis)?$/.test(normalized)
   ) {
     return "Yeah, I'm here, Jossel.";
   }
@@ -215,7 +215,7 @@ export default function LissaVoiceAssistant({
         continuous: true,
         maxAlternatives: 1,
         addsPunctuation: true,
-        contextualStrings: ['Reverse', 'Lissa', 'Lisa', 'point two', 'Jossel', 'Reverse Picks', 'pass attempts', 'key passes'],
+        contextualStrings: ['JARVIS', 'Reverse Picks', 'pass attempts', 'key passes'],
       });
     } catch (err) {
       recognitionActiveRef.current = false;
@@ -332,7 +332,7 @@ export default function LissaVoiceAssistant({
       const immediate = immediateResponse(clean);
       const result = immediate
         ? null
-        : await sendLissaMessage(email, token, sessionId, clean, contextRef.current);
+        : await sendJarvisMessage(email, token, sessionId, clean, contextRef.current);
       const text = addressReverse(immediate || result?.response || 'I could not produce a safe answer for that analysis.');
 
       // ★ Unblock the UI immediately — show the answer text right away

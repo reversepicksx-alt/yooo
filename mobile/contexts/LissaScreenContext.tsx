@@ -1,16 +1,16 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import type { LissaContext } from '@/lib/api';
+import type { JarvisContext } from '@/lib/api';
 
 type LissaScreenContextValue = {
-  context?: LissaContext;
-  setContext: (context?: LissaContext) => void;
+  context?: JarvisContext;
+  setContext: (context?: JarvisContext) => void;
 };
 
 const LissaScreenContext = createContext<LissaScreenContextValue | null>(null);
 
 export function LissaScreenContextProvider({ children }: { children: React.ReactNode }) {
-  const [context, setContextState] = useState<LissaContext | undefined>();
-  const setContext = useCallback((next?: LissaContext) => {
+  const [context, setContextState] = useState<JarvisContext | undefined>();
+  const setContext = useCallback((next?: JarvisContext) => {
     setContextState(next);
   }, []);
   const value = useMemo(() => ({ context, setContext }), [context, setContext]);
