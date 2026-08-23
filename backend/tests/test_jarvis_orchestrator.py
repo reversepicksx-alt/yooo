@@ -21,7 +21,7 @@ def test_run_player_parses_plays_as_venue_not_prop():
     assert args["opponent_query"] == "PSG"
     assert args["venue"] == "home"
     assert args["line"] == 52.5
-    assert "prop_type" not in args
+    assert args["prop_type"] is None
 
 
 def test_run_player_infers_prop_from_one_matching_board_market():

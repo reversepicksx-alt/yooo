@@ -1251,7 +1251,7 @@ async def lissa_message(req: LissaMessageRequest):
                 player_id=int(request["player_id"]),
                 prop_type=str(request["prop_type"]),
                 line=float(request["line"]),
-            ))
+            ), resolved_context=request)
             recommendation = prediction.get("recommendation") or prediction.get("rec") or "UNKNOWN"
             return {
                 "status": "available",

@@ -211,7 +211,7 @@ async def jarvis_conversation(
                 player_id=int(request["player_id"]),
                 prop_type=str(request["prop_type"]),
                 line=float(request["line"]),
-            ))
+            ), resolved_context=request)
             recommendation = prediction.get("recommendation") or prediction.get("rec") or "UNKNOWN"
             return {
                 "status": "available",
@@ -705,6 +705,16 @@ def _identity_name_matches(query: str, candidate: Any) -> bool:
     return bool(wanted and actual and (wanted == actual or wanted in actual))
 
 
+def _team_name_matches(query: str, candidate: Any) -> bool:
+    """Match full provider names plus safe initialisms such as PSG."""
+    if _identity_name_matches(query, candidate):
+        return True
+    wanted = _identity_text(query).replace(" ", "")
+    words = [word for word in _identity_text(candidate).split() if word]
+    initials = "".join(word[0] for word in words)
+    return bool(wanted and len(wanted) >= 2 and wanted == initials)
+
+
 def _unknown_resolution(reason: str, message: str, **context: Any) -> HTTPException:
     return HTTPException(422, detail={
         "status": "UNKNOWN", "resolution": "unresolved", "reason": reason,
@@ -781,7 +791,16 @@ async def _resolve_soccer_prop_identity(
         and _identity_name_matches(query, row.get("player_name"))
     ]
     graph_fixture: dict[str, Any] | None = None
+    rows: list[dict[str, Any]] = []
     if not players and opponent and not team:
+        # Prefer the project's existing alias-aware team resolver before
+        # asking API-Football to search an abbreviation such as PSG.
+        resolved_opponent = None
+        try:
+            from team_resolver import find_team
+            resolved_opponent = await find_team(str(opponent).strip())
+        except Exception:
+            resolved_opponent = None
         opponent_data = await _sports_get_safe(
             "teams", {"search": str(opponent).strip()},
             cache_ttl=_CACHE_TTL_SCHEDULED,
@@ -793,8 +812,16 @@ async def _resolve_soccer_prop_identity(
         opponent_rows = [
             row for row in opponent_rows
             if row.get("id") is not None
-            and _identity_name_matches(str(opponent), row.get("name"))
+            and _team_name_matches(str(opponent), row.get("name"))
         ]
+        if resolved_opponent and resolved_opponent.get("teamId") is not None:
+            # The alias-aware resolver has league-priority knowledge. Raw
+            # provider search for an acronym can return youth/regional clubs;
+            # never let those ambiguous rows override the verified result.
+            opponent_rows = [{
+                "id": resolved_opponent["teamId"],
+                "name": resolved_opponent.get("teamName") or str(opponent),
+            }]
         opponent_ids = {row.get("id") for row in opponent_rows}
         if len(opponent_ids) == 1:
             opponent_id = next(iter(opponent_ids))
@@ -817,8 +844,14 @@ async def _resolve_soccer_prop_identity(
                 if identity["away_team_id"] != opponent_id:
                     continue
                 candidates.append(identity)
-            if len(candidates) == 1:
-                graph_fixture = candidates[0]
+            selected_fixture = None
+            if candidates:
+                nearest_date = min(item["date"] for item in candidates)
+                same_day = [item for item in candidates if item["date"] == nearest_date]
+                if len(same_day) == 1:
+                    selected_fixture = same_day[0]
+            if selected_fixture:
+                graph_fixture = selected_fixture
                 home_id = graph_fixture["home_team_id"]
                 squad_data = await _sports_get_safe(
                     "players/squads", {"team": home_id},
@@ -906,8 +939,11 @@ async def _resolve_soccer_prop_identity(
             )
             data = await _sports_get("fixtures", params, cache_ttl=_CACHE_TTL_SCHEDULED)
             rows.extend(data.get("response") or [])
+    normalized_fixtures = (
+        [graph_fixture] if graph_fixture else [_fixture_identity(row) for row in rows]
+    )
     fixtures = {
-        item["fixture_id"]: item for item in (_fixture_identity(row) for row in rows)
+        item["fixture_id"]: item for item in normalized_fixtures
         if item.get("fixture_id") is not None
     }
     fixtures = list(fixtures.values())
@@ -928,7 +964,7 @@ async def _resolve_soccer_prop_identity(
                 else item["home_team"] if item["away_team_id"] in player_team_ids
                 else None
             )
-            if opponent_name and _identity_name_matches(opponent, opponent_name):
+            if opponent_name and _team_name_matches(opponent, opponent_name):
                 filtered.append(item)
         fixtures = filtered
     if len(fixtures) != 1:
@@ -2657,7 +2693,61 @@ async def _resolve_soccer_context(fixture_id: int, player_id: int) -> dict:
     except Exception:
         pass
 
-    # ── Step 2b: /players?id=&season= (future fixtures) ───────────────────────
+    # ── Step 2b: fixture-team roster fallback for future fixtures ─────────────
+    # API-Football may reject bare /players?id searches. Since the fixture
+    # already gives us both verified teams, resolve the player through each
+    # team's season roster before trying the legacy player lookup below.
+    if not player_team_id:
+        try:
+            for candidate_team_id, candidate_team_name in (
+                (home_id, home_name), (away_id, away_name)
+            ):
+                roster = await _sports_get(
+                    "players",
+                    {"team": candidate_team_id, "season": season},
+                    cache_ttl=_CACHE_TTL_SCHEDULED,
+                )
+                for row in roster.get("response", []):
+                    candidate = row.get("player") or {}
+                    if candidate.get("id") == player_id:
+                        player_name = candidate.get("name") or player_name
+                        player_team_id = candidate_team_id
+                        player_team_name = candidate_team_name
+                        resolution_source = "fixture_team_season_roster"
+                        break
+                if player_team_id:
+                    break
+        except Exception:
+            pass
+
+    # Some competitions expose a roster only through /players/squads rather
+    # than the season-filtered /players endpoint.
+    if not player_team_id:
+        try:
+            for candidate_team_id, candidate_team_name in (
+                (home_id, home_name), (away_id, away_name)
+            ):
+                squad = await _sports_get(
+                    "players/squads",
+                    {"team": candidate_team_id},
+                    cache_ttl=_CACHE_TTL_SCHEDULED,
+                )
+                for squad_row in squad.get("response", []):
+                    for candidate in squad_row.get("players") or []:
+                        if candidate.get("id") == player_id:
+                            player_name = candidate.get("name") or player_name
+                            player_team_id = candidate_team_id
+                            player_team_name = candidate_team_name
+                            resolution_source = "fixture_team_squad"
+                            break
+                    if player_team_id:
+                        break
+                if player_team_id:
+                    break
+        except Exception:
+            pass
+
+    # ── Step 2c: /players?id=&season= (future fixtures) ───────────────────────
     # Players can have multiple entries (club + national team).  Prefer the
     # entry whose team ID matches a team in the fixture; otherwise fall back
     # to the first entry that looks like a club (not an international league).
@@ -3097,17 +3187,23 @@ class JarvisSoccerPredictBody(BaseModel):
     role_override:     str   = ""
 
 
-async def _run_soccer_prediction(body: JarvisSoccerPredictBody) -> tuple[dict, dict]:
+async def _run_soccer_prediction(
+    body: JarvisSoccerPredictBody,
+    resolved_context: dict[str, Any] | None = None,
+) -> tuple[dict, dict]:
     """Run exactly one untouched RP soccer prediction for JARVIS callers."""
     if not _JARVIS_KEY:
         raise HTTPException(503, detail={"error": "JARVIS_API_KEY not configured."})
 
-    try:
-        ctx = await _resolve_soccer_context(body.fixture_id, body.player_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(422, detail={"error": f"Context resolution failed: {exc}"})
+    if resolved_context:
+        ctx = resolved_context
+    else:
+        try:
+            ctx = await _resolve_soccer_context(body.fixture_id, body.player_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(422, detail={"error": f"Context resolution failed: {exc}"})
 
     from models import PredictionRequest
     from routes.predict import predict as _rp_predict

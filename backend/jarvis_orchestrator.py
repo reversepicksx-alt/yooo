@@ -67,11 +67,34 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
             player_query = re.split(r"\s+at\s+away\b", query, flags=re.IGNORECASE)[0].strip()
         if opponent_match and player_query.lower().endswith(opponent_match.group(0).lower()):
             player_query = player_query[: -len(opponent_match.group(0))].strip()
+        explicit_prop = None
+        prop_match = re.search(
+            r"\b(pass(?:\s+attempts?)?|passes|shots?|clearances?|tackles?)\b",
+            player_query,
+            re.IGNORECASE,
+        )
+        if prop_match:
+            raw_prop = prop_match.group(1).lower().replace(" ", "_")
+            explicit_prop = {
+                "pass": "pass_attempts",
+                "passes": "pass_attempts",
+                "pass_attempts": "pass_attempts",
+                "shot": "shots",
+                "shots": "shots",
+                "clearance": "clearances",
+                "clearances": "clearances",
+                "tackle": "tackles",
+                "tackles": "tackles",
+            }.get(raw_prop)
+            player_query = (
+                player_query[:prop_match.start()] + player_query[prop_match.end():]
+            ).strip()
         args = {
             "player_query": player_query,
             "opponent_query": opponent_match.group(1).strip() if opponent_match else None,
             "venue": venue,
             "line": float(line_match.group(1)) if line_match else None,
+            "prop_type": explicit_prop,
         }
         return "run_player", args
     return "general", {}
@@ -324,7 +347,7 @@ async def execute_action(
             elif len(matches) > 1:
                 data["inferred_prop_type"] = "UNKNOWN"
             else:
-                data["inferred_prop_type"] = prior_prop_type or "UNKNOWN"
+                data["inferred_prop_type"] = args.get("prop_type") or prior_prop_type or "UNKNOWN"
 
             prop_type = data["inferred_prop_type"]
             request = {
