@@ -36,9 +36,44 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
         return "refresh_lines", {}
     if re.search(r"\b(postmortem|post\s*mortem|why\s+did\s+(this|that)\s+(miss|lose|hit))\b", lowered):
         return "postmortem", {}
-    run = re.search(r"\b(?:run|analyze|analyse|check)\s+(.+?)(?:\s+for\s+.+)?$", text, re.IGNORECASE)
+    run = re.search(r"\b(?:run|analyze|analyse|check)\s+(.+)$", text, re.IGNORECASE)
     if run and len(run.group(1).strip()) >= 3:
-        return "run_player", {"player_query": run.group(1).strip()}
+        query = run.group(1).strip()
+        # "plays at home" is natural-language venue context, not a prop
+        # called "plays". Leave the prop unresolved until the live board
+        # supplies the canonical provider market.
+        line_match = re.search(r"\bline\s+(\d+(?:\.\d+)?)\b", query, re.IGNORECASE)
+        opponent_match = re.search(
+            r"\b(?:vs\.?|versus|against)\s+(.+?)(?=\s+\bline\b|$)",
+            query,
+            re.IGNORECASE,
+        )
+        player_match = re.match(
+            r"(.+?)(?:\s+plays?\s+at\s+(home|away)|\s+at\s+(home|away))"
+            r"(?:\s+(?:vs\.?|versus|against)\s+.+)?$",
+            query,
+            re.IGNORECASE,
+        )
+        venue = None
+        player_query = query
+        if player_match:
+            player_query = player_match.group(1).strip()
+            venue = (player_match.group(2) or player_match.group(3) or "").lower() or None
+        elif re.search(r"\bat\s+home\b", query, re.IGNORECASE):
+            venue = "home"
+            player_query = re.split(r"\s+at\s+home\b", query, flags=re.IGNORECASE)[0].strip()
+        elif re.search(r"\bat\s+away\b", query, re.IGNORECASE):
+            venue = "away"
+            player_query = re.split(r"\s+at\s+away\b", query, flags=re.IGNORECASE)[0].strip()
+        if opponent_match and player_query.lower().endswith(opponent_match.group(0).lower()):
+            player_query = player_query[: -len(opponent_match.group(0))].strip()
+        args = {
+            "player_query": player_query,
+            "opponent_query": opponent_match.group(1).strip() if opponent_match else None,
+            "venue": venue,
+            "line": float(line_match.group(1)) if line_match else None,
+        }
+        return "run_player", args
     return "general", {}
 
 
@@ -253,8 +288,53 @@ async def execute_action(
             data["postmortem_memory"] = (memory or [])[:30] if isinstance(memory, list) else []
             response = "I loaded the settled-pick context and advisory Tactical Memory for a postmortem. I will separate verified settlement facts from UNKNOWN causes."
         else:
-            data["player_query"] = args.get("player_query")
-            response = f"I started the read-only analysis workflow for {args.get('player_query')}. I need a verified player identity and fixture before producing a projection or verdict."
+            board_tool, board = await _safe_tool("search_market_board", load_board)
+            tools.append(board_tool)
+            player_query = str(args.get("player_query") or "").strip()
+            target_line = args.get("line")
+            normalized_query = player_query.casefold()
+            matches = []
+            for market in (board or []) if isinstance(board, list) else []:
+                if not isinstance(market, dict):
+                    continue
+                market_name = str(
+                    market.get("playerName")
+                    or market.get("player")
+                    or market.get("name")
+                    or ""
+                )
+                market_line = market.get("line", market.get("marketLine"))
+                try:
+                    same_line = target_line is None or float(market_line) == float(target_line)
+                except (TypeError, ValueError):
+                    same_line = False
+                if normalized_query and normalized_query in market_name.casefold() and same_line:
+                    matches.append(market)
+            data["player_query"] = player_query
+            data["opponent_query"] = args.get("opponent_query")
+            data["venue"] = args.get("venue")
+            data["line"] = target_line
+            data["matching_markets"] = matches[:10]
+            if len(matches) == 1:
+                market = matches[0]
+                data["inferred_prop_type"] = market.get("propType") or market.get("market") or market.get("statType")
+                response = (
+                    f"I matched {player_query} to one verified board market at {target_line}. "
+                    "I inferred the canonical prop from that market and will now verify the player identity and fixture."
+                )
+            elif len(matches) > 1:
+                data["inferred_prop_type"] = "UNKNOWN"
+                response = (
+                    f"I found multiple {player_query} markets at {target_line}. "
+                    "The prop type remains UNKNOWN; I need that distinction before running the analysis."
+                )
+            else:
+                data["inferred_prop_type"] = "UNKNOWN"
+                response = (
+                    f"I parsed {player_query} with {args.get('venue') or 'unspecified'} venue"
+                    f" and line {target_line}, but found no exact board market yet. "
+                    "I will not interpret the word 'plays' as a prop or invent a projection."
+                )
         return _result(action, status="partial", tools=tools, data=data, response=response)
 
     return _result(
