@@ -1,0 +1,66 @@
+Send Replit this exact correction:
+
+FULL AUDIT ORCHESTRATION BUG — MUST BECOME A FIRST-CLASS INTENT
+
+The exact request Full audit Rongier under 52.5 currently falls through to general and calls no tools. Fix this as a first-class JARVIS workflow intent.
+
+Natural-language phrases including full audit, deep dive, audit this, run the full pipeline, analyze fully, and equivalent wording must classify as FULL_PLAYER_AUDIT.
+
+The workflow must not require the user to provide team, opponent, fixture, player ID, or prop type if those can be resolved from conversation state, board state, or API-Football.
+
+For Full audit Rongier under 52.5, JARVIS must automatically:
+
+1. Resolve conversation context first. Preserve the already-established canonical context when available: Valentin Rongier, Rennes, PSG, home venue, pass_attempts, line 52.5.
+2. If context is incomplete, run the same graph-based identity resolution already proven by the successful Rongier prediction path.
+3. Verify canonical fixture/player/team/opponent/league/season/venue.
+4. Run the deterministic Reverse Picks numerical engine at the requested/saved line.
+5. Pull exact tactical role from current lineup/recent formation/grid evidence.
+6. Pull player recent logs and matching-venue history.
+7. Pull target-team recent matching-venue fixtures and opponent corresponding-venue fixtures.
+8. Retrieve fixture/team statistics needed for possession, passes, shots, SOT, buildup environment, and workload.
+9. Determine buildup architecture: central/wide/direct, hub concentration, CB/GK recycling, pivot usage, and whether the target player is a hub, connector, or territorial receiver.
+10. Determine opponent defensive behavior: high/mid/low block, press intensity, press triggers, GK/CB pressure, pivot screening, wide traps, and long-ball forcing.
+11. Pull role/opponent cohort evidence when valid.
+12. Pull current lineup/injury/availability/minutes/substitution evidence.
+13. Pull odds and determine likely first-scoring team when available.
+14. Run score-state analysis separately for target leads, target trails, level around 60’, target scores before 20’, and opponent scores before 20’.
+15. Explicitly determine whether the player’s prop volume freezes, survives, or explodes in each score state.
+16. Pull PrizePicks current/saved line and line history when available; missing market data is optional and must not abort the audit.
+17. Build the strongest realistic opposite case.
+18. Stress-test possession ±5 percentage points, minutes -5/-10, formation/role change, different opponent press, early goal either direction, and dominance failure.
+19. Identify correlated assumptions.
+20. Return the deterministic model result and a separate JARVIS tactical verdict, including grade and robustness.
+
+The final response contract must include at minimum:
+
+identity
+prop
+line
+line_source
+projection
+p_over
+p_under
+model_recommendation
+exact_role
+venue_analysis
+team_playstyle
+opponent_playstyle
+buildup_interaction
+press_block_interaction
+role_cohort
+first_goal
+leading_state
+trailing_state
+level_60_state
+early_goal_states
+minutes_risk
+line_movement
+strongest_opposite_case
+stress_test
+robustness
+jarvis_grade
+final_verdict
+unknown_evidence
+provenance
+
+FULL_PLAYER_AUDIT is a multi-tool workflow, not a wrapper around one existing audit endpoint. The reasoning/orchestration layer must continue choosing tools until the audit contract is sufficiently populated or all safe evidence paths are exhausted.
