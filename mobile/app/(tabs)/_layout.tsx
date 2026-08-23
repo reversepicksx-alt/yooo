@@ -72,7 +72,7 @@ export default function TabLayout() {
           name="scan"
           options={{
             title: 'Predict',
-            tabBarIcon: ({ focused }) => <TabIcon name="scan" focused={focused} />,
+             tabBarIcon: ({ focused }) => <TabIcon name="analytics-outline" focused={focused} />,
           }}
         />
         <Tabs.Screen
