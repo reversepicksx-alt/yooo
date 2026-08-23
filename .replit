@@ -25,7 +25,7 @@ REVIEWER_LOGIN_ENABLED = "1"
 MONGO_URL = "mongodb+srv://josselj001_db_user:G4dITcE8CLMA6fWA@reverse.4h7msnc.mongodb.net/?appName=Reverse"
 ODDS_TIER_PRIORS_MODE = "live"
 JARVIS_BRAIN_MODE = "openai"
-JARVIS_OPENAI_MODEL = "o5"
+JARVIS_OPENAI_MODEL = "gpt-5.6-sol"
 
   [workflows]
 runButton = "Project"
