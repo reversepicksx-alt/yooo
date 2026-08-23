@@ -89,14 +89,6 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="chat"
-          options={{
-            href: session.accessType?.toLowerCase() === 'owner' ? undefined : null,
-            title: 'JARVIS',
-            tabBarIcon: ({ focused }) => <TabIcon name="sparkles" focused={focused} />,
-          }}
-        />
-        <Tabs.Screen
           name="account"
           options={{
             title: 'Account',
