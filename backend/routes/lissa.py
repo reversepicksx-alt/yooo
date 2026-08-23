@@ -11,7 +11,7 @@ import re
 import uuid
 import os
 import asyncio as aio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -1203,12 +1203,26 @@ async def lissa_message(req: LissaMessageRequest):
             return rows if isinstance(rows, list) else []
         return []
 
+    async def _discover_slate() -> list[dict[str, Any]]:
+        start = datetime.now(timezone.utc).date()
+        raw = await priority_api_football_request(
+            "fixtures",
+            {"from": start.isoformat(), "to": (start + timedelta(days=2)).isoformat(), "status": "NS"},
+        )
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            rows = raw.get("response") or raw.get("data") or []
+            return rows if isinstance(rows, list) else []
+        return []
+
     action_result = await execute_action(
         message,
         context=req.context,
         load_picks=_load_owner_picks_cached,
         find_team=find_team,
         fetch_fixtures=_fixtures_for_team,
+        discover_slate=_discover_slate,
         load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
         load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
     )

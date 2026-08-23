@@ -17,13 +17,12 @@ def test_classifies_named_commands():
 def test_script_hunt_dispatches_fixture_and_board_tools():
     calls = []
 
-    async def team(query):
-        calls.append(("team", query))
-        return {"teamId": 7, "teamName": "Arsenal"}
-
-    async def fixtures(team_id):
-        calls.append(("fixtures", team_id))
-        return [{"fixture": {"id": 99}}]
+    async def slate():
+        calls.append(("slate",))
+        return [{"fixture": {"id": 99}, "teams": {
+            "home": {"id": 7, "name": "Arsenal"},
+            "away": {"id": 8, "name": "Chelsea"},
+        }}]
 
     async def board():
         calls.append(("board",))
@@ -33,18 +32,20 @@ def test_script_hunt_dispatches_fixture_and_board_tools():
         return []
 
     result = asyncio.run(execute_action(
-        "Script Hunt for Arsenal",
+        "Script hunt",
         context=None,
         load_picks=empty,
-        find_team=team,
-        fetch_fixtures=fixtures,
+        find_team=lambda _: empty(),
+        fetch_fixtures=lambda _: empty(),
+        discover_slate=slate,
         load_board=board,
         load_memory=empty,
     ))
     assert result["action"] == "script_hunt"
     assert result["status"] == "partial"
-    assert [call[0] for call in calls] == ["team", "fixtures", "board"]
-    assert result["data"]["home_control_filter"]["status"] == "UNKNOWN"
+    assert [call[0] for call in calls] == ["slate", "board"]
+    assert result["data"]["home_control_filter"]["status"] == "partial"
+    assert result["data"]["fixtures"][0]["homeTeam"]["name"] == "Arsenal"
     assert result["provenance"]["tool_results_are_read_only"] is True
 
 
@@ -61,6 +62,7 @@ def test_tool_failures_are_unknown_and_do_not_raise():
         load_picks=empty,
         find_team=lambda _: empty(),
         fetch_fixtures=lambda _: empty(),
+        discover_slate=empty,
         load_board=fail,
         load_memory=empty,
     ))

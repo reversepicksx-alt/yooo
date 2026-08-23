@@ -41,7 +41,9 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
     return "general", {}
 
 
-def _result(action: str, *, status: str, response: str, tools: list[dict[str, Any]], data: dict[str, Any] | None = None) -> dict[str, Any]:
+def _result(action: str, *, status: str, response: str, tools: list[dict[str, Any]],
+            data: dict[str, Any] | None = None,
+            stage_overrides: dict[str, str] | None = None) -> dict[str, Any]:
     stage_names = [
         "fixture_discovery",
         "home_control_filter",
@@ -68,6 +70,7 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
         stage_status["line_movement_check"] = "available" if stage_status["market_board_search"] == "available" else "UNKNOWN"
     if action == "postmortem":
         stage_status["final_verdict"] = "partial"
+    stage_status.update(stage_overrides or {})
     return {
         "schema_version": "jarvis-conversation.v1",
         "action": action,
@@ -108,6 +111,7 @@ async def execute_action(
     load_picks: Callable[[], Awaitable[list[dict[str, Any]]]],
     find_team: Callable[[str], Awaitable[dict[str, Any] | None]],
     fetch_fixtures: Callable[[int], Awaitable[list[dict[str, Any]]]],
+    discover_slate: Callable[[], Awaitable[list[dict[str, Any]]]],
     load_board: Callable[[], Awaitable[list[dict[str, Any]]]],
     load_memory: Callable[[], Awaitable[list[dict[str, Any]]]],
 ) -> dict[str, Any]:
@@ -127,33 +131,86 @@ async def execute_action(
                        response="The market board is unavailable or returned no verified player lines right now. I won't invent a board entry.")
 
     if action == "script_hunt":
-        query = re.sub(r"\b(script\s+hunt|hunt\s+the\s+slate)\b", "", message, flags=re.IGNORECASE).strip(" :,-")
-        query = re.sub(r"^(?:for|against|on)\s+", "", query, flags=re.IGNORECASE).strip()
-        team = None
-        if query:
-            team_tool, team = await _safe_tool("resolve_team", lambda: find_team(query))
-            tools.append(team_tool)
-        if team:
-            fixture_tool, fixtures = await _safe_tool("discover_fixtures", lambda: fetch_fixtures(int(team.get("teamId"))))
-            tools.append(fixture_tool)
-        else:
-            fixtures = []
+        # Script Hunt is intentionally autonomous: the exact command has no
+        # required team/player/fixture input. Discovery is the first tool.
+        fixture_tool, fixtures = await _safe_tool("discover_slate", discover_slate)
+        tools.append(fixture_tool)
         board_tool, board = await _safe_tool("search_market_board", load_board)
         tools.append(board_tool)
+        rows = fixtures if isinstance(fixtures, list) else []
+        candidates: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
+        for fixture in rows[:100]:
+            fixture_data = fixture.get("fixture") if isinstance(fixture, dict) else {}
+            teams = fixture.get("teams") if isinstance(fixture, dict) else {}
+            home = teams.get("home") if isinstance(teams, dict) else {}
+            away = teams.get("away") if isinstance(teams, dict) else {}
+            if not isinstance(home, dict) or not home.get("id"):
+                rejected.append({"fixture": fixture, "reason": "missing_verified_home_identity"})
+                continue
+            item = {
+                "fixtureId": (fixture_data or {}).get("id"),
+                "homeTeam": {"id": home.get("id"), "name": home.get("name")},
+                "awayTeam": {"id": away.get("id"), "name": away.get("name")} if isinstance(away, dict) else {},
+                "homeControl": {"status": "UNKNOWN", "reason": "Requires possession, shape, and opponent-control evidence."},
+                "scriptStrength": "UNKNOWN",
+            }
+            # Only home-side candidates enter Script Hunt. Away-control
+            # scenarios are retained as transparent rejections, never ranked.
+            if away.get("id") if isinstance(away, dict) else False:
+                candidates.append(item)
+            else:
+                rejected.append({"fixture": fixture, "reason": "missing_verified_away_identity"})
         data.update({
-            "team": team,
-            "fixtures": (fixtures or [])[:10],
-            "home_control_filter": {"status": "UNKNOWN", "reason": "Requires a verified fixture and opponent context."},
+            "slate": rows[:100],
+            "fixtures": candidates[:30],
+            "rejectedFixtures": rejected[:30],
+            "home_control_filter": {"status": "partial", "kept": len(candidates), "rejected": len(rejected)},
             "tactical_matchup": {"status": "UNKNOWN", "reason": "Requires exact fixture lineup and tactical evidence."},
             "markets": (board or [])[:50] if isinstance(board, list) else [],
         })
-        if team and fixtures:
-            response = f"I found {len(fixtures[:10])} upcoming fixtures for {team.get('teamName', query)} and checked the available board. Home-control and tactical ranking still need an exact fixture selection before I issue a verdict."
-            status = "partial"
+        board_rows = board if isinstance(board, list) else []
+        candidate_ids = {item.get("fixtureId") for item in candidates if item.get("fixtureId") is not None}
+        candidate_team_ids = {
+            team.get("id")
+            for item in candidates
+            for team in (item.get("homeTeam", {}), item.get("awayTeam", {}))
+            if isinstance(team, dict) and team.get("id") is not None
+        }
+        board_candidates: list[dict[str, Any]] = []
+        rejected_markets: list[dict[str, Any]] = []
+        for market in board_rows[:100]:
+            if not isinstance(market, dict):
+                continue
+            market_fixture = market.get("fixtureId") or market.get("eventId") or market.get("gameId")
+            market_team = market.get("teamId") or market.get("playerTeamId")
+            if market_fixture in candidate_ids or market_team in candidate_team_ids:
+                board_candidates.append(market)
+            else:
+                rejected_markets.append({"market": market, "reason": "no_verified_qualifying_fixture_match"})
+        data["boardCandidates"] = board_candidates[:30]
+        data["rejectedMarkets"] = rejected_markets[:30]
+        data["candidateRanking"] = [
+            {"fixtureId": item.get("fixtureId"), "marketCount": sum(
+                1 for market in board_candidates
+                if market.get("fixtureId") == item.get("fixtureId")
+            ), "scriptStrength": item.get("scriptStrength", "UNKNOWN")}
+            for item in candidates[:30]
+        ]
+        if candidates:
+            response = f"I discovered {len(rows)} upcoming fixtures, kept {len(candidates)} home-team Script Hunt candidates, rejected {len(rejected)} incomplete/away-side cases, and checked the current board. Tactical, role, Bayesian, and adversarial stages remain UNKNOWN until evidence is available."
+            status = "partial" if board_tool["status"] != "UNKNOWN" else "partial"
         else:
-            response = "Script Hunt is wired to fixture discovery and board search, but I need a recognizable team or a verified fixture to rank candidates. Nothing was guessed."
+            response = "I discovered the current slate and checked the board, but no fixture had both verified home and away identities for a safe Script Hunt candidate. Nothing was guessed."
             status = "UNKNOWN"
-        return _result(action, status=status, tools=tools, data=data, response=response)
+        return _result(action, status=status, tools=tools, data=data, response=response,
+                       stage_overrides={
+                           "fixture_discovery": "available" if fixture_tool["status"] == "available" else "UNKNOWN",
+                           "home_control_filter": "partial",
+                           "market_board_search": "available" if board_tool["status"] == "available" else "UNKNOWN",
+                           "candidate_ranking": "partial" if candidates else "UNKNOWN",
+                           "final_verdict": "partial" if candidates else "UNKNOWN",
+                       })
 
     if action in {"opposite_case", "refresh_lines", "run_player", "postmortem"}:
         picks_tool, picks = await _safe_tool("read_owner_ledger", load_picks)

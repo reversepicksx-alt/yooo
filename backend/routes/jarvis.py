@@ -48,7 +48,7 @@ import secrets
 import shutil
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
@@ -166,12 +166,26 @@ async def jarvis_conversation(
             return rows if isinstance(rows, list) else []
         return []
 
+    async def discover_slate() -> list[dict[str, Any]]:
+        start = datetime.now(timezone.utc).date()
+        raw = await priority_api_football_request(
+            "fixtures",
+            {"from": start.isoformat(), "to": (start + timedelta(days=2)).isoformat(), "status": "NS"},
+        )
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            rows = raw.get("response") or raw.get("data") or []
+            return rows if isinstance(rows, list) else []
+        return []
+
     result = await execute_action(
         body.message,
         context=body.context,
         load_picks=load_picks,
         find_team=find_team,
         fetch_fixtures=fetch_fixtures,
+        discover_slate=discover_slate,
         load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
         load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
     )
