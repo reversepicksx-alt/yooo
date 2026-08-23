@@ -252,9 +252,16 @@ async def execute_action(
     if isinstance(session_state, dict) and action in {"run_player", "full_player_audit"}:
         # New explicit values already occupy args; omitted fields inherit only
         # from the authenticated conversation's canonical state.
-        for key in ("opponent_query", "venue", "line", "prop_type"):
-            if args.get(key) in {None, ""} and session_state.get(key) is not None:
-                args[key] = session_state[key]
+        inherited = {
+            "opponent_query": session_state.get("opponent_query")
+            or session_state.get("opponent_name"),
+            "venue": session_state.get("venue"),
+            "line": session_state.get("line"),
+            "prop_type": session_state.get("prop_type"),
+        }
+        for key, value in inherited.items():
+            if args.get(key) in {None, ""} and value is not None:
+                args[key] = value
     tools: list[dict[str, Any]] = []
     data: dict[str, Any] = {"action_spec": ACTION_SPECS[action]}
 
