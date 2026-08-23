@@ -1209,7 +1209,7 @@ async def lissa_message(req: LissaMessageRequest):
         # some API-Sports plans, so narrow the returned window locally.
         raw = await priority_api_football_request(
             "fixtures",
-            {"next": 100},
+            {"next": 50},
         )
         if isinstance(raw, list):
             return raw

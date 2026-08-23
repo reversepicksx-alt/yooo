@@ -169,7 +169,7 @@ async def jarvis_conversation(
     async def discover_slate() -> list[dict[str, Any]]:
         raw = await priority_api_football_request(
             "fixtures",
-            {"next": 100},
+            {"next": 50},
         )
         if isinstance(raw, list):
             return raw

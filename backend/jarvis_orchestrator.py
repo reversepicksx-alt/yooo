@@ -200,6 +200,9 @@ async def execute_action(
         if candidates:
             response = f"I discovered {len(rows)} upcoming fixtures, kept {len(candidates)} home-team Script Hunt candidates, rejected {len(rejected)} incomplete/away-side cases, and checked the current board. Tactical, role, Bayesian, and adversarial stages remain UNKNOWN until evidence is available."
             status = "partial" if board_tool["status"] != "UNKNOWN" else "partial"
+        elif fixture_tool["status"] == "UNKNOWN":
+            response = "I started Script Hunt, but the verified fixture provider is temporarily unavailable. I checked the board independently, kept fixture-dependent stages UNKNOWN, and did not guess candidates."
+            status = "UNKNOWN"
         else:
             response = "I discovered the current slate and checked the board, but no fixture had both verified home and away identities for a safe Script Hunt candidate. Nothing was guessed."
             status = "UNKNOWN"
