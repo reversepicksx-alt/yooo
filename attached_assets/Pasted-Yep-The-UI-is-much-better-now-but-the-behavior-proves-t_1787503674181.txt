@@ -1,0 +1,49 @@
+Yep. The UI is much better now, but the behavior proves the architecture still isn’t right.
+
+The important sentence is:
+
+“I need a recognizable team or a verified fixture to rank candidates.”
+
+That is not what “Script Hunt” means in our workflow. Script Hunt is supposed to discover the fixtures itself. You shouldn’t have to give JARVIS a team or fixture—that defeats the hunt.
+
+When you type only “Script hunt”, Reverse JARVIS should autonomously:
+
+today/upcoming slate → discover fixtures → identify home-control/script candidates → reject away-control cases → research tactical matchup → inspect current board → find players from qualifying matches → rank relevant props → run deeper audits on the best candidates → return results.
+
+So this is progress: the chat interface is substantially closer to what you wanted, and it appears they created a search_market_board capability. But the orchestration is stopping before discovery instead of chaining its actions.
+
+Send Replit this exact correction:
+
+SCRIPT HUNT ORCHESTRATION BUG
+
+The new conversational UI is acceptable. Do not redesign it right now.
+
+The Script Hunt workflow is still incorrect.
+
+When the owner sends exactly “Script hunt”, JARVIS MUST NOT ask for a team, player, matchup, or fixture. Script Hunt is an autonomous slate-discovery command.
+
+Execute the complete chain automatically:
+
+1. Determine the current relevant soccer slate/date.
+2. Retrieve upcoming verified fixtures from API-Football.
+3. Resolve canonical fixture/team/league/venue identities.
+4. Search specifically for home-team control/script environments. Do not surface away-control cases as Script Hunt candidates.
+5. Evaluate expected possession/control, opponent willingness to concede possession, pressing/block behavior, buildup matchup, verticality/directness, likely first scorer, and leading/trailing reactions using available actions/evidence.
+6. Rank qualifying fixtures by script strength and evidence quality.
+7. Query the latest PrizePicks market snapshot for players/props belonging to those qualifying fixtures.
+8. Match board players to verified provider identities.
+9. Identify props whose exact tactical role benefits from the expected script.
+10. Run the required JARVIS/RP analysis pipeline on the strongest candidates, including venue, exact role, line movement, Bayesian projection, calibration/safety, score-state analysis and adversarial stress test.
+11. Return the strongest candidates, rejected candidates and rejection reasons.
+
+search_market_board is one tool inside Script Hunt; it is NOT Script Hunt itself.
+
+JARVIS must orchestrate multiple actions sequentially without requiring the user to manually provide outputs from one action as inputs to another.
+
+If one evidence source is unavailable, label that component UNKNOWN and continue wherever safe. Do not abort the entire hunt merely because an optional component is unavailable.
+
+Add an integration test whose entire user input is exactly "Script hunt". The test passes only if fixture discovery occurs without a supplied fixture/team and the workflow proceeds through fixture filtering and board lookup.
+
+Do not hard-code today’s teams or fixtures to make the test pass.
+
+That’s the correction I want before moving to Phase 2.
