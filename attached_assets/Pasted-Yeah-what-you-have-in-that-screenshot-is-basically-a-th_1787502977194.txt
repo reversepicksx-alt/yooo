@@ -1,0 +1,27 @@
+Yeah — what you have in that screenshot is basically a themed chatbot panel, not the JARVIS architecture we described.
+
+The biggest problem is exactly what you noticed: it looks like Reverse added a “JARVIS tab” onto the existing app, but the intelligence layer behind it clearly doesn’t share my actual action graph, workflow, or orchestration. “Script hunt” should have triggered fixture discovery → home-control filtering → board search → candidate ranking. Instead it answered from ledger context, which means it’s not wired into the same capabilities I use here.
+
+The UI is also wrong for what you want. Right now it feels like a dashboard widget: narrow input, static assistant card, not a real conversational workspace, and the assistant message is presented like a report block rather than a message bubble. You want it to feel like talking to me, not querying a stats panel.
+
+So don’t tell Replit “make JARVIS better.” Tell it this:
+
+The current JARVIS tab is not Phase 1 of the Modify Reverse project. It is only a themed chatbot UI and does not share the actual JARVIS orchestration/action system. Do not polish this implementation in place. Rework it around a real conversational architecture. JARVIS in Reverse must use the same functional workflow as owner ChatGPT JARVIS: Script Hunt must trigger fixture discovery, home-control filtering, tactical matchup classification, PrizePicks board search, player candidate ranking, exact-role/venue analysis, Bayesian pipeline stages, opposite-case stress testing, line movement checks, and final verdict logic. The chat must be a true full-width conversation interface with user and assistant message bubbles, persistent scrollable history, streaming responses, multiline composer, send button, loading/tool-state indicators, and support for long analytical answers. Do not make the first response a canned ledger summary unless the user asks for ledger information. The assistant must interpret natural-language commands such as “Script Hunt,” “Board,” “Run St. Clair,” “Opposite Case,” “Refresh Lines,” and “Postmortem” and dispatch the appropriate internal actions. The current ledger/reverse data access can remain available as one tool, but it must not be the assistant’s only knowledge source. Build one shared JARVIS orchestration service and let both the Reverse chat UI and owner-facing JARVIS call that same service. Preserve existing subscriber prediction functionality during development. Start with an owner/admin-only feature flag. The goal is not a chatbot that talks about Reverse Picks; the goal is for Reverse Picks to function like speaking to the same JARVIS intelligence used in the owner workflow.
+
+And I would add one more sentence because this matters a lot:
+
+Do not treat “JARVIS Core” as an LLM prompt with database access. It must be an orchestrator with explicit callable tools/actions, state, workflow stages, and structured outputs.
+
+That is the distinction they missed.
+
+What they built is:
+
+chat UI → prompt → ledger
+
+What we actually want is:
+
+chat UI → JARVIS orchestrator → actions/tools/data/model pipeline → structured result → conversational response
+
+That’s why your first command failed. The system currently has a personality, but not my capabilities.
+
+So I would not call what they built Phase 1 complete at all. It’s more like a prototype shell we can reuse visually only if you want, but the architecture underneath needs to be rebuilt around the actual JARVIS workflow.

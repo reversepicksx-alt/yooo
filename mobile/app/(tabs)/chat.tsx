@@ -120,11 +120,18 @@ export default function ChatScreen() {
       keyboardVerticalOffset={0}
     >
       <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>JARVIS</Text>
-          <Text style={styles.headerSub}>Your private Reverse Picks intelligence assistant</Text>
+        <View style={styles.headerIdentity}>
+          <View style={styles.headerMark}>
+            <Ionicons name="sparkles" size={16} color={Colors.primary} />
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>JARVIS</Text>
+            <Text style={styles.headerSub}>Reverse Picks intelligence</Text>
+          </View>
         </View>
-        <View style={styles.offlineDot} />
+        <TouchableOpacity style={styles.headerAction} accessibilityLabel="JARVIS options">
+          <Ionicons name="ellipsis-horizontal" size={20} color={Colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -133,13 +140,13 @@ export default function ChatScreen() {
         keyExtractor={item => item.id}
         contentContainerStyle={styles.messageList}
         renderItem={({ item }) => (
-          <View style={[styles.bubble, item.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant]}>
+          <View style={[styles.message, item.role === 'user' ? styles.messageUser : styles.messageAssistant]}>
             {item.role === 'assistant' && (
               <View style={styles.avatarDot}>
                 <Ionicons name="sparkles" size={11} color={Colors.primary} />
               </View>
             )}
-            <Text style={[styles.bubbleText, item.role === 'user' && styles.bubbleTextUser]}>
+            <Text style={[styles.messageText, item.role === 'user' && styles.messageTextUser]}>
               {item.text}
             </Text>
           </View>
@@ -147,20 +154,22 @@ export default function ChatScreen() {
         ListFooterComponent={loading ? (
           <View style={styles.typingRow}>
             <View style={styles.avatarDot}>
-              <Ionicons name="football" size={10} color={Colors.primary} />
+              <Ionicons name="sparkles" size={11} color={Colors.primary} />
             </View>
-            <View style={styles.typingBubble}>
-              <ActivityIndicator color={Colors.primary} size="small" />
-            </View>
+            <ActivityIndicator color={Colors.primary} size="small" />
           </View>
         ) : null}
         scrollEnabled={messages.length > 0}
       />
 
-      <View style={[styles.inputRow, { paddingBottom: bottomPad + 8 }]}>
+      <View style={[styles.composerArea, { paddingBottom: bottomPad + 10 }]}>
+        <View style={styles.inputRow}>
+          <TouchableOpacity style={styles.composerIcon} accessibilityLabel="Add attachment">
+            <Ionicons name="add" size={24} color={Colors.textSecondary} />
+          </TouchableOpacity>
         <TextInput
           style={styles.input}
-              placeholder="Ask about a player, prop, or matchup…"
+          placeholder="Message JARVIS"
           placeholderTextColor={Colors.textSecondary}
           value={input}
           onChangeText={setInput}
@@ -169,13 +178,19 @@ export default function ChatScreen() {
           returnKeyType="send"
           onSubmitEditing={send}
         />
+        {!input.trim() && (
+          <TouchableOpacity style={styles.composerIcon} accessibilityLabel="Voice input">
+            <Ionicons name="mic-outline" size={21} color={Colors.textSecondary} />
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[styles.sendBtn, (!input.trim() || loading) && styles.sendBtnDisabled]}
           onPress={send}
           disabled={!input.trim() || loading}
         >
-              <Ionicons name="arrow-up" size={18} color={input.trim() && !loading ? '#000' : Colors.textTertiary} />
+          <Ionicons name="arrow-up" size={18} color={input.trim() && !loading ? '#000' : Colors.textTertiary} />
         </TouchableOpacity>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -185,25 +200,37 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   header: {
     paddingHorizontal: 20,
-    paddingBottom: 12,
+    paddingTop: 8,
+    paddingBottom: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
   },
-  headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
-  headerSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
-  offlineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.textTertiary },
+  headerIdentity: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerMark: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primaryDim,
+  },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: 0.4 },
+  headerSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
+  headerAction: { padding: 8 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  messageList: { paddingHorizontal: 16, paddingBottom: 8 },
-  bubble: {
-    maxWidth: '80%',
-    marginBottom: 8,
+  messageList: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 18 },
+  message: {
+    width: '100%',
+    marginBottom: 22,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
   },
-  bubbleUser: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
-  bubbleAssistant: { alignSelf: 'flex-start' },
+  messageUser: { alignSelf: 'flex-end', flexDirection: 'row-reverse', width: 'auto', maxWidth: '86%' },
+  messageAssistant: { alignSelf: 'stretch' },
   avatarDot: {
     width: 24,
     height: 24,
@@ -214,52 +241,46 @@ const styles = StyleSheet.create({
     marginTop: 4,
     flexShrink: 0,
   },
-  bubbleText: {
-    backgroundColor: Colors.card,
-    padding: 12,
-    borderRadius: 16,
+  messageText: {
+    flexShrink: 1,
     color: Colors.text,
-    fontSize: 14,
-    lineHeight: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    fontSize: 16,
+    lineHeight: 24,
   },
-  bubbleTextUser: {
+  messageTextUser: {
     backgroundColor: Colors.primary,
     color: '#000',
-    borderColor: Colors.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 20,
     fontWeight: '500',
   },
-  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, marginBottom: 8 },
-  typingBubble: {
-    backgroundColor: Colors.card,
-    padding: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    width: 60,
-    alignItems: 'center',
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2, marginBottom: 8 },
+  composerArea: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+    backgroundColor: Colors.background,
   },
   inputRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.background,
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 52,
+    paddingHorizontal: 8,
+    borderRadius: 28,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
   },
+  composerIcon: { width: 34, height: 38, alignItems: 'center', justifyContent: 'center' },
   input: {
     flex: 1,
-    backgroundColor: Colors.card,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 9,
     color: Colors.text,
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    fontSize: 16,
     maxHeight: 100,
   },
   sendBtn: {
