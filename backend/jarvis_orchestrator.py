@@ -158,6 +158,11 @@ def merge_session_state(previous: dict[str, Any] | None, result: dict[str, Any])
             state["line_source"] = data["line_source"]
         if data.get("current_market_status") is not None:
             state["current_line"] = data.get("current_market_status")
+        analysis = data.get("analysis")
+        if isinstance(analysis, dict) and isinstance(analysis.get("audit"), dict):
+            state["last_audit"] = analysis["audit"]
+            if isinstance(analysis.get("prediction"), dict):
+                state["last_prediction"] = analysis["prediction"]
     state["last_intent"] = result.get("action")
     return state
 
@@ -371,6 +376,30 @@ async def execute_action(
                            "candidate_ranking": "partial" if candidates else "UNKNOWN",
                            "final_verdict": "partial" if candidates else "UNKNOWN",
                        })
+
+    if action == "score_state":
+        audit = (session_state or {}).get("last_audit")
+        data["reused_audit"] = bool(audit)
+        data["score_state"] = args.get("score_state")
+        data["audit"] = audit if isinstance(audit, dict) else {}
+        response = (
+            "I reused the current verified audit packet and isolated the "
+            "opponent-scores-first trailing-state branch."
+            if audit else
+            "No completed audit is stored in this conversation yet, so the "
+            "trailing-state branch remains UNKNOWN."
+        )
+        return _result(
+            action,
+            status="available" if audit else "UNKNOWN",
+            tools=[],
+            data=data,
+            response=response,
+            stage_overrides={
+                "opposite_case_stress_test": "available" if audit else "UNKNOWN",
+                "final_verdict": "available" if audit else "UNKNOWN",
+            },
+        )
 
     if action in {"opposite_case", "refresh_lines", "run_player", "full_player_audit", "postmortem"}:
         picks_tool, picks = await _safe_tool("read_owner_ledger", load_picks)
