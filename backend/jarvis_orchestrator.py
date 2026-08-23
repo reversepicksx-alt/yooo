@@ -168,6 +168,9 @@ async def execute_action(
     discover_slate: Callable[[], Awaitable[list[dict[str, Any]]]],
     load_board: Callable[[], Awaitable[list[dict[str, Any]]]],
     load_memory: Callable[[], Awaitable[list[dict[str, Any]]]],
+    prior_prop_type: str | None = None,
+    resolve_player_fixture: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    run_player_analysis: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     action, args = classify_action(message)
     tools: list[dict[str, Any]] = []
@@ -318,22 +321,54 @@ async def execute_action(
             if len(matches) == 1:
                 market = matches[0]
                 data["inferred_prop_type"] = market.get("propType") or market.get("market") or market.get("statType")
-                response = (
-                    f"I matched {player_query} to one verified board market at {target_line}. "
-                    "I inferred the canonical prop from that market and will now verify the player identity and fixture."
-                )
             elif len(matches) > 1:
                 data["inferred_prop_type"] = "UNKNOWN"
+            else:
+                data["inferred_prop_type"] = prior_prop_type or "UNKNOWN"
+
+            prop_type = data["inferred_prop_type"]
+            request = {
+                "player_name": player_query,
+                "opponent": args.get("opponent_query"),
+                "venue": args.get("venue"),
+                "line": target_line,
+                "prop_type": prop_type,
+                "line_source": "board" if matches else "USER_SUPPLIED_LINE",
+                "current_market_status": "available" if matches else "UNKNOWN",
+            }
+            if prop_type not in {None, "", "UNKNOWN"} and resolve_player_fixture:
+                resolution = await resolve_player_fixture(request)
+                data["resolution"] = resolution
+                if resolution.get("status") == "resolved" and run_player_analysis:
+                    analysis = await run_player_analysis({**request, **resolution})
+                    data["analysis"] = analysis
+                    return _result(
+                        action,
+                        status="available" if analysis.get("status") == "available" else "partial",
+                        tools=tools,
+                        data=data,
+                        response=analysis.get(
+                            "response",
+                            f"I resolved {resolution.get('player_name', player_query)} and ran the deterministic analysis using line {target_line}.",
+                        ),
+                        stage_overrides={
+                            "fixture_discovery": "available",
+                            "exact_role_venue_analysis": "available",
+                            "bayesian_pipeline": analysis.get("status", "UNKNOWN"),
+                            "final_verdict": analysis.get("status", "UNKNOWN"),
+                        },
+                    )
+            if prop_type in {None, "", "UNKNOWN"}:
                 response = (
-                    f"I found multiple {player_query} markets at {target_line}. "
-                    "The prop type remains UNKNOWN; I need that distinction before running the analysis."
+                    f"I parsed {player_query} with {args.get('venue') or 'unspecified'} venue and line {target_line}. "
+                    "The current board does not provide a canonical prop, and no prior prop context was available. "
+                    "I need only the prop type before running the analysis."
                 )
             else:
-                data["inferred_prop_type"] = "UNKNOWN"
                 response = (
-                    f"I parsed {player_query} with {args.get('venue') or 'unspecified'} venue"
-                    f" and line {target_line}, but found no exact board market yet. "
-                    "I will not interpret the word 'plays' as a prop or invent a projection."
+                    f"I parsed {player_query} with {args.get('venue') or 'unspecified'} venue and line {target_line}. "
+                    f"I will use {prop_type} and treat the line as "
+                    f"{'board-verified' if matches else 'USER_SUPPLIED_LINE'} while continuing identity and fixture verification."
                 )
         return _result(action, status="partial", tools=tools, data=data, response=response)
 

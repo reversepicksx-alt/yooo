@@ -1,0 +1,43 @@
+Yeah — the problem is now pretty clear.
+
+Replit is still building JARVIS like a cautious command parser that stops whenever one expected field is missing. That is not how I work here. The whole point was for it to use the available tools and keep going until it has exhausted the evidence path.
+
+For Rongier, even if the current PrizePicks snapshot does not show an exact 52.5 market, JARVIS already has enough context to keep working: player name, opponent, venue, date, and user-supplied line. It should treat 52.5 as USER_SUPPLIED_LINE, resolve the player and fixture directly from API-Football, infer the likely canonical prop from context if the conversation established we are discussing passes, or ask only if the prop truly cannot be determined. It should not require the live board to “authorize” the existence of the prop before doing football analysis.
+
+Send Replit this exactly:
+
+JARVIS ORCHESTRATION IS STILL TOO BRITTLE. FIX THE STOP CONDITIONS.
+
+The current behavior is wrong because JARVIS is treating the PrizePicks board as a required identity/prop authority instead of one optional market-evidence source. In the owner workflow, JARVIS must behave like a real autonomous analyst: use all available tools, continue through safe fallbacks, and stop only when a genuinely required fact cannot be resolved.
+
+For requests like Run Rongier plays at home vs PSG line 52.5, the correct sequence is:
+
+1. Parse player=Rongier, opponent=PSG, venue context=home, line=52.5.
+2. Resolve the player and exact fixture directly from API-Football or the direct football identity tools. The PrizePicks board is NOT required for player/fixture identity.
+3. Determine the canonical prop from conversation context or explicit user wording. If the surrounding conversation is about pass attempts and Rongier 52.5 was already established, preserve that context. If no prop is inferable, ask only for the prop type; do not throw away the rest of the resolved context.
+4. Treat the user-provided 52.5 as USER_SUPPLIED_LINE when no live/saved market exists. Market verification status should be USER_REPORTED or UNKNOWN, not a hard failure.
+5. Continue the full football/pipeline analysis using the user-supplied line even if PrizePicks does not currently expose the market.
+6. Separately query PrizePicks for current/saved/history evidence. If absent, report CURRENT_PRIZEPICKS_LINE=UNKNOWN and USER_SUPPLIED_LINE=52.5. Do NOT refuse to run the prediction.
+7. Only stop when a required canonical fact is truly unresolved, such as multiple possible Rongiers or no verified fixture. Missing optional market evidence must never stop the analysis.
+
+More generally, change the orchestration policy from “missing field => stop” to “missing field => try the next relevant tool/fallback; stop only if all safe resolution paths fail.”
+
+Required vs optional evidence must be explicit:
+
+Required: canonical player identity, exact fixture, team/opponent orientation, prop type, prediction line.
+
+Optional/advisory: current PrizePicks listing, line history, tactical memory, some news, some cohort evidence, some possession layers.
+
+A user-supplied line is valid prediction input and must not be rejected just because the current board does not contain it.
+
+Add regression tests for:
+
+* Run Rongier pass attempts at home vs PSG line 52.5 with no board market: must still resolve player/fixture and run using USER_SUPPLIED_LINE.
+* Run Rongier at home vs PSG line 52.5 when prior conversation established pass attempts: must inherit conversation prop context and continue.
+* Missing PrizePicks market must produce CURRENT_LINE=UNKNOWN, not ANALYSIS_ABORTED.
+* Missing tactical memory must not stop prediction.
+* Missing one optional API source must not stop prediction when required identity/stat inputs are available.
+
+JARVIS should use the board to VERIFY/MONITOR the market, not to decide whether the football prop is allowed to be analyzed.
+
+That is the core issue. Replit has the tools, but the orchestration policy is still too rigid. It needs to learn the difference between required facts and optional evidence.
