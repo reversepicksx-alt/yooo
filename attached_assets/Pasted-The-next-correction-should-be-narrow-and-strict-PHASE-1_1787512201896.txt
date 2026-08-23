@@ -1,0 +1,31 @@
+The next correction should be narrow and strict:
+
+PHASE 1 FOOTBALL-INTELLIGENCE TRUTHFULNESS FIX
+
+The live Rongier acceptance test proves the orchestration and model/JARVIS separation are working, but the tactical verdict still overstates evidence. Do not add new market features yet. Fix evidence grading and football-specific interpretation first.
+
+Required changes:
+
+1. Matching-venue evidence must be honest. If same-venue player comparables or same-role comparables are unavailable, the corresponding module must be PARTIAL or UNKNOWN, not AVAILABLE merely because generic logs or team venue possession exist. Distinguish team venue context from player matching-venue evidence.
+2. Playstyle fields must never be implied when absent. If Rennes buildup style, PSG press/block style, progression channel, hub concentration, or pressing treatment are not directly supported by evidence, return UNKNOWN. Do not infer team playstyle solely from formation or possession.
+3. Hub/connector claims need evidence. A Deep-Lying Playmaker role does not automatically mean primary buildup hub. Only classify HUB, CONNECTOR, or TERRITORIAL_RECEIVER when supported by verified volume share, touches/pass concentration, lineup structure, teammate redistribution, or equivalent evidence. Otherwise say ROLE=Deep-Lying Playmaker; HUB_STATUS=UNKNOWN.
+4. Score-state branches must include a prop consequence. For each branch—Rennes scores first, PSG scores first, level around 60’, early goal either way—return pass_volume_direction = UP / DOWN / NEUTRAL / UNKNOWN, plus the evidence and rationale. Do not return only branch names and historical weights.
+5. The strongest opposite case must be football-specific. It should explain the realistic OVER path using actual evidence, e.g. Rennes get longer harmless possession, PSG relax pressure, Rongier becomes first outlet, back line funnels through him, minutes remain 90, etc. If the evidence for that path is missing, state that explicitly.
+6. Counterfactual robustness must produce results, not just inputs. For the requested stress cases—possession ±5pp, minutes -5/-10, different press, formation/role shift, early goal either direction, favorite unexpectedly trailing—either rerun/derive the resulting projection or classify the scenario effect as UP/DOWN/UNKNOWN. Then summarize ROBUST / MODERATELY ROBUST / FRAGILE / EXTREMELY FRAGILE with the exact flip condition.
+7. JARVIS grade must be evidence-capped. No A/ELITE-style grade is allowed when major tactical fields are UNKNOWN. Missing playstyle, missing same-role cohort, missing same-venue player evidence, missing line movement, missing formation-change counterfactual, or missing model-disagreement evidence must contribute to the evidence-quality penalty.
+8. Expose UNKNOWN evidence truthfully. unknown_evidence must list every materially unavailable tactical component. Zero UNKNOWN evidence is invalid if any audit module is unavailable or partial.
+9. Separate three evidence classes in the response: MODEL_EVIDENCE, TACTICAL_EVIDENCE, and UNAVAILABLE_EVIDENCE. Do not let one category make another look complete.
+10. Rerun the exact Rongier acceptance test. The result should answer, in plain football terms:
+
+* what Rongier’s exact role is,
+* whether he is actually a buildup hub or only role-adjacent,
+* how Rennes are expected to progress,
+* how PSG are expected to press/block,
+* what changes if PSG score first,
+* the strongest OVER path,
+* whether the UNDER survives realistic possession/minutes/score-state changes,
+* and why the final JARVIS grade is justified by the evidence quality.
+
+The acceptance test passes only if the final response is more conservative where evidence is missing and more specific where evidence exists. Do not fabricate missing tactical detail to make the audit look complete.
+
+That’s the exact next fix I’d make.
