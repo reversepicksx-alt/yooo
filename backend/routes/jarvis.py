@@ -83,8 +83,14 @@ from tactical_memory import (
     invalidate_regime,
     upsert_tactical_memory,
 )
+from jarvis_orchestrator import execute_action
 
 router = APIRouter()
+
+
+class JarvisConversationBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1200)
+    context: dict[str, Any] | None = None
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _API_SPORTS_BASE = "https://v3.football.api-sports.io"
@@ -127,6 +133,53 @@ def _require_auth(authorization: Optional[str]) -> None:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or token.strip() != _JARVIS_KEY:
         raise HTTPException(401, detail={"error": "Invalid JARVIS API key."})
+
+
+@router.post("/api/jarvis/conversation")
+async def jarvis_conversation(
+    body: JarvisConversationBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Run one owner-facing JARVIS action through the shared orchestrator."""
+    _require_auth(authorization)
+    if (os.environ.get("JARVIS_CONVERSATION_MODE") or "enabled").strip().lower() in {
+        "off", "disabled", "false", "0",
+    }:
+        raise HTTPException(404, detail={"error": "feature_disabled", "feature": "jarvis_conversation"})
+
+    from team_resolver import find_team
+    from utils import priority_api_football_request
+
+    async def load_picks() -> list[dict[str, Any]]:
+        return await db.picks.find(
+            {"email": OWNER_EMAIL}, {"_id": 0, "playerName": 1, "propType": 1, "line": 1,
+             "recommendation": 1, "projectedValue": 1, "result": 1, "fixtureId": 1,
+             "teamName": 1, "opponentName": 1}
+        ).sort([("createdAt", -1)]).limit(100).to_list(length=100)
+
+    async def fetch_fixtures(team_id: int) -> list[dict[str, Any]]:
+        raw = await priority_api_football_request("fixtures", {"team": team_id, "next": 10})
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            rows = raw.get("response") or raw.get("data") or []
+            return rows if isinstance(rows, list) else []
+        return []
+
+    result = await execute_action(
+        body.message,
+        context=body.context,
+        load_picks=load_picks,
+        find_team=find_team,
+        fetch_fixtures=fetch_fixtures,
+        load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
+        load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
+    )
+    return {
+        "source": "jarvis/conversation",
+        "assistant": "JARVIS",
+        **result,
+    }
 
 
 def _runtime_status(value: Any, *, source: str, reason: str | None = None) -> dict:

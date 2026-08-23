@@ -24,6 +24,7 @@ from compact_explanation import _within_daily_limit as _within_explanation_budge
 from lissa_memory import load_recent_turns, remember_turn
 from team_resolver import find_team
 from utils import priority_api_football_request
+from jarvis_orchestrator import execute_action
 
 
 router = APIRouter(prefix="/api/lissa", tags=["lissa"])
@@ -708,6 +709,7 @@ async def _finish_turn(
     response: str,
     mode: str,
     summary: dict[str, Any],
+    orchestration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = _address_owner(response)
     try:
@@ -724,7 +726,7 @@ async def _finish_turn(
         )
     except Exception as exc:
         print(f"[LISSA MEMORY] turn save skipped: {type(exc).__name__}: {exc}")
-    return {
+    response = {
         "assistant": ".2",
         "sessionId": session_id,
         "response": text,
@@ -732,6 +734,11 @@ async def _finish_turn(
         "mode": mode,
         "summary": summary,
     }
+    if orchestration:
+        response["orchestration"] = orchestration
+        response["action"] = orchestration.get("action")
+        response["tools"] = orchestration.get("tools", [])
+    return response
 
 
 @router.post("/overview")
@@ -743,7 +750,11 @@ async def lissa_overview(req: LissaOverviewRequest):
         "assistant": ".2",
         "readOnly": True,
         "summary": summary,
-        "message": _address_owner(_summary_text(summary)),
+        "message": _address_owner(
+            "I’m JARVIS. Tell me what to run — Script Hunt, Board, Run a player, "
+            "Opposite Case, Refresh Lines, or Postmortem. I’m read-only and will "
+            "show what each workflow can verify."
+        ),
         "sessionId": f"lissa-{uuid.uuid4().hex[:12]}",
     }
 
@@ -1179,6 +1190,42 @@ async def lissa_message(req: LissaMessageRequest):
     await _authorize(req)
     message = req.message.strip()
     session_id = _session_id(req)
+
+    # Named commands use the shared action orchestrator instead of the retired
+    # ledger-only chat path. Each tool is bounded, read-only, and provenance
+    # labeled; failures become UNKNOWN inside the response.
+    async def _fixtures_for_team(team_id: int) -> list[dict[str, Any]]:
+        raw = await priority_api_football_request("fixtures", {"team": team_id, "next": 10})
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            rows = raw.get("response") or raw.get("data") or []
+            return rows if isinstance(rows, list) else []
+        return []
+
+    action_result = await execute_action(
+        message,
+        context=req.context,
+        load_picks=_load_owner_picks_cached,
+        find_team=find_team,
+        fetch_fixtures=_fixtures_for_team,
+        load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
+        load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
+    )
+    if action_result.get("action") != "general":
+        try:
+            picks_for_summary = await _load_owner_picks_cached()
+        except Exception as exc:
+            print(f"[LISSA] action summary load skipped: {type(exc).__name__}: {exc}")
+            picks_for_summary = []
+        return await _finish_turn(
+            req,
+            session_id,
+            action_result["response"],
+            f"action:{action_result['action']}",
+            _ledger_summary(picks_for_summary),
+            orchestration=action_result,
+        )
 
     # 1. Instant screen/identity responses — no I/O needed
     fast = _fast_response(message, req.context)

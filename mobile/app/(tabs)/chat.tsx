@@ -5,6 +5,7 @@ import {
   Platform,
 } from 'react-native';
 import { Redirect } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +17,31 @@ interface Msg {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  tools?: string[];
+}
+
+async function loadChatHistory(email: string): Promise<Msg[]> {
+  const key = `jarvis-chat:${email.toLowerCase()}`;
+  try {
+    const raw = Platform.OS === 'web'
+      ? localStorage.getItem(key)
+      : await SecureStore.getItemAsync(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(-100) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveChatHistory(email: string, messages: Msg[]) {
+  const key = `jarvis-chat:${email.toLowerCase()}`;
+  try {
+    const raw = JSON.stringify(messages.slice(-100));
+    if (Platform.OS === 'web') localStorage.setItem(key, raw);
+    else await SecureStore.setItemAsync(key, raw);
+  } catch {
+    // History is a convenience; a storage failure must not block conversation.
+  }
 }
 
 export default function ChatScreen() {
@@ -35,13 +61,14 @@ export default function ChatScreen() {
     let cancelled = false;
     (async () => {
       try {
+        const history = await loadChatHistory(session.email);
         const resp = await startLissa(session.email, session.token);
         if (cancelled) return;
         setSessionId(resp.sessionId);
-        setMessages([{
+        setMessages(history.length ? history : [{
           id: '0',
           role: 'assistant',
-          text: resp.message || resp.response || 'I’m JARVIS. Ask me about your picks, model evidence, or a matchup.',
+          text: resp.message || resp.response || 'I’m JARVIS. Tell me what to run.',
         }]);
       } catch {
         setMessages([{
@@ -55,6 +82,10 @@ export default function ChatScreen() {
     })();
     return () => { cancelled = true; };
   }, [session?.email, session?.token]);
+
+  useEffect(() => {
+    if (session?.email && messages.length) void saveChatHistory(session.email, messages);
+  }, [session?.email, messages]);
 
   const send = async () => {
     const text = input.trim();
@@ -78,6 +109,7 @@ export default function ChatScreen() {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         text: resp.response || resp.message || 'I could not find a verified answer for that yet.',
+        tools: (resp.tools || resp.orchestration?.tools || []).map(tool => `${tool.name}:${tool.status}`),
       }]);
     } catch {
       setMessages(prev => [...prev, {
@@ -146,9 +178,16 @@ export default function ChatScreen() {
                 <Ionicons name="sparkles" size={11} color={Colors.primary} />
               </View>
             )}
-            <Text style={[styles.messageText, item.role === 'user' && styles.messageTextUser]}>
-              {item.text}
-            </Text>
+            <View style={styles.messageContent}>
+              <Text style={[styles.messageText, item.role === 'user' && styles.messageTextUser]}>
+                {item.text}
+              </Text>
+              {!!item.tools?.length && (
+                <Text style={styles.toolText}>
+                  {item.tools.map((tool: string) => tool.replace(':available', ' ✓').replace(':partial', ' …').replace(':UNKNOWN', ' ?')).join('  ')}
+                </Text>
+              )}
+            </View>
           </View>
         )}
         ListFooterComponent={loading ? (
@@ -254,6 +293,13 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 20,
     fontWeight: '500',
+  },
+  messageContent: { flex: 1, minWidth: 0 },
+  toolText: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    marginTop: 7,
+    letterSpacing: 0.2,
   },
   typingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2, marginBottom: 8 },
   composerArea: {

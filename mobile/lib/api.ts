@@ -335,6 +335,14 @@ export interface LissaResponse {
   readOnly: boolean;
   mode?: string;
   summary: LissaSummary;
+  action?: string;
+  tools?: Array<{ name: string; status: string; reason?: string }>;
+  orchestration?: {
+    action?: string;
+    status?: string;
+    tools?: Array<{ name: string; status: string; reason?: string }>;
+    data?: Record<string, unknown>;
+  };
 }
 
 export interface LissaContext {
