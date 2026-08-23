@@ -2317,7 +2317,7 @@ export default function ScanScreen() {
           <View style={styles.sportPickerOptions}>
             {([
               { key: 'soccer' as const, label: 'SOCCER', icon: 'football-outline', color: '#39FF14' },
-              { key: 'nba' as const, label: 'NBA', icon: 'basketball-outline', color: '#FF6B35' },
+              { key: 'mlb' as const, label: 'MLB', icon: 'baseball-outline', color: '#4DA3FF' },
               { key: 'nfl' as const, label: 'NFL', icon: 'american-football-outline', color: '#FF9500' },
             ]).map(option => {
               const active = sport === option.key;
