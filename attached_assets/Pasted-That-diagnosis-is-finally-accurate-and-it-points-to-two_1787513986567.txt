@@ -1,0 +1,39 @@
+That diagnosis is finally accurate, and it points to two real blockers only:
+
+1. Fixture resolution is still not robust enough.
+The parser works now, but Rongier can still die at identity/fixture resolution because the resolver is relying on incomplete cached player metadata and not successfully falling back through opponent → fixture → home team → squad → player.
+
+2. The OpenAI brain is still not actually in the loop.
+The diagnostics prove it: provider_used = deterministic-fallback, response_id = null, orchestration_rounds = 0. So right now Reverse still isn’t “me.” It’s a deterministic router wearing the JARVIS UI.
+
+Tell Replit this next, and keep it focused:
+
+PHASE 2 BLOCKERS — FIX ONLY THESE TWO BEFORE ANY MORE FEATURES
+
+1. Wire the Responses API into the actual owner conversation path. The configured gpt-5.6-sol provider must actually receive owner turns. A successful live turn must return a non-null response_id, provider_used=openai, fallback_used=false, and orchestration_rounds>=1. The model should receive the conversation state plus typed Reverse Picks tools and be allowed to choose/sequence them. Do not route owner turns through the named deterministic command path first unless the model explicitly delegates there.
+2. Replace brittle player-cache fixture lookup with graph resolution. For Rongier 52.5 passes vs PSG, resolve:
+    opponent PSG → PSG team ID → nearest relevant verified fixture where PSG is away → home team Rennes → Rennes squad/current players → Valentin Rongier → exact player ID → fixture 1552735 → venue home. Cached player metadata may accelerate this but must not be required.
+3. The exact live acceptance test is mandatory:
+    Rongier 52.5 passes vs PSG
+
+It must return:
+
+* Valentin Rongier
+* Rennes
+* PSG
+* home venue
+* exact fixture ID
+* pass_attempts
+* line 52.5
+* deterministic projection/recommendation
+* owner diagnostics proving OpenAI handled the turn
+
+4. Do not add more intents, UI polish, market features, or Tactical Memory work until this passes.
+5. After that single-player flow passes, rerun:
+    Full audit him
+    What if PSG score first?
+    Actually use 49.5
+    and only then return to Script Hunt depth.
+6. If OpenAI Responses cannot be called in the current workspace, report that as the blocker. Do not claim the JARVIS brain is active when the diagnostics show deterministic fallback.
+
+That’s the cleanest path now. Stop expanding the system and make the one real JARVIS path work end-to-end first.

@@ -1334,6 +1334,7 @@ async def lissa_message(req: LissaMessageRequest):
         prior_prop_type=prior_prop_type or session_state.get("prop_type"),
         resolve_player_fixture=_resolve_player_fixture,
         run_player_analysis=_run_player_analysis,
+            evaluate_script_fixture=__import__("routes.jarvis", fromlist=["_evaluate_script_fixture"])._evaluate_script_fixture,
     )
     action_result["owner_cutover"] = "phase2"
     await save_session_state(

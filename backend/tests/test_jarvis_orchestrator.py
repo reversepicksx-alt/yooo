@@ -137,10 +137,11 @@ def test_script_hunt_dispatches_fixture_and_board_tools():
         load_memory=empty,
     ))
     assert result["action"] == "script_hunt"
-    assert result["status"] == "partial"
+    assert result["status"] == "UNKNOWN"
     assert [call[0] for call in calls] == ["slate", "board"]
-    assert result["data"]["home_control_filter"]["status"] == "partial"
-    assert result["data"]["fixtures"][0]["homeTeam"]["name"] == "Arsenal"
+    assert result["data"]["home_control_filter"]["status"] == "UNKNOWN"
+    assert result["data"]["fixtures"] == []
+    assert result["data"]["rejectedFixtures"][0]["reason"] == "home_control_evaluator_unavailable"
     assert result["provenance"]["tool_results_are_read_only"] is True
 
 

@@ -311,6 +311,7 @@ async def jarvis_conversation(
         prior_prop_type=((body.context or {}).get("propType") if isinstance(body.context, dict) else None),
         resolve_player_fixture=resolve_player_fixture,
         run_player_analysis=run_player_analysis,
+        evaluate_script_fixture=_evaluate_script_fixture,
     )
     return {
         "source": "jarvis/conversation",
@@ -791,6 +792,82 @@ def _unknown_resolution(reason: str, message: str, **context: Any) -> HTTPExcept
         "status": "UNKNOWN", "resolution": "unresolved", "reason": reason,
         "message": message, **context,
     })
+
+
+async def _evaluate_script_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
+    """Bounded, evidence-first home-control evaluation for Script Hunt."""
+    identity = _fixture_identity(fixture)
+    home_id = identity.get("home_team_id")
+    away_id = identity.get("away_team_id")
+    if not home_id or not away_id:
+        return {"grade": "UNKNOWN", "reason": "fixture_identity_incomplete", "evidence_quality": "none"}
+
+    async def recent(team_id: int, venue: str) -> list[dict[str, Any]]:
+        data = await _sports_get_safe(
+            "fixtures",
+            {"team": team_id, "last": 7},
+            cache_ttl=_CACHE_TTL_SCHEDULED,
+        )
+        rows = data.get("response") or [] if isinstance(data, dict) else []
+        return [
+            _fixture_identity(row) for row in rows
+            if _fixture_identity(row).get("fixture_id")
+            and (
+                (_fixture_identity(row).get("home_team_id") == team_id and venue == "home")
+                or (_fixture_identity(row).get("away_team_id") == team_id and venue == "away")
+            )
+        ][:5]
+
+    home_rows, away_rows = await asyncio.gather(
+        recent(int(home_id), "home"),
+        recent(int(away_id), "away"),
+    )
+
+    async def possession(row: dict[str, Any], team_id: int) -> float | None:
+        data = await _sports_get_safe(
+            "fixtures/statistics",
+            {"fixture": row["fixture_id"]},
+            cache_ttl=_CACHE_TTL_SCHEDULED,
+        )
+        for team_packet in (data or {}).get("response") or []:
+            if (team_packet.get("team") or {}).get("id") != team_id:
+                continue
+            for stat in team_packet.get("statistics") or []:
+                if str(stat.get("type") or "").casefold() == "ball possession":
+                    raw = str(stat.get("value") or "").replace("%", "").strip()
+                    try:
+                        return float(raw)
+                    except (TypeError, ValueError):
+                        return None
+        return None
+
+    home_poss, away_poss = await asyncio.gather(
+        asyncio.gather(*(possession(row, int(home_id)) for row in home_rows)),
+        asyncio.gather(*(possession(row, int(away_id)) for row in away_rows)),
+    )
+    home_values = [value for value in home_poss if value is not None]
+    away_values = [value for value in away_poss if value is not None]
+    evidence = {
+        "fixture": identity,
+        "home_matching_venue_samples": len(home_values),
+        "away_corresponding_venue_samples": len(away_values),
+        "home_possession_average": round(sum(home_values) / len(home_values), 1) if home_values else None,
+        "away_possession_average": round(sum(away_values) / len(away_values), 1) if away_values else None,
+        "source": "api-football fixtures/statistics",
+    }
+    if len(home_values) < 3 or len(away_values) < 3:
+        return {"grade": "UNKNOWN", "reason": "insufficient_matching_venue_possession_samples", "evidence_quality": "insufficient", "evidence": evidence}
+    home_avg = evidence["home_possession_average"]
+    away_avg = evidence["away_possession_average"]
+    if home_avg >= 55 and away_avg <= 50:
+        grade = "VERIFIED_HOME_CONTROL"
+    elif home_avg >= 52 and away_avg <= 53:
+        grade = "PARTIAL_HOME_CONTROL"
+    elif home_avg < 48 and away_avg > 52:
+        grade = "CONTRADICTED"
+    else:
+        grade = "NEUTRAL"
+    return {"grade": grade, "evidence_quality": "measured", "evidence": evidence}
 
 
 def _player_search_identity(row: dict[str, Any]) -> dict[str, Any]:

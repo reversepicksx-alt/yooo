@@ -364,7 +364,10 @@ async def execute_action(
         candidates: list[dict[str, Any]] = []
         rejected: list[dict[str, Any]] = []
         evaluated: list[dict[str, Any]] = []
-        for fixture in rows[:50]:
+        # Keep one blank-chat hunt bounded; unevaluated tail rows remain
+        # transparent and can never enter the ranked shortlist.
+        evaluated_fixture_rows = rows[:10]
+        for fixture in evaluated_fixture_rows:
             fixture_data = fixture.get("fixture") if isinstance(fixture, dict) else {}
             teams = fixture.get("teams") if isinstance(fixture, dict) else {}
             home = teams.get("home") if isinstance(teams, dict) else {}
@@ -399,6 +402,10 @@ async def execute_action(
             "fixtures": candidates[:30],
             "rejectedFixtures": rejected[:30],
             "evaluatedFixtures": evaluated[:30],
+            "unevaluatedFixtures": [
+                {"fixture": fixture, "reason": "bounded_script_hunt_evaluation"}
+                for fixture in rows[10:100]
+            ],
             "home_control_filter": {"status": "available" if evaluated else "UNKNOWN", "kept": len(candidates), "rejected": len(rejected), "qualification_required": True},
             "tactical_matchup": {"status": "partial" if candidates else "UNKNOWN", "reason": "Deeper fixture/player audits run only for surviving qualified fixtures."},
             "markets": (board or [])[:50] if isinstance(board, list) else [],
@@ -437,18 +444,27 @@ async def execute_action(
                 audited_candidates.append(await audit_script_candidate(candidate))
             data["deepAudits"] = audited_candidates
         if candidates:
-            response = f"I discovered {len(rows)} upcoming fixtures, kept {len(candidates)} provisional home-side Script Hunt candidates, rejected {len(rejected)} incomplete/away-side cases, and checked the current board. Home-control qualification remains UNKNOWN until possession and matchup evidence is available; I did not treat formation alone as proof."
+            response = (
+                f"Script Hunt evaluated {len(evaluated)} fixtures and qualified {len(candidates)} "
+                f"home-control environments. It rejected {len(rejected)} fixtures, found "
+                f"{len(board_candidates)} current board candidates, and ranked survivors by "
+                "verified workload pathway. Deeper audits are included for shortlisted props."
+            )
             status = "partial" if board_tool["status"] != "UNKNOWN" else "partial"
         elif fixture_tool["status"] == "UNKNOWN":
             response = "I started Script Hunt, but the verified fixture provider is temporarily unavailable. I checked the board independently, kept fixture-dependent stages UNKNOWN, and did not guess candidates."
             status = "UNKNOWN"
         else:
-            response = "I discovered the current slate and checked the board, but no fixture had both verified home and away identities for a safe Script Hunt candidate. Nothing was guessed."
+            response = (
+                f"Script Hunt evaluated {len(evaluated)} fixtures and rejected {len(rejected)} "
+                "because possession/control evidence was UNKNOWN or contradicted. "
+                "No board candidates, ranked props, or deeper audits were promoted; nothing was guessed."
+            )
             status = "UNKNOWN"
         return _result(action, status=status, tools=tools, data=data, response=response,
                        stage_overrides={
                            "fixture_discovery": "available" if fixture_tool["status"] == "available" else "UNKNOWN",
-                           "home_control_filter": "partial",
+                            "home_control_filter": data.get("home_control_filter", {}).get("status", "UNKNOWN"),
                            "market_board_search": "available" if board_tool["status"] == "available" else "UNKNOWN",
                            "candidate_ranking": "partial" if candidates else "UNKNOWN",
                            "final_verdict": "partial" if candidates else "UNKNOWN",

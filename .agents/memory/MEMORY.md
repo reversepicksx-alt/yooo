@@ -156,3 +156,4 @@
 - [Plain pytest async convention](plain-pytest-async.md) — backend tests should use asyncio.run unless an async pytest plugin is explicitly configured.
 - [Manifest validation](manifest-validation.md) — large machine-readable exports need strict parsing, schema-key checks, and patchable formatting.
 - [JARVIS identity resolution](jarvis-identity-resolution.md) — contextual team, fixture, orientation, and squad fallbacks are required before stopping conversational predictions.
+- [JARVIS Script Hunt evidence gate](jarvis-script-hunt-evidence.md) — fixture discovery never creates candidates; measured home/away control evidence gates board lookup and ranking.
