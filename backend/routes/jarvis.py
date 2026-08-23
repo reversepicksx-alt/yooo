@@ -116,6 +116,7 @@ def _audit_response_contract(audit: dict[str, Any], prediction: dict[str, Any]) 
         "press_block_interaction": values("press_block_interaction"),
         "role_cohort": values("role_opponent_venue_cohort"),
         "first_goal": values("first_goal_market"),
+        "score_state_branches": (values("game_state") or {}).get("branch_effects"),
         "leading_state": (values("first_goal_regime_change") or {}).get("best_case"),
         "trailing_state": (values("first_goal_regime_change") or {}).get("worst_case"),
         "level_60_state": (values("game_state") or {}).get("level_around_60"),
@@ -129,6 +130,9 @@ def _audit_response_contract(audit: dict[str, Any], prediction: dict[str, Any]) 
         "final_verdict": verdict.get("final_verdict"),
         "unknown_evidence": verdict.get("unknown_evidence") or [],
         "provenance": verdict.get("provenance") or audit.get("provenance"),
+        "model_evidence": verdict.get("model_evidence") or {},
+        "tactical_evidence": verdict.get("tactical_evidence") or {},
+        "unavailable_evidence": verdict.get("unavailable_evidence") or verdict.get("unknown_evidence") or [],
     }
 
 # ── Config ────────────────────────────────────────────────────────────────────

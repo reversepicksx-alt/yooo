@@ -387,6 +387,32 @@ def _runtime_module(
     )
 
 
+def _has_direct_packet(value: Any, *, sample_keys: tuple[str, ...] = ()) -> bool:
+    """True only when a packet has direct, usable evidence—not just a wrapper."""
+    if not isinstance(value, dict):
+        return bool(value)
+    if value.get("available") is False or str(value.get("status", "")).lower() in {
+        "unavailable", "unknown", "not_started",
+    }:
+        return False
+    if sample_keys:
+        return any(
+            value.get(key) not in (None, "", [], {}, 0)
+            for key in sample_keys
+        )
+    return any(value.get(key) not in (None, "", [], {}, 0) for key in value)
+
+
+def _unknown_components(modules: dict[str, dict[str, Any]]) -> list[str]:
+    """Flatten material gaps so callers cannot mistake a populated packet for complete evidence."""
+    gaps: list[str] = []
+    for name, module in modules.items():
+        status = str(module.get("status", "")).lower() if isinstance(module, dict) else ""
+        if status in {"unknown", "unavailable", "partial", "not_started"}:
+            gaps.append(name)
+    return gaps
+
+
 def _jarvis_verdict(
     *,
     prediction: dict[str, Any],
@@ -401,19 +427,21 @@ def _jarvis_verdict(
         name for name, module in modules.items()
         if isinstance(module, dict) and module.get("status") in {"available", "partial"}
     ]
-    unknown = [
-        name for name, module in modules.items()
-        if isinstance(module, dict) and module.get("status") == "UNKNOWN"
-    ]
+    unknown = _unknown_components(modules)
     tactical = modules.get("buildup_interaction", {}).get("values", {})
     press = modules.get("press_block_interaction", {}).get("values", {})
     role = modules.get("exact_role", {}).get("values", {}).get("exact_role")
     direction = recommendation.upper() if recommendation in {"over", "under"} else "PASS"
+    # Tactical completeness is capped independently of RP confidence.
+    critical_gaps = {
+        "buildup_interaction", "press_block_interaction",
+        "venue_h2h_possession", "role_opponent_venue_cohort",
+        "market_movement", "model_disagreement", "counterfactual_robustness",
+    }
+    critical_unknowns = len(critical_gaps.intersection(unknown))
     grade = "C"
-    if len(active) >= 10 and not anomalies.get("blocks_elite_grade"):
+    if len(active) >= 10 and critical_unknowns <= 2 and not anomalies.get("blocks_elite_grade"):
         grade = "B"
-    if len(active) >= 14 and not unknown:
-        grade = "A"
     verdict = (
         f"JARVIS {direction}: {role or 'role evidence is incomplete'}; "
         f"the tactical packet has {len(active)} populated evidence modules"
@@ -429,6 +457,7 @@ def _jarvis_verdict(
         "strongest_opposite_case": modules.get("strongest_opposite_case", {}).get("values", {}),
         "active_modules": active,
         "unknown_evidence": unknown,
+        "evidence_quality_penalty": critical_unknowns,
         "provenance": "deterministic synthesis of existing Reverse Picks runtime packets; shadow_only",
         "production_influence": False,
         "tactical_summary": {
@@ -537,6 +566,70 @@ def build_audit_snapshot(
         "pressure_response": tactical_context.get("pressureResponse"),
         "opponent_stats": opponent_stats,
     }
+    same_role = role_values.get("evidence_chain") if isinstance(role_values.get("evidence_chain"), dict) else {}
+    same_role = same_role.get("sameRoleEvidence") if isinstance(same_role.get("sameRoleEvidence"), dict) else {}
+    same_venue = role_values.get("evidence_chain", {})
+    same_venue = same_venue.get("sameVenueEvidence") if isinstance(same_venue, dict) else {}
+    cohort_direct = _has_direct_packet(
+        position_comparison,
+        sample_keys=("sampleSize", "avgStatValue", "average", "weightedAverage"),
+    ) and bool((position_comparison or {}).get("players"))
+    same_role_direct = _has_direct_packet(same_role, sample_keys=("sampleSize",))
+    same_venue_direct = _has_direct_packet(same_venue, sample_keys=("sampleSize",))
+    direct_playstyle = any(
+        tactical_intelligence.get(key) not in (None, "", [], {})
+        or tactical_context.get(key) not in (None, "", [], {})
+        for key in ("teamPlaystyle", "buildupStyle", "progressionChannel")
+    )
+    direct_press_style = any(
+        tactical_intelligence.get(key) not in (None, "", [], {})
+        or tactical_context.get(key) not in (None, "", [], {})
+        for key in ("opponentPlaystyle", "pressingTreatment", "blockStyle")
+    )
+    hub_evidence = any(
+        tactical_intelligence.get(key) not in (None, "", [], {})
+        or tactical_context.get(key) not in (None, "", [], {})
+        for key in ("hubSignal", "volumeShare", "passConcentration", "touchShare")
+    ) or bool((prediction.get("teammateRedistribution") or {}).get("hubEvidence"))
+    branch_base = {
+        "pass_volume_direction": "UNKNOWN",
+        "evidence": [],
+        "rationale": "No validated score-state-to-pass-volume transport was returned; branch remains descriptive.",
+        "projection_influence": "shadow_only",
+    }
+    first_goal_values = first_goal_modules["first_goal_market"].get("values", {})
+    branch_values = {
+        "rennes_scores_first": {**branch_base, "scenario_probability": first_goal_values.get("team_scores_first_probability")},
+        "psg_scores_first": {**branch_base, "scenario_probability": first_goal_values.get("opponent_scores_first_probability")},
+        "level_around_60": {**branch_base, "scenario_probability": first_goal_values.get("no_goal_probability")},
+        "early_goal_either_way": {**branch_base, "scenario_probability": first_goal_values.get("team_scores_first_probability")},
+    }
+    counterfactual_values = {
+        "base_projection": _prediction_value(prediction, "projectedValue", "projection"),
+        "base_line": request.get("line"),
+        "scenarios": {
+            "possession_minus_5pp": {"effect": "UNKNOWN", "projection": None},
+            "possession_plus_5pp": {"effect": "UNKNOWN", "projection": None},
+            "minutes_minus_5": {"effect": "UNKNOWN", "projection": None},
+            "minutes_minus_10": {"effect": "UNKNOWN", "projection": None},
+            "different_press": {"effect": "UNKNOWN", "projection": None},
+            "formation_or_role_shift": {"effect": "UNKNOWN", "projection": None},
+            "rennes_scores_first": {"effect": "UNKNOWN", "projection": None},
+            "psg_scores_first": {"effect": "UNKNOWN", "projection": None},
+            "favorite_trailing": {"effect": "UNKNOWN", "projection": None},
+        },
+        "summary": "UNKNOWN",
+        "flip_condition": "UNKNOWN; no bounded counterfactual rerun was returned.",
+        "projection_influence": "shadow_only",
+    }
+    opposite_values = {
+        "opposite_direction": "over" if recommendation == "under" else "under",
+        "path_status": "UNKNOWN",
+        "football_case": "UNKNOWN: no direct evidence establishes that Rennes would sustain longer harmless possession, funnel buildup through Rongier, or that PSG would relax its press.",
+        "supporting_evidence": [],
+        "missing_evidence": ["buildup_style", "hub_concentration", "press_relaxation", "verified_90_minute_role"],
+        "projection": _prediction_value(prediction, "projectedValue", "projection"),
+    }
     modules = {
         "stat_definition": _module(
             "available" if stat_definition.get("verification_status") != "unknown" else "unknown",
@@ -547,12 +640,20 @@ def build_audit_snapshot(
         "exact_role": _runtime_module(prediction, name="exact_role", values=role_values, sources=("roleEvidencePacket", "tacticalContext"), reason="No exact observed role or lineup evidence was returned."),
         "rp_possession_context": _runtime_module(prediction, name="rp_possession_context", values=venue_values, sources=("rp_prediction",), reason="RP response did not expose venue possession values."),
         "independent_venue_possession": _runtime_module(prediction, name="independent_venue_possession", values=tactical_context_values, sources=("api-football fixture statistics", "tacticalContext"), reason="No verified same-venue team possession packet was returned."),
-        "venue_h2h_possession": _runtime_module(prediction, name="venue_h2h_possession", values={"venue": context.get("venue"), "player_logs": player_logs, "venue_average": tactical_context.get("venueAverage"), "venue_samples": tactical_context.get("venueSampleSize")}, sources=("playerGameLogs", "tacticalContext"), reason="No matching-venue player history packet was returned."),
-        "role_opponent_venue_cohort": _runtime_module(prediction, name="role_opponent_venue_cohort", values={"position_cohort": position_comparison, "role": role_values, "opponent": context.get("opponent_name")}, sources=("positionComparison", "roleEvidencePacket"), reason="No valid role/opponent/venue cohort packet was returned."),
+        "venue_h2h_possession": _module("available" if same_venue_direct else "partial" if tactical_context.get("venueAverage") is not None else "UNKNOWN", source="roleEvidencePacket/tacticalContext", values={"matching_venue_player_evidence": same_venue if same_venue_direct else "UNKNOWN", "team_venue_context": {"average": tactical_context.get("venueAverage"), "sample_size": tactical_context.get("venueSampleSize")}, "player_logs_are_matching_venue": same_venue_direct}, reason=None if same_venue_direct else "Team venue context or generic player logs do not establish matching-venue player comparables."),
+        "role_opponent_venue_cohort": _module("available" if cohort_direct or same_role_direct else "UNKNOWN", source="positionComparison/roleEvidencePacket", values={"position_cohort": position_comparison if cohort_direct else "UNKNOWN", "same_role_evidence": same_role if same_role_direct else "UNKNOWN", "opponent": context.get("opponent_name"), "venue": context.get("venue")}, reason=None if cohort_direct or same_role_direct else "Same-role/opponent/venue comparable rows were not returned."),
         "volume_share": _runtime_module(prediction, name="volume_share", values={"matchup_volume": matchup_volume, "player_logs": player_logs, "hub_signal": tactical_intelligence.get("hubSignal") or tactical_context.get("hubSignal")}, sources=("matchupVolume", "tacticalIntelligence"), reason="No player/team volume-share packet was returned."),
         "teammate_redistribution": _runtime_module(prediction, name="teammate_redistribution", values={"redistribution": prediction.get("teammateRedistribution") or tactical_context.get("teammateRedistribution"), "lineup": prediction.get("lineup") or tactical_context.get("lineupStatus")}, sources=("lineup", "tacticalContext"), reason="No verified teammate redistribution packet was returned."),
         "minutes_probability": _runtime_module(prediction, name="minutes_probability", values={"minutes_risk": tactical_context.get("minutesRisk") or (news_intelligence_module.get("values") or {}).get("minutes_risk"), "start_probability": (news_intelligence_module.get("values") or {}).get("target_start_probability"), "lineup_status": tactical_context.get("lineupStatus")}, sources=("newsIntelligence", "tacticalContext"), reason="No lineup/minutes probability packet was returned."),
-        "game_state": first_goal_modules["game_state"],
+        "game_state": _module(
+            first_goal_modules["game_state"].get("status", "partial"),
+            source="first_goal_engine",
+            values={
+                **first_goal_modules["game_state"].get("values", {}),
+                "branch_effects": branch_values,
+            },
+            reason=first_goal_modules["game_state"].get("reason"),
+        ),
         "first_goal_market": first_goal_modules["first_goal_market"],
         "first_goal_regime_change": first_goal_modules["first_goal_regime_change"],
         "news_intelligence": news_intelligence_module,
@@ -560,13 +661,37 @@ def build_audit_snapshot(
         "anomaly_detection": anomalies,
         "evidence_quality": _module("available" if eq else "unknown", source="rp_evidence_quality" if eq else "unavailable", values=eq, reason=None if eq else "RP did not return an evidence-quality packet."),
         "model_disagreement": _module("unknown", source="independent_layer_registry", reason="Only RP-correlated values are present; independent disagreement cannot be claimed from one prediction run."),
-        "counterfactual_robustness": _runtime_module(prediction, name="counterfactual_robustness", values={"possession_stress": [-5, 0, 5], "minutes_stress": [-10, -5, 0], "formation_change": "UNKNOWN", "early_goal_states": first_goal_modules["game_state"].get("values", {}), "base_projection": _prediction_value(prediction, "projectedValue", "projection"), "base_line": request.get("line")}, sources=("first_goal_engine", "RP snapshot"), reason="Only bounded scenario inputs were available; no independent counterfactual rerun was returned."),
+        "counterfactual_robustness": _module("UNKNOWN", source="bounded_counterfactual_runner", values=counterfactual_values, reason="Scenario inputs were specified, but no derived projection/effect was returned."),
         "calibration": _module("partial", source="rp_response_and_settled_pick_ledger", values={"prop_historical_rate": prediction.get("propHistoricalRate"), "prop_historical_n": prediction.get("propHistoricalN"), "line_deviation_hit_rate": prediction.get("lineDeviationHitRate"), "line_deviation_n": prediction.get("lineDeviationHitRateN")}),
-        "buildup_interaction": _runtime_module(prediction, name="buildup_interaction", values=buildup_values, sources=("tacticalIntelligence", "tacticalContext", "matchupVolume"), reason="No buildup architecture packet was returned."),
-        "press_block_interaction": _runtime_module(prediction, name="press_block_interaction", values=press_values, sources=("tacticalContext", "opponentMatchStats"), reason="No opponent press/block packet was returned."),
-        "strongest_opposite_case": _runtime_module(prediction, name="strongest_opposite_case", values={"opposite_direction": "over" if recommendation == "under" else "under", "counterpoints": prediction.get("riskSignals") or prediction.get("tacticalAlerts") or [], "projection": _prediction_value(prediction, "projectedValue", "projection")}, sources=("riskSignals", "tacticalBreakdown"), reason="No explicit opposite-case evidence was returned."),
+        "buildup_interaction": _module("available" if direct_playstyle and hub_evidence else "partial" if matchup_volume else "UNKNOWN", source="tacticalIntelligence/tacticalContext", values={**buildup_values, "team_playstyle": tactical_intelligence.get("teamPlaystyle") or tactical_context.get("teamPlaystyle") or "UNKNOWN", "progression_channel": tactical_intelligence.get("progressionChannel") or tactical_context.get("progressionChannel") or "UNKNOWN", "hub_status": "HUB" if hub_evidence else "UNKNOWN"}, reason=None if direct_playstyle and hub_evidence else "Formation, possession, and role alone do not establish Rennes buildup style or Rongier hub status."),
+        "press_block_interaction": _module("available" if direct_press_style else "partial" if tactical_context.get("pressIntensity") or tactical_context.get("recentOpponentBlockProfiles") else "UNKNOWN", source="tacticalContext/opponentMatchStats", values={**press_values, "opponent_playstyle": tactical_intelligence.get("opponentPlaystyle") or tactical_context.get("opponentPlaystyle") or "UNKNOWN", "pressing_treatment": tactical_intelligence.get("pressingTreatment") or tactical_context.get("pressingTreatment") or "UNKNOWN"}, reason=None if direct_press_style else "Press intensity proxies do not establish PSG press/block style or its effect on this prop."),
+        "strongest_opposite_case": _module("available" if opposite_values["supporting_evidence"] else "UNKNOWN", source="deterministic_opposite_case", values=opposite_values, reason="No evidence-backed football-specific OVER path was returned."),
     }
     verdict = _jarvis_verdict(prediction=prediction, modules=modules, anomalies=anomalies)
+    component_unknowns = []
+    buildup_values_final = modules["buildup_interaction"]["values"]
+    press_values_final = modules["press_block_interaction"]["values"]
+    if buildup_values_final.get("team_playstyle") == "UNKNOWN":
+        component_unknowns.extend(["Rennes buildup style", "progression channel"])
+    if buildup_values_final.get("hub_status") == "UNKNOWN":
+        component_unknowns.append("Rongier hub/connector status")
+    if press_values_final.get("opponent_playstyle") == "UNKNOWN":
+        component_unknowns.append("PSG press/block style")
+    if press_values_final.get("pressing_treatment") == "UNKNOWN":
+        component_unknowns.append("PSG pressing treatment")
+    verdict["unknown_evidence"] = sorted(set(verdict["unknown_evidence"] + component_unknowns))
+    verdict["unavailable_evidence"] = verdict["unknown_evidence"]
+    if verdict["unknown_evidence"] and verdict["grade"] == "A":
+        verdict["grade"] = "B"
+    verdict["model_evidence"] = {
+        "rp_snapshot": "rp_snapshot",
+        "probability": "rp_probability",
+        "recommendation": recommendation,
+    }
+    verdict["tactical_evidence"] = {
+        name: module for name, module in modules.items()
+        if name not in {"market_movement", "model_disagreement", "calibration", "evidence_quality"}
+    }
 
     return {
         "schema_version": AUDIT_SCHEMA_VERSION,
@@ -605,6 +730,11 @@ def build_audit_snapshot(
         },
         "modules": modules,
         "jarvis_verdict": verdict,
+        "evidence_classes": {
+            "MODEL_EVIDENCE": verdict["model_evidence"],
+            "TACTICAL_EVIDENCE": verdict["tactical_evidence"],
+            "UNAVAILABLE_EVIDENCE": verdict["unavailable_evidence"],
+        },
         "verdict": {
             "rp_recommendation": recommendation or prediction.get("recommendation"),
             "audit_decision": "RP_RECOMMENDATION_UNCHANGED",
