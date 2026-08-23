@@ -11,7 +11,7 @@ import re
 import uuid
 import os
 import asyncio as aio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -1204,10 +1204,12 @@ async def lissa_message(req: LissaMessageRequest):
         return []
 
     async def _discover_slate() -> list[dict[str, Any]]:
-        start = datetime.now(timezone.utc).date()
+        # API-Football's global upcoming-fixtures query is the portable
+        # discovery primitive. Date/status-only requests are rejected by
+        # some API-Sports plans, so narrow the returned window locally.
         raw = await priority_api_football_request(
             "fixtures",
-            {"from": start.isoformat(), "to": (start + timedelta(days=2)).isoformat(), "status": "NS"},
+            {"next": 100},
         )
         if isinstance(raw, list):
             return raw

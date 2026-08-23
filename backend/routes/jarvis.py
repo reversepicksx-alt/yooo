@@ -48,7 +48,7 @@ import secrets
 import shutil
 import time
 import unicodedata
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
@@ -167,10 +167,9 @@ async def jarvis_conversation(
         return []
 
     async def discover_slate() -> list[dict[str, Any]]:
-        start = datetime.now(timezone.utc).date()
         raw = await priority_api_football_request(
             "fixtures",
-            {"from": start.isoformat(), "to": (start + timedelta(days=2)).isoformat(), "status": "NS"},
+            {"next": 100},
         )
         if isinstance(raw, list):
             return raw
