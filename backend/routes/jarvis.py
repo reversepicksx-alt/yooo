@@ -206,12 +206,38 @@ async def jarvis_conversation(
         if request.get("status") != "resolved":
             return {"status": "UNKNOWN", "response": "Verified player and fixture context was unavailable."}
         try:
-            _, prediction = await _run_soccer_prediction(JarvisSoccerPredictBody(
+            body = JarvisSoccerPredictBody(
                 fixture_id=int(request["fixture_id"]),
                 player_id=int(request["player_id"]),
                 prop_type=str(request["prop_type"]),
                 line=float(request["line"]),
-            ), resolved_context=request)
+            )
+            _, prediction = await _run_soccer_prediction(body, resolved_context=request)
+            if request.get("audit"):
+                await asyncio.gather(
+                    _ensure_full_audit_first_goal_context(
+                        prediction, request, body.prop_type
+                    ),
+                    _ensure_full_audit_news_context(
+                        prediction, request, body.fixture_id
+                    ),
+                    return_exceptions=True,
+                )
+                audit = build_audit_snapshot(
+                    prediction, _soccer_audit_request(body), context=request
+                )
+                return {
+                    "status": "available",
+                    "recommendation": prediction.get("recommendation"),
+                    "prediction": prediction,
+                    "audit": audit,
+                    "jarvis_grade": audit.get("jarvis_grade") or audit.get("grade"),
+                    "response": (
+                        f"Verified {request.get('player_name')} at {request.get('venue')} vs "
+                        f"{request.get('opponent_name')} and completed the full read-only audit "
+                        f"for {body.prop_type} at line {body.line}."
+                    ),
+                }
             recommendation = prediction.get("recommendation") or prediction.get("rec") or "UNKNOWN"
             return {
                 "status": "available",

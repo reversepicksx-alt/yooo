@@ -16,6 +16,7 @@ ACTION_SPECS = {
     "script_hunt": "fixture discovery, home-control filtering, tactical matchup, and board candidates",
     "board": "current player-prop board search",
     "run_player": "exact player and matchup analysis",
+    "full_player_audit": "full deterministic prediction plus independent tactical and adversarial audit",
     "opposite_case": "strongest opposite-case stress test",
     "refresh_lines": "current line and movement check",
     "postmortem": "settled-pick postmortem and lessons",
@@ -26,6 +27,14 @@ ACTION_SPECS = {
 def classify_action(message: str) -> tuple[str, dict[str, Any]]:
     text = str(message or "").strip()
     lowered = text.lower()
+    full_audit = re.match(
+        r"\s*(?:full\s+audit|deep\s+dive|audit\s+this|run\s+the\s+full\s+pipeline|analyze\s+fully)\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if full_audit:
+        text = "Run " + full_audit.group(1).strip()
+        lowered = text.lower()
     if re.search(r"\b(script\s+hunt|hunt\s+the\s+slate|find\s+the\s+best\s+script)\b", lowered):
         return "script_hunt", {}
     if re.search(r"\b(board|show\s+(me\s+)?lines|available\s+props|prop\s+board)\b", lowered):
@@ -42,7 +51,7 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
         # "plays at home" is natural-language venue context, not a prop
         # called "plays". Leave the prop unresolved until the live board
         # supplies the canonical provider market.
-        line_match = re.search(r"\bline\s+(\d+(?:\.\d+)?)\b", query, re.IGNORECASE)
+        line_match = re.search(r"\b(?:line|under|over)\s+(\d+(?:\.\d+)?)\b", query, re.IGNORECASE)
         opponent_match = re.search(
             r"\b(?:vs\.?|versus|against)\s+(.+?)(?=\s+\bline\b|$)",
             query,
@@ -67,6 +76,14 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
             player_query = re.split(r"\s+at\s+away\b", query, flags=re.IGNORECASE)[0].strip()
         if opponent_match and player_query.lower().endswith(opponent_match.group(0).lower()):
             player_query = player_query[: -len(opponent_match.group(0))].strip()
+        # Under/over describes the requested direction, not part of the
+        # player's identity. The numeric line was already captured above.
+        player_query = re.sub(
+            r"\s+(?:under|over)\s+\d+(?:\.\d+)?\.?\s*$",
+            "",
+            player_query,
+            flags=re.IGNORECASE,
+        ).strip()
         explicit_prop = None
         prop_match = re.search(
             r"\b(pass(?:\s+attempts?)?|passes|shots?|clearances?|tackles?)\b",
@@ -96,6 +113,13 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
             "line": float(line_match.group(1)) if line_match else None,
             "prop_type": explicit_prop,
         }
+        if full_audit:
+            args["audit_direction"] = (
+                "UNDER" if re.search(r"\bunder\b", query, re.IGNORECASE)
+                else "OVER" if re.search(r"\bover\b", query, re.IGNORECASE)
+                else None
+            )
+            return "full_player_audit", args
         return "run_player", args
     return "general", {}
 
@@ -295,7 +319,7 @@ async def execute_action(
                            "final_verdict": "partial" if candidates else "UNKNOWN",
                        })
 
-    if action in {"opposite_case", "refresh_lines", "run_player", "postmortem"}:
+    if action in {"opposite_case", "refresh_lines", "run_player", "full_player_audit", "postmortem"}:
         picks_tool, picks = await _safe_tool("read_owner_ledger", load_picks)
         tools.append(picks_tool)
         data["matching_picks"] = (picks or [])[:30] if isinstance(picks, list) else []
@@ -340,6 +364,7 @@ async def execute_action(
             data["opponent_query"] = args.get("opponent_query")
             data["venue"] = args.get("venue")
             data["line"] = target_line
+            data["audit_direction"] = args.get("audit_direction")
             data["matching_markets"] = matches[:10]
             if len(matches) == 1:
                 market = matches[0]
@@ -347,7 +372,19 @@ async def execute_action(
             elif len(matches) > 1:
                 data["inferred_prop_type"] = "UNKNOWN"
             else:
-                data["inferred_prop_type"] = args.get("prop_type") or prior_prop_type or "UNKNOWN"
+                ledger_prop = None
+                if action == "full_player_audit":
+                    for pick in data.get("matching_picks") or []:
+                        if (
+                            isinstance(pick, dict)
+                            and player_query.casefold() in str(pick.get("playerName") or "").casefold()
+                            and pick.get("propType")
+                        ):
+                            ledger_prop = pick["propType"]
+                            break
+                data["inferred_prop_type"] = (
+                    args.get("prop_type") or prior_prop_type or ledger_prop or "UNKNOWN"
+                )
 
             prop_type = data["inferred_prop_type"]
             request = {
@@ -358,6 +395,8 @@ async def execute_action(
                 "prop_type": prop_type,
                 "line_source": "board" if matches else "USER_SUPPLIED_LINE",
                 "current_market_status": "available" if matches else "UNKNOWN",
+                "audit": action == "full_player_audit",
+                "audit_direction": args.get("audit_direction"),
             }
             data["line_source"] = request["line_source"]
             data["current_market_status"] = request["current_market_status"]

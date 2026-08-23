@@ -51,6 +51,14 @@ def test_run_player_infers_prop_from_one_matching_board_market():
     assert result["data"]["inferred_prop_type"] == "pass_attempts"
 
 
+def test_full_audit_is_first_class_intent():
+    action, args = classify_action("Full audit Rongier under 52.5.")
+    assert action == "full_player_audit"
+    assert args["player_query"] == "Rongier"
+    assert args["line"] == 52.5
+    assert args["audit_direction"] == "UNDER"
+
+
 def test_script_hunt_dispatches_fixture_and_board_tools():
     calls = []
 
