@@ -1,0 +1,52 @@
+For the JARVIS you’re trying to build inside Reverse, I would use GPT-5.6 Sol (gpt-5.6-sol, or the gpt-5.6 alias) as the primary brain.
+
+OpenAI currently positions GPT-5.6 Sol as the frontier option for complex professional work, while GPT-5.6 Terra is the intelligence/cost-balanced option and Luna is for high-volume workloads. OpenAI specifically recommends the Responses API for reasoning, tool-calling, and multi-turn workflows. 
+
+And your workload is exactly where I would prioritize the strongest orchestration model: many tools, long instructions, autonomous multi-step execution, tactical synthesis, evidence conflicts, and knowing when NOT to stop and ask you for information it can retrieve itself.
+
+How I’d configure Reverse JARVIS
+
+Primary JARVIS brain: gpt-5.6-sol
+
+Use the OpenAI Responses API⁠￼, not a basic one-shot chatbot call.
+
+Start with:
+
+* reasoning.effort: medium for normal conversation
+* reasoning.effort: high for Script Hunt / full prop audit
+* potentially xhigh only for exceptionally difficult audits—we should benchmark whether it actually improves our results before paying the latency/cost
+* streaming responses
+* function/tool calling
+* structured outputs for internal results
+* persistent multi-turn state
+* server-side JARVIS instructions
+
+GPT-5.6 supports reasoning levels through max, but OpenAI explicitly recommends testing rather than assuming more reasoning is always necessary. 
+
+More importantly, don’t use the expensive model for every little operation.
+
+I would architect it as:
+
+GPT-5.6 Sol = JARVIS/orchestrator
+↓
+API-Football actions
+PrizePicks board
+Web/news research
+RP Bayesian code
+Calibration/safety
+Venue analysis
+Tactical analysis
+Score-state analysis
+Stress test
+↓
+GPT-5.6 Sol synthesizes and decides the JARVIS verdict
+
+For cheap mechanical work—normalizing names, extracting fields, categorizing returned data, etc.—you can eventually delegate to a smaller model. But don’t optimize that yet. First make JARVIS behave correctly.
+
+And there’s an important distinction: the model should NOT calculate your production Bayesian engine by improvising math in natural language. Your deterministic Python/code should execute the engine. GPT-5.6 should decide which actions to call, inspect their outputs, detect missing/contradictory evidence, perform the tactical/adversarial reasoning, and explain the result.
+
+That’s how we get much closer to what you’re experiencing with me here rather than another green-themed chatbot.
+
+So if Replit asks you “which OpenAI model?”, tell them:
+
+gpt-5.6-sol + Responses API + tool calling + medium/high reasoning, with the deterministic Reverse Picks engine exposed as tools rather than recreated by the LLM.
