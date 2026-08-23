@@ -3647,6 +3647,7 @@ async def jarvis_full_audit_soccer(
         return_exceptions=True,
     )
     audit = build_audit_snapshot(result, _soccer_audit_request(body), context=ctx)
+    audit_contract = _audit_response_contract(audit, result)
     rp_diagnostic = _build_soccer_diagnostic(result)
     jarvis_brief = dict(rp_diagnostic.get("final") or {})
     jarvis_brief.update(_audit_first_goal_brief(audit))
@@ -3678,6 +3679,8 @@ async def jarvis_full_audit_soccer(
         "news_warnings": news_brief.get("news_warnings") or [],
         "rp_prediction": rp_diagnostic,
         "audit": audit,
+        "jarvis_verdict": audit.get("jarvis_verdict") or audit.get("verdict"),
+        "audit_contract": audit_contract,
         "tactical_memory": {
             "status": tactical_memory_status,
             "records": tactical_memory,
