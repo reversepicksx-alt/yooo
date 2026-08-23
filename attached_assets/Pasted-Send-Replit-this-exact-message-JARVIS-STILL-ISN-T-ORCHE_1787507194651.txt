@@ -1,0 +1,73 @@
+Send Replit this exact message:
+
+JARVIS STILL ISN’T ORCHESTRATING — FIX THE IDENTITY RESOLVER CHAIN
+
+The latest failure is not an acceptable stop condition. API-Football requiring team/league context for player lookup is a provider constraint JARVIS should route around automatically.
+
+For the exact request Run Rongier pass attempts at home vs PSG line 52.5, JARVIS already knows:
+
+player query = Rongier
+opponent = PSG
+requested venue = home
+prop = pass_attempts
+line = 52.5
+date/current slate context = available from session
+
+It must now autonomously resolve the missing player/team context instead of stopping.
+
+Required resolution order:
+
+1. Resolve the opponent team PSG to its API-Football team ID.
+2. Search the current/upcoming fixtures involving PSG on the relevant date/window.
+3. Filter for fixtures where PSG is the away team because the user said Rongier plays at home.
+4. From that verified fixture, resolve the HOME team.
+5. Query /players/squads?team=<home_team_id> or /players?team=<home_team_id>&season=<season> and match Rongier against that squad.
+6. If exactly one valid Rongier is found, obtain the canonical player ID and continue.
+7. Verify the player belongs to the resolved home team and the fixture is the expected PSG matchup.
+8. Only if multiple Rongiers remain possible after squad/fixture resolution should JARVIS ask the user for clarification.
+
+JARVIS must never call /players?search=Rongier without first satisfying the provider’s required context if contextual resolution is possible.
+
+More generally, identity resolution must be a graph, not a single API call:
+
+opponent name → opponent team ID → upcoming fixture → home team ID → team squad → player ID
+
+or, when team is explicitly supplied:
+
+team name → team ID → squad → player ID → fixture
+
+or, when league/date context is stronger:
+
+league/date → fixtures → teams → squads → player
+
+Add retry/fallback routing between these paths before returning UNKNOWN.
+
+Add a regression test with the exact input:
+
+Run Rongier pass attempts at home vs PSG line 52.5
+
+The test passes only if JARVIS resolves:
+
+* Valentin Rongier
+* Rennes
+* PSG
+* Rennes as home
+* exact fixture ID
+* pass_attempts
+* USER_SUPPLIED_LINE 52.5
+
+and then proceeds into the analysis pipeline.
+
+Do NOT hard-code Rongier, Rennes, PSG, or this fixture in the test implementation.
+
+Missing PrizePicks market is optional. Missing bare-name player search capability is also not fatal when fixture/team context can resolve the identity.
+
+The orchestration rule should be:
+
+If one API route needs context, derive that context from the other facts already present and continue.
+
+JARVIS should stop only after all valid resolution paths are exhausted.
+
+That’s the issue in one sentence:
+
+It still thinks like an endpoint wrapper. We need it to think like a resolver.

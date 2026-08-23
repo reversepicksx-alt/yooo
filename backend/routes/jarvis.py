@@ -762,10 +762,16 @@ async def _resolve_soccer_prop_identity(
             raise _unknown_resolution("invalid_date", "date must use YYYY-MM-DD.") from exc
 
     search_season = int(season or datetime.now(timezone.utc).year)
-    player_data = await _sports_get(
-        "players", {"search": query, "season": search_season},
-        cache_ttl=_CACHE_TTL_SCHEDULED,
-    )
+    try:
+        player_data = await _sports_get(
+            "players", {"search": query, "season": search_season},
+            cache_ttl=_CACHE_TTL_SCHEDULED,
+        )
+    except HTTPException:
+        # API-Football requires team/league context for search. Do not turn
+        # that provider constraint into a terminal identity failure; the
+        # opponent + venue graph below can derive the missing team context.
+        player_data = {"response": []}
     players = [
         _player_search_identity(row) for row in (player_data.get("response") or [])
     ]
@@ -774,9 +780,78 @@ async def _resolve_soccer_prop_identity(
         if row.get("player_id") is not None
         and _identity_name_matches(query, row.get("player_name"))
     ]
+    graph_fixture: dict[str, Any] | None = None
+    if not players and opponent and not team:
+        opponent_data = await _sports_get_safe(
+            "teams", {"search": str(opponent).strip()},
+            cache_ttl=_CACHE_TTL_SCHEDULED,
+        )
+        opponent_rows = [
+            row.get("team") if isinstance(row.get("team"), dict) else row
+            for row in ((opponent_data or {}).get("response") or [])
+        ]
+        opponent_rows = [
+            row for row in opponent_rows
+            if row.get("id") is not None
+            and _identity_name_matches(str(opponent), row.get("name"))
+        ]
+        opponent_ids = {row.get("id") for row in opponent_rows}
+        if len(opponent_ids) == 1:
+            opponent_id = next(iter(opponent_ids))
+            fixture_params = (
+                {"date": target_date.isoformat()}
+                if target_date else {"team": opponent_id, "next": 20}
+            )
+            if target_date:
+                fixture_params["team"] = opponent_id
+            fixture_data = await _sports_get_safe(
+                "fixtures", fixture_params, cache_ttl=_CACHE_TTL_SCHEDULED,
+            )
+            fixture_rows = (fixture_data or {}).get("response") or []
+            terminal = {"FT", "AET", "PEN", "CANC", "PST", "ABD", "AWD", "WO"}
+            candidates = []
+            for row in fixture_rows:
+                identity = _fixture_identity(row)
+                if identity["status"] in terminal or identity["fixture_id"] is None:
+                    continue
+                if identity["away_team_id"] != opponent_id:
+                    continue
+                candidates.append(identity)
+            if len(candidates) == 1:
+                graph_fixture = candidates[0]
+                home_id = graph_fixture["home_team_id"]
+                squad_data = await _sports_get_safe(
+                    "players/squads", {"team": home_id},
+                    cache_ttl=_CACHE_TTL_SCHEDULED,
+                )
+                squad_rows = (squad_data or {}).get("response") or []
+                squad_players = []
+                for row in squad_rows:
+                    squad_players.extend(row.get("players") or [])
+                matched = [
+                    player for player in squad_players
+                    if _identity_name_matches(
+                        query,
+                        player.get("name") or " ".join(
+                            part for part in (player.get("firstname"), player.get("lastname"))
+                            if part
+                        ),
+                    )
+                ]
+                players = [{
+                    "player_id": player.get("id"),
+                    "player_name": player.get("name") or " ".join(
+                        part for part in (player.get("firstname"), player.get("lastname"))
+                        if part
+                    ),
+                    "teams": [{"team_id": home_id, "team_name": graph_fixture["home_team"]}],
+                } for player in matched if player.get("id") is not None]
+                if len(players) == 1:
+                    rows = [graph_fixture]
     if not players:
         raise _unknown_resolution("player_not_found", f"No verified player matched {query}.",
-                                   query=query, season=search_season)
+                                   query=query, season=search_season,
+                                   resolution_path="opponent_fixture_home_team_squad")
 
     resolved_team = None
     if team:
@@ -822,14 +897,15 @@ async def _resolve_soccer_prop_identity(
             player_id=player["player_id"],
         )
 
-    rows = []
-    for team_id in sorted(player_team_ids):
-        params = {"team": team_id}
-        params["date" if target_date else "next"] = (
-            target_date.isoformat() if target_date else 20
-        )
-        data = await _sports_get("fixtures", params, cache_ttl=_CACHE_TTL_SCHEDULED)
-        rows.extend(data.get("response") or [])
+    if not rows:
+        rows = []
+        for team_id in sorted(player_team_ids):
+            params = {"team": team_id}
+            params["date" if target_date else "next"] = (
+                target_date.isoformat() if target_date else 20
+            )
+            data = await _sports_get("fixtures", params, cache_ttl=_CACHE_TTL_SCHEDULED)
+            rows.extend(data.get("response") or [])
     fixtures = {
         item["fixture_id"]: item for item in (_fixture_identity(row) for row in rows)
         if item.get("fixture_id") is not None
