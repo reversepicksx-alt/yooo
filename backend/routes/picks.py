@@ -5125,10 +5125,19 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             return update
 
         # DNP / not-in-squad settlement: the match is finished and the player
-        # does not appear in the fixtures/players response. They did not make the
-        # matchday squad — settle as push/DNP immediately instead of leaving
-        # the pick stuck in "live".
+        # does not appear in the fixtures/players response. For pass props,
+        # an empty response may be transient or quota-limited; defer instead
+        # of creating a false DNP review because the exact independent source
+        # can still verify the player and recover the final pass denominator.
         if not _player_found_in_api:
+            if pick.get("propType", "") in {"pass_attempts", "passes"}:
+                print(
+                    f"[SETTLE-DEFER] {pick.get('playerName','')} "
+                    f"{pick.get('propType','')} — player row unavailable at FT; "
+                    "deferring to exact independent settlement"
+                )
+                update["matchStatus"] = "final"
+                return update
             print(f"[SETTLE-DNP] {pick.get('playerName','')} {pick.get('propType','')} — not in finished fixture squad")
             update["result"] = "dnp"
             update["actualValue"] = None
