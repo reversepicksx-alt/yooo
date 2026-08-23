@@ -336,6 +336,8 @@ async def execute_action(
                 "line_source": "board" if matches else "USER_SUPPLIED_LINE",
                 "current_market_status": "available" if matches else "UNKNOWN",
             }
+            data["line_source"] = request["line_source"]
+            data["current_market_status"] = request["current_market_status"]
             if prop_type not in {None, "", "UNKNOWN"} and resolve_player_fixture:
                 resolution = await resolve_player_fixture(request)
                 data["resolution"] = resolution
@@ -357,6 +359,13 @@ async def execute_action(
                             "bayesian_pipeline": analysis.get("status", "UNKNOWN"),
                             "final_verdict": analysis.get("status", "UNKNOWN"),
                         },
+                    )
+                if resolution.get("status") != "resolved":
+                    response = (
+                        f"I preserved {prop_type} and USER_SUPPLIED_LINE {target_line}, but verified "
+                        f"player/fixture resolution is UNKNOWN"
+                        f"{': ' + str(resolution.get('message') or resolution.get('detail') or resolution.get('reason')) if (resolution.get('message') or resolution.get('detail') or resolution.get('reason')) else '.'} "
+                        "The missing market did not abort the analysis; only the unresolved required identity/fixture stopped it."
                     )
             if prop_type in {None, "", "UNKNOWN"}:
                 response = (

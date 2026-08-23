@@ -178,6 +178,56 @@ async def jarvis_conversation(
             return rows if isinstance(rows, list) else []
         return []
 
+    async def resolve_player_fixture(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            resolved = await _resolve_soccer_prop_identity(
+                player_name=str(request.get("player_name") or ""),
+                opponent=request.get("opponent"),
+                requested_date=request.get("date"),
+                season=request.get("season"),
+            )
+            requested_venue = request.get("venue")
+            if requested_venue and resolved.get("venue") != requested_venue:
+                return {
+                    "status": "UNKNOWN",
+                    "reason": "verified_fixture_venue_conflicts_with_user_request",
+                    "requested_venue": requested_venue,
+                    "resolved_venue": resolved.get("venue"),
+                    "resolution": resolved,
+                }
+            return resolved
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"reason": str(exc.detail)}
+            return {"status": "UNKNOWN", **detail}
+        except Exception as exc:
+            return {"status": "UNKNOWN", "reason": f"{type(exc).__name__} during identity resolution"}
+
+    async def run_player_analysis(request: dict[str, Any]) -> dict[str, Any]:
+        if request.get("status") != "resolved":
+            return {"status": "UNKNOWN", "response": "Verified player and fixture context was unavailable."}
+        try:
+            _, prediction = await _run_soccer_prediction(JarvisSoccerPredictBody(
+                fixture_id=int(request["fixture_id"]),
+                player_id=int(request["player_id"]),
+                prop_type=str(request["prop_type"]),
+                line=float(request["line"]),
+            ))
+            recommendation = prediction.get("recommendation") or prediction.get("rec") or "UNKNOWN"
+            return {
+                "status": "available",
+                "recommendation": recommendation,
+                "prediction": prediction,
+                "response": (
+                    f"Verified {request.get('player_name')} at {request.get('venue')} vs "
+                    f"{request.get('opponent_name')} and ran the deterministic {request.get('prop_type')} "
+                    f"analysis at line {request.get('line')}. Recommendation: {recommendation}."
+                ),
+            }
+        except HTTPException as exc:
+            return {"status": "UNKNOWN", "reason": str(exc.detail)}
+        except Exception as exc:
+            return {"status": "UNKNOWN", "reason": f"{type(exc).__name__} during prediction analysis"}
+
     result = await execute_action(
         body.message,
         context=body.context,
@@ -187,6 +237,9 @@ async def jarvis_conversation(
         discover_slate=discover_slate,
         load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
         load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
+        prior_prop_type=((body.context or {}).get("propType") if isinstance(body.context, dict) else None),
+        resolve_player_fixture=resolve_player_fixture,
+        run_player_analysis=run_player_analysis,
     )
     return {
         "source": "jarvis/conversation",

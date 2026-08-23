@@ -1218,6 +1218,63 @@ async def lissa_message(req: LissaMessageRequest):
             return rows if isinstance(rows, list) else []
         return []
 
+    async def _resolve_player_fixture(request: dict[str, Any]) -> dict[str, Any]:
+        from routes.jarvis import _resolve_soccer_prop_identity
+        try:
+            resolved = await _resolve_soccer_prop_identity(
+                player_name=str(request.get("player_name") or ""),
+                opponent=request.get("opponent"),
+                requested_date=request.get("date"),
+                season=request.get("season"),
+            )
+            if request.get("venue") and resolved.get("venue") != request["venue"]:
+                return {
+                    "status": "UNKNOWN",
+                    "reason": "verified_fixture_venue_conflicts_with_user_request",
+                    "requested_venue": request["venue"],
+                    "resolved_venue": resolved.get("venue"),
+                }
+            return resolved
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"reason": str(exc.detail)}
+            return {"status": "UNKNOWN", **detail}
+        except Exception as exc:
+            return {"status": "UNKNOWN", "reason": f"{type(exc).__name__} during identity resolution"}
+
+    async def _run_player_analysis(request: dict[str, Any]) -> dict[str, Any]:
+        from routes.jarvis import JarvisSoccerPredictBody, _run_soccer_prediction
+        if request.get("status") != "resolved":
+            return {"status": "UNKNOWN", "response": "Verified player and fixture context was unavailable."}
+        try:
+            _, prediction = await _run_soccer_prediction(JarvisSoccerPredictBody(
+                fixture_id=int(request["fixture_id"]),
+                player_id=int(request["player_id"]),
+                prop_type=str(request["prop_type"]),
+                line=float(request["line"]),
+            ))
+            recommendation = prediction.get("recommendation") or prediction.get("rec") or "UNKNOWN"
+            return {
+                "status": "available",
+                "recommendation": recommendation,
+                "prediction": prediction,
+                "response": (
+                    f"Verified {request.get('player_name')} at {request.get('venue')} vs "
+                    f"{request.get('opponent_name')} and ran the deterministic {request.get('prop_type')} "
+                    f"analysis at line {request.get('line')}. Recommendation: {recommendation}."
+                ),
+            }
+        except HTTPException as exc:
+            return {"status": "UNKNOWN", "reason": str(exc.detail)}
+        except Exception as exc:
+            return {"status": "UNKNOWN", "reason": f"{type(exc).__name__} during prediction analysis"}
+
+    action_context = req.context or {}
+    prior_prop_type = action_context.get("propType")
+    if isinstance(action_context.get("pick"), dict):
+        prior_prop_type = prior_prop_type or action_context["pick"].get("propType")
+    if isinstance(action_context.get("analysis"), dict):
+        prior_prop_type = prior_prop_type or action_context["analysis"].get("propType")
+
     action_result = await execute_action(
         message,
         context=req.context,
@@ -1227,6 +1284,9 @@ async def lissa_message(req: LissaMessageRequest):
         discover_slate=_discover_slate,
         load_board=lambda: list_market_board(hours=72, limit=60, sport_id="SOCCER"),
         load_memory=lambda: retrieve_tactical_memory(db, include_stale=False, limit=30),
+        prior_prop_type=prior_prop_type,
+        resolve_player_fixture=_resolve_player_fixture,
+        run_player_analysis=_run_player_analysis,
     )
     if action_result.get("action") != "general":
         try:
