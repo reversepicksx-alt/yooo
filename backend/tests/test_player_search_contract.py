@@ -42,6 +42,6 @@ def test_durable_identity_fallback_survives_disposable_cache_timeouts():
 def test_known_provider_identity_correction_precedes_stale_abbreviated_cache_rows():
     """Iñigo Vicente must not be returned as the cached Defender ``I. Vicente``."""
     assert '"id": 554362' in PLAYERS_SOURCE
-    assert '"name": "Iñigo Vicente"' in PLAYERS_SOURCE
+    assert '"name": "Iñigo Vicente Elorduy"' in PLAYERS_SOURCE
     assert '"position": "Midfielder"' in PLAYERS_SOURCE
     assert '"inigo vicente"' in PLAYERS_SOURCE

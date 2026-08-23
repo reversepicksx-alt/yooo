@@ -40,10 +40,10 @@ _VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
     },
     {
         "id": 554362,
-        "name": "Iñigo Vicente",
-        "fullName": "Iñigo Vicente",
-        "firstname": "Iñigo",
-        "lastname": "Vicente",
+        "name": "Iñigo Vicente Elorduy",
+        "fullName": "Iñigo Vicente Elorduy",
+        "firstname": "Iñigo Vicente",
+        "lastname": "Elorduy",
         "position": "Midfielder",
         "teamId": 717,
         "teamName": "Racing Santander",
@@ -51,6 +51,8 @@ _VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
         "aliases": {
             "inigo vicente",
             "iñigo vicente",
+            "inigo vicente elorduy",
+            "iñigo vicente elorduy",
             "i vicente",
         },
     },
