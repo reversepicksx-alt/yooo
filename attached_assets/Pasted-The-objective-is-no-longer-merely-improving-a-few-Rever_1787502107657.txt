@@ -1,0 +1,55 @@
+The objective is no longer merely improving a few Reverse Picks endpoints. We want Reverse Picks to become another interface to the same JARVIS system you’re building here, while preserving the existing subscriber product during migration.
+
+The target architecture is:
+
+JARVIS Core
+→ same engine specification
+→ same tactical/playstyle intelligence
+→ same API-Football evidence
+→ same market intelligence
+→ same Tactical Memory
+→ same adversarial/stress testing
+→ same factor ledger
+→ same final decision discipline
+
+Then two interfaces use it:
+
+You → ChatGPT/JARVIS → JARVIS Core
+
+Subscriber → Reverse Picks → JARVIS Core
+
+That means a subscriber asking Reverse for a prediction should eventually get analysis generated under the same rules I use here, rather than Reverse having a separate simplified brain.
+
+Phase 1 — do NOT touch subscriber behavior yet
+
+Before replacing anything, we build the shared JARVIS orchestration layer beside production.
+
+Tell Replit this:
+
+Begin the “Modify Reverse” project. The long-term goal is for Reverse Picks and the owner ChatGPT JARVIS to operate as two interfaces to one shared JARVIS intelligence architecture. Do not change, remove, reroute, or degrade any current subscriber-facing production behavior yet. Build the new architecture in parallel behind a feature flag/owner-only route first.
+
+Create a versioned JarvisCore orchestration layer that does not contain provider credentials and does not duplicate raw provider data. It must accept canonical prediction requests and orchestrate the same stages used by owner JARVIS: canonical fixture/player identity; raw evidence acquisition; exact tactical role; team tactical fingerprint and current regime; venue-specific history; possession environment; buildup routing and hub concentration; opponent press/block interaction; first-goal and score-state scenarios; Bayesian three-layer calculation according to the documented Reverse Picks numerical codebook; deterministic post-layers; variance/uncertainty; 5,000-run simulation; empirical calibration; prop-safety controls; PrizePicks line/current-line history; adversarial opposite case; robustness test; tactical verdict; factor ledger; provenance; unavailable evidence; and postmortem hooks.
+
+Separate the architecture into data, quantitative engine, tactical intelligence, memory, market, adversarial audit, and presentation layers. No UI component should perform prediction mathematics. No AI-generated narrative may modify numerical model outputs.
+
+Preserve the existing Reverse Picks production engine as the control implementation during migration. Add an owner-only shadow route that runs JarvisCore against the same prediction request without affecting the subscriber response. Store both outputs for comparison: production projection/probabilities/recommendation/confidence and JarvisCore projection/probabilities/recommendation/confidence, plus stage-level numerical differences and provenance differences.
+
+Implement deterministic testing around the mathematical stages wherever possible. Because production Monte Carlo is unseeded, compare deterministic pre-simulation values exactly and Monte Carlo outputs within documented tolerance rather than demanding identical random samples.
+
+Tactical Memory must remain advisory and fail-open. Current verified fixture, lineup, role, manager/regime, injury and tactical evidence supersede stale memory. Fix the current Tactical Memory production runtime ClientResponseError as part of this project, but memory failure must never make a valid prediction fail.
+
+Create one canonical JarvisPredictionResult contract shared by the future app and owner workflow containing identity, saved/current line, line movement, game logs, exact role, tactical fingerprint, venue evidence, possession evidence, press/block interaction, score-state scenarios, prior, momentum, covariates, posterior, every active post-layer, projection, effective standard deviation, simulation results, pOver, pUnder, calibration, confidence, recommendation, safety state, factor ledger, strongest opposite case, robustness, tactical verdict, provenance, UNKNOWN/unavailable evidence, model/codebook version, and fingerprints.
+
+Do not replace the subscriber production route yet. First prove parity and stability in shadow mode. Add regression tests using historical saved predictions and settled picks across passes, goalkeeper passes, saves, tackles, clearances, shots and shots-on-target, multiple positions/roles, home/away fixtures, strong/weak possession environments and thin samples.
+
+Produce a migration report showing which components already match the documented JARVIS architecture, which are duplicated, which remain app-specific, numerical parity results, Tactical Memory status, API/provider dependencies, and exactly what would need to change before Reverse Picks can safely use JarvisCore for subscribers. Do not perform that final cutover without explicit approval.
+
+That is Phase 1.
+
+We should not immediately rip out your working subscriber engine. We build JARVIS Core beside it, run the same historical cases through both, and find every disagreement.
+
+Once we can demonstrate that the shared core is correct, then when you’re ready we move to Phase 2:
+
+Reverse UI → JARVIS Core
+
+At that point, using Reverse should feel like using me: same quantitative discipline, same tactical understanding, same memory, same opposite-case testing, same UNKNOWN discipline.
