@@ -7,10 +7,18 @@ structured result that can be rendered by any JARVIS client.
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
-from jarvis_brain import BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS, configured_provider
+from jarvis_brain import (
+    BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS, BrainTurn, configured_provider,
+    run_reasoning_turn,
+)
+
+_ACTIVE_BRAIN_DIAGNOSTIC: ContextVar[dict[str, Any] | None] = ContextVar(
+    "jarvis_active_brain_diagnostic", default=None
+)
 
 ACTION_SPECS = {
     "script_hunt": "fixture discovery, home-control filtering, tactical matchup, and board candidates",
@@ -259,7 +267,7 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
         # This is intentionally explicit: the current named-action path is
         # deterministic orchestration. A configured provider is not reported
         # as having handled a turn unless its Responses adapter actually ran.
-        "owner_brain_diagnostic": {
+        "owner_brain_diagnostic": _ACTIVE_BRAIN_DIAGNOSTIC.get() or {
             "provider_used": "deterministic-fallback",
             "model_used": configured_provider().model if configured_provider() else None,
             "response_id": None,
@@ -295,6 +303,16 @@ async def _safe_tool(name: str, call: Callable[[], Awaitable[Any]]) -> tuple[dic
         }, None
 
 
+async def _brain_tool_ack(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Keep provider orchestration typed without letting it own RP math."""
+    return {
+        "status": "delegated",
+        "tool": name,
+        "arguments_received": sorted(arguments.keys()) if isinstance(arguments, dict) else [],
+        "note": "deterministic owner tool execution follows; provider cannot calculate or persist RP results",
+    }
+
+
 async def execute_action(
     message: str,
     *,
@@ -311,6 +329,50 @@ async def execute_action(
     evaluate_script_fixture: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     audit_script_candidate: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
+    # Provider-first owner bridge. The model may request typed tools, but the
+    # deterministic Reverse Picks path remains the quantitative authority.
+    brain_state = BrainTurn()
+    provider = configured_provider()
+    brain_result: dict[str, Any]
+    if provider:
+        try:
+            brain_result = await run_reasoning_turn(
+                message,
+                state=brain_state,
+                dispatch_tool=lambda name, arguments: _brain_tool_ack(name, arguments),
+                reasoning_effort="high",
+            )
+        except Exception as exc:
+            brain_result = {
+                "provider": "deterministic-fallback",
+                "status": "fallback",
+                "response_id": None,
+                "events": [],
+                "reason": f"{type(exc).__name__} while calling Responses API",
+            }
+    else:
+        brain_result = await run_reasoning_turn(
+            message,
+            state=brain_state,
+            dispatch_tool=lambda name, arguments: _brain_tool_ack(name, arguments),
+        )
+    brain_events = brain_result.get("events") or []
+    brain_tool_names = [
+        str(event.get("name"))
+        for event in brain_events
+        if event.get("kind") == "tool"
+    ]
+    brain_diagnostic = {
+        "provider_used": "openai" if brain_result.get("provider") == "openai-responses" else "deterministic-fallback",
+        "model_used": provider.model if provider else None,
+        "response_id": brain_result.get("response_id"),
+        "tool_call_count": len(brain_tool_names),
+        "tool_call_names": brain_tool_names,
+        "orchestration_rounds": sum(1 for event in brain_events if event.get("name") == "reasoning"),
+        "fallback_used": brain_result.get("provider") != "openai-responses",
+        "fallback_reason": brain_result.get("reason") if brain_result.get("provider") != "openai-responses" else None,
+    }
+    _ACTIVE_BRAIN_DIAGNOSTIC.set(brain_diagnostic)
     action, args = classify_action(message)
     session_state = (context or {}).get("_jarvis_state") if isinstance(context, dict) else {}
     if isinstance(session_state, dict) and action in {"run_player", "full_player_audit"}:
