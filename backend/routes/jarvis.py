@@ -92,6 +92,45 @@ class JarvisConversationBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=1200)
     context: dict[str, Any] | None = None
 
+
+def _audit_response_contract(audit: dict[str, Any], prediction: dict[str, Any]) -> dict[str, Any]:
+    modules = audit.get("modules") if isinstance(audit.get("modules"), dict) else {}
+    identity = audit.get("identity") if isinstance(audit.get("identity"), dict) else {}
+    probability = audit.get("probability") if isinstance(audit.get("probability"), dict) else {}
+    verdict = audit.get("jarvis_verdict") if isinstance(audit.get("jarvis_verdict"), dict) else {}
+    values = lambda name: (modules.get(name) or {}).get("values", {})
+    return {
+        "identity": identity,
+        "prop": identity.get("prop_type"),
+        "line": identity.get("line"),
+        "line_source": (prediction.get("_request") or {}).get("line_source") or "USER_SUPPLIED_LINE",
+        "projection": (audit.get("rp_snapshot") or {}).get("projectedValue"),
+        "p_over": probability.get("p_over"),
+        "p_under": probability.get("p_under"),
+        "model_recommendation": probability.get("selected_side"),
+        "exact_role": values("exact_role"),
+        "venue_analysis": values("independent_venue_possession"),
+        "team_playstyle": values("buildup_interaction").get("team_playstyle"),
+        "opponent_playstyle": values("press_block_interaction").get("opponent_playstyle"),
+        "buildup_interaction": values("buildup_interaction"),
+        "press_block_interaction": values("press_block_interaction"),
+        "role_cohort": values("role_opponent_venue_cohort"),
+        "first_goal": values("first_goal_market"),
+        "leading_state": (values("first_goal_regime_change") or {}).get("best_case"),
+        "trailing_state": (values("first_goal_regime_change") or {}).get("worst_case"),
+        "level_60_state": (values("game_state") or {}).get("level_around_60"),
+        "early_goal_states": values("game_state"),
+        "minutes_risk": values("minutes_probability"),
+        "line_movement": values("market_movement"),
+        "strongest_opposite_case": verdict.get("strongest_opposite_case") or values("strongest_opposite_case"),
+        "stress_test": values("counterfactual_robustness"),
+        "robustness": verdict.get("robustness"),
+        "jarvis_grade": verdict.get("grade"),
+        "final_verdict": verdict.get("final_verdict"),
+        "unknown_evidence": verdict.get("unknown_evidence") or [],
+        "provenance": verdict.get("provenance") or audit.get("provenance"),
+    }
+
 # ── Config ────────────────────────────────────────────────────────────────────
 _API_SPORTS_BASE = "https://v3.football.api-sports.io"
 _API_SPORTS_KEY  = os.environ.get("API_SPORTS_KEY", "")
@@ -231,6 +270,8 @@ async def jarvis_conversation(
                     "recommendation": prediction.get("recommendation"),
                     "prediction": prediction,
                     "audit": audit,
+                    "jarvis_verdict": audit.get("jarvis_verdict") or audit.get("verdict"),
+                    "audit_contract": _audit_response_contract(audit, prediction),
                     "jarvis_grade": audit.get("jarvis_grade") or audit.get("grade"),
                     "response": (
                         f"Verified {request.get('player_name')} at {request.get('venue')} vs "

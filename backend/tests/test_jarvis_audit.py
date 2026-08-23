@@ -58,9 +58,45 @@ def test_audit_preserves_rp_math_and_separates_conviction():
     assert snapshot["probability"]["p_under"] == 78.0
     assert snapshot["probability"]["selected_probability"] == 78.0
     assert snapshot["conviction"]["evidence_quality_score"] == 64.0
-    assert snapshot["modules"]["independent_venue_possession"]["status"] == "not_started"
+    assert snapshot["modules"]["independent_venue_possession"]["status"] in {"available", "UNKNOWN"}
     assert snapshot["modules"]["stat_definition"]["status"] == "available"
     assert snapshot["rp_snapshot"]["fingerprint"]
+
+
+def test_audit_populates_runtime_modules_and_separates_jarvis_verdict():
+    snapshot = build_audit_snapshot(
+        _prediction(
+            tacticalContext={
+                "expectedPossession": 54,
+                "venueAverage": 52,
+                "venueSampleSize": 8,
+                "role": "Deep-Lying Playmaker",
+                "lineupFormation": "4-3-3",
+                "pressIntensity": {"status": "available", "score": 0.7},
+                "positionCohort": {"sampleSize": 12, "average": 48},
+            },
+            tacticalIntelligence={
+                "teamPlaystyle": "controlled buildup",
+                "opponentPlaystyle": "high press",
+                "buildupInteraction": {"hubSignal": "central connector"},
+            },
+            matchupVolume={"available": True, "sampleSize": 7},
+            roleEvidencePacket={"status": "available", "role": "Deep-Lying Playmaker"},
+            playerGameLogs={"games": [{"fixtureId": 1, "passes_total": 55}]},
+        ),
+        {"fixture_id": 123, "player_id": 456, "prop_type": "pass_attempts", "line": 57.5},
+        context={"venue": "home", "team_name": "Home FC", "opponent_name": "Away FC"},
+    )
+
+    assert all(
+        module["status"] != "not_started"
+        for module in snapshot["modules"].values()
+    )
+    assert snapshot["modules"]["buildup_interaction"]["status"] == "available"
+    assert snapshot["modules"]["press_block_interaction"]["status"] == "available"
+    assert snapshot["jarvis_verdict"]["production_influence"] is False
+    assert snapshot["verdict"]["rp_recommendation"] == "under"
+    assert snapshot["verdict"]["grade"]
 
 
 def test_audit_promotes_first_goal_modules_without_changing_rp_math():
