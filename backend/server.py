@@ -260,6 +260,14 @@ async def _run_startup_tasks():
         logging.getLogger("server").warning(
             f"JARVIS audit indexes skipped (Atlas transient): {_audit_idx_err}"
         )
+    try:
+        from jarvis_core import ensure_shadow_indexes
+        await ensure_shadow_indexes(db)
+    except Exception as _core_idx_err:
+        import logging
+        logging.getLogger("server").warning(
+            f"JARVIS Core shadow indexes skipped (Atlas transient): {_core_idx_err}"
+        )
     # Install TTL indexes on all cache collections to keep Atlas storage under control
     try:
         from ttl_indexes import setup_ttl_indexes

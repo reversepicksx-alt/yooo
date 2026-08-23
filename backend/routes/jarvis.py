@@ -3331,6 +3331,99 @@ async def jarvis_full_audit_soccer(
     }
 
 
+def _jarvis_core_shadow_enabled() -> bool:
+    """Feature flag for the parallel migration surface; disabled by default."""
+    return (os.environ.get("JARVIS_CORE_SHADOW_MODE") or "").strip().lower() in {
+        "on", "enabled", "true", "1", "shadow",
+    }
+
+
+@router.post("/api/jarvis/shadow/soccer")
+async def jarvis_core_shadow_soccer(
+    body: JarvisSoccerPredictBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Compare the versioned JarvisCore contract with the RP control run."""
+    _require_auth(authorization)
+    if not _jarvis_core_shadow_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "feature_disabled", "feature": "jarvis_core_shadow"},
+        )
+
+    from jarvis_core import (
+        build_prediction_result,
+        canonical_request,
+        compare_control_to_core,
+        persist_shadow_run,
+    )
+    ctx, control_result = await _run_soccer_prediction(body)
+    shadow_error = None
+    memory_records: list[dict[str, Any]] = []
+    memory_status = "UNKNOWN"
+    memory_reason = None
+    try:
+        memory_records = await retrieve_tactical_memory(
+            db,
+            player_id=body.player_id,
+            prop_type=body.prop_type,
+            role=body.role_override,
+            limit=20,
+        )
+        memory_status = "available"
+    except Exception as exc:
+        memory_reason = f"Advisory memory unavailable: {type(exc).__name__}."
+
+    request = canonical_request(body)
+    try:
+        core_result = build_prediction_result(
+            request=request,
+            control_result=control_result,
+            context=ctx,
+            tactical_memory=memory_records,
+            tactical_memory_status=memory_status,
+            tactical_memory_reason=memory_reason,
+        )
+        comparison = compare_control_to_core(control_result, core_result)
+        persistence = await persist_shadow_run(
+            db,
+            request=request,
+            control_result=control_result,
+            core_result=core_result,
+            comparison=comparison,
+        )
+    except Exception as exc:
+        shadow_error = f"Shadow assembly unavailable: {type(exc).__name__}."
+        core_result = {
+            "schema_version": "jarvis-core.v1",
+            "model_version": "jarvis-core-shadow.v1",
+            "status": "UNKNOWN",
+            "production_influence": False,
+            "reason": shadow_error,
+        }
+        comparison = {
+            "schema_version": "jarvis-core.v1",
+            "math_unchanged": True,
+            "production_influence": False,
+            "status": "UNKNOWN",
+            "reason": shadow_error,
+        }
+        persistence = {"persisted": False, "status": "UNKNOWN", "reason": shadow_error}
+
+    return {
+        "source": "jarvis/core-shadow/soccer",
+        "schema_version": core_result["schema_version"],
+        "feature": "jarvis_core_shadow",
+        "math_unchanged": True,
+        "production_influence": False,
+        "control_prediction": control_result,
+        "jarvis_core": core_result,
+        "comparison": comparison,
+        "persistence": persistence,
+        **({"shadow_error": shadow_error} if shadow_error else {}),
+    }
+
+
 @router.get("/api/jarvis/tactical-memory")
 async def get_tactical_memory(
     authorization: Optional[str] = Header(default=None),
