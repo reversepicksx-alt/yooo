@@ -20,6 +20,7 @@ ACTION_SPECS = {
     "opposite_case": "strongest opposite-case stress test",
     "score_state": "score-state branch against the current audit",
     "refresh_lines": "current line and movement check",
+    "compare_players": "read-only comparison against the current role and venue evidence",
     "postmortem": "settled-pick postmortem and lessons",
     "general": "read-only owner intelligence question",
 }
@@ -37,6 +38,8 @@ def classify_action(message: str) -> tuple[str, dict[str, Any]]:
         return "run_player", {"player_query": "", "line": float(line_update.group(1))}
     if re.search(r"\b(?:what\s+if|if)\b.*\b(?:score|scores)\s+first\b", lowered):
         return "score_state", {"score_state": "opponent_scores_first"}
+    if re.search(r"\bcompare\b.*\b(?:another|different|other)\b.*\b(?:midfielder|player|one)\b", lowered):
+        return "compare_players", {}
     full_audit = re.match(
         r"\s*(?:full\s+audit|deep\s+dive|audit\s+this|run\s+the\s+full\s+pipeline|analyze\s+fully)\s+(.+)$",
         text,
@@ -195,6 +198,9 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
     if action == "refresh_lines":
         stage_status["line_movement_check"] = "available" if stage_status["market_board_search"] == "available" else "UNKNOWN"
     if action == "postmortem":
+        stage_status["final_verdict"] = "partial"
+    if action == "compare_players":
+        stage_status["exact_role_venue_analysis"] = "partial"
         stage_status["final_verdict"] = "partial"
     stage_status.update(stage_overrides or {})
     return {
@@ -399,6 +405,34 @@ async def execute_action(
                 "opposite_case_stress_test": "available" if audit else "UNKNOWN",
                 "final_verdict": "available" if audit else "UNKNOWN",
             },
+        )
+
+    if action == "compare_players":
+        audit = (session_state or {}).get("last_audit")
+        data["reused_audit"] = bool(audit)
+        data["comparison"] = {
+            "target_role": (
+                (((audit or {}).get("modules") or {}).get("exact_role") or {}).get("values", {})
+                if isinstance(audit, dict) else {}
+            ),
+            "cohort": (
+                (((audit or {}).get("modules") or {}).get("role_opponent_venue_cohort") or {}).get("values", {})
+                if isinstance(audit, dict) else {}
+            ),
+            "status": "UNKNOWN" if not audit else "partial",
+            "provenance": "current session audit only; no second player was resolved",
+        }
+        return _result(
+            action,
+            status="partial" if audit else "UNKNOWN",
+            tools=[],
+            data=data,
+            response=(
+                "I reused the current audit and exposed its role/cohort evidence for comparison. "
+                "A second player was not resolved, so I will not invent a player-to-player comparison."
+                if audit else
+                "No verified audit is stored yet, so a player comparison remains UNKNOWN."
+            ),
         )
 
     if action in {"opposite_case", "refresh_lines", "run_player", "full_player_audit", "postmortem"}:

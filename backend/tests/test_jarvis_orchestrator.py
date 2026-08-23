@@ -59,6 +59,12 @@ def test_full_audit_is_first_class_intent():
     assert args["audit_direction"] == "UNDER"
 
 
+def test_compare_follow_up_is_orchestrated_without_inventing_player():
+    action, args = classify_action("Compare him to another midfielder")
+    assert action == "compare_players"
+    assert args == {}
+
+
 def test_session_state_preserves_verified_context_and_user_line():
     state = merge_session_state({}, {
         "action": "run_player",

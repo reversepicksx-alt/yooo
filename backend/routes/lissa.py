@@ -36,6 +36,13 @@ router = APIRouter(prefix="/api/lissa", tags=["lissa"])
 _LISSA_AI_TIMEOUT_SECONDS = 3.5
 
 
+def _phase2_owner_cutover_enabled() -> bool:
+    """Owner-only feature gate; subscriber prediction routes never consult it."""
+    return (os.environ.get("JARVIS_PHASE2_OWNER_CUTOVER") or "true").strip().lower() in {
+        "1", "true", "yes", "on", "enabled",
+    }
+
+
 class LissaMessageRequest(BaseModel):
     email: str
     token: str
@@ -738,6 +745,7 @@ async def _finish_turn(
         "readOnly": True,
         "mode": mode,
         "summary": summary,
+        "owner_cutover": "phase2" if _phase2_owner_cutover_enabled() else "legacy",
     }
     if orchestration:
         response["orchestration"] = orchestration
@@ -1327,6 +1335,7 @@ async def lissa_message(req: LissaMessageRequest):
         resolve_player_fixture=_resolve_player_fixture,
         run_player_analysis=_run_player_analysis,
     )
+    action_result["owner_cutover"] = "phase2"
     await save_session_state(
         req.email,
         session_id,

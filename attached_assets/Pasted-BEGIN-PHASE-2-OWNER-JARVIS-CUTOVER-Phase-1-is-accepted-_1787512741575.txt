@@ -1,0 +1,79 @@
+BEGIN PHASE 2 — OWNER JARVIS CUTOVER
+
+Phase 1 is accepted. The orchestration, conversational state, deterministic model separation, truthful audit grading, UNKNOWN handling, and shadow JARVIS verdict have passed the Rongier acceptance test.
+
+Phase 2 goal: make the new JARVIS orchestration path the primary owner/admin workflow inside Reverse Picks, while leaving all normal subscriber-facing prediction behavior unchanged for now.
+
+Do not remove, reroute, or degrade existing subscriber production routes. Use an owner/admin-only feature flag for the Phase 2 cutover.
+
+Required Phase 2 behavior:
+
+1. The owner JARVIS chat becomes the default owner analysis interface.
+2. Natural-language requests such as Script hunt, Full audit Rongier under 52.5, What if PSG score first?, What is the strongest opposite case?, Actually use 49.5, Check the board, and Compare him to another midfielder must route through the new JARVIS orchestrator rather than the legacy deterministic command router.
+3. Preserve verified multi-turn session context across owner chat turns.
+4. Use the deterministic Reverse Picks engine as the quantitative authority for projection, probabilities, calibration, safety, saved-line semantics, and settlement facts.
+5. Use JARVIS only for orchestration, tactical interpretation, evidence grading, opposite-case analysis, robustness, and final explanation.
+6. Script Hunt must autonomously:
+    * discover the upcoming slate,
+    * filter for our qualifying home-control match environments,
+    * reject away-dominance-only cases,
+    * inspect current PrizePicks markets,
+    * resolve player/fixture identities,
+    * rank candidates,
+    * and run deeper audits on the best matches without requiring manual fixture/team/player IDs.
+7. Full Player Audit must automatically populate the truthful audit contract:
+    * canonical identity,
+    * prop/line source,
+    * deterministic model result,
+    * exact role,
+    * venue evidence,
+    * team/opponent playstyle when actually supported,
+    * buildup and press/block interaction,
+    * role/venue cohort evidence,
+    * first-goal and score-state branches,
+    * minutes risk,
+    * line movement when available,
+    * strongest opposite case,
+    * counterfactual robustness,
+    * JARVIS grade,
+    * final verdict,
+    * UNKNOWN evidence,
+    * provenance.
+8. Missing optional evidence must never abort a valid analysis. Preserve UNKNOWN and continue safely.
+9. Owner chat must support true follow-up behavior without re-resolving identity unnecessarily.
+10. The UI should behave as a real chat workspace: persistent message history, user/assistant bubbles, multiline composer, streaming/progress states, and tool/activity indicators. Do not expose provider IDs or force forms unless a genuine ambiguity requires clarification.
+
+Phase 2 acceptance tests:
+
+A. Blank-chat Script Hunt
+User input: Script hunt
+Expected: JARVIS autonomously discovers fixtures, filters home-control candidates, checks the board, ranks props, and returns results without asking for a team or fixture.
+
+B. Full Player Audit
+User input: Full audit Rongier under 52.5
+Expected: existing verified session context is reused if available; otherwise JARVIS resolves everything autonomously and returns deterministic model output plus a separate truthful JARVIS tactical verdict.
+
+C. Follow-up chain
+What if PSG score first?
+What is the strongest opposite case?
+Actually use 49.5
+Expected: same session/audit context is reused; only the requested branch or line changes.
+
+D. Different prop type
+Run one goalkeeper pass-attempt prop and one defensive prop to verify the orchestrator is not overfitted to midfielder pass props.
+
+E. Failure behavior
+Remove one optional evidence source and confirm the analysis still completes with explicit UNKNOWN provenance.
+
+Do not expose Phase 2 to normal subscribers yet. When these live owner tests pass, produce a Phase 2 validation report showing:
+
+* intents recognized,
+* tools/actions called,
+* session context reused,
+* deterministic engine result,
+* JARVIS tactical result,
+* UNKNOWN evidence,
+* any unresolved gaps,
+* and whether the owner workflow is ready for subscriber pilot.
+
+The purpose of Phase 2 is to make Reverse’s owner experience function like speaking to the same JARVIS intelligence, not like using a command router or form-based prediction tool.
