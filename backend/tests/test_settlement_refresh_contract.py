@@ -5,6 +5,7 @@ import pytest
 
 import soccer_bdl_client
 from routes import picks
+from fotmob_client import _player_stats_from_page, _read_stat_value, _team_matches
 
 
 def _finished_fixture():
@@ -39,6 +40,27 @@ def _player_fixture_stats():
             ],
         }
     ]
+
+
+def test_fotmob_pass_fraction_uses_attempt_denominator():
+    player = {
+        "stats": [
+            {
+                "stats": {
+                    "Accurate passes": {
+                        "key": "accurate_passes",
+                        "stat": {"value": "13/24"},
+                    }
+                }
+            }
+        ]
+    }
+
+    assert _read_stat_value(player, "pass_attempts") == (24, "Accurate passes")
+
+
+def test_fotmob_matches_punctuated_dc_united_identity():
+    assert _team_matches("D.C. United", "DC United") is True
 
 
 def test_forced_soccer_settlement_uses_fresh_exact_fixture_and_player_calls(monkeypatch):

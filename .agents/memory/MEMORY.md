@@ -126,6 +126,7 @@
 - [Player identity and context](player-identity-context.md) — verified player IDs are authoritative; fixture team context disambiguates cache media and prevents same-name history merges.
 - [Owner API status indicator](owner-api-status-indicator.md) — quota health is a compact owner-only header dot; regular users see no provider details.
 - [Provider branding removal](provider-branding-removal.md) — external sports-provider quota and dashboard details stay out of user-facing app surfaces; internal safeguards may remain.
+- [Provider team identity normalization](provider-team-identity-normalization.md) — punctuation-only club variants such as D.C. United vs DC United must still match exact provider player rows.
 - [MLB next-game date boundary](mlb-next-game-date-boundary.md) — reject cached or provider-returned games before today at both API and mobile boundaries.
 - [Soccer player-history TP contract](soccer-player-history-contract.md) — soccer history and exact-position comparison rows require fetched TP plus exact minutes; incomplete rows must retry, never estimate.
 - [Season-stale team fixture archive](season-stale-team-archive.md) — archive size/age does not prove current-season coverage; merge the freshness-checked recent schedule before hydrating history.

@@ -49,6 +49,11 @@ def _team_matches(left: Any, right: Any) -> bool:
         return False
     if a == b:
         return True
+    # Club abbreviations may be punctuated differently across providers:
+    # "D.C. United" and "DC United" normalize to different token spacing,
+    # but represent the same team.
+    if a.replace(" ", "") == b.replace(" ", ""):
+        return True
     # Provider labels sometimes add a club prefix/suffix. Do not use this
     # relaxed comparison for short names, where false matches are common.
     return len(a) >= 5 and len(b) >= 5 and (a in b or b in a)
@@ -292,6 +297,17 @@ def _read_stat_value(
         return None
     actual_label, stat = entry
     value = stat.get(field)
+    # FotMob has exposed pass fractions in both shapes:
+    # {"value": 13, "total": 24} and {"value": "13/24"}.
+    # Pass-attempt props use the denominator, never the accurate/completed
+    # numerator.  Keep this normalization at the provider boundary so the
+    # settlement layer receives the real final attempt count.
+    if prop_type in ("pass_attempts", "passes") and field == "total" and value is None:
+        fraction = stat.get("value")
+        if isinstance(fraction, str):
+            match = re.search(r"/\s*(\d+(?:\.\d+)?)", fraction)
+            if match:
+                value = match.group(1)
     if value is None:
         return None
     try:
