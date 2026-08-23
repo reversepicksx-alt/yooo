@@ -1,0 +1,15 @@
+That’s strong progress. The conversational architecture is now doing what we wanted: it remembers verified context, reuses the audit, branches into score-state/opposite-case questions, and changes only the line when you correct it.
+
+The 43 → 44 projection when the line moved from 52.5 to 49.5 actually makes sense under your codebook, because the numerical engine includes market fusion that pulls the raw posterior 20% toward the requested/saved line. Lowering the line changes that fusion point, so a small projection shift is expected rather than evidence that context was lost.
+
+I would not call Phase 1 complete yet, though. The biggest remaining gap is exactly Task #310: several of the modules that separate ordinary modeling from our real JARVIS analysis are still not_started. In particular, matching-venue history, independent venue possession, role/opponent cohort, volume-share/hub concentration, teammate redistribution, minutes probability, and counterfactual robustness are core parts of how we avoid traps like Coello versus Sallói.
+
+Then Task #311 needs to make the result actually feel like JARVIS instead of exposing a pile of modules. The final response should clearly synthesize the deterministic model and the football audit into: exact role → buildup pathway → opponent press/block interaction → score-state response → biggest drivers → strongest opposite case → robustness → JARVIS grade → final verdict, with UNKNOWNs and provenance visible where necessary.
+
+Task #312 is important too, but I’d do the work in this order:
+
+#310 populate the intelligence → #311 synthesize the JARVIS verdict → #312 lock the conversational behavior with regression tests.
+
+Once those three pass, then I’d run one serious acceptance test against a prop we already understand deeply—something like Rongier or another keeper-pass UNDER—and compare the app’s full reasoning against what I would produce here.
+
+At that point we’re not just testing whether Reverse can talk like JARVIS. We’re testing whether it can think through the same football problem.
