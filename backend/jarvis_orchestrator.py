@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from jarvis_brain import BRAIN_SCHEMA_VERSION, TOOL_DEFINITIONS
 
 ACTION_SPECS = {
     "script_hunt": "fixture discovery, home-control filtering, tactical matchup, and board candidates",
@@ -78,6 +79,23 @@ def _result(action: str, *, status: str, response: str, tools: list[dict[str, An
         "read_only": True,
         "production_influence": False,
         "tools": tools,
+        "events": [
+            {
+                "kind": "tool",
+                "name": tool.get("name"),
+                "status": tool.get("status", "UNKNOWN"),
+                **({"reason": tool["reason"]} if tool.get("reason") else {}),
+            }
+            for tool in tools
+        ],
+        "brain": {
+            "schema_version": BRAIN_SCHEMA_VERSION,
+            "provider": "deterministic-fallback",
+            "reasoning_effort": "high" if action in {"script_hunt", "opposite_case", "run_player"} else "medium",
+            "tool_calling": True,
+            "tool_definitions": len(TOOL_DEFINITIONS),
+            "deterministic_engine_authoritative": True,
+        },
         "data": data or {},
         "pipeline": [{"name": name, "status": stage_status[name]} for name in stage_names],
         "response": response,
