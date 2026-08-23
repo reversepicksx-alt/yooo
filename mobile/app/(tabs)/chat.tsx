@@ -10,7 +10,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { startJarvis, sendJarvisMessage } from '@/lib/api';
+import {
+  createJarvisTraceId, JarvisDebugTrace, startJarvis, sendJarvisMessage,
+  JARVIS_FRONTEND_BUILD,
+} from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Msg {
@@ -18,6 +21,7 @@ interface Msg {
   role: 'user' | 'assistant';
   text: string;
   tools?: string[];
+  debug?: JarvisDebugTrace;
 }
 
 async function loadChatHistory(email: string): Promise<Msg[]> {
@@ -52,6 +56,8 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [latestDebug, setLatestDebug] = useState<JarvisDebugTrace | null>(null);
   const flatRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -104,12 +110,20 @@ export default function ChatScreen() {
     try {
       const sid = sessionId;
       if (!session?.email || !session.token) throw new Error('Owner session required');
-       const resp = await sendJarvisMessage(session.email, session.token, sid, text);
+        const traceId = createJarvisTraceId();
+        const resp = await sendJarvisMessage(session.email, session.token, sid, text, undefined, traceId);
+        const debug = resp.debug || {
+          trace_id: traceId,
+          frontend_build: JARVIS_FRONTEND_BUILD,
+          api_route: '/api/lissa/message',
+        };
+        setLatestDebug(debug);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         text: resp.response || resp.message || 'I could not find a verified answer for that yet.',
         tools: (resp.tools || resp.orchestration?.tools || []).map(tool => `${tool.name}:${tool.status}`),
+          debug,
       }]);
     } catch {
       setMessages(prev => [...prev, {
@@ -161,10 +175,35 @@ export default function ChatScreen() {
             <Text style={styles.headerSub}>Reverse Picks intelligence</Text>
           </View>
         </View>
-        <TouchableOpacity style={styles.headerAction} accessibilityLabel="JARVIS options">
+        <TouchableOpacity
+          style={styles.headerAction}
+          accessibilityLabel="Show JARVIS request debug"
+          onPress={() => setDebugOpen(value => !value)}
+        >
           <Ionicons name="ellipsis-horizontal" size={20} color={Colors.textSecondary} />
         </TouchableOpacity>
       </View>
+      {debugOpen && (
+        <View style={styles.debugDrawer}>
+          <Text style={styles.debugTitle}>JARVIS REQUEST TRACE</Text>
+          <Text style={styles.debugBuild}>Frontend: {latestDebug?.frontend_build || JARVIS_FRONTEND_BUILD}</Text>
+          {[
+            ['Trace', latestDebug?.trace_id],
+            ['Backend', latestDebug?.backend_build],
+            ['Route', latestDebug?.api_route],
+            ['Provider', latestDebug?.provider_used],
+            ['Model', latestDebug?.model_used],
+            ['Response', latestDebug?.response_id],
+            ['Fallback', latestDebug?.fallback_used === undefined ? undefined : String(latestDebug.fallback_used)],
+            ['Rounds', latestDebug?.orchestration_rounds?.toString()],
+            ['Tools', latestDebug?.tools_called?.join(', ')],
+            ['Fixture', latestDebug?.fixture_id?.toString()],
+            ['Player', latestDebug?.player_id?.toString()],
+          ].map(([label, value]) => (
+            <Text key={label} style={styles.debugRow}>{label}: {value || 'UNKNOWN'}</Text>
+          ))}
+        </View>
+      )}
 
       <FlatList
         ref={flatRef}
@@ -259,6 +298,13 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: 0.4 },
   headerSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
   headerAction: { padding: 8 },
+  debugDrawer: {
+    marginHorizontal: 14, marginTop: 10, padding: 12, borderRadius: 10,
+    backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  debugTitle: { color: Colors.primary, fontSize: 10, fontWeight: '900', letterSpacing: 1, marginBottom: 6 },
+  debugBuild: { color: Colors.text, fontSize: 12, marginBottom: 3 },
+  debugRow: { color: Colors.textSecondary, fontSize: 11, lineHeight: 17 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   messageList: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 18 },
   message: {

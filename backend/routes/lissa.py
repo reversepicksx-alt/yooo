@@ -49,6 +49,8 @@ class LissaMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1200)
     session_id: Optional[str] = None
     context: Optional[dict[str, Any]] = None
+    trace_id: Optional[str] = Field(default=None, max_length=96)
+    client_build: Optional[str] = Field(default=None, max_length=96)
 
 
 class LissaOverviewRequest(BaseModel):
@@ -708,6 +710,43 @@ def _session_id(req: LissaMessageRequest) -> str:
     return req.session_id or f"jarvis-{uuid.uuid4().hex[:12]}"
 
 
+def _backend_build() -> str:
+    """Safe deploy identity; never expose hostnames, secrets, or source paths."""
+    return (
+        os.environ.get("REPLIT_COMMIT_SHA")
+        or os.environ.get("GIT_COMMIT")
+        or os.environ.get("DEPLOYMENT_ID")
+        or "workspace"
+    )[:64]
+
+
+def _trace_debug(req: LissaMessageRequest, orchestration: dict[str, Any] | None) -> dict[str, Any]:
+    orchestration = orchestration if isinstance(orchestration, dict) else {}
+    diagnostic = orchestration.get("owner_brain_diagnostic")
+    diagnostic = diagnostic if isinstance(diagnostic, dict) else {}
+    data = orchestration.get("data")
+    data = data if isinstance(data, dict) else {}
+    resolution = data.get("resolution")
+    resolution = resolution if isinstance(resolution, dict) else {}
+    return {
+        "frontend_build": req.client_build or "UNKNOWN",
+        "backend_build": _backend_build(),
+        "trace_id": req.trace_id or "UNKNOWN",
+        "api_route": "/api/lissa/message",
+        "provider_used": diagnostic.get("provider_used") or "UNKNOWN",
+        "model_used": diagnostic.get("model_used"),
+        "response_id": diagnostic.get("response_id"),
+        "fallback_used": diagnostic.get("fallback_used"),
+        "orchestration_rounds": diagnostic.get("orchestration_rounds"),
+        "tools_called": diagnostic.get("tool_call_names") or [
+            str(tool.get("name")) for tool in orchestration.get("tools", [])
+            if isinstance(tool, dict) and tool.get("name")
+        ],
+        "fixture_id": resolution.get("fixture_id"),
+        "player_id": resolution.get("player_id"),
+    }
+
+
 def _screen_name(context: dict[str, Any] | None) -> str | None:
     if not isinstance(context, dict) or not isinstance(context.get("screen"), dict):
         return None
@@ -722,6 +761,7 @@ async def _finish_turn(
     mode: str,
     summary: dict[str, Any],
     orchestration: dict[str, Any] | None = None,
+    debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = _address_owner(response)
     try:
@@ -751,6 +791,10 @@ async def _finish_turn(
         response["orchestration"] = orchestration
         response["action"] = orchestration.get("action")
         response["tools"] = orchestration.get("tools", [])
+    # Owner chat responses always carry a trace envelope. For lightweight
+    # replies there is no orchestration payload, so unavailable fields stay
+    # explicit instead of making the browser guess which path handled a turn.
+    response["debug"] = debug or _trace_debug(req, orchestration)
     return response
 
 
@@ -1315,7 +1359,6 @@ async def lissa_message(req: LissaMessageRequest):
         except Exception as exc:
             return {"status": "UNKNOWN", "reason": f"{type(exc).__name__} during prediction analysis"}
 
-    action_context = req.context or {}
     prior_prop_type = action_context.get("propType")
     if isinstance(action_context.get("pick"), dict):
         prior_prop_type = prior_prop_type or action_context["pick"].get("propType")
@@ -1355,6 +1398,7 @@ async def lissa_message(req: LissaMessageRequest):
             f"action:{action_result['action']}",
             _ledger_summary(picks_for_summary),
             orchestration=action_result,
+            debug=_trace_debug(req, action_result),
         )
 
     # 1. Instant screen/identity responses — no I/O needed

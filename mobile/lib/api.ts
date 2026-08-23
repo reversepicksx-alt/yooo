@@ -21,7 +21,10 @@ const getApiBase = (): string => {
 // request can populate verified fixture/history caches, so a short client
 // timer creates the false "retry" pattern where the second attempt succeeds.
 const LONG_TIMEOUT_PATHS   = ['/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message', '/api/lissa/message', '/api/lissa/overview', '/api/prediction-explanation'];
-const OWNER_CHAT_TIMEOUT_MS = 22_000;  // Atlas pick load + AI generation can exceed 10 s
+// Owner-only JARVIS actions can invoke the exact deterministic prediction path,
+// which deliberately waits for verified fixture/history evidence. Do not abort a
+// still-running server request and show a fake connection failure in the chat.
+const OWNER_CHAT_TIMEOUT_MS = 120_000;
 const PLAYER_SEARCH_PATH   = '/api/players/search';
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/', '/api/match-script'];  // match-script hits a structured press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
@@ -343,6 +346,29 @@ export interface JarvisResponse {
     tools?: Array<{ name: string; status: string; reason?: string }>;
     data?: Record<string, unknown>;
   };
+  debug?: JarvisDebugTrace;
+}
+
+export interface JarvisDebugTrace {
+  frontend_build?: string;
+  backend_build?: string;
+  trace_id?: string;
+  api_route?: string;
+  provider_used?: string;
+  model_used?: string | null;
+  response_id?: string | null;
+  fallback_used?: boolean;
+  orchestration_rounds?: number;
+  tools_called?: string[];
+  fixture_id?: number | string | null;
+  player_id?: number | string | null;
+}
+
+export const JARVIS_FRONTEND_BUILD = 'jarvis-trace-v1';
+
+export function createJarvisTraceId(): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `jarvis-${Date.now().toString(36)}-${random}`;
 }
 
 export interface JarvisContext {
@@ -366,10 +392,14 @@ export async function sendJarvisMessage(
   sessionId: string,
   message: string,
   context?: JarvisContext,
+  traceId?: string,
 ): Promise<JarvisResponse> {
   return apiCall<JarvisResponse>('/api/lissa/message', {
     method: 'POST',
-    body: JSON.stringify({ email, token, session_id: sessionId, message, context }),
+    body: JSON.stringify({
+      email, token, session_id: sessionId, message, context,
+      trace_id: traceId, client_build: JARVIS_FRONTEND_BUILD,
+    }),
   });
 }
 

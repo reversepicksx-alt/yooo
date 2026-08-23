@@ -990,6 +990,12 @@ async def _resolve_soccer_prop_identity(
     graph_fixture: dict[str, Any] | None = None
     rows: list[dict[str, Any]] = []
     graph_trace: list[dict[str, Any]] = []
+    verified_player_team_ids = {
+        int(team.get("team_id"))
+        for player in players
+        for team in (player.get("teams") or [])
+        if isinstance(team, dict) and team.get("team_id") is not None
+    }
     if opponent and not team:
         # Prefer the project's existing alias-aware team resolver before
         # asking API-Football to search an abbreviation such as PSG.
@@ -1051,6 +1057,12 @@ async def _resolve_soccer_prop_identity(
                     continue
                 if identity["away_team_id"] != opponent_id:
                     continue
+                # A verified cached/player-search club identity is stronger
+                # than a broad opponent schedule. Without this filter, "Rongier
+                # vs PSG" could incorrectly select PSG's nearest game against
+                # any club before the squad lookup has a chance to disambiguate.
+                if verified_player_team_ids and identity["home_team_id"] not in verified_player_team_ids:
+                    continue
                 candidates.append(identity)
             graph_trace.append({
                 "step": "fixture_candidates",
@@ -1111,7 +1123,7 @@ async def _resolve_soccer_prop_identity(
                         ),
                     )
                 ]
-                players = [{
+                graph_players = [{
                     "player_id": (player.get("player") or {}).get("id") or player.get("id"),
                     "player_name": (player.get("player") or {}).get("name") or player.get("name") or " ".join(
                         part for part in (player.get("firstname"), player.get("lastname"))
@@ -1120,7 +1132,7 @@ async def _resolve_soccer_prop_identity(
                     "teams": [{"team_id": home_id, "team_name": graph_fixture["home_team"]}],
                 } for player in matched if (player.get("player") or {}).get("id") is not None or player.get("id") is not None]
                 unique_players: dict[int, dict[str, Any]] = {}
-                for candidate in players:
+                for candidate in graph_players:
                     player_id = candidate.get("player_id")
                     if player_id is not None and (
                         player_id not in unique_players
@@ -1128,9 +1140,14 @@ async def _resolve_soccer_prop_identity(
                         > len(str(unique_players[player_id].get("player_name") or ""))
                     ):
                         unique_players[int(player_id)] = candidate
-                players = list(unique_players.values())
-                graph_trace.append({"step": "player_match", "status": "resolved" if len(players) == 1 else "UNKNOWN", "count": len(players)})
-                if len(players) == 1:
+                graph_players = list(unique_players.values())
+                graph_trace.append({"step": "player_match", "status": "resolved" if len(graph_players) == 1 else "UNKNOWN", "count": len(graph_players)})
+                # Fixture squads are optional enrichment and can be unavailable
+                # under provider quota pressure. Never erase an already verified
+                # cached player identity just because this second source is empty;
+                # the exact fixture/team graph below still validates the cache ID.
+                if len(graph_players) == 1:
+                    players = graph_players
                     rows = [graph_fixture]
     if not players:
         raise _unknown_resolution("player_not_found", f"No verified player matched {query}.",

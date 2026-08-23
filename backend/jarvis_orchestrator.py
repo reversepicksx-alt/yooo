@@ -216,6 +216,26 @@ def merge_session_state(previous: dict[str, Any] | None, result: dict[str, Any])
             state["last_audit"] = analysis["audit"]
             if isinstance(analysis.get("prediction"), dict):
                 state["last_prediction"] = analysis["prediction"]
+        if result.get("action") == "script_hunt":
+            def fixture_summary(item: Any) -> dict[str, Any]:
+                row = item if isinstance(item, dict) else {}
+                fixture = row.get("fixture") if isinstance(row.get("fixture"), dict) else row
+                fixture_meta = fixture.get("fixture") if isinstance(fixture.get("fixture"), dict) else {}
+                teams = fixture.get("teams") if isinstance(fixture.get("teams"), dict) else {}
+                home = row.get("homeTeam") if isinstance(row.get("homeTeam"), dict) else teams.get("home")
+                away = row.get("awayTeam") if isinstance(row.get("awayTeam"), dict) else teams.get("away")
+                return {
+                    "fixture_id": row.get("fixtureId") or fixture_meta.get("id"),
+                    "home": (home or {}).get("name") if isinstance(home, dict) else None,
+                    "away": (away or {}).get("name") if isinstance(away, dict) else None,
+                    "reason": row.get("reason")
+                    or ((row.get("homeControl") or {}).get("reason") if isinstance(row.get("homeControl"), dict) else None),
+                }
+            state["last_script_hunt"] = {
+                "evaluated": [fixture_summary(row) for row in (data.get("evaluatedFixtures") or [])][:30],
+                "rejected": [fixture_summary(row) for row in (data.get("rejectedFixtures") or [])][:30],
+                "kept": int(((data.get("home_control_filter") or {}).get("kept") or 0)),
+            }
     state["last_intent"] = result.get("action")
     return state
 
@@ -344,6 +364,49 @@ async def execute_action(
     evaluate_script_fixture: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     audit_script_candidate: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
+    session_state = (context or {}).get("_jarvis_state") if isinstance(context, dict) else {}
+    lowered_message = str(message or "").lower()
+    script_follow_up = (
+        re.search(r"\b(which|what)\s+(matchups?|fixtures?)\b.*\b(reject|that script hunt|they)\b", lowered_message)
+        or re.search(r"\bthat\s+script\s+hunt\b.*\b(reject|matchup|fixture)", lowered_message)
+    )
+    if script_follow_up:
+        prior_hunt = session_state.get("last_script_hunt") if isinstance(session_state, dict) else None
+        if not isinstance(prior_hunt, dict):
+            return _result(
+                "script_hunt", status="UNKNOWN", tools=[],
+                data={"script_hunt_follow_up": True},
+                response="I don’t have a prior Script Hunt in this conversation to reference. Run Script Hunt first; I won’t rediscover the slate just to guess.",
+            )
+        rejected = prior_hunt.get("rejected")
+        evaluated = prior_hunt.get("evaluated")
+        if not isinstance(rejected, list) or not isinstance(evaluated, list):
+            return _result(
+                "script_hunt", status="UNKNOWN", tools=[],
+                data={"script_hunt_follow_up": True},
+                response="The prior Script Hunt record is incomplete, so I can’t safely list its matchups. I won’t rediscover the slate just to guess.",
+            )
+        lines = []
+        for row in rejected:
+            if not isinstance(row, dict):
+                continue
+            matchup = " vs ".join(part for part in (row.get("home"), row.get("away")) if part) or "Unknown fixture"
+            reason = row.get("reason") or "home-control evidence did not qualify"
+            lines.append(f"{matchup} (fixture {row.get('fixture_id') or 'UNKNOWN'}) — {reason}")
+        return _result(
+            "script_hunt", status="available", tools=[],
+            data={
+                "script_hunt_follow_up": True,
+                "evaluatedFixtures": evaluated,
+                "rejectedFixtures": rejected,
+                "home_control_filter": {"kept": prior_hunt.get("kept"), "rejected": len(rejected)},
+            },
+            response=(
+                "From that Script Hunt, these fixtures were rejected:\n"
+                + ("\n".join(lines) if lines else "None were rejected.")
+                + "\n\nThis is the stored result from the prior hunt; I did not rediscover the slate."
+            ),
+        )
     # Provider-first owner bridge. The model may request typed tools, but the
     # deterministic Reverse Picks path remains the quantitative authority.
     brain_state = BrainTurn()
@@ -391,7 +454,6 @@ async def execute_action(
     }
     _ACTIVE_BRAIN_DIAGNOSTIC.set(brain_diagnostic)
     action, args = classify_action(message)
-    session_state = (context or {}).get("_jarvis_state") if isinstance(context, dict) else {}
     if isinstance(session_state, dict) and action in {"run_player", "full_player_audit"}:
         if str(args.get("player_query") or "").casefold() in {"him", "her", "them", "it"}:
             args["player_query"] = None
@@ -733,6 +795,19 @@ async def execute_action(
                         f"player/fixture resolution is UNKNOWN"
                         f"{': ' + str(resolution.get('message') or resolution.get('detail') or resolution.get('reason')) if (resolution.get('message') or resolution.get('detail') or resolution.get('reason')) else '.'} "
                         "The missing market did not abort the analysis; only the unresolved required identity/fixture stopped it."
+                    )
+                    return _result(
+                        action,
+                        status="UNKNOWN",
+                        tools=tools,
+                        data=data,
+                        response=response,
+                        stage_overrides={
+                            "fixture_discovery": "UNKNOWN",
+                            "exact_role_venue_analysis": "UNKNOWN",
+                            "bayesian_pipeline": "UNKNOWN",
+                            "final_verdict": "UNKNOWN",
+                        },
                     )
             if prop_type in {None, "", "UNKNOWN"}:
                 response = (
