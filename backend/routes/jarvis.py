@@ -1034,6 +1034,96 @@ async def jarvis_openapi():
                     },
                 }
             },
+            "/api/jarvis/tactical-memory": {
+                "get": {
+                    "operationId": "getTacticalMemory",
+                    "summary": "Retrieve bounded advisory tactical memory",
+                    "description": "Owner-only retrieval of team fingerprints, player roles, matchup interactions, and postmortems. Tactical memory never changes Reverse Picks math.",
+                    "parameters": [
+                        _param("memory_type", "string", False, "team_fingerprint | player_role | matchup_interaction | postmortem."),
+                        _param("team_id", "integer", False, "Provider team ID."),
+                        _param("opponent_id", "integer", False, "Provider opponent team ID."),
+                        _param("player_id", "integer", False, "Provider player ID."),
+                        _param("role", "string", False, "Exact tactical role."),
+                        _param("manager_regime", "string", False, "Manager or tactical regime."),
+                        _param("venue", "string", False, "home or away."),
+                        _param("prop_type", "string", False, "Relevant player prop."),
+                        _param("since", "string", False, "Earliest observed_at value."),
+                        _param("until", "string", False, "Latest observed_at value."),
+                        _param("include_stale", "boolean", False, "Include historical superseded records."),
+                        _param("limit", "integer", False, "Maximum records; capped at 100."),
+                    ],
+                    "responses": {"200": {"description": "Bounded tactical memory records"}, "401": {"description": "Unauthorized"}},
+                },
+                "post": {
+                    "operationId": "upsertTacticalMemory",
+                    "summary": "Save a versioned tactical memory observation",
+                    "description": "Owner-only append-only write. A replacement creates a new version and marks the prior matching observation stale. Do not store credentials or provider secrets.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["memory_type", "identity", "confidence", "sample_size", "provenance", "payload"],
+                                    "properties": {
+                                        "memory_type": {"type": "string", "enum": ["team_fingerprint", "player_role", "matchup_interaction", "postmortem"]},
+                                        "identity": {"type": "object", "minProperties": 1},
+                                        "competition": {"type": "object"},
+                                        "context": {"type": "object"},
+                                        "confidence": {"type": "number", "minimum": 0, "maximum": 100},
+                                        "sample_size": {"type": "integer", "minimum": 0},
+                                        "provenance": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                                        "validity": {"type": "object"},
+                                        "payload": {"type": "object", "minProperties": 1},
+                                        "schema_version": {"type": "string", "default": "jarvis-tactical-memory.v1"},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "Saved versioned tactical memory record"}, "401": {"description": "Unauthorized"}, "422": {"description": "Invalid record"}},
+                },
+            },
+            "/api/jarvis/tactical-memory/team-fingerprint": {
+                "get": {
+                    "operationId": "getTeamFingerprint",
+                    "summary": "Retrieve a team's tactical fingerprint",
+                    "parameters": [
+                        _param("team_id", "integer", True, "Provider team ID."),
+                        _param("opponent_id", "integer", False, "Optional opponent team ID."),
+                        _param("venue", "string", False, "home or away."),
+                        _param("limit", "integer", False, "Maximum records; capped at 100."),
+                    ],
+                    "responses": {"200": {"description": "Team fingerprint records"}, "401": {"description": "Unauthorized"}},
+                }
+            },
+            "/api/jarvis/tactical-memory/player-role": {
+                "get": {
+                    "operationId": "getPlayerRoleMemory",
+                    "summary": "Retrieve player-specific role memory",
+                    "parameters": [
+                        _param("player_id", "integer", True, "Provider player ID."),
+                        _param("role", "string", False, "Optional exact tactical role."),
+                        _param("limit", "integer", False, "Maximum records; capped at 100."),
+                    ],
+                    "responses": {"200": {"description": "Player role records"}, "401": {"description": "Unauthorized"}},
+                }
+            },
+            "/api/jarvis/tactical-memory/invalidate": {
+                "post": {
+                    "operationId": "invalidateTacticalMemory",
+                    "summary": "Mark outdated tactical memory stale",
+                    "description": "Marks related observations stale after a manager, formation, transfer, injury/return, or tactical-role change without deleting history.",
+                    "parameters": [
+                        _param("team_id", "integer", False, "Provider team ID."),
+                        _param("player_id", "integer", False, "Provider player ID."),
+                        _param("manager_regime", "string", False, "Current manager/regime; older regimes become stale."),
+                        _param("reason", "string", False, "Reason for invalidation."),
+                    ],
+                    "responses": {"200": {"description": "Number of records marked stale"}, "401": {"description": "Unauthorized"}, "422": {"description": "team_id or player_id is required"}},
+                }
+            },
             "/api/jarvis/calibration": {
                 "get": {
                     "operationId": "getCalibration",
@@ -1655,6 +1745,10 @@ async def jarvis_openapi():
     # routes, but are diagnostic/download helpers rather than orchestration
     # primitives and are intentionally omitted from the importer schema.
     for diagnostic_path in (
+        "/api/jarvis/prizepicks/board",
+        "/api/jarvis/prizepicks/markets",
+        "/api/jarvis/prizepicks/line-history",
+        "/api/jarvis/standings",
         "/api/jarvis/stat-definitions",
         "/api/jarvis/prediction-screenshots",
         "/api/jarvis/prediction-screenshots/{handle}/{section}",
