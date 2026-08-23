@@ -4,11 +4,12 @@ import {
   TouchableOpacity, ActivityIndicator, KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { startChat, sendChatMessage } from '@/lib/api';
+import { startLissa, sendLissaMessage } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Msg {
@@ -30,29 +31,30 @@ export default function ChatScreen() {
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
   useEffect(() => {
+    if (!session?.email || !session.token) return;
+    let cancelled = false;
     (async () => {
       try {
-        const resp = await startChat();
-        setSessionId(resp.session_id);
+        const resp = await startLissa(session.email, session.token);
+        if (cancelled) return;
+        setSessionId(resp.sessionId);
         setMessages([{
           id: '0',
           role: 'assistant',
-          text: resp.message,
+          text: resp.message || resp.response || 'I’m JARVIS. Ask me about your picks, model evidence, or a matchup.',
         }]);
       } catch {
-        // Backend lazily creates sessions for unknown IDs, so a client-generated
-        // ID keeps the chat usable even if /chat/start failed (flaky network).
-        setSessionId(`client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
         setMessages([{
           id: '0',
           role: 'assistant',
-        text: 'Deterministic analytics are currently unavailable. You can still review saved pick analysis and statistical breakdowns in the Picks tab.',
+          text: 'JARVIS is unavailable right now. Please check your owner session and try again.',
         }]);
       } finally {
-        setInitializing(false);
+        if (!cancelled) setInitializing(false);
       }
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [session?.email, session?.token]);
 
   const send = async () => {
     const text = input.trim();
@@ -70,11 +72,12 @@ export default function ChatScreen() {
 
     try {
       const sid = sessionId;
-      const resp = await sendChatMessage(sid, text);
+      if (!session?.email || !session.token) throw new Error('Owner session required');
+      const resp = await sendLissaMessage(session.email, session.token, sid, text);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: resp.response || 'Sorry, I could not process that.',
+        text: resp.response || resp.message || 'I could not find a verified answer for that yet.',
       }]);
     } catch {
       setMessages(prev => [...prev, {
@@ -93,11 +96,15 @@ export default function ChatScreen() {
     }
   }, [messages.length]);
 
+  if (session?.accessType?.toLowerCase() !== 'owner') {
+    return <Redirect href="/(tabs)/account" />;
+  }
+
   if (initializing) {
     return (
       <View style={[styles.root, { paddingTop: topPad }]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Analytics Chat</Text>
+          <Text style={styles.headerTitle}>JARVIS</Text>
         </View>
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} />
@@ -114,8 +121,8 @@ export default function ChatScreen() {
     >
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Analytics Chat</Text>
-          <Text style={styles.headerSub}>Deterministic model summaries</Text>
+          <Text style={styles.headerTitle}>JARVIS</Text>
+          <Text style={styles.headerSub}>Your private Reverse Picks intelligence assistant</Text>
         </View>
         <View style={styles.offlineDot} />
       </View>
@@ -129,7 +136,7 @@ export default function ChatScreen() {
           <View style={[styles.bubble, item.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant]}>
             {item.role === 'assistant' && (
               <View style={styles.avatarDot}>
-                <Ionicons name="football" size={10} color={Colors.primary} />
+                <Ionicons name="sparkles" size={11} color={Colors.primary} />
               </View>
             )}
             <Text style={[styles.bubbleText, item.role === 'user' && styles.bubbleTextUser]}>
@@ -167,7 +174,7 @@ export default function ChatScreen() {
           onPress={send}
           disabled={!input.trim() || loading}
         >
-          <Ionicons name="send" size={18} color={input.trim() && !loading ? '#000' : Colors.textTertiary} />
+              <Ionicons name="arrow-up" size={18} color={input.trim() && !loading ? '#000' : Colors.textTertiary} />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
