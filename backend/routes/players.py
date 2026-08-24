@@ -56,6 +56,21 @@ _VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
             "i vicente",
         },
     },
+    {
+        "id": 2799,
+        "name": "Albert Gudmundsson",
+        "fullName": "Albert Gudmundsson",
+        "firstname": "Albert",
+        "lastname": "Guðmundsson",
+        "position": "Attacker",
+        "teamId": 502,
+        "teamName": "Fiorentina",
+        "leagueId": 135,
+        "aliases": {
+            "albert gudmundsson",
+            "albert gudmundsson",
+        },
+    },
 )
 
 
