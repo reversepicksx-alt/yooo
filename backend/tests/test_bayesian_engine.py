@@ -262,10 +262,24 @@ class TestPressIntensity:
     def test_uses_same_fixture_opponent_passes_as_numerator(self):
         packet = compute_press_intensity_score(self._stats())
         assert packet["status"] == "available"
-        assert packet["signal_used"] == "synthetic_ppda_and_actions"
+        assert packet["signal_used"] == "possession_context_plus_synthetic_ppda_and_actions"
         assert packet["avg_opponent_passes"] == 300.0
         assert packet["synthetic_ppda"] < 10
-        assert packet["score"] > 0.6
+        assert packet["possessionPressureScore100"] == 33
+        assert packet["label"] == "Moderate"
+
+    def test_possession_context_changes_pressure_band(self):
+        base = self._stats()[0]
+        low_possession = compute_press_intensity_score(
+            [{**base, "possession": "35%"} for _ in range(7)]
+        )
+        high_possession = compute_press_intensity_score(
+            [{**base, "possession": "70%"} for _ in range(7)]
+        )
+        assert low_possession["possessionPressureScore100"] == 100
+        assert low_possession["score100"] > high_possession["score100"]
+        assert low_possession["label"] in {"High", "Elite"}
+        assert high_possession["possessionPressureScore100"] == 0
 
     def test_missing_action_fields_are_explicitly_unavailable(self):
         packet = compute_press_intensity_score([

@@ -2668,8 +2668,10 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
 
     The returned score is 0.0 → 1.0 (also emitted as ``score100``).  Lower
     synthetic PPDA and more weighted defensive actions mean stronger press.
-    Possession is retained as context but is not allowed to masquerade as
-    pressure: a possession-dominant team can still press passively.
+    Possession is the primary match-context signal: a team pinned below 35%
+    possession is facing strong pressure, while 65%+ possession is a
+    low-pressure environment for that team. Defensive actions and synthetic
+    PPDA remain secondary corroboration rather than the sole label driver.
     """
     unknown = {
         "available": False,
@@ -2793,14 +2795,30 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         if synthetic_ppda is not None else None
     )
     if ppda_score is not None and action_score is not None:
-        score = ppda_score * 0.65 + action_score * 0.35
+        action_score_combined = ppda_score * 0.65 + action_score * 0.35
         signal_used = "synthetic_ppda_and_actions"
     elif ppda_score is not None:
-        score = ppda_score
+        action_score_combined = ppda_score
         signal_used = "synthetic_ppda"
     else:
-        score = action_score if action_score is not None else 0.0
+        action_score_combined = action_score if action_score is not None else 0.0
         signal_used = "defensive_actions"
+
+    avg_poss = round(sum(possessions) / len(possessions), 1) if possessions else None
+    # This is an interpretable possession-pressure context, not a claim that
+    # possession alone identifies a pressing scheme.  The middle band is
+    # neutral; extremes receive the full directional signal.
+    possession_score = None
+    if avg_poss is not None and 0 <= avg_poss <= 100:
+        possession_score = max(0.0, min(1.0, (65.0 - avg_poss) / 30.0))
+        # Keep the possession context authoritative for the direction of the
+        # label without discarding the observed defensive-action evidence.
+        # A 25/75 blend prevents one noisy possession sample from saturating
+        # the rating while still correcting the old action-only bias.
+        score = possession_score * 0.25 + action_score_combined * 0.75
+        signal_used = f"possession_context_plus_{signal_used}"
+    else:
+        score = action_score_combined
 
     score = round(max(0.0, min(1.0, score)), 3)
     score100 = int(round(score * 100))
@@ -2829,8 +2847,9 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         # Press Intensity is the canonical product metric.
         "ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
         "reasoning": (
-            "Lower opponent pass volume per weighted defensive action indicates "
-            "more intense pressure. Possession is context only."
+            "Possession context is primary: lower possession for this team "
+            "indicates more pressure against it; defensive actions and opponent "
+            "pass volume provide secondary corroboration."
         ),
         "sampleSize": sample_size,
         "sampleStatus": (
@@ -2851,7 +2870,9 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
             if component_values["duels_won_agg"] else None,
         "avg_fouls": round(sum(component_values["fouls_committed_agg"]) / len(component_values["fouls_committed_agg"]), 1)
             if component_values["fouls_committed_agg"] else None,
-        "avg_poss": round(sum(possessions) / len(possessions), 1) if possessions else None,
+        "avg_poss": avg_poss,
+        "possessionPressureScore": round(possession_score, 3) if possession_score is not None else None,
+        "possessionPressureScore100": round(possession_score * 100) if possession_score is not None else None,
         "avg_passes": round(sum(opponent_passes) / len(opponent_passes), 1) if opponent_passes else None,
         "avg_opponent_passes": round(avg_opponent_passes, 1) if avg_opponent_passes is not None else None,
         "projectionApplied": False,
