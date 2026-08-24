@@ -83,6 +83,26 @@ def _hot_query_key(query: str, league_id: int | None) -> tuple[str, int | None]:
     return (" ".join(clean.split()), league_id)
 
 
+def _initial_has_full_first_name_evidence(player: dict, query_first: str) -> bool:
+    """Allow a provider's ``A. Surname`` only when its full first name is known.
+
+    API-Football profile results sometimes expose just an initial and surname
+    with no ``firstname`` metadata. Matching that row to a full-name query
+    would turn every same-initial/surname player into a false identity match.
+    An explicitly typed one-letter query remains valid; otherwise the provider
+    must supply the full first-name token through ``firstname`` or ``fullName``.
+    """
+    normalized_query, _ = _hot_query_key(query_first, None)
+    if len(normalized_query) <= 1:
+        return bool(normalized_query)
+    evidence = " ".join(
+        str(player.get(field) or "")
+        for field in ("firstname", "fullName")
+    )
+    normalized_evidence, _ = _hot_query_key(evidence, None)
+    return normalized_query in normalized_evidence.split()
+
+
 def _remember_hot_players(players: list[dict]) -> None:
     """Keep recently resolved identities available without another Atlas read."""
     now = time.monotonic()
@@ -807,7 +827,9 @@ async def search_players(req: PlayerSearchRequest):
             # consists of a letter optionally followed by a period.
             is_initial = (len(first_token) <= 2 and
                           first_token.rstrip(".").isalpha())
-            if (is_initial and
+            if (is_initial
+                    and _initial_has_full_first_name_evidence(p, query_parts[0])
+                    and
                     first_token.rstrip(".") == query_parts[0][0] and
                     all(w in name_norm for w in query_parts[1:])):
                 all_match      = 0
@@ -824,7 +846,8 @@ async def search_players(req: PlayerSearchRequest):
             nt = name_norm.split()
             first_initial_ok = (
                 nt and len(nt[0]) <= 2 and nt[0].rstrip(".").isalpha() and
-                nt[0].rstrip(".") == q_first[0]
+                nt[0].rstrip(".") == q_first[0] and
+                _initial_has_full_first_name_evidence(p, q_first)
             )
             if last_ok and (first_direct or first_initial_ok):
                 all_match      = 0
@@ -889,6 +912,7 @@ async def search_players(req: PlayerSearchRequest):
                 return (
                     len(query_parts) >= 2
                     and is_initial
+                    and _initial_has_full_first_name_evidence(p, query_parts[0])
                     and first_token.rstrip(".") == query_parts[0][0]
                     and all(w in name_norm for w in query_parts[1:])
                 )
