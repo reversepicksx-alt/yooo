@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 import httpx
+from ai_config import paid_ai_disabled
 
 
 BRAIN_SCHEMA_VERSION = "jarvis-brain.v1"
@@ -130,6 +131,8 @@ class ResponsesProvider:
 
 
 def configured_provider() -> ResponsesProvider | None:
+    if paid_ai_disabled():
+        return None
     if (os.environ.get("JARVIS_BRAIN_MODE") or "fallback").lower() not in {"openai", "responses", "enabled"}:
         return None
     key = os.environ.get("OPENAI_API_KEY", "").strip()

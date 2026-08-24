@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config import db
+from ai_config import paid_ai_disabled
 from knowledge_base import assemble_fact_bundle
 
 
@@ -419,6 +420,8 @@ async def _within_daily_limit() -> bool:
 
 
 async def _generate(prompt: str) -> str:
+    if paid_ai_disabled():
+        return ""
     if os.environ.get("GEMINI_COMPACT_EXPLANATIONS", "true").lower() not in {"1", "true", "yes", "on"}:
         return ""
     api_key = os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -495,6 +498,8 @@ async def build_compact_explanation(
         json.dumps(raw_identity, sort_keys=True, default=str).encode()
     ).hexdigest()[:32]
     fallback = _fallback(packet)
+    if paid_ai_disabled():
+        return fallback, "compact_deterministic", cache_key
     if not force:
         cached = await _cached_text(cache_key)
         if cached:

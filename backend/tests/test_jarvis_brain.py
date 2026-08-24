@@ -7,6 +7,7 @@ from jarvis_brain import (
     BRAIN_SCHEMA_VERSION,
     BrainTurn,
     TOOL_DEFINITIONS,
+    configured_provider,
     run_reasoning_turn,
 )
 
@@ -28,6 +29,13 @@ def test_provider_absence_returns_safe_fallback(monkeypatch):
     assert result["schema_version"] == BRAIN_SCHEMA_VERSION
     assert result["provider"] == "deterministic-fallback"
     assert result["status"] == "fallback"
+
+
+def test_global_paid_ai_opt_out_blocks_openai_provider(monkeypatch):
+    monkeypatch.setenv("JARVIS_BRAIN_MODE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only")
+    monkeypatch.setenv("REVERSEPICKS_DISABLE_PAID_AI", "true")
+    assert configured_provider() is None
 
 
 def test_provider_tool_calls_continue_and_emit_events(monkeypatch):

@@ -17,6 +17,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ai_config import paid_ai_disabled
 from config import OWNER_EMAIL, db
 from routes.admin import verify_owner
 from compact_explanation import _generate as _generate_explanation
@@ -1169,6 +1170,8 @@ async def _lissa_pro_ai(prompt: str) -> str | None:
     Separate from the pick-card explanation pipeline so it has no word caps,
     no caching, and full tactical search capability.
     """
+    if paid_ai_disabled():
+        return None
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return None
@@ -1215,6 +1218,8 @@ async def _smart_primary_response(
     context: dict[str, Any] | None,
 ) -> str | None:
     """Gemini 2.5 Pro primary response with Google Search grounding."""
+    if paid_ai_disabled():
+        return None
     if os.environ.get("LISSA_AI_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
         return None
     prompt = await _build_gemini_prompt(message, packet, picks, summary, recent_turns, context)

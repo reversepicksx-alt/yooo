@@ -12,6 +12,7 @@ import os
 from datetime import datetime, timezone
 
 from config import db
+from ai_config import paid_ai_disabled
 
 POSITION_RESOLUTION_VERSION = 8
 _POSITION_AI_MODEL = os.environ.get("GEMINI_POSITION_MODEL", "gemini-2.5-flash")
@@ -240,6 +241,8 @@ async def _verify_with_grounded_gemini(
     generic_position: str,
 ) -> dict | None:
     """Ask Gemini only for a web-grounded position/role identity check."""
+    if paid_ai_disabled():
+        return None
     if os.environ.get("GEMINI_POSITION_VERIFICATION", "true").lower() not in {
         "1", "true", "yes", "on"
     }:

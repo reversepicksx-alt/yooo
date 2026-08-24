@@ -16,6 +16,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ai_config import paid_ai_disabled
 from compact_explanation import _generate as _generate_explanation
 from compact_explanation import _within_daily_limit
 from routes.auth import verify_session
@@ -187,6 +188,8 @@ async def _generate_bounded_read(prediction: dict[str, Any]) -> str:
     read remains explanation-only; the route validates the combined text against
     the final ledger before exposing it as analyst-authored.
     """
+    if paid_ai_disabled():
+        return ""
     evidence = _read_evidence(prediction)
     common = (
         "Use only the supplied DATA for fixture-specific claims. You may use established "
@@ -498,6 +501,9 @@ async def prediction_explanation(req: PredictionExplanationRequest):
 
     prediction = _sanitize(req.prediction)
     key = _cache_key(req.section, prediction)
+    fallback = _fallback(req.section, prediction)
+    if paid_ai_disabled():
+        return {"section": req.section, "text": fallback, "source": "deterministic"}
     cached = _section_cache.get(key)
     if cached:
         return {"section": req.section, "text": cached[0], "source": cached[1]}
@@ -508,7 +514,6 @@ async def prediction_explanation(req: PredictionExplanationRequest):
         if cached:
             return {"section": req.section, "text": cached[0], "source": cached[1]}
 
-        fallback = _fallback(req.section, prediction)
         if req.section != "read" and not await _within_daily_limit():
             _cache_put(key, (fallback, "deterministic"))
             return {"section": req.section, "text": fallback, "source": "deterministic"}
