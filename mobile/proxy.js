@@ -255,8 +255,9 @@ const server = http.createServer((req, res) => {
   const skipLoader = pathname === '/auth' ||
     (parsedUrl.query && (parsedUrl.query.noloader === '1' || parsedUrl.query.shot === '1'));
 
-  // Always proxy /api/* to FastAPI backend
-  if (pathname === '/api' || pathname.startsWith('/api/')) {
+  // Always proxy backend APIs, including the private external gateway.
+  if (pathname === '/api' || pathname.startsWith('/api/') ||
+      pathname === '/health' || pathname.startsWith('/pp/')) {
     return proxyToBackend(req, res);
   }
 
