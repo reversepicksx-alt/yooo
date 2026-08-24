@@ -510,6 +510,11 @@ export function renderTacticalContext(data: Record<string, unknown> | null) {
           ? `${sampleSize} verified next-opponent pressure input${sampleSize === 1 ? '' : 's'}`
           : 'No verified next-opponent pressure input was returned; no 0/100 is implied.'}
       </Text>
+      {available && pressIntensity?.avg_poss != null ? (
+        <Text style={aStyles.flatContextNote}>
+          Possession basis: opponent averaged {Number(pressIntensity.avg_poss).toFixed(0)}% possession
+        </Text>
+      ) : null}
       {available && pressIntensity?.projectionApplied ? (
         <Text style={aStyles.flatContextNote}>
           Passing projection factor: ×{Number(pressIntensity.projectionMultiplier || 1).toFixed(3)}
@@ -1206,7 +1211,8 @@ function renderLegacyTacticalIntelligence(data: Record<string, unknown> | null) 
             </Text>
           )}
           {hasCohort ? (
-           <Text style={aStyles.proCardNote}>
+            <>
+            <Text style={aStyles.proCardNote}>
              {positionCohort?.opponent || 'Opponent'} matchup sample: comparable{' '}
              {cohortPositionLabel(positionCohort?.targetPosition || positionCohort?.positionShort)}{' '}
              players averaged {cohortAverage ?? '—'} {PROP_LABELS[positionCohort?.propType ?? '']?.toLowerCase() ?? String(positionCohort?.propType ?? 'prop').replace(/_/g, ' ')}
@@ -1215,6 +1221,13 @@ function renderLegacyTacticalIntelligence(data: Record<string, unknown> | null) 
               {positionCohort?.overHitRate != null ? ` · ${positionCohort.overHitRate}% OVER` : ''}
               {cohortSample < cohortMinimum ? ` · limited (target n≥${cohortMinimum})` : ' · sufficient sample'}.
             </Text>
+            {Array.isArray(positionCohort?.players) && positionCohort.players.length > 0 ? (
+              <Text style={aStyles.proCardNote}>
+                Similar players: {positionCohort.players.slice(0, 6).map((p: any) => p.playerName || p.name).filter(Boolean).join(', ')}
+                {positionCohort.players.length > 6 ? ` +${positionCohort.players.length - 6} more` : ''}.
+              </Text>
+            ) : null}
+            </>
           ) : (
             <Text style={aStyles.proCardNote}>
               No valid same-position opponent cohort was available.

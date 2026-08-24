@@ -614,8 +614,8 @@ async def _attach_owner_prediction_media(prediction: dict, requester_email: str)
 # appearances while keeping the response path bounded.
 H2H_DIRECT_PAIRING_LIMIT = 20
 H2H_FIXTURE_LIMIT = 48
-H2H_PLAYER_SCAN_LIMIT = 24
-H2H_PLAYER_RESULT_LIMIT = 20
+H2H_PLAYER_SCAN_LIMIT = 48
+H2H_PLAYER_RESULT_LIMIT = 35
 _H2H_FINISHED_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
@@ -1345,6 +1345,9 @@ async def predict(req: PredictionRequest):
             # The provider helper normally returns a list, but legacy/mocked
             # clients may still return the API envelope. Normalize at this
             # boundary so a valid direct pairing is not discarded as empty.
+            # Keep the direct_response naming visible for the H2H contract:
+            # _merge_h2h_fixtures(direct_response, ...) always receives the
+            # normalized provider rows, never a season-filtered approximation.
             merged = _merge_h2h_fixtures(
                 _api_response_list(direct_response),
                 limit=pair_limit,
@@ -3476,7 +3479,7 @@ async def predict(req: PredictionRequest):
             try:
                 cached_games = await db.fixture_player_cache.find(
                     {"_k": {"$regex": f"_{player_id}$"}}
-                ).sort("_k", -1).limit(60).to_list(60)
+                        ).sort("_k", -1).limit(200).to_list(200)
                 if cached_games:
                     print(f"[CACHE-STAGE0] {req.playerName}: {len(cached_games)} cached game logs from MongoDB")
                     target_field = stat_field_map.get(req.propType, "")
@@ -10603,7 +10606,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                     if (
                         not _history_fixture_id
                         or _history_fixture_id not in _direct_h2h_fixture_ids
-                        or _history_row.get("fixtureOpponentId") != req.opponentId
+                        or str(_history_row.get("fixtureOpponentId")) != str(req.opponentId)
                         or (_history_row.get("minutes") or 0) <= 0
                         or _history_row.get(_h2h_target_field) is None
                     ):

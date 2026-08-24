@@ -315,7 +315,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
   const h2hRows = playerMatches
     .slice()
     .sort(newestFirst)
-    .slice(0, 20)
+    .slice(0, 35)
     .map((match: any) => ({
       ...match,
       value: match.targetStat ?? match.value,
@@ -338,7 +338,7 @@ export const CompactAnalysisBars = React.memo(function CompactAnalysisBars({
       && game.value != null
     ))
     .sort(newestFirst)
-    .slice(0, 50);
+    .slice(0, 100);
   const venueCounts = {
     home: allLogs.filter((game) => rowVenue(game) === 'home').length,
     away: allLogs.filter((game) => rowVenue(game) === 'away').length,
