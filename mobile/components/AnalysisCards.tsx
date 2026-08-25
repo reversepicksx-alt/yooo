@@ -410,14 +410,14 @@ export function renderModelCausalDecision(
       ? 'PASS — EVIDENCE GATE ACTIVE'
       : `${finalRecommendation} — MODEL & CAUSAL CHECK`;
   const metric = (label: string, value: string | null, key: string) => value ? (
-    <View key={key} style={{ minWidth: 92, flexGrow: 1, paddingVertical: 8, paddingHorizontal: 9, borderRadius: 7, backgroundColor: '#0B1220', borderWidth: 1, borderColor: Colors.borderSubtle }}>
+    <View key={key} style={{ flex: 1, minWidth: 108, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle }}>
       <Text style={{ color: Colors.textTertiary, fontSize: 8, fontWeight: '800', letterSpacing: 0.8 }}>{label}</Text>
-      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '900', marginTop: 2 }}>{value}</Text>
+      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '900', marginTop: 3 }}>{value}</Text>
     </View>
   ) : null;
 
   return (
-    <View style={{ marginHorizontal: 14, marginTop: 10, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: `${accent}88`, backgroundColor: `${accent}12` }}>
+    <View style={{ marginHorizontal: 14, marginTop: 14, paddingLeft: 12, paddingBottom: 3, borderLeftWidth: 2, borderLeftColor: accent }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <Ionicons name={conflict ? 'git-compare-outline' : incomplete ? 'information-circle-outline' : 'shield-checkmark-outline'} size={16} color={accent} />
         <Text style={{ color: accent, fontSize: 9, fontWeight: '900', letterSpacing: 1 }}>MODEL VS CAUSAL EVIDENCE</Text>
@@ -427,16 +427,16 @@ export function renderModelCausalDecision(
       <Text style={{ color: Colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>
         Model projection and causal workload are separate inputs. Causal workload never replaces the model projection.
       </Text>
-      <View style={{ flexDirection: 'row', gap: 7, marginTop: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 18, marginTop: 10 }}>
         {metric('YOUR LINE', Number.isFinite(line) ? line.toFixed(1) : null, 'line')}
         {metric('MODEL PROJECTION', Number.isFinite(modelProjection) ? modelProjection.toFixed(1) : null, 'projection')}
       </View>
-      <View style={{ flexDirection: 'row', gap: 7, marginTop: 7 }}>
+      <View style={{ flexDirection: 'row', gap: 18, marginTop: 2 }}>
         {metric('MODEL DIRECTION', modelDirection || null, 'model')}
         {metric('CAUSAL DIRECTION', causalDirection || (incomplete ? 'INCOMPLETE' : null), 'causal')}
       </View>
       {(workload != null || baseline != null || effect != null || sampleSize != null) && (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 7 }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, marginTop: 2 }}>
           {metric('ROLE WORKLOAD', workload != null ? Number(workload).toFixed(2) : null, 'workload')}
           {metric('SAME-VENUE BASELINE', baseline != null ? Number(baseline).toFixed(2) : null, 'baseline')}
           {metric('OPPONENT EFFECT', effect != null ? `${Number(effect) >= 1 ? '+' : ''}${((Number(effect) - 1) * 100).toFixed(1)}%` : effectLabel || null, 'effect')}
