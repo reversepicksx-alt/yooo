@@ -15,6 +15,7 @@ from typing import Any
 
 CAUSAL_SCHEMA_VERSION = "causal-script.v1"
 CAUSAL_MODEL_VERSION = "deterministic-observed-mechanism.v1"
+CAUSAL_COHORT_SNAPSHOT_VERSION = "causal-cohort.v2"
 
 PROP_CHAINS = {
     "pass_attempts": "team possession → pressure/progression geometry → first-line recycling → exact-role pass attempts",
@@ -160,6 +161,213 @@ def _role_bucket(role: Any, position: Any) -> str:
     return str(role or position or "UNVERIFIED").upper() or "UNVERIFIED"
 
 
+def _identity_int(row: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        try:
+            value = int(row.get(key))
+            if value:
+                return value
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _row_side_team_ids(row: dict[str, Any]) -> tuple[int | None, int | None]:
+    fixture = row.get("fixture") if isinstance(row.get("fixture"), dict) else {}
+    teams = row.get("teams") if isinstance(row.get("teams"), dict) else {}
+    home = teams.get("home") if isinstance(teams.get("home"), dict) else {}
+    away = teams.get("away") if isinstance(teams.get("away"), dict) else {}
+    home_id = _identity_int(row, "homeTeamId", "home_id") or _identity_int(fixture, "homeTeamId")
+    away_id = _identity_int(row, "awayTeamId", "away_id") or _identity_int(fixture, "awayTeamId")
+    home_id = home_id or _identity_int(home, "id")
+    away_id = away_id or _identity_int(away, "id")
+    return home_id, away_id
+
+
+def canonical_venue(row: dict[str, Any], *, target_team_id: int | None = None) -> str | None:
+    """Return venue from one perspective: the requested player's club.
+
+    Hydrated opponent rows are stored with ``venuePerspective=target`` after
+    assembly. Already-hydrated comparison rows are tagged the same way at the
+    boundary. Fixture side IDs are used only when no canonical venue has been
+    assigned yet, so venue is never flipped twice.
+    """
+    raw = str(row.get("venue") or "").strip().lower()
+    if row.get("venuePerspective") == "target":
+        return raw if raw in {"home", "away"} else None
+    team_id = _identity_int(row, "teamId", "fixtureTeamId", "team_id")
+    home_id, away_id = _row_side_team_ids(row)
+    if team_id and home_id and away_id:
+        if team_id == home_id:
+            observed = "home"
+        elif team_id == away_id:
+            observed = "away"
+        else:
+            observed = None
+        if observed:
+            return observed if team_id == target_team_id else (
+                "away" if observed == "home" else "home"
+            )
+    if raw in {"home", "away"}:
+        return raw
+    if row.get("isHome") is True:
+        return "home"
+    if row.get("isHome") is False:
+        return "away"
+    return None
+
+
+def _row_source_path(row: dict[str, Any]) -> str:
+    return str(
+        row.get("sourcePath")
+        or row.get("historySource")
+        or row.get("source")
+        or "unknown"
+    )
+
+
+def finalize_opponent_cohort(
+    rows: list[dict[str, Any]],
+    *,
+    prop: str,
+    venue: str | None,
+    target_player_id: int | None = None,
+    target_team_id: int | None = None,
+    target_fixture_id: int | None = None,
+    target_opponent_id: int | None = None,
+    target_bucket: str = "UNVERIFIED",
+    target_formation: str | None = None,
+    strict_identity: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Create the deterministic admitted/rejected cohort ledger.
+
+    ``strict_identity`` is enabled for persisted prediction evidence. The
+    legacy direct engine tests intentionally omit fixture identity and continue
+    to exercise the calculation contract without pretending to be persisted
+    provider evidence.
+    """
+    admitted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index, source in enumerate(rows if isinstance(rows, list) else []):
+        row = dict(source) if isinstance(source, dict) else {}
+        reason = None
+        fixture_id = _identity_int(row, "fixtureId", "fixture_id", "id")
+        player_id = _identity_int(row, "playerId", "player_id")
+        team_id = _identity_int(row, "teamId", "fixtureTeamId", "team_id")
+        opponent_id = _identity_int(row, "opponentId", "fixtureOpponentId", "opponent_id")
+        home_id, away_id = _row_side_team_ids(row)
+        if opponent_id is None and target_opponent_id is not None and target_opponent_id in {home_id, away_id}:
+            opponent_id = target_opponent_id
+            row["opponentId"] = target_opponent_id
+        row_venue = canonical_venue(row, target_team_id=target_team_id)
+        row["venue"] = row_venue
+        row["venuePerspective"] = "target"
+        row["sourcePath"] = _row_source_path(row)
+        row["exactRoleBucket"] = _role_bucket(row.get("role"), row.get("position"))
+        row["providerRole"] = row.get("role")
+        row["statValue"] = _value(row, prop)
+        row["baselineValue"] = (
+            _num(row.get("normalMatchingVenue"))
+            or _num(row.get("baseline"))
+            or _num(row.get("seasonAvgStat"))
+        )
+        tags = distortion_tags(row)
+        row["distortionTags"] = tags
+        row["distortionWeight"] = _distortion_weight(tags)
+        if strict_identity and fixture_id is None:
+            reason = "missing_fixture_id"
+        elif strict_identity and player_id is None:
+            reason = "missing_player_id"
+        elif strict_identity and team_id is None:
+            reason = "missing_team_id"
+        elif target_player_id is not None and player_id == target_player_id:
+            reason = "target_player_id"
+        elif target_team_id is not None and team_id == target_team_id:
+            reason = "target_team_id"
+        elif target_fixture_id is not None and fixture_id == target_fixture_id:
+            reason = "target_fixture_id"
+        elif strict_identity and opponent_id is not None and target_opponent_id is not None and opponent_id != target_opponent_id:
+            reason = "fixture_opponent_not_requested_opponent"
+        elif strict_identity and home_id and away_id and target_opponent_id is not None and (
+            target_opponent_id not in {home_id, away_id} or team_id not in {home_id, away_id}
+        ):
+            reason = "fixture_sides_do_not_contain_opponent_and_comparator"
+        elif strict_identity and target_opponent_id is not None and opponent_id != target_opponent_id:
+            reason = "missing_or_mismatched_opponent_identity"
+        elif row["exactRoleBucket"] != target_bucket:
+            reason = "role_bucket_mismatch"
+        elif venue and row_venue != venue:
+            reason = "venue_mismatch"
+        elif target_formation and row.get("formation") and str(row.get("formation")).strip().lower() != target_formation:
+            reason = "formation_mismatch"
+        elif (_num(row.get("minutes")) or 0) < 30:
+            reason = "minutes_below_30"
+        elif row["statValue"] is None:
+            reason = "missing_stat_value"
+        if reason:
+            row["admissionStatus"] = "rejected"
+            row["rejectionReason"] = reason
+            row["admissionReason"] = None
+            rejected.append(row)
+            continue
+        row["admissionStatus"] = "admitted"
+        row["admissionReason"] = "exact_role_opponent_fixture_matching_venue"
+        row["rejectionReason"] = None
+        admitted.append(row)
+
+    admitted_ids = {
+        (_identity_int(row, "fixtureId", "fixture_id", "id"),
+         _identity_int(row, "playerId", "player_id"),
+         _identity_int(row, "teamId", "fixtureTeamId", "team_id"))
+        for row in admitted
+    }
+    purity_failures = []
+    for row in admitted:
+        if target_player_id is not None and _identity_int(row, "playerId", "player_id") == target_player_id:
+            purity_failures.append("target_player_id_in_admitted_cohort")
+        if target_team_id is not None and _identity_int(row, "teamId", "fixtureTeamId", "team_id") == target_team_id:
+            purity_failures.append("target_team_id_in_admitted_cohort")
+        if target_fixture_id is not None and _identity_int(row, "fixtureId", "fixture_id", "id") == target_fixture_id:
+            purity_failures.append("target_fixture_id_in_admitted_cohort")
+        if venue and canonical_venue(row, target_team_id=target_team_id) != venue:
+            purity_failures.append("admitted_row_venue_mismatch")
+        if strict_identity and target_opponent_id is not None and _identity_int(row, "opponentId", "fixtureOpponentId", "opponent_id") != target_opponent_id:
+            purity_failures.append("admitted_row_opponent_identity_mismatch")
+    valid = not purity_failures and (not strict_identity or bool(admitted) or bool(rejected))
+    assertions = {
+        "targetPlayerIdAbsent": not any(
+            target_player_id is not None and _identity_int(row, "playerId", "player_id") == target_player_id
+            for row in admitted
+        ),
+        "targetTeamIdAbsent": not any(
+            target_team_id is not None and _identity_int(row, "teamId", "fixtureTeamId", "team_id") == target_team_id
+            for row in admitted
+        ),
+        "targetFixtureIdAbsent": not any(
+            target_fixture_id is not None and _identity_int(row, "fixtureId", "fixture_id", "id") == target_fixture_id
+            for row in admitted
+        ),
+        "opponentSideOnly": not any(
+            strict_identity and target_opponent_id is not None
+            and _identity_int(row, "opponentId", "fixtureOpponentId", "opponent_id") != target_opponent_id
+            for row in admitted
+        ),
+        "venueMatches": not any(
+            venue and canonical_venue(row, target_team_id=target_team_id) != venue
+            for row in admitted
+        ),
+    }
+    valid = valid and all(assertions.values())
+    return admitted, rejected, {
+        "valid": valid,
+        "purityFailures": sorted(set(purity_failures)),
+        "assertions": assertions,
+        "candidateCount": len(rows) if isinstance(rows, list) else 0,
+        "admittedCount": len(admitted),
+        "rejectedCount": len(rejected),
+    }
+
+
 def _cohort_packet(prediction: dict, prop: str, venue: str | None, opponent: str | None, role: Any, position: Any, evidence: dict | None = None) -> dict:
     comparison = prediction.get("positionComparison") or {}
     role_packet = prediction.get("roleEvidencePacket") or {}
@@ -177,6 +385,28 @@ def _cohort_packet(prediction: dict, prop: str, venue: str | None, opponent: str
         prediction.get("formation") or prediction.get("teamFormation") or
         (role_packet.get("formation") if isinstance(role_packet, dict) else "") or ""
     ).strip().lower()
+    snapshot = (evidence or {}).get("cohortSnapshot") if isinstance(evidence, dict) else None
+    if isinstance(snapshot, dict):
+        if snapshot.get("status") == "invalid":
+            return {
+                "status": "invalid",
+                "roleBucket": target_bucket,
+                "formation": target_formation or "unverified",
+                "sampleSize": 0,
+                "weightedSampleSize": 0,
+                "cleanSampleSize": 0,
+                "distortedSampleSize": 0,
+                "workloadAverage": None,
+                "normalMatchingVenueAverage": None,
+                "opponentRoleEffect": None,
+                "effect": "not_established",
+                "provenance": "immutable causal cohort snapshot",
+                "snapshotKey": snapshot.get("snapshotKey"),
+                "snapshotVersion": snapshot.get("snapshotVersion"),
+                "validation": snapshot.get("validation") or {},
+                "limitation": "EVIDENCE INVALID: cohort purity or opponent-side assertion failed.",
+            }
+        rows = snapshot.get("admittedRows") or []
     cohort: list[dict] = []
     for row in rows:
         if not isinstance(row, dict) or _value(row, prop) is None:
@@ -387,11 +617,13 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     current_regime_unknown = script["status"] not in {"available", "partial"}
     thin_edge = gap is not None and gap < 1.0
     mechanism_edge = cohort["effect"] in {"uplift", "suppression"} and cohort["status"] == "available"
+    invalid_evidence = cohort.get("status") == "invalid"
     mechanism_direction = (
         "over" if cohort["effect"] == "uplift" else "under"
         if cohort["effect"] == "suppression" else None
     )
     causal_direction = (
+        "EVIDENCE INVALID" if invalid_evidence else
         "MORE" if mechanism_direction == "over" else
         "LESS" if mechanism_direction == "under" else
         "EVIDENCE INCOMPLETE" if cohort["status"] != "available" else
@@ -416,10 +648,18 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     # Three rows plus aligned context can authorize a production flip, but it
     # is still provisional confidence. Only five clean exact-role rows may
     # promote the sample itself to strong.
-    sample_strength = "strong" if clean_exact_role_n >= 5 else "provisional" if clean_exact_role_n >= 3 else "insufficient"
+    sample_strength = (
+        "invalid" if invalid_evidence else
+        "strong" if clean_exact_role_n >= 5 else
+        "provisional" if clean_exact_role_n >= 3 else "insufficient"
+    )
     distorted_dominant = bool(tagged_logs) and len(clean_logs) < max(2, len(tagged_logs) / 2)
     cohort_incomplete = cohort["status"] != "available"
-    if uncertain_role or current_regime_unknown or thin_edge or cohort_incomplete:
+    if invalid_evidence:
+        decision = "PASS"
+        reason = "EVIDENCE INVALID: opponent cohort purity or fixture-side assertion failed; causal direction withheld."
+        verdict = "EVIDENCE INVALID"
+    elif uncertain_role or current_regime_unknown or thin_edge or cohort_incomplete:
         if uncertain_role:
             missing_reason = "the player's exact role is not verified"
         elif current_regime_unknown:

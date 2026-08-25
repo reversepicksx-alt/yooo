@@ -254,6 +254,11 @@ async def _run_startup_tasks():
     try:
         await db.fixture_player_cache.create_index("_k", unique=True)
         await db.causal_provider_response_cache.create_index("_k", unique=True)
+        await db.causal_cohort_snapshots.create_index(
+            [("identity.fixtureId", 1), ("identity.playerId", 1),
+             ("identity.propType", 1), ("identity.line", 1)],
+            name="causal_cohort_identity",
+        )
     except Exception as _idx_err:
         import logging
         logging.getLogger("server").warning(f"create_index skipped (Atlas transient): {_idx_err}")

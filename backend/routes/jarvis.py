@@ -2879,6 +2879,10 @@ async def jarvis_predict(
 
         # Evidence quality gate output
         "evidence_quality": eq,
+        # Preserve the complete immutable causal cohort ledger for owner
+        # audits. This is intentionally the exact prediction snapshot, not a
+        # recomputed or aggregate-only summary.
+        "causal_script": result.get("causalScript"),
 
         # Factor ledger — top-level key in the real response
         "factors": result.get("factorLedger") or result.get("factors") or bm.get("factorLedger"),
@@ -3253,6 +3257,8 @@ def _build_soccer_diagnostic(result: dict) -> dict:
 
         # ── Evidence quality gate ─────────────────────────────────────────────
         "evidence_quality": eq,
+        # Preserve the exact immutable causal cohort ledger for owner audits.
+        "causal_script": result.get("causalScript"),
 
         # ── Calibration alert: OK / RISKY / AVOID ────────────────────────────
         "calibration_alert": {

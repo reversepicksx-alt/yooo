@@ -22,6 +22,11 @@ from utils import (
     priority_api_football_request,
 )
 from tactical_evidence import infer_grid_position, normalize_observed_position
+from causal_script_engine import (
+    CAUSAL_COHORT_SNAPSHOT_VERSION,
+    _role_bucket,
+    finalize_opponent_cohort,
+)
 
 MAX_TARGET_MATCHES = 20
 MAX_OPPONENT_MATCHES = 20
@@ -33,6 +38,124 @@ _PRIORITY_REPLAY_KEYS = (
     "ferraresi-1492340",
     "moncayola-1570350",
 )
+_COHORT_SNAPSHOT_MEMORY: dict[str, dict[str, Any]] = {}
+
+
+def _cohort_snapshot_key(
+    *, fixture_id: int | None, player_id: int | None, team_id: int | None,
+    opponent_id: int | None, prop: str, line: Any,
+) -> str:
+    identity = {
+        "fixtureId": fixture_id,
+        "playerId": player_id,
+        "teamId": team_id,
+        "opponentId": opponent_id,
+        "propType": prop,
+        "line": str(line),
+        "version": CAUSAL_COHORT_SNAPSHOT_VERSION,
+    }
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()[:32]
+
+
+async def _load_cohort_snapshot(snapshot_key: str) -> dict[str, Any] | None:
+    if snapshot_key in _COHORT_SNAPSHOT_MEMORY:
+        return dict(_COHORT_SNAPSHOT_MEMORY[snapshot_key])
+    try:
+        return await db.causal_cohort_snapshots.find_one(
+            {"_id": snapshot_key}, {"_id": 0}
+        )
+    except Exception:
+        return None
+
+
+async def _persist_cohort_snapshot(document: dict[str, Any]) -> bool:
+    """Insert once; never overwrite a cohort for the same prediction identity."""
+    try:
+        from pymongo import ReturnDocument
+        winner = await db.causal_cohort_snapshots.find_one_and_update(
+            {"_id": document["_id"]},
+            {"$setOnInsert": document},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+            projection={"_id": 0},
+        )
+        if not winner:
+            return False
+        _COHORT_SNAPSHOT_MEMORY[document["snapshotKey"]] = dict(winner)
+        return True
+    except Exception as error:
+        print(f"[CAUSAL COHORT] immutable snapshot write failed: {type(error).__name__}")
+        return False
+
+
+def _invalid_snapshot_evidence(
+    *, snapshot_key: str, cutoff: str | None, reason: str,
+) -> dict[str, Any]:
+    return {
+        "version": "causal-evidence.v2",
+        "provider": "api-football",
+        "providerState": "evidence_invalid",
+        "cutoff": cutoff or None,
+        "pregameOnly": True,
+        "targetHistory": [],
+        "opponentRoleCandidates": [],
+        "opponentRoleRejected": [],
+        "targetHistoryRequested": MAX_TARGET_MATCHES,
+        "opponentHistoryRequested": MAX_OPPONENT_MATCHES,
+        "targetHistoryReturned": 0,
+        "opponentHistoryReturned": 0,
+        "cohortSnapshot": {
+            "status": "invalid",
+            "snapshotKey": snapshot_key,
+            "snapshotVersion": CAUSAL_COHORT_SNAPSHOT_VERSION,
+            "validation": {"valid": False, "purityFailures": [reason]},
+            "admittedRows": [],
+            "rejectedRows": [],
+        },
+        "coverage": {
+            "targetHistory": "not_loaded",
+            "opponentRoleCohort": "invalid",
+            "reason": reason,
+        },
+    }
+
+
+def _snapshot_evidence_response(
+    snapshot: dict[str, Any],
+    *,
+    target_rows: list[dict[str, Any]],
+    cutoff: str,
+    provider_state: str,
+) -> dict[str, Any]:
+    admitted_rows = snapshot.get("admittedRows") or []
+    rejected_rows = snapshot.get("rejectedRows") or []
+    return {
+        "version": "causal-evidence.v2",
+        "provider": "api-football",
+        "providerState": provider_state,
+        "cutoff": snapshot.get("cutoff") or cutoff or None,
+        "pregameOnly": True,
+        "targetFixtureResultFieldsRead": False,
+        "targetHistory": snapshot.get("targetHistory") or target_rows,
+        "opponentRoleCandidates": admitted_rows,
+        "opponentRoleRejected": rejected_rows,
+        "targetHistoryRequested": MAX_TARGET_MATCHES,
+        "opponentHistoryRequested": MAX_OPPONENT_MATCHES,
+        "targetHistoryReturned": len(snapshot.get("targetHistory") or target_rows),
+        "opponentHistoryReturned": len(admitted_rows),
+        "cohortSnapshot": snapshot,
+        "currentFixture": [],
+        "market": [],
+        "coverage": {
+            "targetHistory": "available" if snapshot.get("targetHistory") or target_rows else "not_loaded",
+            "opponentRoleCohort": "available" if admitted_rows else "not_loaded",
+            "fixture": "not_loaded",
+            "market": "not_loaded",
+            "detailTagCounts": {},
+        },
+    }
 
 
 async def _priority_replays_pending() -> bool:
@@ -350,6 +473,7 @@ async def _hydrate_opponent_cohort(
                 result.append({
                     **row, **flat,
                     "playerId": player_id,
+                    "teamId": (team.get("team") or {}).get("id") or row.get("teamId"),
                     "name": identity.get("name"),
                     "position": observed,
                     "role": target_role if observed == expected else None,
@@ -361,6 +485,9 @@ async def _hydrate_opponent_cohort(
                     # average or a fabricated zero.
                     "normalMatchingVenue": row.get("normalMatchingVenue") or row.get("seasonAvgStat"),
                     "venue": "away" if row.get("venue") == "home" else "home",
+                    "venuePerspective": "target",
+                    "sourcePath": "api_football_hydrated_opponent_fixture",
+                    "opponentId": row.get("teamId") or team_id,
                 })
     return result, details
 
@@ -607,6 +734,100 @@ async def assemble_causal_evidence(
     except (TypeError, ValueError):
         opponent_id = None
     prop = str(request.get("prop_type") or prediction.get("propType") or "passes").lower()
+    try:
+        target_fixture_id = int(request.get("fixture_id") or prediction.get("fixtureId") or 0) or None
+    except (TypeError, ValueError):
+        target_fixture_id = None
+    snapshot_key = _cohort_snapshot_key(
+        fixture_id=target_fixture_id,
+        player_id=player_id,
+        team_id=team_id,
+        opponent_id=opponent_id,
+        prop=prop,
+        line=request.get("line") if request.get("line") is not None else prediction.get("line"),
+    )
+    if cohort_rows:
+        existing_snapshot = _COHORT_SNAPSHOT_MEMORY.get(snapshot_key)
+        if existing_snapshot is None:
+            try:
+                existing_snapshot = await aio.wait_for(
+                    _load_cohort_snapshot(snapshot_key), timeout=0.2
+                )
+            except (TimeoutError, aio.TimeoutError):
+                existing_snapshot = None
+    else:
+        try:
+            existing_snapshot = await aio.wait_for(
+                _load_cohort_snapshot(snapshot_key), timeout=0.35
+            )
+        except (TimeoutError, aio.TimeoutError):
+            existing_snapshot = None
+    if existing_snapshot:
+        snapshot = dict(existing_snapshot)
+        snapshot["status"] = snapshot.get("status") or "available"
+        snapshot["snapshotKey"] = snapshot_key
+        return _snapshot_evidence_response(
+            snapshot, target_rows=target_rows, cutoff=cutoff,
+            provider_state="immutable_snapshot",
+        )
+    # Fast path: the prediction route has already attached the exact
+    # position-comparison rows. Persist those rows before any optional
+    # provider/detail work can consume the causal deadline.
+    if cohort_rows:
+        target_position = prediction.get("playerPosition") or prediction.get("position")
+        target_role = prediction.get("exactTacticalRole") or prediction.get("tacticalRole") or prediction.get("role")
+        comparison_scope = str(comparison.get("sourceScope") or "unknown") if isinstance(comparison, dict) else "unknown"
+        for row in cohort_rows:
+            if isinstance(row, dict):
+                row.setdefault("venuePerspective", "target")
+                row.setdefault("sourcePath", "positionComparison")
+                row.setdefault("sourceScope", comparison_scope)
+                if opponent_id is not None:
+                    # fetch_position_comparison is already scoped to the
+                    # requested opponent; make that fixture-side fact
+                    # explicit before strict persistence validation.
+                    row.setdefault("opponentId", opponent_id)
+        target_bucket = _role_bucket(target_role, target_position)
+        admitted_rows, rejected_rows, validation = finalize_opponent_cohort(
+            cohort_rows, prop=prop, venue=selected_venue or None,
+            target_player_id=player_id, target_team_id=team_id,
+            target_fixture_id=target_fixture_id, target_opponent_id=opponent_id,
+            target_bucket=target_bucket, strict_identity=True,
+        )
+        snapshot = {
+            "_id": snapshot_key, "snapshotKey": snapshot_key,
+            "snapshotVersion": CAUSAL_COHORT_SNAPSHOT_VERSION,
+            "status": "available" if validation["valid"] else "invalid",
+            "createdAt": datetime.now(timezone.utc),
+            "identity": {
+                "fixtureId": target_fixture_id, "playerId": player_id,
+                "teamId": team_id, "opponentId": opponent_id,
+                "propType": prop, "line": request.get("line"),
+                "venue": selected_venue or None, "roleBucket": target_bucket,
+            },
+            "cutoff": cutoff or None, "targetHistory": target_rows,
+            "admittedRows": admitted_rows, "rejectedRows": rejected_rows,
+            "validation": validation,
+            "sourcePaths": sorted(set(row.get("sourcePath") or "unknown" for row in cohort_rows)),
+            "evidenceFingerprint": hashlib.sha256(json.dumps(
+                {"admitted": admitted_rows, "rejected": rejected_rows},
+                sort_keys=True, separators=(",", ":"), default=str,
+            ).encode()).hexdigest()[:24],
+        }
+        try:
+            persisted = await aio.wait_for(_persist_cohort_snapshot(snapshot), timeout=1.2)
+        except (TimeoutError, aio.TimeoutError):
+            persisted = False
+        if not persisted:
+            return _invalid_snapshot_evidence(
+                snapshot_key=snapshot_key, cutoff=cutoff,
+                reason="immutable_cohort_snapshot_persistence_unavailable",
+            )
+        snapshot = _COHORT_SNAPSHOT_MEMORY.get(snapshot_key) or snapshot
+        return _snapshot_evidence_response(
+            snapshot, target_rows=target_rows, cutoff=cutoff,
+            provider_state="immutable_snapshot",
+        )
     target_position = prediction.get("playerPosition") or prediction.get("position")
     target_role = prediction.get("exactTacticalRole") or prediction.get("tacticalRole") or prediction.get("role")
     target_details: dict[int, dict[str, Any]] = {}
@@ -642,6 +863,7 @@ async def assemble_causal_evidence(
     if (
         live_fixture_id
         and not replay_mode
+        and not _has_snapshot_evidence
         and not is_quota_exhausted()
         and _provider_budget_available
     ):
@@ -682,31 +904,110 @@ async def assemble_causal_evidence(
         provider_state = "available_snapshot" if snapshot_complete else "available"
     target_rows = _merge_details(target_rows, target_details)
     cohort_rows = _merge_details(cohort_rows, cohort_details)
+    # Already-hydrated position-comparison rows are already expressed from the
+    # requested player's perspective. Mark that fact before the shared
+    # canonical venue function runs, so they cannot be flipped a second time.
+    comparison_scope = str(comparison.get("sourceScope") or "unknown") if isinstance(comparison, dict) else "unknown"
+    for row in cohort_rows:
+        if isinstance(row, dict):
+            row.setdefault("venuePerspective", "target")
+            row.setdefault("sourcePath", "positionComparison")
+            row.setdefault("sourceScope", comparison_scope)
     try:
         # A cache baseline is optional enrichment. Atlas may be slow or lack
         # an index for older fixture-player rows; never let that turn already
         # assembled API-Football evidence into a response deadline.
-        cohort_rows = await aio.wait_for(
-            _hydrate_cached_matching_venue_baselines(
-                cohort_rows, prop, selected_venue, cutoff
-            ),
-            timeout=1.25,
-        )
+        if not any(row.get("sourcePath") == "positionComparison" for row in cohort_rows):
+            cohort_rows = await aio.wait_for(
+                _hydrate_cached_matching_venue_baselines(
+                    cohort_rows, prop, selected_venue, cutoff
+                ),
+                timeout=1.25,
+            )
     except (TimeoutError, aio.TimeoutError):
         pass
+    target_bucket = _role_bucket(target_role, target_position)
+    target_formation = str(
+        prediction.get("formation") or prediction.get("teamFormation") or ""
+    ).strip().lower() or None
+    admitted_rows, rejected_rows, validation = finalize_opponent_cohort(
+        cohort_rows,
+        prop=prop,
+        venue=selected_venue or None,
+        target_player_id=player_id,
+        target_team_id=team_id,
+        target_fixture_id=target_fixture_id,
+        target_opponent_id=opponent_id,
+        target_bucket=target_bucket,
+        target_formation=target_formation,
+        strict_identity=True,
+    )
+    snapshot_status = "available" if validation["valid"] else "invalid"
+    snapshot = {
+        "_id": snapshot_key,
+        "snapshotKey": snapshot_key,
+        "snapshotVersion": CAUSAL_COHORT_SNAPSHOT_VERSION,
+        "status": snapshot_status,
+        "createdAt": datetime.now(timezone.utc),
+        "identity": {
+            "fixtureId": target_fixture_id,
+            "playerId": player_id,
+            "teamId": team_id,
+            "opponentId": opponent_id,
+            "propType": prop,
+            "line": request.get("line") if request.get("line") is not None else prediction.get("line"),
+            "venue": selected_venue or None,
+            "roleBucket": target_bucket,
+        },
+        "cutoff": cutoff or None,
+        "targetHistory": target_rows,
+        "admittedRows": admitted_rows,
+        "rejectedRows": rejected_rows,
+        "validation": validation,
+        "sourcePaths": sorted(set(row.get("sourcePath") or "unknown" for row in cohort_rows)),
+        "evidenceFingerprint": hashlib.sha256(
+            json.dumps(
+                {"admitted": admitted_rows, "rejected": rejected_rows},
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+        ).hexdigest()[:24],
+    }
+    try:
+        persisted = await aio.wait_for(
+            _persist_cohort_snapshot(snapshot), timeout=1.0
+        )
+    except (TimeoutError, aio.TimeoutError):
+        persisted = False
+    if not persisted:
+        return _invalid_snapshot_evidence(
+            snapshot_key=snapshot_key,
+            cutoff=cutoff,
+            reason="immutable_cohort_snapshot_persistence_unavailable",
+        )
+    # A duplicate-key race means another request persisted the winner. Load it
+    # so both concurrent callers calculate from byte-identical admitted rows.
+    winner = await _load_cohort_snapshot(snapshot_key)
+    if winner:
+        snapshot = winner
+        admitted_rows = snapshot.get("admittedRows") or []
+        rejected_rows = snapshot.get("rejectedRows") or []
     return {
-        "version": "causal-evidence.v1",
+        "version": "causal-evidence.v2",
         "provider": "api-football",
         "providerState": provider_state,
         "cutoff": cutoff or None,
         "pregameOnly": True,
         "targetFixtureResultFieldsRead": False if replay_mode else None,
         "targetHistory": target_rows,
-        "opponentRoleCandidates": cohort_rows,
+        "opponentRoleCandidates": admitted_rows,
+        "opponentRoleRejected": rejected_rows,
         "targetHistoryRequested": MAX_TARGET_MATCHES,
         "opponentHistoryRequested": MAX_OPPONENT_MATCHES,
         "targetHistoryReturned": len(target_rows),
-        "opponentHistoryReturned": len(cohort_rows),
+        "opponentHistoryReturned": len(admitted_rows),
+        "cohortSnapshot": snapshot,
         "currentFixture": live_fixture if isinstance(live_fixture, list) else [],
         "market": live_odds if isinstance(live_odds, list) else [],
         "coverage": {

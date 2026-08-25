@@ -17891,11 +17891,16 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "line": req.line,
             }
             try:
-                _causal_evidence = await _bounded_prediction_source(
-                    assemble_causal_evidence(prediction, _causal_request, _causal_context),
-                    "causal API-Football evidence",
-                    22.0,
-                    {"status": "incomplete", "reason": "causal evidence deadline"},
+                # Causal assembly is now cache-first: the position-comparison
+                # rows are already attached to this prediction and must be
+                # snapshotted even when optional enrichment exhausted the
+                # general prediction budget. Its own bounded persistence path
+                # prevents provider work from extending the request.
+                _causal_evidence = await aio.wait_for(
+                    assemble_causal_evidence(
+                        prediction, _causal_request, _causal_context
+                    ),
+                    timeout=1.5,
                 )
             except Exception as _causal_evidence_err:
                 print(f"[CAUSAL EVIDENCE] assembly failed: {_causal_evidence_err}")

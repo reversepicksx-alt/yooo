@@ -14,3 +14,9 @@ Model projection and causal workload are separate decision layers. Causal worklo
 **Why:** A generic PASS concealed whether the model was withheld for thin evidence, rolling safety, or provider-backed causal disagreement, leaving subscribers unable to understand the decision.
 
 **How to apply:** Snapshot the finalized model projection/direction before causal gating. Return the causal workload, baseline, effect, sample strength, causal direction, verdict, and all gates independently through live and saved-pick response paths. Causal confirmation is valid only when the causal direction supports the model direction.
+
+Immutable causal cohorts must use a versioned identity and an atomic insert-only write; return the stored winner, not the newly assembled candidate. Persist rejected rows with explicit reasons alongside admitted rows, and make calculations read only the admitted winner.
+
+**Why:** Provider/cache timing changed Mailson's cohort across calls and allowed the target player into the comparison sample. A duplicate-key path that returned its local candidate could still make repeated calls disagree.
+
+**How to apply:** Include fixture/player/team/opponent/prop/line in the snapshot identity, normalize venue once from the target perspective, assert target IDs are absent and opponent identity/venue match, and fail closed as EVIDENCE INVALID/PASS on persistence or purity failure.

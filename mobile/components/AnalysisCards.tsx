@@ -394,6 +394,22 @@ export function renderModelCausalDecision(
     summary.finalReason ?? source.passReason ?? summary.reason ?? gate.reason ?? '',
   );
   const safety = source.recentPropSafety ?? summary.gates?.rollingSafety;
+  const lineBand = source.lineDeviationBand ?? summary.lineDeviationBand;
+  const lineRate = source.lineDeviationHitRate ?? summary.lineDeviationHitRate;
+  const lineSample = source.lineDeviationHitRateN ?? summary.lineDeviationHitRateN;
+  const calibrationDirection = String(
+    source.recommendation ?? source.preCausalRecommendation ?? summary.modelDirection ?? '',
+  ).toUpperCase();
+  const hasLineCalibration = typeof lineRate === 'number' && Number(lineSample ?? 0) > 0;
+  const rollingRate = safety && typeof (safety as any).hitRate === 'number'
+    ? (safety as any).hitRate
+    : null;
+  const rollingSample = safety ? Number((safety as any).sampleSize ?? (safety as any).n ?? 0) : 0;
+  const calibrationMessage = hasLineCalibration
+    ? `Within the ${String(lineBand ?? 'current').replace(/_/g, ' ').toUpperCase()} line band, ${calibrationDirection || 'SELECTED'} has hit ${(lineRate as number).toFixed(1)}% across ${lineSample} system-confirmed saved picks.`
+    : rollingRate != null && rollingSample > 0
+      ? `The ${calibrationDirection || 'selected'} direction has hit ${Number(rollingRate).toFixed(1)}% across ${rollingSample} system-confirmed saved picks in the rolling 45-day calibration window.`
+      : 'Calibration is active, but there is not yet a verified system-confirmed saved-pick sample for this band.';
   const hasCausalData = Boolean(
     verdict || causalDirection || workload != null || gateDecision || summary.reason,
   );
@@ -453,6 +469,9 @@ export function renderModelCausalDecision(
           Independent rolling safety control: {String((safety as any).action ?? 'active').replace(/_/g, ' ')}.
         </Text>
       ) : null}
+      <Text style={{ color: Colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
+        {calibrationMessage}
+      </Text>
     </View>
   );
 }
