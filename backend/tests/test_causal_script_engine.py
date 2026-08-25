@@ -56,7 +56,8 @@ def test_thin_edge_without_exact_role_is_pass():
         "line": 39.5,
     })
     assert packet["recommendationGate"]["decision"] == "PASS"
-    assert "MODEL EDGE REJECTED" in packet["recommendationGate"]["reason"]
+    assert "CAUSAL EVIDENCE INCOMPLETE" in packet["recommendationGate"]["reason"]
+    assert packet["causalVerdict"] == "EVIDENCE INCOMPLETE"
 
 
 def test_reference_miss_replay_is_pregame_only_and_conservative():
@@ -121,3 +122,45 @@ def test_five_clean_exact_role_samples_allow_strong_sample_status():
     assert packet["corroboration"]["productionFlipEligible"] is True
     assert packet["corroboration"]["sampleStrength"] == "strong"
     assert packet["corroboration"]["strongConfidenceAllowed"] is True
+
+
+def test_goalie_saves_uses_api_football_goal_saves_values():
+    rows = [
+        {
+            "role": "GK", "position": "GK", "venue": "home",
+            "goals_saves": 4, "normalMatchingVenue": 2, "minutes": 90,
+        }
+        for _ in range(3)
+    ]
+    packet = build_causal_script_packet({
+        "sport": "soccer", "playerName": "Mailson",
+        "propType": "goalie_saves", "playerPosition": "GK",
+        "recommendation": "over", "projection": 4.0, "line": 2.5,
+        "venue": "home", "positionComparison": {"players": rows},
+        "tacticalContext": {"expectedPossession": 40, "opponentExpectedPossession": 60},
+    })
+    cohort = packet["opponentRoleCohort"]
+    assert cohort["sampleSize"] == 3
+    assert cohort["workloadAverage"] == 4.0
+    assert cohort["opponentRoleEffect"] == 2.0
+    assert packet["causalVerdict"] == "CAUSAL CONFIRM"
+
+
+def test_shot_stopper_role_is_admitted_to_goalkeeper_cohort():
+    rows = [
+        {
+            "role": "Shot-Stopper", "position": "GK", "venue": "home",
+            "goals_saves": 4, "normalMatchingVenue": 2, "minutes": 90,
+        }
+        for _ in range(3)
+    ]
+    packet = build_causal_script_packet({
+        "sport": "soccer", "playerName": "Mailson",
+        "propType": "goalie_saves", "playerPosition": "GK",
+        "recommendation": "over", "projection": 4.0, "line": 2.5,
+        "venue": "home", "positionComparison": {"players": rows},
+        "tacticalContext": {"expectedPossession": 40, "opponentExpectedPossession": 60},
+    })
+    assert packet["opponentRoleCohort"]["sampleSize"] == 3
+    assert packet["opponentRoleCohort"]["roleBucket"] == "GK"
+    assert packet["causalVerdict"] == "CAUSAL CONFIRM"

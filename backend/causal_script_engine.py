@@ -45,6 +45,7 @@ _VALUE_KEYS = {
     "shots": ("value", "statValue", "targetStat", "shots_total", "shots"),
     "shots_on_target": ("value", "statValue", "targetStat", "shots_on", "shots_on_target"),
     "saves": ("value", "statValue", "targetStat", "goals_saves", "saves"),
+    "goalie_saves": ("value", "statValue", "targetStat", "goals_saves", "saves"),
     "clearances": ("value", "statValue", "targetStat", "clearances"),
     "crosses": ("value", "statValue", "targetStat", "crosses"),
     "tackles": ("value", "statValue", "targetStat", "tackles_total", "tackles"),
@@ -148,13 +149,15 @@ def _clean_rows(rows: list[dict], venue: str | None, prop: str) -> tuple[list[di
 
 def _role_bucket(role: Any, position: Any) -> str:
     raw = str(role or position or "").strip().lower()
-    if any(token in raw for token in ("goalkeeper", "keeper", "gk")):
+    if any(token in raw for token in (
+        "goalkeeper", "keeper", "gk", "shot-stopper", "shot stopper",
+    )):
         return "GK"
     if any(token in raw for token in ("center-back", "centre-back", "cb", "defender")):
         return "CB"
     if any(token in raw for token in ("pivot", "anchor", "dm", "cm", "midfielder")):
         return "PIVOT"
-    return str(role or position or "UNKNOWN").upper() or "UNKNOWN"
+    return str(role or position or "UNVERIFIED").upper() or "UNVERIFIED"
 
 
 def _cohort_packet(prediction: dict, prop: str, venue: str | None, opponent: str | None, role: Any, position: Any, evidence: dict | None = None) -> dict:
@@ -215,11 +218,11 @@ def _cohort_packet(prediction: dict, prop: str, venue: str | None, opponent: str
     average = sum(value * weight for value, weight in values) / value_weight if value_weight else None
     baseline = sum(value * weight for value, weight in baseline_values) / baseline_weight if baseline_weight else None
     uplift = average / baseline if average is not None and baseline and baseline > 0 else None
-    status = "available" if value_weight >= 3 and uplift is not None else "partial" if values else "UNKNOWN"
+    status = "available" if value_weight >= 3 and uplift is not None else "partial" if values else "not_established"
     return {
         "status": status,
         "roleBucket": target_bucket,
-        "formation": target_formation or "UNKNOWN",
+        "formation": target_formation or "unverified",
         "sampleSize": len(values),
         "weightedSampleSize": round(value_weight, 2),
         "cleanSampleSize": sum(1 for row in weighted if row["distortionWeight"] == 1),
@@ -227,7 +230,7 @@ def _cohort_packet(prediction: dict, prop: str, venue: str | None, opponent: str
         "workloadAverage": round(average, 2) if average is not None else None,
         "normalMatchingVenueAverage": round(baseline, 2) if baseline is not None else None,
         "opponentRoleEffect": round(uplift, 3) if uplift is not None else None,
-        "effect": "uplift" if uplift is not None and uplift > 1.08 else "suppression" if uplift is not None and uplift < 0.92 else "neutral" if uplift is not None else "UNKNOWN",
+        "effect": "uplift" if uplift is not None and uplift > 1.08 else "suppression" if uplift is not None and uplift < 0.92 else "neutral" if uplift is not None else "not_established",
         "provenance": "positionComparison/roleEvidencePacket exact-role rows",
         "limitation": None if status == "available" else "Fewer than three distortion-weighted exact-role matching-venue opponent rows with a baseline.",
     }
@@ -253,18 +256,18 @@ def _script(prediction: dict, venue: str | None, evidence: dict | None = None) -
     elif favorite:
         label, status = "CONTROL" if favorite in {"team", "home"} else "SUPPRESSION", "partial"
     else:
-        label, status = "UNKNOWN", "UNKNOWN"
+        label, status = "NOT ESTABLISHED", "not_established"
     if dominant in {"home_blowout", "away_blowout"}:
-        label = f"{label}→LOCK" if label != "UNKNOWN" else "LOCK"
+        label = f"{label}→LOCK" if label != "NOT ESTABLISHED" else "LOCK"
     elif dominant == "open_close":
-        label = f"{label}→CHASE" if label != "UNKNOWN" else "CHASE"
+        label = f"{label}→CHASE" if label != "NOT ESTABLISHED" else "CHASE"
     elif dominant == "low_scoring" and label == "CONTROL":
         label = "CONTROL→LOCK"
     recent_manager = bool(manager.get("isRecent"))
     half_life = (
         "short" if recent_manager or "→CHASE" in label else
         "long" if "LOCK" in label and status == "available" else
-        "medium" if status == "available" else "UNKNOWN"
+        "medium" if status == "available" else "not_established"
     )
     return {
         "status": status,
@@ -278,18 +281,18 @@ def _script(prediction: dict, venue: str | None, evidence: dict | None = None) -
 
 def _branches(prop: str, role_bucket: str, script: str) -> dict:
     pass_like = prop in {"pass_attempts", "passes"} and role_bucket in {"GK", "CB", "PIVOT"}
-    base = "UNKNOWN"
+    base = "NOT ESTABLISHED"
     if script.startswith("CONTROL"):
         base = "UP" if pass_like else "NEUTRAL"
     elif script.startswith(("SUPPRESSION", "SIEGE")):
         base = "UP" if prop in {"saves", "clearances", "tackles", "interceptions"} else "DOWN" if pass_like else "NEUTRAL"
     return {
-        "target_scores_first": {"workload": base, "regime": "SURVIVES" if base != "UNKNOWN" else "UNKNOWN"},
-        "opponent_scores_first": {"workload": "UP" if prop in {"shots", "saves", "crosses", "key_passes"} else "DOWN" if pass_like else base, "regime": "EXPLODES" if prop in {"shots", "saves"} else "SURVIVES" if base != "UNKNOWN" else "UNKNOWN"},
-        "level_around_60": {"workload": base, "regime": "FREEZES" if script.startswith("CONTROL") else "SURVIVES" if base != "UNKNOWN" else "UNKNOWN"},
-        "target_scores_before_20": {"workload": "DOWN" if pass_like else base, "regime": "FREEZES" if script.startswith("CONTROL") else "SURVIVES" if base != "UNKNOWN" else "UNKNOWN"},
-        "opponent_scores_before_20": {"workload": "UP" if prop in {"shots", "saves", "crosses", "key_passes"} else "DOWN" if pass_like else base, "regime": "EXPLODES" if prop in {"shots", "saves"} else "SURVIVES" if base != "UNKNOWN" else "UNKNOWN"},
-        "early_goal_either_way": {"workload": "UNKNOWN" if script == "UNKNOWN" else base, "regime": "EXPLODES" if script.startswith(("SUPPRESSION", "SIEGE")) else "SURVIVES" if base != "UNKNOWN" else "UNKNOWN"},
+        "target_scores_first": {"workload": base, "regime": "SURVIVES" if base != "NOT ESTABLISHED" else "NOT ESTABLISHED"},
+        "opponent_scores_first": {"workload": "UP" if prop in {"shots", "saves", "crosses", "key_passes"} else "DOWN" if pass_like else base, "regime": "EXPLODES" if prop in {"shots", "saves"} else "SURVIVES" if base != "NOT ESTABLISHED" else "NOT ESTABLISHED"},
+        "level_around_60": {"workload": base, "regime": "FREEZES" if script.startswith("CONTROL") else "SURVIVES" if base != "NOT ESTABLISHED" else "NOT ESTABLISHED"},
+        "target_scores_before_20": {"workload": "DOWN" if pass_like else base, "regime": "FREEZES" if script.startswith("CONTROL") else "SURVIVES" if base != "NOT ESTABLISHED" else "NOT ESTABLISHED"},
+        "opponent_scores_before_20": {"workload": "UP" if prop in {"shots", "saves", "crosses", "key_passes"} else "DOWN" if pass_like else base, "regime": "EXPLODES" if prop in {"shots", "saves"} else "SURVIVES" if base != "NOT ESTABLISHED" else "NOT ESTABLISHED"},
+        "early_goal_either_way": {"workload": "NOT ESTABLISHED" if script == "NOT ESTABLISHED" else base, "regime": "EXPLODES" if script.startswith(("SUPPRESSION", "SIEGE")) else "SURVIVES" if base != "NOT ESTABLISHED" else "NOT ESTABLISHED"},
     }
 
 
@@ -367,8 +370,8 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     # A verified position bucket (GK/CB/PIVOT) is usable role evidence even
     # when an exact lineup role string was not attached. Truly unknown position
     # remains conservative.
-    uncertain_role = role_bucket == "UNKNOWN"
-    current_regime_unknown = script["status"] == "UNKNOWN"
+    uncertain_role = role_bucket == "UNVERIFIED"
+    current_regime_unknown = script["status"] not in {"available", "partial"}
     thin_edge = gap is not None and gap < 1.0
     mechanism_edge = cohort["effect"] in {"uplift", "suppression"} and cohort["status"] == "available"
     mechanism_direction = (
@@ -398,8 +401,17 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     distorted_dominant = bool(tagged_logs) and len(clean_logs) < max(2, len(tagged_logs) / 2)
     cohort_incomplete = cohort["status"] != "available"
     if uncertain_role or current_regime_unknown or thin_edge or cohort_incomplete:
-        decision, reason = "PASS", "MODEL EDGE REJECTED: exact-role concentration or numerical edge is too uncertain."
-        verdict = "DISTORTED SAMPLE" if distorted_dominant else "UNKNOWN"
+        if uncertain_role:
+            missing_reason = "the player's exact role is not verified"
+        elif current_regime_unknown:
+            missing_reason = "the current match regime is not verified"
+        elif cohort_incomplete:
+            missing_reason = "the opponent-created exact-role workload baseline is not verified"
+        else:
+            missing_reason = "the deterministic edge is too close to the line"
+        decision = "PASS"
+        reason = f"CAUSAL EVIDENCE INCOMPLETE: {missing_reason}; recommendation withheld."
+        verdict = "DISTORTED SAMPLE" if distorted_dominant else "EVIDENCE INCOMPLETE"
     elif mechanism_edge and ((recommendation == "under" and cohort["effect"] == "uplift") or (recommendation == "over" and cohort["effect"] == "suppression")):
         decision, reason = "REJECT", "CAUSAL CONTRADICTION: today's opponent-created exact-role workload conflicts with the RP direction."
         verdict = "CAUSAL CONTRADICTION"
@@ -407,8 +419,9 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
         decision, reason = "CONFIRM", "MECHANISM EDGE: clean exact-role opponent workload supports the RP direction."
         verdict = "CAUSAL CONFIRM" if cohort["effect"] != "neutral" else "MECHANISM EDGE"
     else:
-        decision, reason = "UNKNOWN", "UNKNOWN: no validated exact-role opponent workload effect is available."
-        verdict = "DISTORTED SAMPLE" if distorted_dominant else "UNKNOWN"
+        decision = "PASS"
+        reason = "NO MECHANISM EDGE: validated exact-role workload is neutral for this line."
+        verdict = "DISTORTED SAMPLE" if distorted_dominant else "NO MECHANISM EDGE"
     return {
         "schemaVersion": CAUSAL_SCHEMA_VERSION,
         "modelVersion": CAUSAL_MODEL_VERSION,
@@ -421,7 +434,7 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
             "teamName": prediction.get("teamName"),
             "opponentName": opponent,
             "venue": venue,
-            "role": role or "UNKNOWN",
+            "role": role or "unverified",
             "roleBucket": role_bucket,
             "propType": prop,
             "line": line,
@@ -449,11 +462,11 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
             "productionFlipEligible": bool(mechanism_edge and strong_corroboration),
             "strongConfidenceAllowed": bool(clean_exact_role_n >= 5),
         },
-        "evidence": evidence or {"status": "UNKNOWN", "reason": "Evidence assembly did not run."},
+        "evidence": evidence or {"status": "incomplete", "reason": "Evidence assembly did not run."},
         "recommendationGate": {
             "decision": decision,
             "reason": reason,
-            "rpRecommendation": recommendation or "UNKNOWN",
+            "rpRecommendation": recommendation or "not_set",
             "wouldRecommendation": recommendation if decision not in {"PASS", "REJECT"} else "PASS",
             "productionInfluence": "active_pass_guard",
             "replayValidated": False,

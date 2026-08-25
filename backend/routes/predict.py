@@ -4811,7 +4811,7 @@ async def predict(req: PredictionRequest):
             "pass_attempts": ("passes", "total"), "shots": ("shots", "total"),
             "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
             "key_passes": ("passes", "key"), "shots_assisted": ("passes", "key"),
-            "saves": ("goals", "saves"),
+            "saves": ("goals", "saves"), "goalie_saves": ("goals", "saves"),
             "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
             "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
             "goals": ("goals", "total"), "assists": ("goals", "assists"),
@@ -5131,6 +5131,10 @@ async def predict(req: PredictionRequest):
                             ),
                             "playerId": player_id,
                             "teamId": comparison_team_id,
+                            "fixtureId": fid,
+                            "leagueId": fix.get("leagueId"),
+                            "season": fix.get("season"),
+                            "historySource": "fixture_player_cache",
                             "team": (
                                 player_doc.get("teamName")
                                 or meta.get(
@@ -5518,7 +5522,7 @@ async def predict(req: PredictionRequest):
                             # For saves prop: stat_cat="goals", stat_sub="saves" per PROP_STAT_KEYS.
                             # Conceded is at the same "goals" block in the fixture player API.
                             _gk_conceded = None
-                            if prop_type == "saves":
+                            if prop_type in {"saves", "goalie_saves"}:
                                 _raw_conceded = pstats.get("goals", {}).get("conceded")
                                 if _raw_conceded is not None:
                                     try:
@@ -5535,6 +5539,10 @@ async def predict(req: PredictionRequest):
                                 "name": p_name,
                                 "playerId": p_id,
                                 "teamId": tid,
+                                "fixtureId": fid,
+                                "leagueId": fix.get("leagueId"),
+                                "season": fix.get("season"),
+                                "historySource": "api_football_fixture_players",
                                 "team": team_name,
                                 "minutes": minutes,
                                 "statValue": stat_val,
@@ -12336,7 +12344,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 # ── SAVES: compute per-game save rate from fixture data — no API call needed.
                 # API-Football does NOT return goalkeeper.saves in season stats for many leagues.
                 # Per-game rate (saves vs this opponent) is directly available and highly relevant.
-                if _enrich_prop == "saves":
+                if _enrich_prop in {"saves", "goalie_saves"}:
                     _gc = p_entry.get("goalsConceded")
                     _sv = p_entry.get("statValue", 0)
                     if _gc is not None and (_sv + _gc) > 0:
@@ -17867,11 +17875,11 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     assemble_causal_evidence(prediction, _causal_request, _causal_context),
                     "causal API-Football evidence",
                     22.0,
-                    {"status": "UNKNOWN", "reason": "causal evidence deadline"},
+                    {"status": "incomplete", "reason": "causal evidence deadline"},
                 )
             except Exception as _causal_evidence_err:
                 print(f"[CAUSAL EVIDENCE] assembly failed: {_causal_evidence_err}")
-                _causal_evidence = {"status": "UNKNOWN", "reason": "causal evidence failure"}
+                _causal_evidence = {"status": "incomplete", "reason": "causal evidence failure"}
             prediction["causalScript"] = build_causal_script_packet(
                 prediction,
                 request=_causal_request,
@@ -17896,6 +17904,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 "halfLife": (_causal_packet.get("script") or {}).get("halfLife"),
                 "gateDecision": (_causal_packet.get("recommendationGate") or {}).get("decision"),
                 "reason": (_causal_packet.get("recommendationGate") or {}).get("reason"),
+                "coverage": (_causal_packet.get("evidence") or {}).get("coverage"),
             }
             prediction.setdefault("tacticalContext", {})["causalSummary"] = prediction["causalSummary"]
             _causal_gate = prediction["causalScript"].get("recommendationGate") or {}
@@ -17921,6 +17930,26 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     f"[CAUSAL GATE] {req.playerName}/{req.propType} "
                     f"{_prior_recommendation} → PASS ({_causal_gate.get('decision')})"
                 )
+            # A causal withholding reason is the subscriber-facing explanation
+            # for PASS, not an older rolling hit-rate guard. Keep the rolling
+            # rate as audit context, but never let it masquerade as the causal
+            # reason the recommendation was withheld.
+            if _causal_gate.get("decision") in {"PASS", "REJECT"}:
+                _causal_leaning = (
+                    prediction.get("preCausalRecommendation")
+                    or prediction.get("passLeaning")
+                    or prediction.get("recommendation")
+                    or "the deterministic side"
+                )
+                _causal_primary_reason = (
+                    f"Deterministic projection favored {str(_causal_leaning).upper()}, "
+                    f"but {_causal_gate.get('reason')}"
+                )
+                prediction["passReason"] = _causal_primary_reason
+                prediction["edgeRatingReason"] = _causal_primary_reason
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"CAUSAL WITHHOLD: {_causal_primary_reason}"
+                ]
         # Reconcile the evidence verdict with the final displayed direction.
         # Late safety/calibration gates can change OVER/UNDER; the cohort must
         # describe that final saved recommendation, without changing it.

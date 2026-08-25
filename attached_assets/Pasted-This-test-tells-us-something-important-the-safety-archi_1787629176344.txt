@@ -1,0 +1,23 @@
+This test tells us something important: the safety architecture is working, but the actual causal engine has not really evaluated Mailson yet.
+
+For Mailson 27.5 passes, the deterministic model says 24 → Under-shaped, but the final output is PASS because the causal packet is UNKNOWN. That means the app still has not answered the questions we actually care about: does Al-Fayha force opposing home keepers into repeated recycling, does Al-Taawoun route buildup through Mailson under the current manager, what do comparable home GKs do against Al-Fayha, and what happened in clean same-role fixtures after removing red cards and distorted states? Until those fields are populated, the PASS is correct. Your screenshot’s last five — 37, 17, 19, 30, 25 — is useful context, but it should not decide the pick by itself.
+
+For Mailson 2.5 saves, the raw projection of 6.7 is exactly why the causal gate matters. That number is large enough that I would want to audit the projection source before trusting it. The active gate correctly refused to let a raw model Over through while exact-role/opponent evidence is unavailable. So OVER → PASS is the desired behavior right now.
+
+The key distinction is:
+
+Old system: projection exists → recommendation.
+
+Current system while evidence is unavailable: projection exists → causal evidence incomplete → PASS.
+
+Finished system after API budget/reset: projection exists → opponent-role workload + venue + current regime + distortion-adjusted history + score states assembled → CONFIRM / CONTRADICT / MECHANISM EDGE / PASS.
+
+And this Mailson test actually exposes one thing I would fix in the UI/logic wording. The reason shown for passes — “recent UNDER evidence was only 33% across 15 settled events” — is still basically a hit-rate argument. That should be secondary. It should instead say something like:
+
+“Deterministic projection favors Under, but opponent-created GK pass workload and current-regime buildup concentration are unavailable; recommendation withheld.”
+
+Then underneath it can show the 33% history as supporting/background evidence.
+
+So I would tell Replit to make CAUSAL UNKNOWN override trend-language as the primary reason. Otherwise users will still think the engine is making decisions from greens/reds even though we specifically rebuilt it to avoid that.
+
+For this exact Mailson passes line, our manual causal work previously found a real Under mechanism: even when Al-Taawoun chased Al-Fayha from 0-2 down, Mailson did not become the central recycling hub, which is materially more informative than a 25.6 last-five average. The app has not reproduced that evidence yet. Once the replay/evidence budget is available, that’s the sort of fact it needs to discover automatically before it can graduate this from PASS to a real causal Under.

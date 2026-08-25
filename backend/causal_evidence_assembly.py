@@ -145,7 +145,7 @@ def _event_tags(events: list[dict[str, Any]], team_id: int | None) -> dict[str, 
         "eventTags": sorted(set(tags)),
         "earlyGoal": bool(any(minute <= 20 for minute in goal_minutes)),
         "goalMinutes": goal_minutes,
-        "eventCoverage": "available" if isinstance(events, list) else "UNKNOWN",
+        "eventCoverage": "available" if isinstance(events, list) else "not_loaded",
     }
 
 
@@ -159,7 +159,7 @@ def _lineup_metadata(lineups: list[dict[str, Any]], team_id: int | None) -> dict
             "coach": ((item.get("coach") or {}).get("name")) or None,
             "lineupCoverage": "available",
         }
-    return {"formation": None, "coach": None, "lineupCoverage": "UNKNOWN"}
+    return {"formation": None, "coach": None, "lineupCoverage": "not_loaded"}
 
 
 def _statistics_metadata(stats: list[dict[str, Any]], team_id: int | None) -> dict[str, Any]:
@@ -180,7 +180,7 @@ def _statistics_metadata(stats: list[dict[str, Any]], team_id: int | None) -> di
             elif name == "shots on goal":
                 values["teamShotsOnTarget"] = value
         break
-    values["statisticsCoverage"] = "available" if values else "UNKNOWN"
+    values["statisticsCoverage"] = "available" if values else "not_loaded"
     return values
 
 
@@ -199,7 +199,7 @@ async def _fixture_detail(fixture_id: int, team_id: int | None, *, priority: boo
         **_lineup_metadata(usable(lineups), team_id),
         **_statistics_metadata(usable(stats), team_id),
         **_event_tags(usable(events), team_id),
-        "playerStatisticsCoverage": "available" if isinstance(players, list) and players else "UNKNOWN",
+        "playerStatisticsCoverage": "available" if isinstance(players, list) and players else "not_loaded",
         "_players": usable(players),
         "_lineups": usable(lineups),
     }
@@ -380,7 +380,7 @@ async def _details_for_rows(
         async with sem:
             if provider_unavailable.is_set() or is_quota_exhausted():
                 return fixture_id, {
-                    "coverage": "UNKNOWN",
+                    "coverage": "not_loaded",
                     "reason": "provider budget or quota unavailable",
                 }
             try:
@@ -400,7 +400,7 @@ async def _details_for_rows(
                 return key, detail
             except Exception as error:
                 provider_unavailable.set()
-                return fixture_id, {"coverage": "UNKNOWN", "error": type(error).__name__}
+                return fixture_id, {"coverage": "not_loaded", "error": type(error).__name__}
 
     pairs_to_fetch = list(fixture_team_pairs.items())
     # Replay work is intentionally sequential and bounded. Once this many
@@ -435,6 +435,106 @@ def _merge_details(rows: list[dict[str, Any]], details: dict[int, dict[str, Any]
     return merged
 
 
+_CACHE_PROP_FIELDS = {
+    "pass_attempts": "passes_total",
+    "passes": "passes_total",
+    "key_passes": "passes_key",
+    "goalie_saves": "goals_saves",
+    "saves": "goals_saves",
+    "shots": "shots_total",
+    "shots_on_target": "shots_on",
+    "tackles": "tackles_total",
+    "clearances": "tackles_clearances",
+}
+
+
+async def _hydrate_cached_matching_venue_baselines(
+    rows: list[dict[str, Any]], prop: str, venue: str, cutoff: str,
+) -> list[dict[str, Any]]:
+    """Attach a bounded, pre-kickoff same-player/venue baseline from cache."""
+    field = _CACHE_PROP_FIELDS.get(prop)
+    if not field or venue not in {"home", "away"}:
+        return rows
+    by_player: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or any(
+            row.get(key) is not None
+            for key in ("normalMatchingVenue", "baseline", "seasonAvgStat")
+        ):
+            continue
+        try:
+            key = (int(row["playerId"]), int(row["teamId"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(by_player) < 8 or key in by_player:
+            by_player.setdefault(key, []).append(row)
+    if not by_player:
+        return rows
+
+    async def read_player_baseline(player_id: int, team_id: int):
+        try:
+            stat_docs = await db.fixture_player_cache.find(
+                {"_k": {"$regex": f"^fxp_[0-9]+_{player_id}$"}},
+                {"_id": 0, "_k": 1, "d": 1},
+            ).to_list(24)
+            fixture_ids = []
+            for doc in stat_docs:
+                parts = str(doc.get("_k") or "").split("_")
+                if len(parts) == 3 and parts[1].isdigit():
+                    fixture_ids.append(int(parts[1]))
+            if not fixture_ids:
+                return (player_id, team_id), []
+            meta_docs = await db.fixture_player_cache.find(
+                {"_k": {"$in": [f"fxm_{fixture_id}" for fixture_id in fixture_ids]}},
+                {"_id": 0, "_k": 1, "d": 1},
+            ).to_list(len(fixture_ids))
+            meta_by_fixture = {
+                int(str(doc.get("_k") or "").removeprefix("fxm_")): doc.get("d") or {}
+                for doc in meta_docs
+                if str(doc.get("_k") or "").removeprefix("fxm_").isdigit()
+            }
+            values = []
+            for doc in stat_docs:
+                parts = str(doc.get("_k") or "").split("_")
+                if len(parts) != 3 or not parts[1].isdigit():
+                    continue
+                meta = meta_by_fixture.get(int(parts[1])) or {}
+                fixture_date = str(meta.get("date") or meta.get("fixtureDate") or "")
+                if cutoff and fixture_date and fixture_date >= cutoff:
+                    continue
+                try:
+                    same_venue = (
+                        int(meta.get("home_id")) == team_id if venue == "home"
+                        else int(meta.get("away_id")) == team_id
+                    )
+                    minutes = float((doc.get("d") or {}).get("minutes") or 0)
+                    value = float((doc.get("d") or {}).get(field))
+                except (TypeError, ValueError):
+                    continue
+                if same_venue and minutes >= 30:
+                    values.append(value)
+            return (player_id, team_id), values[:12]
+        except Exception:
+            return (player_id, team_id), []
+
+    resolved = await aio.gather(*[
+        read_player_baseline(player_id, team_id)
+        for player_id, team_id in by_player
+    ], return_exceptions=True)
+    for result in resolved:
+        if not isinstance(result, tuple):
+            continue
+        key, values = result
+        if len(values) < 3:
+            continue
+        baseline = round(sum(values) / len(values), 2)
+        for row in by_player[key]:
+            row["normalMatchingVenue"] = baseline
+            row["baselineSampleSize"] = len(values)
+            row["baselineSource"] = "fixture_player_cache_same_venue"
+    return rows
+
+
 async def assemble_causal_evidence(
     prediction: dict[str, Any],
     request: dict[str, Any],
@@ -449,27 +549,6 @@ async def assemble_causal_evidence(
     replay_priority = bool(context.get("replay_priority"))
     selected_venue = str(context.get("venue") or prediction.get("resolvedVenue") or prediction.get("venue") or "").lower()
     replay_stop_after = _REPLAY_MINIMUM_SAMPLES if replay_mode else None
-    if not replay_mode and await _priority_replays_pending():
-        return {
-            "version": "causal-evidence.v1",
-            "provider": "api-football",
-            "providerState": "priority_replays_pending",
-            "cutoff": cutoff or None,
-            "pregameOnly": True,
-            "targetHistory": [],
-            "opponentRoleCandidates": [],
-            "targetHistoryRequested": MAX_TARGET_MATCHES,
-            "opponentHistoryRequested": MAX_OPPONENT_MATCHES,
-            "targetHistoryReturned": 0,
-            "opponentHistoryReturned": 0,
-            "currentFixture": [],
-            "market": [],
-            "coverage": {
-                "targetHistory": "UNKNOWN",
-                "opponentRoleCohort": "UNKNOWN",
-                "reason": "Priority causal replay queue is completing before ordinary enrichment.",
-            },
-        }
     logs_packet = prediction.get("playerGameLogs") or {}
     target_rows = logs_packet.get("games") if isinstance(logs_packet, dict) else prediction.get("gameLogs")
     target_rows = _sorted_limited(target_rows or [], MAX_TARGET_MATCHES, cutoff)
@@ -479,6 +558,35 @@ async def assemble_causal_evidence(
         MAX_OPPONENT_MATCHES,
         cutoff,
     )
+    # The route has already assembled these rows from API-Football. Do not
+    # query MongoDB for replay status before evaluating them: an Atlas stall
+    # previously spent the entire causal deadline and converted valid snapshot
+    # evidence into an empty timeout packet.
+    _has_snapshot_evidence = bool(target_rows or cohort_rows)
+    priority_replays_pending = False
+    if not replay_mode and not _has_snapshot_evidence:
+        priority_replays_pending = await _priority_replays_pending()
+        if priority_replays_pending:
+            return {
+                "version": "causal-evidence.v1",
+                "provider": "api-football",
+                "providerState": "priority_replays_pending",
+                "cutoff": cutoff or None,
+                "pregameOnly": True,
+                "targetHistory": [],
+                "opponentRoleCandidates": [],
+                "targetHistoryRequested": MAX_TARGET_MATCHES,
+                "opponentHistoryRequested": MAX_OPPONENT_MATCHES,
+                "targetHistoryReturned": 0,
+                "opponentHistoryReturned": 0,
+                "currentFixture": [],
+                "market": [],
+                "coverage": {
+                    "targetHistory": "not_loaded",
+                    "opponentRoleCohort": "not_loaded",
+                    "reason": "Priority causal replay queue is completing before ordinary enrichment.",
+                },
+            }
     if replay_mode:
         # Target rows must be matching-venue appearances. Corresponding
         # opponent fixtures put the comparable player at that same venue.
@@ -503,7 +611,8 @@ async def assemble_causal_evidence(
     target_role = prediction.get("exactTacticalRole") or prediction.get("tacticalRole") or prediction.get("role")
     target_details: dict[int, dict[str, Any]] = {}
     cohort_details: dict[int, dict[str, Any]] = {}
-    if not is_quota_exhausted() and not target_rows:
+    _provider_budget_available = api_sports_soft_budget_available()
+    if not is_quota_exhausted() and _provider_budget_available and not target_rows:
         raw_target_rows = await _historical_fixture_rows(team_id, cutoff, priority=replay_priority)
         if replay_mode:
             raw_target_rows = [
@@ -513,7 +622,7 @@ async def assemble_causal_evidence(
         target_rows, target_details = await _hydrate_target_history(
             raw_target_rows, player_id, stop_after=replay_stop_after, priority=replay_priority
         )
-    if not is_quota_exhausted() and not cohort_rows:
+    if not is_quota_exhausted() and _provider_budget_available and not cohort_rows:
         raw_opponent_rows = await _historical_fixture_rows(opponent_id, cutoff, priority=replay_priority)
         if replay_mode:
             opposite_venue = "away" if selected_venue == "home" else "home"
@@ -530,7 +639,12 @@ async def assemble_causal_evidence(
     live_odds = []
     # Historical replays deliberately never read the target fixture object:
     # it may now contain final score/result fields unavailable pre-kickoff.
-    if live_fixture_id and not replay_mode and not is_quota_exhausted():
+    if (
+        live_fixture_id
+        and not replay_mode
+        and not is_quota_exhausted()
+        and _provider_budget_available
+    ):
         try:
             live_fixture, live_odds = await aio.gather(
                 _permanent_provider_request("fixtures", {"id": live_fixture_id}),
@@ -540,10 +654,21 @@ async def assemble_causal_evidence(
         except Exception:
             live_fixture, live_odds = [], []
 
+    snapshot_complete = bool(target_rows and cohort_rows)
+    # Cache-first evidence must be evaluated even while the priority queue is
+    # reserving fresh provider capacity. A budget shortage changes freshness,
+    # not whether verified rows already attached to this prediction exist.
     if is_quota_exhausted():
         provider_state = "quota_exhausted"
+    elif (priority_replays_pending or not _provider_budget_available) and _has_snapshot_evidence:
+        provider_state = "available_snapshot"
+    elif not _provider_budget_available:
+        provider_state = "provider_budget_deferred"
     else:
-        if not target_details or not cohort_details:
+        # The prediction route has already performed the expensive provider
+        # joins for these rows. Do not re-fetch every historical fixture just
+        # because a detail map was not attached to the compact snapshot.
+        if not snapshot_complete and (not target_details or not cohort_details):
             fetched_target, fetched_cohort = await aio.gather(
                 _details_for_rows(
                     target_rows, "teamId", stop_after=replay_stop_after, priority=replay_priority
@@ -554,9 +679,21 @@ async def assemble_causal_evidence(
             )
             target_details = target_details or fetched_target
             cohort_details = cohort_details or fetched_cohort
-        provider_state = "available"
+        provider_state = "available_snapshot" if snapshot_complete else "available"
     target_rows = _merge_details(target_rows, target_details)
     cohort_rows = _merge_details(cohort_rows, cohort_details)
+    try:
+        # A cache baseline is optional enrichment. Atlas may be slow or lack
+        # an index for older fixture-player rows; never let that turn already
+        # assembled API-Football evidence into a response deadline.
+        cohort_rows = await aio.wait_for(
+            _hydrate_cached_matching_venue_baselines(
+                cohort_rows, prop, selected_venue, cutoff
+            ),
+            timeout=1.25,
+        )
+    except (TimeoutError, aio.TimeoutError):
+        pass
     return {
         "version": "causal-evidence.v1",
         "provider": "api-football",
@@ -573,10 +710,10 @@ async def assemble_causal_evidence(
         "currentFixture": live_fixture if isinstance(live_fixture, list) else [],
         "market": live_odds if isinstance(live_odds, list) else [],
         "coverage": {
-            "targetHistory": "available" if target_rows else "UNKNOWN",
-            "opponentRoleCohort": "available" if cohort_rows else "UNKNOWN",
-            "fixture": "available" if isinstance(live_fixture, list) and live_fixture else "UNKNOWN",
-            "market": "available" if isinstance(live_odds, list) and live_odds else "UNKNOWN",
+            "targetHistory": "available" if target_rows else "not_loaded",
+            "opponentRoleCohort": "available" if cohort_rows else "not_loaded",
+            "fixture": "available" if isinstance(live_fixture, list) and live_fixture else "not_loaded",
+            "market": "available" if isinstance(live_odds, list) and live_odds else "not_loaded",
             "detailTagCounts": dict(Counter(
                 tag for row in [*target_rows, *cohort_rows]
                 for tag in ((row.get("fixtureEvidence") or {}).get("eventTags") or [])
