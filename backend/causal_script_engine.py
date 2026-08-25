@@ -363,10 +363,23 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     script = _script(prediction, venue, evidence)
     role_bucket = cohort["roleBucket"]
     chain = PROP_CHAINS.get(prop, f"role/zone → opportunity creation → {prop}")
-    projection = _num(prediction.get("projectedValue") if prediction.get("projectedValue") is not None else prediction.get("projection"))
+    projection = _num(
+        prediction.get("deterministicProjection")
+        if prediction.get("deterministicProjection") is not None
+        else prediction.get("projectedValue")
+        if prediction.get("projectedValue") is not None
+        else prediction.get("projection")
+    )
     line = _num(prediction.get("line") if prediction.get("line") is not None else request.get("line"))
     gap = abs(projection - line) if projection is not None and line is not None else None
-    recommendation = str(prediction.get("recommendation") or "").lower()
+    model_direction = str(
+        prediction.get("modelDirection")
+        or prediction.get("preCausalRecommendation")
+        or prediction.get("recommendation")
+        or ""
+    ).lower()
+    if model_direction not in {"over", "under"} and projection is not None and line is not None:
+        model_direction = "over" if projection > line else "under" if projection < line else ""
     # A verified position bucket (GK/CB/PIVOT) is usable role evidence even
     # when an exact lineup role string was not attached. Truly unknown position
     # remains conservative.
@@ -377,6 +390,12 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     mechanism_direction = (
         "over" if cohort["effect"] == "uplift" else "under"
         if cohort["effect"] == "suppression" else None
+    )
+    causal_direction = (
+        "MORE" if mechanism_direction == "over" else
+        "LESS" if mechanism_direction == "under" else
+        "EVIDENCE INCOMPLETE" if cohort["status"] != "available" else
+        "NEUTRAL"
     )
     clean_exact_role_n = int(cohort.get("cleanSampleSize") or 0)
     script_direction = _script_direction(prop, script["classification"])
@@ -412,12 +431,27 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
         decision = "PASS"
         reason = f"CAUSAL EVIDENCE INCOMPLETE: {missing_reason}; recommendation withheld."
         verdict = "DISTORTED SAMPLE" if distorted_dominant else "EVIDENCE INCOMPLETE"
-    elif mechanism_edge and ((recommendation == "under" and cohort["effect"] == "uplift") or (recommendation == "over" and cohort["effect"] == "suppression")):
-        decision, reason = "REJECT", "CAUSAL CONTRADICTION: today's opponent-created exact-role workload conflicts with the RP direction."
+    elif mechanism_edge and (
+        (model_direction == "under" and cohort["effect"] == "uplift")
+        or (model_direction == "over" and cohort["effect"] == "suppression")
+    ):
+        decision, reason = "REJECT", (
+            f"MODEL/CAUSAL DISAGREEMENT: model {model_direction.upper()} "
+            f"conflicts with causal {causal_direction} workload evidence."
+        )
         verdict = "CAUSAL CONTRADICTION"
-    elif mechanism_edge:
-        decision, reason = "CONFIRM", "MECHANISM EDGE: clean exact-role opponent workload supports the RP direction."
+    elif mechanism_edge and model_direction == mechanism_direction:
+        decision, reason = "CONFIRM", (
+            f"MECHANISM EDGE: clean exact-role opponent workload supports "
+            f"the model {model_direction.upper()} direction."
+        )
         verdict = "CAUSAL CONFIRM" if cohort["effect"] != "neutral" else "MECHANISM EDGE"
+    elif mechanism_edge:
+        decision, reason = "PASS", (
+            "CAUSAL EVIDENCE INCOMPLETE: a deterministic model direction "
+            "was not available for comparison; recommendation withheld."
+        )
+        verdict = "EVIDENCE INCOMPLETE"
     else:
         decision = "PASS"
         reason = "NO MECHANISM EDGE: validated exact-role workload is neutral for this line."
@@ -449,6 +483,9 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
             "weighted": True,
         },
         "opponentRoleCohort": cohort,
+        "modelProjection": projection,
+        "modelDirection": model_direction.upper() or None,
+        "causalDirection": causal_direction,
         "scoreStateBranches": _branches(prop, role_bucket, script["classification"]),
         "causalVerdict": verdict,
         "corroboration": {
@@ -466,8 +503,8 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
         "recommendationGate": {
             "decision": decision,
             "reason": reason,
-            "rpRecommendation": recommendation or "not_set",
-            "wouldRecommendation": recommendation if decision not in {"PASS", "REJECT"} else "PASS",
+            "rpRecommendation": model_direction or "not_set",
+            "wouldRecommendation": model_direction if decision not in {"PASS", "REJECT"} else "PASS",
             "productionInfluence": "active_pass_guard",
             "replayValidated": False,
             "strongestOppositeCase": (

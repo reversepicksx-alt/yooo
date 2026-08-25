@@ -17854,6 +17854,26 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         # before a recommendation crosses the persistence/UI boundary. It can
         # only downgrade to PASS: it never invents a counter-projection.
         if str(prediction.get("sport") or "soccer").lower() == "soccer":
+            # Keep the finalized deterministic model result immutable and
+            # visible after causal or safety gates change the final action.
+            _model_projection = prediction.get("projectedValue")
+            if _model_projection is None:
+                _model_projection = prediction.get("projection")
+            try:
+                _model_projection_number = float(_model_projection)
+                _model_line_number = float(prediction.get("line"))
+                _model_direction = (
+                    "OVER" if _model_projection_number > _model_line_number
+                    else "UNDER" if _model_projection_number < _model_line_number
+                    else None
+                )
+            except (TypeError, ValueError):
+                _model_direction = None
+            if _model_direction is None:
+                _candidate_direction = str(prediction.get("recommendation") or "").upper()
+                _model_direction = _candidate_direction if _candidate_direction in {"OVER", "UNDER"} else None
+            prediction["deterministicProjection"] = _model_projection
+            prediction["modelDirection"] = _model_direction
             _causal_context = {
                 "opponent_name": prediction.get("opponentName") or req.opponentName,
                 "venue": prediction.get("resolvedVenue") or req.venue,
@@ -17899,12 +17919,22 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     float(prediction.get("confidenceScore") or 70), 69
                 )
             prediction["causalSummary"] = {
+                "modelProjection": _causal_packet.get("modelProjection"),
+                "modelDirection": _causal_packet.get("modelDirection"),
+                "causalDirection": _causal_packet.get("causalDirection"),
                 "verdict": _causal_packet.get("causalVerdict"),
                 "script": (_causal_packet.get("script") or {}).get("classification"),
                 "halfLife": (_causal_packet.get("script") or {}).get("halfLife"),
                 "gateDecision": (_causal_packet.get("recommendationGate") or {}).get("decision"),
                 "reason": (_causal_packet.get("recommendationGate") or {}).get("reason"),
                 "coverage": (_causal_packet.get("evidence") or {}).get("coverage"),
+                "workloadAverage": (_causal_packet.get("opponentRoleCohort") or {}).get("workloadAverage"),
+                "normalMatchingVenueAverage": (_causal_packet.get("opponentRoleCohort") or {}).get("normalMatchingVenueAverage"),
+                "opponentRoleEffect": (_causal_packet.get("opponentRoleCohort") or {}).get("opponentRoleEffect"),
+                "effect": (_causal_packet.get("opponentRoleCohort") or {}).get("effect"),
+                "sampleSize": (_causal_packet.get("opponentRoleCohort") or {}).get("sampleSize"),
+                "cleanSampleSize": (_causal_packet.get("opponentRoleCohort") or {}).get("cleanSampleSize"),
+                "sampleStrength": (_causal_packet.get("corroboration") or {}).get("sampleStrength"),
             }
             prediction.setdefault("tacticalContext", {})["causalSummary"] = prediction["causalSummary"]
             _causal_gate = prediction["causalScript"].get("recommendationGate") or {}
@@ -17935,21 +17965,25 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             # rate as audit context, but never let it masquerade as the causal
             # reason the recommendation was withheld.
             if _causal_gate.get("decision") in {"PASS", "REJECT"}:
-                _causal_leaning = (
-                    prediction.get("preCausalRecommendation")
-                    or prediction.get("passLeaning")
-                    or prediction.get("recommendation")
-                    or "the deterministic side"
-                )
-                _causal_primary_reason = (
-                    f"Deterministic projection favored {str(_causal_leaning).upper()}, "
-                    f"but {_causal_gate.get('reason')}"
+                _causal_primary_reason = _causal_gate.get("reason") or (
+                    "MODEL/CAUSAL DISAGREEMENT: recommendation withheld."
                 )
                 prediction["passReason"] = _causal_primary_reason
                 prediction["edgeRatingReason"] = _causal_primary_reason
                 prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
                     f"CAUSAL WITHHOLD: {_causal_primary_reason}"
                 ]
+            prediction["causalSummary"]["finalRecommendation"] = str(
+                prediction.get("recommendation") or "PASS"
+            ).upper()
+            prediction["causalSummary"]["finalReason"] = (
+                prediction.get("passReason")
+                or (_causal_gate.get("reason") if isinstance(_causal_gate, dict) else None)
+            )
+            prediction["causalSummary"]["gates"] = {
+                "causal": _causal_gate.get("decision"),
+                "rollingSafety": prediction.get("recentPropSafety"),
+            }
         # Reconcile the evidence verdict with the final displayed direction.
         # Late safety/calibration gates can change OVER/UNDER; the cohort must
         # describe that final saved recommendation, without changing it.

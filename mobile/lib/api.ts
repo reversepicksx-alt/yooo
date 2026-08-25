@@ -691,6 +691,25 @@ export interface PossessionSampleRow {
   teamId?: number;
 }
 
+export interface CausalSummary {
+  modelProjection?: number | null;
+  modelDirection?: string | null;
+  causalDirection?: string | null;
+  verdict?: string | null;
+  gateDecision?: string | null;
+  reason?: string | null;
+  finalRecommendation?: string | null;
+  finalReason?: string | null;
+  workloadAverage?: number | null;
+  normalMatchingVenueAverage?: number | null;
+  opponentRoleEffect?: number | null;
+  effect?: string | null;
+  sampleSize?: number | null;
+  cleanSampleSize?: number | null;
+  sampleStrength?: string | null;
+  gates?: Record<string, unknown>;
+}
+
 export interface PredictionResult {
   playerName?: string;
   teamName?: string;
@@ -699,6 +718,12 @@ export interface PredictionResult {
   playerIsHome?: boolean;
   line?: number;
   projection?: number;
+  deterministicProjection?: number | null;
+  modelDirection?: string | null;
+  causalDirection?: string | null;
+  causalSummary?: CausalSummary;
+  causalScript?: Record<string, unknown>;
+  recentPropSafety?: Record<string, unknown>;
   confidence?: number;
   rawConfidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
@@ -2167,6 +2192,12 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     venue: (raw as any).venue || (raw as any).playerVenue || undefined,
     playerIsHome: (raw as any).playerIsHome ?? (raw as any).matchupOverview?.playerIsHome,
     projection: raw.projectedValue,
+    deterministicProjection: (raw as any).deterministicProjection ?? raw.projectedValue ?? (raw as any).projection ?? null,
+    modelDirection: (raw as any).modelDirection ?? (raw as any).causalSummary?.modelDirection ?? null,
+    causalDirection: (raw as any).causalDirection ?? (raw as any).causalSummary?.causalDirection ?? null,
+    causalSummary: (raw as any).causalSummary ?? undefined,
+    causalScript: (raw as any).causalScript ?? undefined,
+    recentPropSafety: (raw as any).recentPropSafety ?? undefined,
     confidence: raw.confidenceScore,
     rawConfidence: raw.rawConfidence ?? raw.confidenceScore,
     recommendation: rec,
@@ -2409,6 +2440,12 @@ export interface Pick {
   confidence?: number;
   confidenceLevel?: string;
   projectedValue?: number;
+  deterministicProjection?: number | null;
+  modelDirection?: string | null;
+  causalDirection?: string | null;
+  causalSummary?: CausalSummary;
+  causalScript?: Record<string, unknown>;
+  recentPropSafety?: Record<string, unknown>;
   status?: string;
   result?: string;
   settlementReview?: {
@@ -2578,6 +2615,12 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     line: (p.line as number) || 0,
     // normalize projectedValue → projection
     projection: (p.projectedValue as number) ?? (p.projection as number),
+    deterministicProjection: (p.deterministicProjection as number) ?? (p.projectedValue as number) ?? (p.projection as number) ?? null,
+    modelDirection: (p.modelDirection as string) ?? ((p.causalSummary as any)?.modelDirection as string) ?? null,
+    causalDirection: (p.causalDirection as string) ?? ((p.causalSummary as any)?.causalDirection as string) ?? null,
+    causalSummary: (p.causalSummary as CausalSummary) || undefined,
+    causalScript: (p.causalScript as Record<string, unknown>) || undefined,
+    recentPropSafety: (p.recentPropSafety as Record<string, unknown>) || undefined,
     // normalize to uppercase OVER/UNDER
     recommendation: ((p.recommendation as string) || '').toUpperCase() || undefined,
     passLeaning: (p.passLeaning as string) || null,

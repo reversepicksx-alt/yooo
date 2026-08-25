@@ -207,12 +207,26 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "safetyRating": prediction.get("safetyRating"),
             "historicalRate": prediction.get("propHistoricalRate"),
             "historicalSample": prediction.get("propHistoricalN"),
+            "deterministicProjection": prediction.get("deterministicProjection"),
+            "modelDirection": prediction.get("modelDirection"),
+            "finalReason": prediction.get("passReason"),
         },
         "causalSummary": prediction.get("causalSummary") or (
             {
+                "modelProjection": (prediction.get("causalScript") or {}).get("modelProjection"),
+                "modelDirection": (prediction.get("causalScript") or {}).get("modelDirection"),
+                "causalDirection": (prediction.get("causalScript") or {}).get("causalDirection"),
                 "verdict": (prediction.get("causalScript") or {}).get("causalVerdict"),
                 "script": ((prediction.get("causalScript") or {}).get("script") or {}).get("classification"),
                 "gateDecision": ((prediction.get("causalScript") or {}).get("recommendationGate") or {}).get("decision"),
+                "reason": ((prediction.get("causalScript") or {}).get("recommendationGate") or {}).get("reason"),
+                "workloadAverage": ((prediction.get("causalScript") or {}).get("opponentRoleCohort") or {}).get("workloadAverage"),
+                "normalMatchingVenueAverage": ((prediction.get("causalScript") or {}).get("opponentRoleCohort") or {}).get("normalMatchingVenueAverage"),
+                "opponentRoleEffect": ((prediction.get("causalScript") or {}).get("opponentRoleCohort") or {}).get("opponentRoleEffect"),
+                "effect": ((prediction.get("causalScript") or {}).get("opponentRoleCohort") or {}).get("effect"),
+                "sampleSize": ((prediction.get("causalScript") or {}).get("opponentRoleCohort") or {}).get("sampleSize"),
+                "cleanSampleSize": ((prediction.get("causalScript") or {}).get("opponentRoleCohort") or {}).get("cleanSampleSize"),
+                "sampleStrength": ((prediction.get("causalScript") or {}).get("corroboration") or {}).get("sampleStrength"),
             }
             if isinstance(prediction.get("causalScript"), dict) else {}
         ),

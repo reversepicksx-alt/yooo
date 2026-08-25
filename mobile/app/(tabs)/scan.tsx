@@ -26,6 +26,7 @@ import { CompactAnalysisBars, getTacticalRead } from '@/components/CompactAnalys
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 import {
+  renderModelCausalDecision,
   renderTacticalContext,
   renderTacticalIntelligence,
 } from '@/components/AnalysisCards';
@@ -3667,6 +3668,7 @@ export default function ScanScreen() {
               {/* ─── GROUNDED PLAYER + MATCH TACTICAL READ ─── */}
               {prediction.sport === 'soccer' && (
                 <>
+                   {renderModelCausalDecision(prediction as any, prediction as any)}
                   {renderTacticalIntelligence(prediction as any)}
                   {renderTacticalContext(prediction as any)}
                 </>

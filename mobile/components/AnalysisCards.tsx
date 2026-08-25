@@ -355,6 +355,108 @@ export function renderMatchupPossession(
   );
 }
 
+/**
+ * Subscriber-facing model/causal decision card. It deliberately displays the
+ * deterministic projection and causal workload as separate evidence layers.
+ */
+export function renderModelCausalDecision(
+  data: Record<string, unknown> | null,
+  pick: Record<string, unknown> | null,
+) {
+  const source = { ...(pick ?? {}), ...(data ?? {}) } as any;
+  const causal = source.causalScript ?? {};
+  const summary = source.causalSummary ?? {};
+  const cohort = causal.opponentRoleCohort ?? {};
+  const gate = causal.recommendationGate ?? {};
+  const modelProjection = Number(
+    source.deterministicProjection ?? summary.modelProjection ?? causal.modelProjection
+      ?? source.projectedValue ?? source.projection,
+  );
+  const line = Number(source.line);
+  const modelDirection = String(
+    source.modelDirection ?? summary.modelDirection ?? causal.modelDirection ?? gate.rpRecommendation ?? '',
+  ).toUpperCase();
+  const causalDirection = String(
+    source.causalDirection ?? summary.causalDirection ?? causal.causalDirection ?? '',
+  ).toUpperCase();
+  const verdict = String(summary.verdict ?? causal.causalVerdict ?? '');
+  const gateDecision = String(summary.gateDecision ?? gate.decision ?? '');
+  const workload = summary.workloadAverage ?? cohort.workloadAverage;
+  const baseline = summary.normalMatchingVenueAverage ?? cohort.normalMatchingVenueAverage;
+  const effect = summary.opponentRoleEffect ?? cohort.opponentRoleEffect;
+  const effectLabel = String(summary.effect ?? cohort.effect ?? '').toUpperCase();
+  const sampleSize = summary.cleanSampleSize ?? cohort.cleanSampleSize ?? summary.sampleSize ?? cohort.sampleSize;
+  const sampleStrength = String(summary.sampleStrength ?? causal.corroboration?.sampleStrength ?? '');
+  const finalRecommendation = String(
+    summary.finalRecommendation ?? source.recommendation ?? 'PASS',
+  ).toUpperCase();
+  const finalReason = String(
+    summary.finalReason ?? source.passReason ?? summary.reason ?? gate.reason ?? '',
+  );
+  const safety = source.recentPropSafety ?? summary.gates?.rollingSafety;
+  const hasCausalData = Boolean(
+    verdict || causalDirection || workload != null || gateDecision || summary.reason,
+  );
+  if (!hasCausalData) return null;
+
+  const conflict = verdict === 'CAUSAL CONTRADICTION'
+    || (modelDirection === 'UNDER' && causalDirection === 'MORE')
+    || (modelDirection === 'OVER' && causalDirection === 'LESS');
+  const incomplete = verdict === 'EVIDENCE INCOMPLETE' || causalDirection === 'EVIDENCE INCOMPLETE';
+  const accent = conflict ? '#F59E0B' : incomplete ? '#94A3B8' : Colors.success;
+  const finalLabel = conflict
+    ? `PASS — MODEL ${modelDirection || 'EDGE'} / CAUSAL ${causalDirection || 'CONFLICT'}`
+    : finalRecommendation === 'PASS'
+      ? 'PASS — EVIDENCE GATE ACTIVE'
+      : `${finalRecommendation} — MODEL & CAUSAL CHECK`;
+  const metric = (label: string, value: string | null, key: string) => value ? (
+    <View key={key} style={{ minWidth: 92, flexGrow: 1, paddingVertical: 8, paddingHorizontal: 9, borderRadius: 7, backgroundColor: '#0B1220', borderWidth: 1, borderColor: Colors.borderSubtle }}>
+      <Text style={{ color: Colors.textTertiary, fontSize: 8, fontWeight: '800', letterSpacing: 0.8 }}>{label}</Text>
+      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '900', marginTop: 2 }}>{value}</Text>
+    </View>
+  ) : null;
+
+  return (
+    <View style={{ marginHorizontal: 14, marginTop: 10, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: `${accent}88`, backgroundColor: `${accent}12` }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+        <Ionicons name={conflict ? 'git-compare-outline' : incomplete ? 'information-circle-outline' : 'shield-checkmark-outline'} size={16} color={accent} />
+        <Text style={{ color: accent, fontSize: 9, fontWeight: '900', letterSpacing: 1 }}>MODEL VS CAUSAL EVIDENCE</Text>
+        {sampleStrength ? <Text style={{ marginLeft: 'auto', color: Colors.textSecondary, fontSize: 9, fontWeight: '800' }}>{sampleStrength.toUpperCase()}</Text> : null}
+      </View>
+      <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900', marginTop: 7 }}>{finalLabel}</Text>
+      <Text style={{ color: Colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>
+        Model projection and causal workload are separate inputs. Causal workload never replaces the model projection.
+      </Text>
+      <View style={{ flexDirection: 'row', gap: 7, marginTop: 10 }}>
+        {metric('YOUR LINE', Number.isFinite(line) ? line.toFixed(1) : null, 'line')}
+        {metric('MODEL PROJECTION', Number.isFinite(modelProjection) ? modelProjection.toFixed(1) : null, 'projection')}
+      </View>
+      <View style={{ flexDirection: 'row', gap: 7, marginTop: 7 }}>
+        {metric('MODEL DIRECTION', modelDirection || null, 'model')}
+        {metric('CAUSAL DIRECTION', causalDirection || (incomplete ? 'INCOMPLETE' : null), 'causal')}
+      </View>
+      {(workload != null || baseline != null || effect != null || sampleSize != null) && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 7 }}>
+          {metric('ROLE WORKLOAD', workload != null ? Number(workload).toFixed(2) : null, 'workload')}
+          {metric('SAME-VENUE BASELINE', baseline != null ? Number(baseline).toFixed(2) : null, 'baseline')}
+          {metric('OPPONENT EFFECT', effect != null ? `${Number(effect) >= 1 ? '+' : ''}${((Number(effect) - 1) * 100).toFixed(1)}%` : effectLabel || null, 'effect')}
+          {metric('EXACT-ROLE SAMPLE', sampleSize != null ? String(sampleSize) : null, 'sample')}
+        </View>
+      )}
+      <Text style={{ color: accent, fontSize: 11, fontWeight: '800', lineHeight: 16, marginTop: 10 }}>
+        {incomplete
+          ? 'CAUSAL EVIDENCE INCOMPLETE — no causal direction is inferred without a verified comparison baseline.'
+          : finalReason || verdict.replace(/_/g, ' ')}
+      </Text>
+      {safety ? (
+        <Text style={{ color: Colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 5 }}>
+          Independent rolling safety control: {String((safety as any).action ?? 'active').replace(/_/g, ' ')}.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 /** Customer-facing tactical verdict — one coherent player/prop read. */
 export function renderTacticalVerdict(
   data: Record<string, unknown> | null,

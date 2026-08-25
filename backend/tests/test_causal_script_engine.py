@@ -43,6 +43,10 @@ def test_clean_exact_role_uplift_rejects_conflicting_under():
     })
     assert packet["opponentRoleCohort"]["opponentRoleEffect"] == 1.75
     assert packet["recommendationGate"]["decision"] == "REJECT"
+    assert packet["modelDirection"] == "UNDER"
+    assert packet["causalDirection"] == "MORE"
+    assert packet["causalVerdict"] == "CAUSAL CONTRADICTION"
+    assert packet["modelProjection"] == 23.5
 
 
 def test_thin_edge_without_exact_role_is_pass():
@@ -164,3 +168,21 @@ def test_shot_stopper_role_is_admitted_to_goalkeeper_cohort():
     assert packet["opponentRoleCohort"]["sampleSize"] == 3
     assert packet["opponentRoleCohort"]["roleBucket"] == "GK"
     assert packet["causalVerdict"] == "CAUSAL CONFIRM"
+
+
+def test_incomplete_goalkeeper_saves_does_not_invent_causal_direction():
+    rows = [
+        {"role": "Shot-Stopper", "position": "GK", "venue": "home",
+         "goals_saves": 3, "minutes": 90}
+        for _ in range(3)
+    ]
+    packet = build_causal_script_packet({
+        "sport": "soccer", "playerName": "Mailson",
+        "propType": "goalie_saves", "playerPosition": "GK",
+        "recommendation": "over", "projection": 4.0, "line": 2.5,
+        "venue": "home", "positionComparison": {"players": rows},
+        "tacticalContext": {"expectedPossession": 40, "opponentExpectedPossession": 60},
+    })
+    assert packet["opponentRoleCohort"]["workloadAverage"] == 3.0
+    assert packet["causalDirection"] == "EVIDENCE INCOMPLETE"
+    assert packet["causalVerdict"] == "EVIDENCE INCOMPLETE"

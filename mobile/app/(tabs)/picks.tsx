@@ -38,7 +38,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { CompactAnalysisBars } from '@/components/CompactAnalysisBars';
-import { renderTacticalContext } from '@/components/AnalysisCards';
+import { renderModelCausalDecision, renderTacticalContext } from '@/components/AnalysisCards';
 import EventEvidenceCard from '@/components/EventEvidenceCard';
 import SameRoleEvidenceCard from '@/components/SameRoleEvidenceCard';
 
@@ -2058,6 +2058,10 @@ export default function PicksScreen() {
               ...(analysisModal?.pick as any),
               ...(analysisModal?.data as any),
             })}
+            {!analysisModal?.loading && renderModelCausalDecision(
+              (analysisModal?.data as Record<string, unknown> | null) ?? null,
+              (analysisModal?.pick as unknown as Record<string, unknown> | null) ?? null,
+            )}
             {!analysisModal?.loading && capturedModalFactors.length > 0 && renderEvidenceSummary({
               ...(analysisModal?.pick as any),
               ...(analysisModal?.data as any),
