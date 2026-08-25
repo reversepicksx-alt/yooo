@@ -8,17 +8,83 @@ measured zero.
 from __future__ import annotations
 
 import asyncio as aio
+import hashlib
+import json
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-from utils import api_football_request, is_quota_exhausted, priority_api_football_request
+from config import db
+from utils import (
+    api_football_request,
+    api_sports_soft_budget_available,
+    is_quota_exhausted,
+    priority_api_football_request,
+)
 from tactical_evidence import infer_grid_position, normalize_observed_position
 
 MAX_TARGET_MATCHES = 20
 MAX_OPPONENT_MATCHES = 20
 _DETAIL_TIMEOUT_SECONDS = 18.0
 _DETAIL_CONCURRENCY = 4
+_REPLAY_MINIMUM_SAMPLES = 3
+_PRIORITY_REPLAY_KEYS = (
+    "petrovic-1557374",
+    "ferraresi-1492340",
+    "moncayola-1570350",
+)
+
+
+async def _priority_replays_pending() -> bool:
+    """Prevent ordinary causal fan-out from overtaking the audited replay queue."""
+    try:
+        completed = await db.causal_replay_packets.count_documents(
+            {"_id": {"$in": list(_PRIORITY_REPLAY_KEYS)}, "status": "complete"}
+        )
+        return completed < len(_PRIORITY_REPLAY_KEYS)
+    except Exception:
+        # A storage outage does not authorize optional provider enrichment.
+        return True
+
+
+async def _permanent_provider_request(
+    endpoint: str, params: dict[str, Any], *, priority: bool = False
+) -> list[dict[str, Any]]:
+    """Cache successful causal source responses permanently by exact request."""
+    raw_key = f"{endpoint}|{json.dumps(params, sort_keys=True, default=str)}"
+    key = hashlib.sha256(raw_key.encode()).hexdigest()
+    try:
+        cached = await db.causal_provider_response_cache.find_one(
+            {"_k": key}, {"_id": 0, "response": 1}
+        )
+        if isinstance((cached or {}).get("response"), list):
+            return cached["response"]
+    except Exception:
+        # A cache outage must not become a provider call failure.
+        pass
+    if not api_sports_soft_budget_available():
+        return []
+    response = await (
+        priority_api_football_request(endpoint, params)
+        if priority else api_football_request(endpoint, params)
+    )
+    if isinstance(response, list) and response:
+        try:
+            await db.causal_provider_response_cache.update_one(
+                {"_k": key},
+                {"$set": {
+                    "_k": key,
+                    "endpoint": endpoint,
+                    "params": params,
+                    "response": response,
+                    "permanent": True,
+                    "cachedAt": datetime.now(timezone.utc),
+                }},
+                upsert=True,
+            )
+        except Exception:
+            pass
+    return response if isinstance(response, list) else []
 
 
 def _fixture_id(row: dict[str, Any]) -> int | None:
@@ -34,6 +100,17 @@ def _fixture_id(row: dict[str, Any]) -> int | None:
 
 def _row_date(row: dict[str, Any]) -> str:
     return str(row.get("date") or row.get("fixtureDate") or "")[:25]
+
+
+def _venue_from_row(row: dict[str, Any]) -> str | None:
+    venue = str(row.get("venue") or "").strip().lower()
+    if venue in {"home", "away"}:
+        return venue
+    if row.get("isHome") is True:
+        return "home"
+    if row.get("isHome") is False:
+        return "away"
+    return None
 
 
 def _before_cutoff(row: dict[str, Any], cutoff: str | None) -> bool:
@@ -107,13 +184,13 @@ def _statistics_metadata(stats: list[dict[str, Any]], team_id: int | None) -> di
     return values
 
 
-async def _fixture_detail(fixture_id: int, team_id: int | None) -> tuple[int, dict[str, Any]]:
+async def _fixture_detail(fixture_id: int, team_id: int | None, *, priority: bool = False) -> tuple[int, dict[str, Any]]:
     """Fetch a fixture's observed post-match evidence for historical samples."""
     players, lineups, stats, events = await aio.gather(
-        api_football_request("fixtures/players", {"fixture": fixture_id}),
-        api_football_request("fixtures/lineups", {"fixture": fixture_id}),
-        api_football_request("fixtures/statistics", {"fixture": fixture_id}),
-        api_football_request("fixtures/events", {"fixture": fixture_id}),
+        _permanent_provider_request("fixtures/players", {"fixture": fixture_id}, priority=priority),
+        _permanent_provider_request("fixtures/lineups", {"fixture": fixture_id}, priority=priority),
+        _permanent_provider_request("fixtures/statistics", {"fixture": fixture_id}, priority=priority),
+        _permanent_provider_request("fixtures/events", {"fixture": fixture_id}, priority=priority),
         return_exceptions=True,
     )
     def usable(value: Any) -> list[dict[str, Any]]:
@@ -203,18 +280,22 @@ def _raw_history_fixture(raw: dict[str, Any], team_id: int) -> dict[str, Any] | 
     }
 
 
-async def _historical_fixture_rows(team_id: int | None, cutoff: str | None) -> list[dict[str, Any]]:
+async def _historical_fixture_rows(team_id: int | None, cutoff: str | None, *, priority: bool = False) -> list[dict[str, Any]]:
     if not team_id:
         return []
-    fixtures = await priority_api_football_request("fixtures", {"team": team_id, "last": MAX_TARGET_MATCHES + 1})
+    fixtures = await _permanent_provider_request(
+        "fixtures", {"team": team_id, "last": MAX_TARGET_MATCHES + 1}, priority=priority
+    )
     rows = [_raw_history_fixture(row, int(team_id)) for row in fixtures or []]
     return _sorted_limited([row for row in rows if row], MAX_TARGET_MATCHES, cutoff)
 
 
 async def _hydrate_target_history(
-    rows: list[dict[str, Any]], player_id: int | None
+    rows: list[dict[str, Any]], player_id: int | None, *, stop_after: int | None = None, priority: bool = False
 ) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
-    details = await _details_for_rows(rows, "teamId")
+    details = await _details_for_rows(
+        rows, "teamId", stop_after=stop_after, priority=priority
+    )
     hydrated = []
     for row in rows:
         detail = details.get(_fixture_id(row) or 0) or {}
@@ -234,9 +315,12 @@ async def _hydrate_target_history(
 
 
 async def _hydrate_opponent_cohort(
-    rows: list[dict[str, Any]], target_position: str | None, target_role: str | None, prop: str
+    rows: list[dict[str, Any]], target_position: str | None, target_role: str | None, prop: str,
+    *, stop_after: int | None = None, priority: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
-    details = await _details_for_rows(rows, "teamId")
+    details = await _details_for_rows(
+        rows, "teamId", stop_after=stop_after, priority=priority
+    )
     expected = str(target_position or "").upper()
     result: list[dict[str, Any]] = []
     for row in rows:
@@ -281,7 +365,9 @@ async def _hydrate_opponent_cohort(
     return result, details
 
 
-async def _details_for_rows(rows: list[dict[str, Any]], team_key: str) -> dict[int, dict[str, Any]]:
+async def _details_for_rows(
+    rows: list[dict[str, Any]], team_key: str, *, stop_after: int | None = None, priority: bool = False,
+) -> dict[int, dict[str, Any]]:
     sem = aio.Semaphore(_DETAIL_CONCURRENCY)
     provider_unavailable = aio.Event()
     fixture_team_pairs: dict[int, int | None] = {}
@@ -298,7 +384,7 @@ async def _details_for_rows(rows: list[dict[str, Any]], team_key: str) -> dict[i
                     "reason": "provider budget or quota unavailable",
                 }
             try:
-                key, detail = await _fixture_detail(fixture_id, team_id)
+                key, detail = await _fixture_detail(fixture_id, team_id, priority=priority)
                 # A skipped soft-budget request returns an empty list rather
                 # than raising. Stop queued detail fan-out after that first
                 # unmistakable all-empty packet instead of hammering the same
@@ -316,7 +402,13 @@ async def _details_for_rows(rows: list[dict[str, Any]], team_key: str) -> dict[i
                 provider_unavailable.set()
                 return fixture_id, {"coverage": "UNKNOWN", "error": type(error).__name__}
 
-    tasks = [limited(fid, tid) for fid, tid in fixture_team_pairs.items()]
+    pairs_to_fetch = list(fixture_team_pairs.items())
+    # Replay work is intentionally sequential and bounded. Once this many
+    # usable historical fixture packets are present, the caller evaluates the
+    # causal gate instead of spending budget completing an arbitrary 20-row set.
+    if stop_after:
+        pairs_to_fetch = pairs_to_fetch[:stop_after]
+    tasks = [limited(fid, tid) for fid, tid in pairs_to_fetch]
     try:
         pairs = await aio.wait_for(aio.gather(*tasks), timeout=_DETAIL_TIMEOUT_SECONDS)
     except (TimeoutError, aio.TimeoutError):
@@ -353,6 +445,31 @@ async def assemble_causal_evidence(
         context.get("fixture_date") or prediction.get("fixtureDate") or
         ((prediction.get("matchContext") or {}).get("date")) or ""
     )
+    replay_mode = bool(context.get("replay_mode"))
+    replay_priority = bool(context.get("replay_priority"))
+    selected_venue = str(context.get("venue") or prediction.get("resolvedVenue") or prediction.get("venue") or "").lower()
+    replay_stop_after = _REPLAY_MINIMUM_SAMPLES if replay_mode else None
+    if not replay_mode and await _priority_replays_pending():
+        return {
+            "version": "causal-evidence.v1",
+            "provider": "api-football",
+            "providerState": "priority_replays_pending",
+            "cutoff": cutoff or None,
+            "pregameOnly": True,
+            "targetHistory": [],
+            "opponentRoleCandidates": [],
+            "targetHistoryRequested": MAX_TARGET_MATCHES,
+            "opponentHistoryRequested": MAX_OPPONENT_MATCHES,
+            "targetHistoryReturned": 0,
+            "opponentHistoryReturned": 0,
+            "currentFixture": [],
+            "market": [],
+            "coverage": {
+                "targetHistory": "UNKNOWN",
+                "opponentRoleCohort": "UNKNOWN",
+                "reason": "Priority causal replay queue is completing before ordinary enrichment.",
+            },
+        }
     logs_packet = prediction.get("playerGameLogs") or {}
     target_rows = logs_packet.get("games") if isinstance(logs_packet, dict) else prediction.get("gameLogs")
     target_rows = _sorted_limited(target_rows or [], MAX_TARGET_MATCHES, cutoff)
@@ -362,6 +479,13 @@ async def assemble_causal_evidence(
         MAX_OPPONENT_MATCHES,
         cutoff,
     )
+    if replay_mode:
+        # Target rows must be matching-venue appearances. Corresponding
+        # opponent fixtures put the comparable player at that same venue.
+        target_rows = [row for row in target_rows if not selected_venue or _venue_from_row(row) == selected_venue]
+        cohort_rows = [row for row in cohort_rows if not selected_venue or _venue_from_row(row) == selected_venue]
+        target_rows = target_rows[:_REPLAY_MINIMUM_SAMPLES]
+        cohort_rows = cohort_rows[:_REPLAY_MINIMUM_SAMPLES]
     try:
         player_id = int(request.get("player_id") or prediction.get("playerId") or 0) or None
     except (TypeError, ValueError):
@@ -380,21 +504,37 @@ async def assemble_causal_evidence(
     target_details: dict[int, dict[str, Any]] = {}
     cohort_details: dict[int, dict[str, Any]] = {}
     if not is_quota_exhausted() and not target_rows:
-        raw_target_rows = await _historical_fixture_rows(team_id, cutoff)
-        target_rows, target_details = await _hydrate_target_history(raw_target_rows, player_id)
+        raw_target_rows = await _historical_fixture_rows(team_id, cutoff, priority=replay_priority)
+        if replay_mode:
+            raw_target_rows = [
+                row for row in raw_target_rows
+                if _venue_from_row(row) == selected_venue
+            ]
+        target_rows, target_details = await _hydrate_target_history(
+            raw_target_rows, player_id, stop_after=replay_stop_after, priority=replay_priority
+        )
     if not is_quota_exhausted() and not cohort_rows:
-        raw_opponent_rows = await _historical_fixture_rows(opponent_id, cutoff)
+        raw_opponent_rows = await _historical_fixture_rows(opponent_id, cutoff, priority=replay_priority)
+        if replay_mode:
+            opposite_venue = "away" if selected_venue == "home" else "home"
+            raw_opponent_rows = [
+                row for row in raw_opponent_rows
+                if _venue_from_row(row) == opposite_venue
+            ]
         cohort_rows, cohort_details = await _hydrate_opponent_cohort(
-            raw_opponent_rows, target_position, target_role, prop
+            raw_opponent_rows, target_position, target_role, prop,
+            stop_after=replay_stop_after, priority=replay_priority,
         )
     live_fixture_id = request.get("fixture_id") or prediction.get("fixtureId")
     live_fixture = []
     live_odds = []
-    if live_fixture_id and not is_quota_exhausted():
+    # Historical replays deliberately never read the target fixture object:
+    # it may now contain final score/result fields unavailable pre-kickoff.
+    if live_fixture_id and not replay_mode and not is_quota_exhausted():
         try:
             live_fixture, live_odds = await aio.gather(
-                priority_api_football_request("fixtures", {"id": live_fixture_id}),
-                priority_api_football_request("odds", {"fixture": live_fixture_id}),
+                _permanent_provider_request("fixtures", {"id": live_fixture_id}),
+                _permanent_provider_request("odds", {"fixture": live_fixture_id}),
                 return_exceptions=True,
             )
         except Exception:
@@ -405,8 +545,12 @@ async def assemble_causal_evidence(
     else:
         if not target_details or not cohort_details:
             fetched_target, fetched_cohort = await aio.gather(
-                _details_for_rows(target_rows, "teamId") if not target_details else aio.sleep(0, result=target_details),
-                _details_for_rows(cohort_rows, "teamId") if not cohort_details else aio.sleep(0, result=cohort_details),
+                _details_for_rows(
+                    target_rows, "teamId", stop_after=replay_stop_after, priority=replay_priority
+                ) if not target_details else aio.sleep(0, result=target_details),
+                _details_for_rows(
+                    cohort_rows, "teamId", stop_after=replay_stop_after, priority=replay_priority
+                ) if not cohort_details else aio.sleep(0, result=cohort_details),
             )
             target_details = target_details or fetched_target
             cohort_details = cohort_details or fetched_cohort
@@ -419,6 +563,7 @@ async def assemble_causal_evidence(
         "providerState": provider_state,
         "cutoff": cutoff or None,
         "pregameOnly": True,
+        "targetFixtureResultFieldsRead": False if replay_mode else None,
         "targetHistory": target_rows,
         "opponentRoleCandidates": cohort_rows,
         "targetHistoryRequested": MAX_TARGET_MATCHES,

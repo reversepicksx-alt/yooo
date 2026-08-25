@@ -219,6 +219,16 @@ def is_quota_exhausted() -> bool:
     return _quota_tripped()
 
 
+def api_sports_soft_budget_available() -> bool:
+    """Whether a non-essential provider job may spend another request today.
+
+    This deliberately does not use the priority context: replay jobs should run
+    first after reset, but they must still respect the shared daily budget.
+    """
+    _reset_daily_budget_if_needed()
+    return not _quota_tripped() and _daily_call_count < API_DAILY_SOFT_LIMIT
+
+
 async def breaker_midnight_sweep_loop():
     """Background loop that proactively clears a stale in-memory quota breaker.
 

@@ -229,6 +229,11 @@ async def _run_startup_tasks():
         )
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
+    # These three audited regression replays reserve the first causal
+    # enrichment work after API-Football's UTC reset. The loop is cache-first
+    # and exits at each supported gate verdict instead of bulk-prefetching.
+    from causal_replay_priority import causal_replay_priority_loop
+    asyncio.create_task(causal_replay_priority_loop())
     # These are the two hot authenticated reads behind My Picks. Creating them
     # at startup avoids a cold collection scan/sort on the first screen load.
     try:
@@ -248,6 +253,7 @@ async def _run_startup_tasks():
     # Create index for fixture stat cache (speeds up prediction pipeline)
     try:
         await db.fixture_player_cache.create_index("_k", unique=True)
+        await db.causal_provider_response_cache.create_index("_k", unique=True)
     except Exception as _idx_err:
         import logging
         logging.getLogger("server").warning(f"create_index skipped (Atlas transient): {_idx_err}")
