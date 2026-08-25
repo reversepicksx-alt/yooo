@@ -21,6 +21,12 @@ H2H evidence should remain a compact comparison strip rather than a second full-
 
 **How to apply:** Keep H2H height close to the bar content itself and use tap selection only where it adds information without restoring a large detail panel.
 
+Model-versus-causal evidence should use a flat left-accent section with underlined metric rows, not an enclosing card or grid of filled tiles.
+
+**Why:** The user explicitly rejected the box-within-box treatment because it reads like a dashboard widget and overwhelms the analysis on mobile.
+
+**How to apply:** Keep the decision hierarchy, labels, and provenance visible, but remove outer borders, rounded containers, background panels, and per-metric boxes. Let the evidence sit in the same continuous reading flow as tactical context.
+
 Recent Matches, player-history/model-source numbers, and H2H should share one bordered history card. When a fixture venue is known, the Recent Matches chart must show only that venue’s verified player matches, while the compact header may summarize both archive counts.
 
 **Why:** The user wants the selected home/away sample immediately visible without stacking separate history and H2H cards that push the useful bars below the fold.
