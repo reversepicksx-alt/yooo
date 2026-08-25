@@ -17879,6 +17879,17 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 evidence=_causal_evidence if isinstance(_causal_evidence, dict) else None,
             )
             _causal_packet = prediction["causalScript"]
+            _causal_corrob = _causal_packet.get("corroboration") or {}
+            # Context can make a three-row mechanism actionable, but never
+            # let that thin sample render as STRONG confidence.
+            if (
+                int(_causal_corrob.get("cleanExactRoleSamples") or 0) < 5
+                and str(prediction.get("confidenceLevel") or "").lower() in {"strong", "high"}
+            ):
+                prediction["confidenceLevel"] = "Medium"
+                prediction["confidenceScore"] = min(
+                    float(prediction.get("confidenceScore") or 70), 69
+                )
             prediction["causalSummary"] = {
                 "verdict": _causal_packet.get("causalVerdict"),
                 "script": (_causal_packet.get("script") or {}).get("classification"),

@@ -155,3 +155,4 @@
 - [JARVIS branding](jarvis-branding.md) — owner intelligence surfaces use JARVIS only; legacy names are compatibility-only and never user-facing.
 - [EAS TestFlight submission credential path](eas-testflight-credential-path.md) — the App Store Connect key may exist only as a workspace secret; materialize the configured local key path before submitting, never rebuild to resolve submission setup.
 - [Causal replay priority](causal-replay-priority.md) — audited replay fixtures reserve the post-reset API budget, use permanent cache-first evidence, and never read target-match result fields.
+- [Causal corroboration threshold](causal-corroboration-threshold.md) — three clean exact-role rows are provisional; flips need five rows or three plus aligned regime, venue, or player H2H evidence.

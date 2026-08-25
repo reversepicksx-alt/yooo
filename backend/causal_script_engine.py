@@ -293,6 +293,56 @@ def _branches(prop: str, role_bucket: str, script: str) -> dict:
     }
 
 
+def _script_direction(prop: str, script: str) -> str | None:
+    """Translate a script into a workload direction for the selected prop."""
+    if prop in {"passes", "pass_attempts", "key_passes"}:
+        if script.startswith("CONTROL"):
+            return "over"
+        if script.startswith(("SUPPRESSION", "SIEGE")):
+            return "under"
+    if prop in {"saves", "clearances", "tackles", "interceptions"}:
+        if script.startswith(("SUPPRESSION", "SIEGE")):
+            return "over"
+        if script.startswith("CONTROL"):
+            return "under"
+    return None
+
+
+def _sample_direction(rows: list[dict], prop: str, line: float | None) -> str | None:
+    if line is None or len(rows) < 3:
+        return None
+    values = [_value(row, prop) for row in rows]
+    values = [value for value in values if value is not None]
+    if len(values) < 3:
+        return None
+    average = sum(values) / len(values)
+    # A half-point cushion prevents a line-adjacent sample from pretending to
+    # be corroboration for a production flip.
+    if average >= line + 0.5:
+        return "over"
+    if average <= line - 0.5:
+        return "under"
+    return None
+
+
+def _h2h_direction(prediction: dict, line: float | None, prop: str) -> str | None:
+    h2h = prediction.get("h2hPlayerStats") or {}
+    try:
+        sample_size = int(h2h.get("sampleSize") or 0)
+    except (TypeError, ValueError):
+        sample_size = 0
+    if sample_size < 3 or line is None:
+        return None
+    average = _num(h2h.get("avgVsOpponent"))
+    if average is None:
+        return None
+    if average >= line + 0.5:
+        return "over"
+    if average <= line - 0.5:
+        return "under"
+    return None
+
+
 def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, Any] | None = None, context: dict[str, Any] | None = None, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
     request = request or {}
     context = context or {}
@@ -321,6 +371,30 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
     current_regime_unknown = script["status"] == "UNKNOWN"
     thin_edge = gap is not None and gap < 1.0
     mechanism_edge = cohort["effect"] in {"uplift", "suppression"} and cohort["status"] == "available"
+    mechanism_direction = (
+        "over" if cohort["effect"] == "uplift" else "under"
+        if cohort["effect"] == "suppression" else None
+    )
+    clean_exact_role_n = int(cohort.get("cleanSampleSize") or 0)
+    script_direction = _script_direction(prop, script["classification"])
+    venue_direction = _sample_direction(clean_logs, prop, line)
+    h2h_direction = _h2h_direction(prediction, line, prop)
+    corroboration = [
+        label for label, direction in (
+            ("current_regime", script_direction),
+            ("matching_venue_history", venue_direction),
+            ("player_h2h", h2h_direction),
+        )
+        if mechanism_direction and direction == mechanism_direction
+    ]
+    strong_corroboration = (
+        clean_exact_role_n >= 5
+        or clean_exact_role_n >= 3 and bool(corroboration)
+    )
+    # Three rows plus aligned context can authorize a production flip, but it
+    # is still provisional confidence. Only five clean exact-role rows may
+    # promote the sample itself to strong.
+    sample_strength = "strong" if clean_exact_role_n >= 5 else "provisional" if clean_exact_role_n >= 3 else "insufficient"
     distorted_dominant = bool(tagged_logs) and len(clean_logs) < max(2, len(tagged_logs) / 2)
     cohort_incomplete = cohort["status"] != "available"
     if uncertain_role or current_regime_unknown or thin_edge or cohort_incomplete:
@@ -364,6 +438,17 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
         "opponentRoleCohort": cohort,
         "scoreStateBranches": _branches(prop, role_bucket, script["classification"]),
         "causalVerdict": verdict,
+        "corroboration": {
+            "cleanExactRoleSamples": clean_exact_role_n,
+            "requiredForProductionFlip": "5 clean exact-role samples, or 3 plus aligned current-regime, matching-venue, or H2H evidence",
+            "alignedEvidence": corroboration,
+            "currentRegimeDirection": script_direction,
+            "matchingVenueDirection": venue_direction,
+            "h2hDirection": h2h_direction,
+            "sampleStrength": sample_strength,
+            "productionFlipEligible": bool(mechanism_edge and strong_corroboration),
+            "strongConfidenceAllowed": bool(clean_exact_role_n >= 5),
+        },
         "evidence": evidence or {"status": "UNKNOWN", "reason": "Evidence assembly did not run."},
         "recommendationGate": {
             "decision": decision,
