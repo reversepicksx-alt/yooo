@@ -410,15 +410,22 @@ export function renderModelCausalDecision(
     : rollingRate != null && rollingSample > 0
       ? `The ${calibrationDirection || 'selected'} direction has hit ${Number(rollingRate).toFixed(1)}% across ${rollingSample} system-confirmed saved picks in the rolling 45-day calibration window.`
       : 'Calibration is active, but there is not yet a verified system-confirmed saved-pick sample for this band.';
+  const rollingCalibrationMessage = rollingRate != null && rollingSample > 0
+    ? `Rolling 45-day control: ${String(((safety as any)?.direction ?? calibrationDirection) || 'SELECTED').toUpperCase()} has hit ${Number(rollingRate).toFixed(1)}% across ${rollingSample} system-confirmed saved picks.`
+    : null;
   const hasCausalData = Boolean(
-    verdict || causalDirection || workload != null || gateDecision || summary.reason,
+    verdict || causalDirection || workload != null || gateDecision || summary.reason
+      || source.recommendation != null || source.projectedValue != null,
   );
   if (!hasCausalData) return null;
 
   const conflict = verdict === 'CAUSAL CONTRADICTION'
     || (modelDirection === 'UNDER' && causalDirection === 'MORE')
     || (modelDirection === 'OVER' && causalDirection === 'LESS');
-  const incomplete = verdict === 'EVIDENCE INCOMPLETE' || causalDirection === 'EVIDENCE INCOMPLETE';
+  const incomplete = verdict === 'EVIDENCE INCOMPLETE'
+    || causalDirection === 'EVIDENCE INCOMPLETE'
+    || verdict === 'EVIDENCE INVALID'
+    || causalDirection === 'EVIDENCE INVALID';
   const accent = conflict ? '#F59E0B' : incomplete ? '#94A3B8' : Colors.success;
   const finalLabel = conflict
     ? `PASS — MODEL ${modelDirection || 'EDGE'} / CAUSAL ${causalDirection || 'CONFLICT'}`
@@ -472,6 +479,11 @@ export function renderModelCausalDecision(
       <Text style={{ color: Colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
         {calibrationMessage}
       </Text>
+      {rollingCalibrationMessage ? (
+        <Text style={{ color: Colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 3 }}>
+          {rollingCalibrationMessage}
+        </Text>
+      ) : null}
     </View>
   );
 }

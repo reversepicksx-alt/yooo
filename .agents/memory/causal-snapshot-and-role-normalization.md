@@ -20,3 +20,9 @@ Immutable causal cohorts must use a versioned identity and an atomic insert-only
 **Why:** Provider/cache timing changed Mailson's cohort across calls and allowed the target player into the comparison sample. A duplicate-key path that returned its local candidate could still make repeated calls disagree.
 
 **How to apply:** Include fixture/player/team/opponent/prop/line in the snapshot identity, normalize venue once from the target perspective, assert target IDs are absent and opponent identity/venue match, and fail closed as EVIDENCE INVALID/PASS on persistence or purity failure.
+
+Calibration evidence must be rendered as a concrete rate, sample count, and time/band context in the shared live and saved prediction card; a generic action label is not sufficient.
+
+**Why:** The backend was logging the rolling pass calibration and returning line-band hit rates, but the UI only showed “active”/“suppress” and hid the evidence users needed to understand a PASS.
+
+**How to apply:** Prefer line-deviation band evidence when available, show rolling direction calibration too when present, and state explicitly when no confirmed saved-pick sample exists.
