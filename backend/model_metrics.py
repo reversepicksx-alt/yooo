@@ -924,9 +924,14 @@ def walk_forward_trends(rows: list[dict]) -> dict:
     Runs walk_forward_replay independently on three date-filtered slices of the
     deduped corpus — all-time, last 30 days, and last 7 days — so the dashboard
     can show whether accuracy is improving or degrading after calibration changes.
+    It also returns eight chronological seven-day Brier buckets for the compact
+    dashboard sparkline.
 
     Each period returns a list of per-sport records with:
       sport, n, logLoss, brierScore, mae
+
+    Weekly buckets contain:
+      weekStart, weekEnd, n, bySport[{sport, n, brierScore}]
 
     The date filter uses the same sort key as _as_sortable_dt (settledAt preferred,
     falling back to timestamp).  Rows without either field fall into the "all" slice
@@ -991,12 +996,58 @@ def walk_forward_trends(rows: list[dict]) -> dict:
     wf_30d = walk_forward_replay(rows_30d) if rows_30d else {}
     wf_7d = walk_forward_replay(rows_7d) if rows_7d else {}
 
+    # Build fixed-width, chronological seven-day windows ending at `now`.
+    # Keeping empty windows in the response lets the dashboard show gaps rather
+    # than implying that an adjacent week's score applies to the missing week.
+    def _weekly_brier_summary(bucket_rows: list[dict]) -> list[dict]:
+        accumulators: dict[str, dict[str, float | int]] = defaultdict(
+            lambda: {"brier": 0.0, "n": 0}
+        )
+        for row in bucket_rows:
+            if not _is_scored_directional_row(row):
+                continue
+            confidence = _number(row.get("confidenceScore"))
+            if confidence is None:
+                continue
+            probability = max(0.0001, min(0.9999, confidence / 100.0))
+            outcome = 1 if row.get("result") == "hit" else 0
+            sport = str(row.get("sport") or "unknown")
+            accumulators[sport]["brier"] += (probability - outcome) ** 2
+            accumulators[sport]["n"] += 1
+        return [
+            {
+                "sport": sport,
+                "n": int(values["n"]),
+                "brierScore": round(float(values["brier"]) / int(values["n"]), 4),
+            }
+            for sport, values in sorted(accumulators.items())
+            if values["n"]
+        ]
+
+    weekly_buckets = []
+    weekly_start = now - timedelta(days=7 * 8)
+    for index in range(8):
+        bucket_start = weekly_start + timedelta(days=7 * index)
+        bucket_end = bucket_start + timedelta(days=7)
+        bucket_rows = []
+        for row in deduped:
+            row_dt = _parse_row_dt(row)
+            if row_dt is not None and bucket_start <= row_dt < bucket_end:
+                bucket_rows.append(row)
+        weekly_buckets.append({
+            "weekStart": bucket_start.date().isoformat(),
+            "weekEnd": bucket_end.date().isoformat(),
+            "n": len(bucket_rows),
+            "bySport": _weekly_brier_summary(bucket_rows),
+        })
+
     return {
         "periods": {
             "all": _sport_summary(wf_all),
             "30d": _sport_summary(wf_30d),
             "7d": _sport_summary(wf_7d),
         },
+        "weeklyBuckets": weekly_buckets,
         "dateRange": {
             "all": wf_all.get("dateRange"),
             "30d": wf_30d.get("dateRange") if wf_30d else None,

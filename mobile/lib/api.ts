@@ -3326,6 +3326,12 @@ export interface AnalyticsData {
         '30d': Array<{ sport: string; n: number; logLoss: number | null; brierScore: number | null; mae: number | null }>;
         '7d': Array<{ sport: string; n: number; logLoss: number | null; brierScore: number | null; mae: number | null }>;
       };
+      weeklyBuckets: Array<{
+        weekStart: string;
+        weekEnd: string;
+        n: number;
+        bySport: Array<{ sport: string; n: number; brierScore: number | null }>;
+      }>;
       n: { all: number; '30d': number; '7d': number };
     };
   };

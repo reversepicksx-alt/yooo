@@ -849,3 +849,60 @@ def test_walk_forward_trends_mae_is_populated_when_actual_and_projected_present(
     # MAE must be a positive finite number when both values are present
     assert mlb_entry["mae"] is not None
     assert mlb_entry["mae"] > 0
+
+
+def test_walk_forward_trends_returns_eight_chronological_weekly_brier_buckets():
+    rows = [
+        _trends_row(1, sport="soccer", result="hit", confidence=70, days_ago=3),
+        _trends_row(2, sport="soccer", result="miss", confidence=70, days_ago=10),
+        _trends_row(3, sport="mlb", result="hit", confidence=60, days_ago=17),
+        _trends_row(4, sport="soccer", result="hit", confidence=70, days_ago=60),
+    ]
+
+    trends = walk_forward_trends(rows)
+    buckets = trends["weeklyBuckets"]
+
+    assert len(buckets) == 8
+    assert [bucket["weekStart"] for bucket in buckets] == sorted(
+        bucket["weekStart"] for bucket in buckets
+    )
+    assert all(bucket["weekEnd"] > bucket["weekStart"] for bucket in buckets)
+    assert sum(bucket["n"] for bucket in buckets) == 3
+
+    soccer_points = [
+        row
+        for bucket in buckets
+        for row in bucket["bySport"]
+        if row["sport"] == "soccer"
+    ]
+    mlb_points = [
+        row
+        for bucket in buckets
+        for row in bucket["bySport"]
+        if row["sport"] == "mlb"
+    ]
+    assert len(soccer_points) == 2
+    assert len(mlb_points) == 1
+    assert all(point["n"] == 1 for point in soccer_points + mlb_points)
+    assert soccer_points[0]["brierScore"] == round((0.7 - 0) ** 2, 4)
+    assert soccer_points[1]["brierScore"] == round((0.7 - 1) ** 2, 4)
+
+
+def test_walk_forward_trends_weekly_brier_buckets_deduplicate_saves():
+    base = _trends_row(1, sport="soccer", result="hit", confidence=65, days_ago=3)
+    duplicate = dict(
+        base,
+        trackingId="trk-soccer-1b",
+        settledAt=(datetime.now(timezone.utc) - timedelta(days=3, hours=1)).isoformat(),
+    )
+
+    trends = walk_forward_trends([base, duplicate])
+    bucket_rows = [
+        row
+        for bucket in trends["weeklyBuckets"]
+        for row in bucket["bySport"]
+        if row["sport"] == "soccer"
+    ]
+
+    assert len(bucket_rows) == 1
+    assert bucket_rows[0]["n"] == 1

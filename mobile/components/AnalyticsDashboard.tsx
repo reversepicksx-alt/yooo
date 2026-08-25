@@ -1071,6 +1071,7 @@ export default function AnalyticsDashboard({
                         <Text style={[s.trendTableCell, s.trendTableCellNum]}>30D</Text>
                         <Text style={[s.trendTableCell, s.trendTableCellNum]}>7D</Text>
                         <Text style={[s.trendTableCell, s.trendTableCellNum]}>ΔALL→7D</Text>
+                         <Text style={[s.trendTableCell, s.trendTableCellTrend]}>8W</Text>
                       </View>
                       {sports.map(sport => {
                         const allRow = allMap[sport];
@@ -1080,6 +1081,43 @@ export default function AnalyticsDashboard({
                         const brier30 = row30?.brierScore ?? null;
                         const brier7 = row7?.brierScore ?? null;
                         const delta = (brier7 != null && allBrier != null) ? brier7 - allBrier : null;
+                         const weekly = (trends.weeklyBuckets ?? [])
+                           .map(bucket => ({
+                             weekStart: bucket.weekStart,
+                             brierScore: bucket.bySport.find(row => row.sport === sport)?.brierScore ?? null,
+                           }));
+                         const observedWeekly = weekly.filter(point => point.brierScore != null);
+                         const sparklineWidth = 68;
+                         const sparklineHeight = 24;
+                         const sparklinePadding = 3;
+                         const sparklineValues = observedWeekly.map(point => point.brierScore as number);
+                         const sparklineMin = sparklineValues.length
+                           ? Math.min(...sparklineValues)
+                           : 0;
+                         const sparklineMax = sparklineValues.length
+                           ? Math.max(...sparklineValues)
+                           : 1;
+                         const sparklineRange = Math.max(sparklineMax - sparklineMin, 0.04);
+                         const sparklinePoints = weekly.flatMap((point, index) => {
+                           const brierScore = point.brierScore;
+                           if (brierScore == null) return [];
+                           const x = weekly.length > 1
+                             ? sparklinePadding + (index / (weekly.length - 1)) * (sparklineWidth - sparklinePadding * 2)
+                             : sparklineWidth / 2;
+                           const y = sparklineHeight - sparklinePadding -
+                             ((brierScore - sparklineMin) / sparklineRange) *
+                             (sparklineHeight - sparklinePadding * 2);
+                           return [{ x, y, weekStart: point.weekStart, brierScore }];
+                         });
+                         const sparklinePath = sparklinePoints
+                           .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+                           .join(' ');
+                         const sparklinePointColor = (value: number) => {
+                           if (allBrier == null) return Colors.textTertiary;
+                           if (value < allBrier - 0.01) return Colors.success;
+                           if (value > allBrier + 0.01) return Colors.error;
+                           return Colors.textSecondary;
+                         };
                         return (
                           <View key={sport} style={s.trendTableRow}>
                             <Text style={[s.trendTableCell, s.trendTableCellSport, { color: Colors.text }]}>
@@ -1100,6 +1138,33 @@ export default function AnalyticsDashboard({
                             }]}>
                               {delta != null ? (delta > 0 ? '+' : '') + delta.toFixed(3) : '—'}
                             </Text>
+                             <View style={s.trendTableCellTrend}>
+                               {sparklinePoints.length > 0 ? (
+                                 <Svg width={sparklineWidth} height={sparklineHeight}>
+                                   {sparklinePath ? (
+                                     <Path
+                                       d={sparklinePath}
+                                       fill="none"
+                                       stroke={Colors.textSecondary}
+                                       strokeWidth={1.5}
+                                       strokeLinecap="round"
+                                       strokeLinejoin="round"
+                                     />
+                                   ) : null}
+                                   {sparklinePoints.map((point) => (
+                                     <Circle
+                                       key={`${point.weekStart}-${sport}`}
+                                       cx={point.x}
+                                       cy={point.y}
+                                       r={2.5}
+                                       fill={sparklinePointColor(point.brierScore)}
+                                     />
+                                   ))}
+                                 </Svg>
+                               ) : (
+                                 <Text style={s.trendSparklineEmpty}>—</Text>
+                               )}
+                             </View>
                           </View>
                         );
                       })}
@@ -1379,6 +1444,8 @@ const s = StyleSheet.create({
   trendTableCell: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
   trendTableCellSport: { flex: 2 },
   trendTableCellNum: { flex: 2, textAlign: 'right' as const },
+   trendTableCellTrend: { flex: 2, alignItems: 'flex-end' },
+   trendSparklineEmpty: { fontSize: 10, color: Colors.textTertiary },
   chartCard: {
     backgroundColor: Colors.card,
     borderRadius: 14,
