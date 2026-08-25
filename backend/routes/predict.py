@@ -54,6 +54,7 @@ from statsbomb_client import fetch_match_enrichment as _fetch_statsbomb_enrichme
 from opponent_block_profile import (
     fetch_recent_opponent_block_profiles as _fetch_recent_opponent_block_profiles,
 )
+from causal_script_engine import build_causal_script_packet
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
@@ -17840,6 +17841,23 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 }
 
         prediction = _normalize_prediction_identity(prediction, req)
+        # Every soccer result carries a deterministic pre-match mechanism
+        # packet. It is diagnostic/shadow-only until replay validation promotes
+        # a numeric adjustment; it never replaces the RP recommendation here.
+        if str(prediction.get("sport") or "soccer").lower() == "soccer":
+            prediction["causalScript"] = build_causal_script_packet(
+                prediction,
+                request={
+                    "fixture_id": req.fixtureId,
+                    "player_id": req.playerId,
+                    "prop_type": req.propType,
+                    "line": req.line,
+                },
+                context={
+                    "opponent_name": prediction.get("opponentName") or req.opponentName,
+                    "venue": prediction.get("resolvedVenue") or req.venue,
+                },
+            )
         # Reconcile the evidence verdict with the final displayed direction.
         # Late safety/calibration gates can change OVER/UNDER; the cohort must
         # describe that final saved recommendation, without changing it.

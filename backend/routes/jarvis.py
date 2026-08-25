@@ -99,6 +99,7 @@ def _audit_response_contract(audit: dict[str, Any], prediction: dict[str, Any]) 
     identity = audit.get("identity") if isinstance(audit.get("identity"), dict) else {}
     probability = audit.get("probability") if isinstance(audit.get("probability"), dict) else {}
     verdict = audit.get("jarvis_verdict") if isinstance(audit.get("jarvis_verdict"), dict) else {}
+    causal = audit.get("causal_script") if isinstance(audit.get("causal_script"), dict) else {}
     values = lambda name: (modules.get(name) or {}).get("values", {})
     return {
         "identity": identity,
@@ -134,6 +135,9 @@ def _audit_response_contract(audit: dict[str, Any], prediction: dict[str, Any]) 
         "model_evidence": verdict.get("model_evidence") or {},
         "tactical_evidence": verdict.get("tactical_evidence") or {},
         "unavailable_evidence": verdict.get("unavailable_evidence") or verdict.get("unknown_evidence") or [],
+        "causal_script": causal,
+        "causal_gate": causal.get("recommendationGate") or {},
+        "causal_provenance": causal.get("provenance") or {},
     }
 
 # ── Config ────────────────────────────────────────────────────────────────────

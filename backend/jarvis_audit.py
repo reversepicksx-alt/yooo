@@ -16,6 +16,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from causal_script_engine import build_causal_script_packet
+
 
 AUDIT_SCHEMA_VERSION = "jarvis-audit.v1"
 AUDIT_MODEL_VERSION = "jarvis-shadow-audit.v1"
@@ -479,6 +481,11 @@ def build_audit_snapshot(
     probabilities, or recommendation.
     """
     context = context or {}
+    causal_script = build_causal_script_packet(
+        prediction,
+        request=request,
+        context=context,
+    ) if str(prediction.get("sport") or "soccer").lower() == "soccer" else None
     bm = prediction.get("bayesianMetrics") or {}
     eq = prediction.get("evidenceQuality") or {}
     prop_type = str(request.get("prop_type") or prediction.get("propType") or "").strip().lower()
@@ -729,6 +736,7 @@ def build_audit_snapshot(
             "note": "Probability and evidence conviction are tracked separately.",
         },
         "modules": modules,
+        "causal_script": causal_script,
         "jarvis_verdict": verdict,
         "evidence_classes": {
             "MODEL_EVIDENCE": verdict["model_evidence"],
