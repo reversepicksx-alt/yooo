@@ -481,10 +481,10 @@ def build_audit_snapshot(
     probabilities, or recommendation.
     """
     context = context or {}
-    causal_script = build_causal_script_packet(
-        prediction,
-        request=request,
-        context=context,
+    causal_script = (
+        prediction.get("causalScript")
+        if isinstance(prediction.get("causalScript"), dict)
+        else build_causal_script_packet(prediction, request=request, context=context)
     ) if str(prediction.get("sport") or "soccer").lower() == "soccer" else None
     bm = prediction.get("bayesianMetrics") or {}
     eq = prediction.get("evidenceQuality") or {}

@@ -55,6 +55,7 @@ from opponent_block_profile import (
     fetch_recent_opponent_block_profiles as _fetch_recent_opponent_block_profiles,
 )
 from causal_script_engine import build_causal_script_packet
+from causal_evidence_assembly import assemble_causal_evidence
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
@@ -17841,23 +17842,74 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 }
 
         prediction = _normalize_prediction_identity(prediction, req)
-        # Every soccer result carries a deterministic pre-match mechanism
-        # packet. It is diagnostic/shadow-only until replay validation promotes
-        # a numeric adjustment; it never replaces the RP recommendation here.
+        # The causal gate runs after the deterministic projection is final but
+        # before a recommendation crosses the persistence/UI boundary. It can
+        # only downgrade to PASS: it never invents a counter-projection.
         if str(prediction.get("sport") or "soccer").lower() == "soccer":
+            _causal_context = {
+                "opponent_name": prediction.get("opponentName") or req.opponentName,
+                "venue": prediction.get("resolvedVenue") or req.venue,
+                "team_id": prediction.get("fixtureTeamId") or req.teamId,
+                "opponent_id": prediction.get("fixtureOpponentId") or req.opponentId,
+                "fixture_date": (
+                    (match_odds or {}).get("matchDate")
+                    or (prediction.get("matchContext") or {}).get("date")
+                ),
+            }
+            _causal_request = {
+                "fixture_id": req.fixtureId or prediction.get("fixtureId") or (match_odds or {}).get("fixtureId"),
+                "player_id": req.playerId,
+                "prop_type": req.propType,
+                "line": req.line,
+            }
+            try:
+                _causal_evidence = await _bounded_prediction_source(
+                    assemble_causal_evidence(prediction, _causal_request, _causal_context),
+                    "causal API-Football evidence",
+                    22.0,
+                    {"status": "UNKNOWN", "reason": "causal evidence deadline"},
+                )
+            except Exception as _causal_evidence_err:
+                print(f"[CAUSAL EVIDENCE] assembly failed: {_causal_evidence_err}")
+                _causal_evidence = {"status": "UNKNOWN", "reason": "causal evidence failure"}
             prediction["causalScript"] = build_causal_script_packet(
                 prediction,
-                request={
-                    "fixture_id": req.fixtureId,
-                    "player_id": req.playerId,
-                    "prop_type": req.propType,
-                    "line": req.line,
-                },
-                context={
-                    "opponent_name": prediction.get("opponentName") or req.opponentName,
-                    "venue": prediction.get("resolvedVenue") or req.venue,
-                },
+                request=_causal_request,
+                context=_causal_context,
+                evidence=_causal_evidence if isinstance(_causal_evidence, dict) else None,
             )
+            _causal_packet = prediction["causalScript"]
+            prediction["causalSummary"] = {
+                "verdict": _causal_packet.get("causalVerdict"),
+                "script": (_causal_packet.get("script") or {}).get("classification"),
+                "halfLife": (_causal_packet.get("script") or {}).get("halfLife"),
+                "gateDecision": (_causal_packet.get("recommendationGate") or {}).get("decision"),
+                "reason": (_causal_packet.get("recommendationGate") or {}).get("reason"),
+            }
+            prediction.setdefault("tacticalContext", {})["causalSummary"] = prediction["causalSummary"]
+            _causal_gate = prediction["causalScript"].get("recommendationGate") or {}
+            if (
+                str(prediction.get("recommendation") or "").lower() in {"over", "under"}
+                and _causal_gate.get("decision") in {"PASS", "REJECT"}
+            ):
+                _prior_recommendation = prediction.get("recommendation")
+                prediction["preCausalRecommendation"] = _prior_recommendation
+                prediction["recommendation"] = "pass"
+                prediction["confidenceScore"] = min(
+                    float(prediction.get("confidenceScore") or 50),
+                    50,
+                )
+                prediction["confidenceLevel"] = "Low"
+                prediction["causalScript"]["recommendationGate"]["applied"] = True
+                prediction["causalScript"]["recommendationGate"]["downgradedFrom"] = _prior_recommendation
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"CAUSAL GATE {prediction['causalScript'].get('causalVerdict')}: "
+                    f"{_causal_gate.get('reason')}"
+                ]
+                print(
+                    f"[CAUSAL GATE] {req.playerName}/{req.propType} "
+                    f"{_prior_recommendation} → PASS ({_causal_gate.get('decision')})"
+                )
         # Reconcile the evidence verdict with the final displayed direction.
         # Late safety/calibration gates can change OVER/UNDER; the cohort must
         # describe that final saved recommendation, without changing it.

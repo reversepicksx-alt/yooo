@@ -208,6 +208,14 @@ def build_evidence_packet(prediction: dict[str, Any]) -> dict[str, Any]:
             "historicalRate": prediction.get("propHistoricalRate"),
             "historicalSample": prediction.get("propHistoricalN"),
         },
+        "causalSummary": prediction.get("causalSummary") or (
+            {
+                "verdict": (prediction.get("causalScript") or {}).get("causalVerdict"),
+                "script": ((prediction.get("causalScript") or {}).get("script") or {}).get("classification"),
+                "gateDecision": ((prediction.get("causalScript") or {}).get("recommendationGate") or {}).get("decision"),
+            }
+            if isinstance(prediction.get("causalScript"), dict) else {}
+        ),
         "context": {
             "age": prediction.get("playerAge")
             if prediction.get("playerAge") is not None

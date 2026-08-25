@@ -19,7 +19,7 @@ def test_pass_chain_and_distortion_tags_are_explicit():
     assert "pressure/progression geometry" in packet["statProductionChain"]
     assert packet["history"]["distortionCounts"]["red_card"] == 1
     assert packet["provenance"]["pregameOnly"] is True
-    assert packet["recommendationGate"]["productionInfluence"] == "shadow_only"
+    assert packet["recommendationGate"]["productionInfluence"] == "active_pass_guard"
 
 
 def test_clean_exact_role_uplift_rejects_conflicting_under():
@@ -39,6 +39,7 @@ def test_clean_exact_role_uplift_rejects_conflicting_under():
         "opponentName": "Manchester City",
         "venue": "away",
         "positionComparison": {"players": rows},
+        "tacticalContext": {"expectedPossession": 42, "opponentExpectedPossession": 58},
     })
     assert packet["opponentRoleCohort"]["opponentRoleEffect"] == 1.75
     assert packet["recommendationGate"]["decision"] == "REJECT"
