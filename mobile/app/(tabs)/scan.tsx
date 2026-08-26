@@ -32,7 +32,11 @@ import {
 } from '@/components/AnalysisCards';
 import { LinearGradient } from 'expo-linear-gradient';
 import Purchases from 'react-native-purchases';
-import { REVENUECAT_ENTITLEMENT_IDENTIFIER, useSubscription } from '@/lib/revenuecat';
+import {
+  REVENUECAT_ENTITLEMENT_IDENTIFIER,
+  setRevenueCatUserId,
+  useSubscription,
+} from '@/lib/revenuecat';
 
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -822,6 +826,11 @@ export default function ScanScreen() {
     const sessionKey = `${session.email}:${session.token}`;
     if (accessRefreshRef.current === sessionKey) return !isNoSub;
     try {
+      // RevenueCat can still be on an anonymous StoreKit customer after a
+      // reinstall. Identify the signed-in account before reading entitlement
+      // state or the active purchase can be missed and the user gets routed
+      // to the paywall.
+      await setRevenueCatUserId(session.email);
       const info = await Purchases.getCustomerInfo();
       const entitlement = info?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
       if (!entitlement) return !isNoSub;

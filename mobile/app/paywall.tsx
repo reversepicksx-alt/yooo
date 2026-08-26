@@ -10,7 +10,11 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
+import {
+  setRevenueCatUserId,
+  useSubscription,
+  REVENUECAT_ENTITLEMENT_IDENTIFIER,
+} from '@/lib/revenuecat';
 import { iapSignup, syncAppleAccess } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
@@ -118,7 +122,10 @@ export default function PaywallScreen() {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     if (enteredFromEntitlementRef.current) return;
-    Purchases.getCustomerInfo().then(async info => {
+    (async () => {
+      if (session?.email) await setRevenueCatUserId(session.email);
+      return Purchases.getCustomerInfo();
+    })().then(async info => {
       const ent = info?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
       if (!ent) return;
       enteredFromEntitlementRef.current = true;

@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import { apiCall, syncAppleAccess } from '@/lib/api';
 import Purchases from 'react-native-purchases';
+import { setRevenueCatUserId } from '@/lib/revenuecat';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -313,6 +314,7 @@ export default function AuthScreen() {
         // Fast-path IAP grant if backend says NoSubscription but RC has active entitlement
         if (result.access_type === 'NoSubscription' && Platform.OS === 'ios') {
           try {
+            await setRevenueCatUserId(result.email);
             const rcInfo = await Purchases.getCustomerInfo();
             const hasEnt = rcInfo?.entitlements?.active?.['pro'] !== undefined;
             if (hasEnt) {
