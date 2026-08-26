@@ -15,9 +15,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, getCachedUserProfile, setUsername, setProfileImage, getDmInbox } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
-  resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
+  resubscribeCheckout, PLAN_OPTIONS, deleteAccount, syncAppleAccess, type SubscriptionStatus,
 } from '@/lib/api';
-import { useSubscription } from '@/lib/revenuecat';
+import { setRevenueCatUserId, useSubscription } from '@/lib/revenuecat';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
 // ── Skeleton loader ────────────────────────────────────────────────────────────
@@ -173,19 +173,18 @@ function IAPPaywall() {
   const [buyingId, setBuyingId] = useState<string | null>(null);
   const [confirmPkg, setConfirmPkg] = useState<PurchasesPackage | null>(null);
 
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !email) return;
+    setRevenueCatUserId(email).catch((error) => {
+      console.warn('[Subscription] Account RevenueCat identification skipped:', error);
+    });
+  }, [email]);
+
   const grantBackend = async () => {
     if (!email || !session?.token) return;
+    await setRevenueCatUserId(email);
     const customerId = await Purchases.getAppUserID();
-    const response = await fetch('/api/auth/iap-grant', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, session_token: session.token, revenuecat_customer_id: customerId }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      throw new Error(body?.detail || 'Apple subscription verification failed. Please try again.');
-    }
-    const result = await response.json().catch(() => null);
+    const result = await syncAppleAccess(email, session.token, customerId);
     if (result?.access_type) {
       await loginWithResponse({
         email,

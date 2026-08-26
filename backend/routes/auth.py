@@ -220,18 +220,24 @@ async def _check_revenuecat_live(email_lower: str) -> str | None:
             except Exception:
                 expires_iso = None
         now_iso = datetime.now(timezone.utc).isoformat()
-        await db.apple_iap_subscriptions.update_one(
-            {"email": email_lower},
-            {"$set": {
-                "email":       email_lower,
-                "status":      "active",
-                "productId":   best.get("entitlement_id", ""),
-                "expiresAt":   expires_iso,
-                "updatedAt":   now_iso,
-                "source":      "revenuecat_live_fallback",
-            }},
-            upsert=True,
-        )
+        try:
+            await db.apple_iap_subscriptions.update_one(
+                {"email": email_lower},
+                {"$set": {
+                    "email":       email_lower,
+                    "status":      "active",
+                    "productId":   best.get("entitlement_id", ""),
+                    "expiresAt":   expires_iso,
+                    "updatedAt":   now_iso,
+                    "source":      "revenuecat_live_fallback",
+                }},
+                upsert=True,
+            )
+        except Exception as persistence_error:
+            # RevenueCat's live response is the access decision. Atlas/cache
+            # storage is only a speed-up and may be temporarily read-only
+            # (for example when the cluster quota is full).
+            print(f"[REVENUECAT LIVE FALLBACK] cache write skipped: {type(persistence_error).__name__}")
         return "Premium (Apple)"
     except Exception as e:
         print(f"[REVENUECAT LIVE FALLBACK] Network/timeout error for {email_lower}: {e}")
@@ -364,15 +370,20 @@ async def _verify_revenuecat_purchase(
     }
     # This collection intentionally contains no email. It survives account
     # deletion and prevents local account state from becoming a trial reset.
-    await db.apple_iap_customer_history.update_one(
-        {"revenueCatCustomerId": customer_id},
-        {
-            "$set": identity_doc,
-            "$setOnInsert": {"firstSeenAt": now_iso},
-            "$addToSet": {"transactionIds": best_sub.get("store_subscription_identifier")},
-        },
-        upsert=True,
-    )
+    try:
+        await db.apple_iap_customer_history.update_one(
+            {"revenueCatCustomerId": customer_id},
+            {
+                "$set": identity_doc,
+                "$setOnInsert": {"firstSeenAt": now_iso},
+                "$addToSet": {"transactionIds": best_sub.get("store_subscription_identifier")},
+            },
+            upsert=True,
+        )
+    except Exception as persistence_error:
+        # The entitlement was already verified directly with RevenueCat.
+        # Identity history is durable bookkeeping, not an access prerequisite.
+        print(f"[REVENUECAT VERIFY] identity history write skipped: {type(persistence_error).__name__}")
 
     return {
         "customer_id": customer_id,
@@ -1254,27 +1265,33 @@ async def iap_grant(req: IAPGrantRequest):
     )
     now_iso = verified["verified_at"]
 
-    await db.apple_iap_subscriptions.update_one(
-        {"email": email_lower},
-        {"$set": {
-            "email":     email_lower,
-            "status":    "active",
-            "productId": verified.get("product_id"),
-            "expiresAt": verified.get("expires_at"),
-            "revenueCatCustomerId": verified["customer_id"],
-            "originalRevenueCatCustomerId": verified["original_customer_id"],
-            "storeTransactionId": verified.get("store_transaction_id"),
-            "environment": verified.get("environment"),
-            "trialing": verified.get("trialing", False),
-            "lastVerifiedAt": now_iso,
-            "updatedAt": now_iso,
-        }},
-        upsert=True,
-    )
-    await db.sessions.update_one(
-        {"email": email_lower},
-        {"$set": {"access_type": "Premium (Apple)", "last_active": now_iso}},
-    )
+    try:
+        await db.apple_iap_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email":     email_lower,
+                "status":    "active",
+                "productId": verified.get("product_id"),
+                "expiresAt": verified.get("expires_at"),
+                "revenueCatCustomerId": verified["customer_id"],
+                "originalRevenueCatCustomerId": verified["original_customer_id"],
+                "storeTransactionId": verified.get("store_transaction_id"),
+                "environment": verified.get("environment"),
+                "trialing": verified.get("trialing", False),
+                "lastVerifiedAt": now_iso,
+                "updatedAt": now_iso,
+            }},
+            upsert=True,
+        )
+    except Exception as persistence_error:
+        print(f"[IAP GRANT] subscription cache write skipped: {type(persistence_error).__name__}")
+    try:
+        await db.sessions.update_one(
+            {"email": email_lower},
+            {"$set": {"access_type": "Premium (Apple)", "last_active": now_iso}},
+        )
+    except Exception as persistence_error:
+        print(f"[IAP GRANT] session access write skipped: {type(persistence_error).__name__}")
     print(f"[IAP GRANT] {email_lower} → Premium (Apple) | customer={verified['customer_id'][:32]} | expires={verified.get('expires_at')}")
     return {"ok": True, "access_type": "Premium (Apple)"}
 

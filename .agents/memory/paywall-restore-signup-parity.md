@@ -27,6 +27,12 @@ Native IAP grant calls must use the shared API client, not a relative browser UR
 
 **How to apply:** Route every authenticated RevenueCat grant through `syncAppleAccess` (or `apiCall`) and use the server-returned access type to update the local session.
 
+Every native entitlement read must identify the signed-in RevenueCat customer first, including Analyze, Paywall, Account recovery, and OTP fast-paths. Direct RevenueCat verification must remain authoritative when Atlas persistence is temporarily unavailable; subscription/session cache writes are best-effort.
+
+**Why:** Reinstall/anonymous StoreKit state can otherwise be read before email association, while a full Atlas cluster can turn a confirmed active entitlement into a false sync failure and paywall loop.
+
+**How to apply:** Call `setRevenueCatUserId(email)` before `getCustomerInfo()` or purchase/restore flows, and let verified RevenueCat access proceed even when bookkeeping writes fail.
+
 RevenueCat V2 `active_entitlements.items[].entitlement_id` is the entitlement resource ID, not necessarily the mobile SDK identifier; production currently returns `entl9515aab63f` for Pro.
 
 **Why:** Checking only the SDK-facing identifier (`pro`) caused verified active Apple subscribers to appear unsubscribed to the backend and receive 403 prediction responses.
