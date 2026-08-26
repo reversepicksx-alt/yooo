@@ -32,3 +32,9 @@ RevenueCat V2 `active_entitlements.items[].entitlement_id` is the entitlement re
 **Why:** Checking only the SDK-facing identifier (`pro`) caused verified active Apple subscribers to appear unsubscribed to the backend and receive 403 prediction responses.
 
 **How to apply:** Treat the V2 resource ID as canonical, keep it configurable with a hardcoded project fallback, and validate both live-access and purchase-grant paths against the same ID set.
+
+The native tab layout must not redirect a session marked `NoSubscription` to the paywall while StoreKit/server entitlement reconciliation is still possible; Predict should revalidate the server session immediately before Analyze.
+
+**Why:** A paying iOS customer can briefly restore with a stale local session or an in-flight RevenueCat query. Redirecting first creates a repeat paywall loop even though the server can confirm `Premium (Apple)`.
+
+**How to apply:** Keep the native user on Predict during entitlement loading and stale-session reconciliation, then update the local access type from the server grant. Preserve the backend subscription check for users who remain unsubscribed.

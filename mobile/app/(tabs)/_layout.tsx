@@ -29,8 +29,12 @@ export default function TabLayout() {
     // session is restored. Do not route a native customer to the paywall during
     // that window; ScanScreen and RevenueCatSync will reconcile the server
     // session once the entitlement is available.
+    // Keep native users on Predict while the server session is revalidated.
+    // ScanScreen performs the same server-side entitlement check immediately
+    // before Analyze, so a stale NoSubscription session cannot trap a paying
+    // customer in the paywall during StoreKit/session reconciliation.
     const nativeEntitlementPending = Platform.OS === 'ios'
-      && (isSubscriptionLoading || isSubscribed);
+      && (isSubscriptionLoading || isSubscribed || session?.accessType === 'NoSubscription');
     if (!isLoading && session && session.accessType === 'NoSubscription' && !nativeEntitlementPending) {
       redirectedRef.current = true;
       if (Platform.OS === 'web') {

@@ -576,9 +576,16 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType, loginWithResponse } = useAuth();
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
-  const { isSubscribed: hasNativeAppleEntitlement } = useSubscription();
+  const {
+    isSubscribed: hasNativeAppleEntitlement,
+    isLoading: isNativeSubscriptionLoading,
+  } = useSubscription();
   // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
-  const isNoSub = (!accessType || accessType === 'NoSubscription')
+  // Do not paint the native paywall while RevenueCat is still restoring the
+  // customer's entitlement. Analyze performs a server revalidation below.
+  const nativeSubscriptionPending = Platform.OS === 'ios' && isNativeSubscriptionLoading;
+  const isNoSub = !nativeSubscriptionPending
+    && (!accessType || accessType === 'NoSubscription')
     && !(Platform.OS === 'ios' && hasNativeAppleEntitlement);
   const accessRefreshRef = useRef<string | null>(null);
   const qc = useQueryClient();
@@ -835,10 +842,10 @@ export default function ScanScreen() {
   };
 
   const ensurePredictionAccess = async (): Promise<boolean> => {
-    if (Platform.OS === 'ios') return refreshAppleAccess();
     if (!isNoSub) return true;
-    // Web/Stripe sessions can also be stale after a checkout or webhook.
-    // verifySession uses the same server-side access check as /api/predict.
+    // Revalidate the server session first. This covers older/reinstalled native
+    // builds where StoreKit is active but the cached session still says
+    // NoSubscription, and it keeps the client gate identical to /api/predict.
     if (!session?.email || !session.token) return false;
     try {
       const refreshed = await verifySession(session.email, session.token);
@@ -853,6 +860,10 @@ export default function ScanScreen() {
     } catch (error) {
       console.warn('[Subscription] Analyze-time session refresh skipped:', error);
     }
+    // If the server still has no grant, native StoreKit is the remaining
+    // recovery source. It is sent back through the server sync endpoint; the
+    // client never grants access from the entitlement alone.
+    if (Platform.OS === 'ios') return refreshAppleAccess();
     return false;
   };
 
