@@ -20,7 +20,7 @@ def test_pass_chain_and_distortion_tags_are_explicit():
     assert "pressure/progression geometry" in packet["statProductionChain"]
     assert packet["history"]["distortionCounts"]["red_card"] == 1
     assert packet["provenance"]["pregameOnly"] is True
-    assert packet["recommendationGate"]["productionInfluence"] == "active_pass_guard"
+    assert packet["recommendationGate"]["productionInfluence"] == "active_invalid_or_contradiction_guard"
 
 
 def test_clean_exact_role_uplift_rejects_conflicting_under():
@@ -50,7 +50,7 @@ def test_clean_exact_role_uplift_rejects_conflicting_under():
     assert packet["modelProjection"] == 23.5
 
 
-def test_thin_edge_without_exact_role_is_pass():
+def test_thin_edge_without_exact_role_does_not_override_deterministic_model():
     packet = build_causal_script_packet({
         "sport": "soccer",
         "playerName": "Moncayola",
@@ -60,14 +60,15 @@ def test_thin_edge_without_exact_role_is_pass():
         "projection": 40,
         "line": 39.5,
     })
-    assert packet["recommendationGate"]["decision"] == "PASS"
+    assert packet["recommendationGate"]["decision"] == "NO_OVERRIDE"
     assert "CAUSAL EVIDENCE INCOMPLETE" in packet["recommendationGate"]["reason"]
+    assert "deterministic recommendation retained" in packet["recommendationGate"]["reason"]
     assert packet["causalVerdict"] == "EVIDENCE INCOMPLETE"
 
 
 def test_reference_miss_replay_is_pregame_only_and_conservative():
     replay = replay_reference_misses()
-    assert [item["decision"] for item in replay] == ["REJECT", "REJECT", "PASS"]
+    assert [item["decision"] for item in replay] == ["REJECT", "REJECT", "NO_OVERRIDE"]
     assert all(item["pregameOnly"] and not item["resultDataUsed"] for item in replay)
 
 

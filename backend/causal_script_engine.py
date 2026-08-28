@@ -668,8 +668,11 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
             missing_reason = "the opponent-created exact-role workload baseline is not verified"
         else:
             missing_reason = "the deterministic edge is too close to the line"
-        decision = "PASS"
-        reason = f"CAUSAL EVIDENCE INCOMPLETE: {missing_reason}; recommendation withheld."
+        decision = "NO_OVERRIDE"
+        reason = (
+            f"CAUSAL EVIDENCE INCOMPLETE: {missing_reason}; "
+            "deterministic recommendation retained."
+        )
         verdict = "DISTORTED SAMPLE" if distorted_dominant else "EVIDENCE INCOMPLETE"
     elif mechanism_edge and (
         (model_direction == "under" and cohort["effect"] == "uplift")
@@ -693,8 +696,11 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
         )
         verdict = "EVIDENCE INCOMPLETE"
     else:
-        decision = "PASS"
-        reason = "NO MECHANISM EDGE: validated exact-role workload is neutral for this line."
+        decision = "NO_OVERRIDE"
+        reason = (
+            "NO MECHANISM EDGE: validated exact-role workload is neutral for "
+            "this line; deterministic recommendation retained."
+        )
         verdict = "DISTORTED SAMPLE" if distorted_dominant else "NO MECHANISM EDGE"
     return {
         "schemaVersion": CAUSAL_SCHEMA_VERSION,
@@ -745,7 +751,7 @@ def build_causal_script_packet(prediction: dict[str, Any], request: dict[str, An
             "reason": reason,
             "rpRecommendation": model_direction or "not_set",
             "wouldRecommendation": model_direction if decision not in {"PASS", "REJECT"} else "PASS",
-            "productionInfluence": "active_pass_guard",
+            "productionInfluence": "active_invalid_or_contradiction_guard",
             "replayValidated": False,
             "strongestOppositeCase": (
                 "Opponent-created role workload defeats the selected direction."

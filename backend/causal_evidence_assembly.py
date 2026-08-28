@@ -746,6 +746,13 @@ async def assemble_causal_evidence(
         prop=prop,
         line=request.get("line") if request.get("line") is not None else prediction.get("line"),
     )
+
+    def _has_cohort_integrity_failure(validation_packet: dict[str, Any]) -> bool:
+        assertions = validation_packet.get("assertions") or {}
+        return bool(
+            validation_packet.get("purityFailures")
+            or any(value is False for value in assertions.values())
+        )
     if cohort_rows:
         existing_snapshot = _COHORT_SNAPSHOT_MEMORY.get(snapshot_key)
         if existing_snapshot is None:
@@ -764,6 +771,17 @@ async def assemble_causal_evidence(
             existing_snapshot = None
     if existing_snapshot:
         snapshot = dict(existing_snapshot)
+        existing_validation = snapshot.get("validation") or {}
+        if (
+            snapshot.get("status") == "invalid"
+            and not (snapshot.get("admittedRows") or [])
+            and not _has_cohort_integrity_failure(existing_validation)
+        ):
+            # Older snapshots classified an empty cohort as invalid because
+            # validation.valid also represented minimum evidence coverage.
+            # Empty optional evidence is incomplete, not a purity failure.
+            snapshot["status"] = "incomplete"
+            snapshot["persistence"] = "legacy_empty_cohort_reclassified"
         snapshot["status"] = snapshot.get("status") or "available"
         snapshot["snapshotKey"] = snapshot_key
         return _snapshot_evidence_response(
@@ -794,10 +812,15 @@ async def assemble_causal_evidence(
             target_fixture_id=target_fixture_id, target_opponent_id=opponent_id,
             target_bucket=target_bucket, strict_identity=True,
         )
+        cohort_integrity_failure = _has_cohort_integrity_failure(validation)
         snapshot = {
             "_id": snapshot_key, "snapshotKey": snapshot_key,
             "snapshotVersion": CAUSAL_COHORT_SNAPSHOT_VERSION,
-            "status": "available" if validation["valid"] else "invalid",
+            "status": (
+                "invalid"
+                if cohort_integrity_failure
+                else "available" if admitted_rows else "incomplete"
+            ),
             "createdAt": datetime.now(timezone.utc),
             "identity": {
                 "fixtureId": target_fixture_id, "playerId": player_id,
@@ -814,16 +837,19 @@ async def assemble_causal_evidence(
                 sort_keys=True, separators=(",", ":"), default=str,
             ).encode()).hexdigest()[:24],
         }
-        try:
-            persisted = await aio.wait_for(_persist_cohort_snapshot(snapshot), timeout=1.2)
-        except (TimeoutError, aio.TimeoutError):
-            persisted = False
-        if not persisted:
-            return _invalid_snapshot_evidence(
-                snapshot_key=snapshot_key, cutoff=cutoff,
-                reason="immutable_cohort_snapshot_persistence_unavailable",
-            )
-        snapshot = _COHORT_SNAPSHOT_MEMORY.get(snapshot_key) or snapshot
+        if not cohort_integrity_failure and not admitted_rows:
+            snapshot["persistence"] = "not_required_empty_cohort"
+        else:
+            try:
+                persisted = await aio.wait_for(_persist_cohort_snapshot(snapshot), timeout=1.2)
+            except (TimeoutError, aio.TimeoutError):
+                persisted = False
+            if not persisted:
+                return _invalid_snapshot_evidence(
+                    snapshot_key=snapshot_key, cutoff=cutoff,
+                    reason="immutable_cohort_snapshot_persistence_unavailable",
+                )
+            snapshot = _COHORT_SNAPSHOT_MEMORY.get(snapshot_key) or snapshot
         return _snapshot_evidence_response(
             snapshot, target_rows=target_rows, cutoff=cutoff,
             provider_state="immutable_snapshot",
@@ -942,7 +968,12 @@ async def assemble_causal_evidence(
         target_formation=target_formation,
         strict_identity=True,
     )
-    snapshot_status = "available" if validation["valid"] else "invalid"
+    _cohort_is_valid = not _has_cohort_integrity_failure(validation)
+    snapshot_status = (
+        "invalid"
+        if not _cohort_is_valid
+        else "available" if admitted_rows else "incomplete"
+    )
     snapshot = {
         "_id": snapshot_key,
         "snapshotKey": snapshot_key,
@@ -974,25 +1005,32 @@ async def assemble_causal_evidence(
             ).encode()
         ).hexdigest()[:24],
     }
-    try:
-        persisted = await aio.wait_for(
-            _persist_cohort_snapshot(snapshot), timeout=1.0
-        )
-    except (TimeoutError, aio.TimeoutError):
-        persisted = False
-    if not persisted:
-        return _invalid_snapshot_evidence(
-            snapshot_key=snapshot_key,
-            cutoff=cutoff,
-            reason="immutable_cohort_snapshot_persistence_unavailable",
-        )
-    # A duplicate-key race means another request persisted the winner. Load it
-    # so both concurrent callers calculate from byte-identical admitted rows.
-    winner = await _load_cohort_snapshot(snapshot_key)
-    if winner:
-        snapshot = winner
-        admitted_rows = snapshot.get("admittedRows") or []
-        rejected_rows = snapshot.get("rejectedRows") or []
+    if _cohort_is_valid and not admitted_rows:
+        # There is no causal workload evidence capable of changing the model,
+        # so there is no immutable decision input to persist. Atlas/bookkeeping
+        # availability must not convert an empty optional cohort into invalid
+        # evidence and suppress the deterministic recommendation.
+        snapshot["persistence"] = "not_required_empty_cohort"
+    else:
+        try:
+            persisted = await aio.wait_for(
+                _persist_cohort_snapshot(snapshot), timeout=1.0
+            )
+        except (TimeoutError, aio.TimeoutError):
+            persisted = False
+        if not persisted:
+            return _invalid_snapshot_evidence(
+                snapshot_key=snapshot_key,
+                cutoff=cutoff,
+                reason="immutable_cohort_snapshot_persistence_unavailable",
+            )
+        # A duplicate-key race means another request persisted the winner. Load
+        # it so concurrent callers calculate from byte-identical admitted rows.
+        winner = await _load_cohort_snapshot(snapshot_key)
+        if winner:
+            snapshot = winner
+            admitted_rows = snapshot.get("admittedRows") or []
+            rejected_rows = snapshot.get("rejectedRows") or []
     return {
         "version": "causal-evidence.v2",
         "provider": "api-football",
@@ -1012,7 +1050,11 @@ async def assemble_causal_evidence(
         "market": live_odds if isinstance(live_odds, list) else [],
         "coverage": {
             "targetHistory": "available" if target_rows else "not_loaded",
-            "opponentRoleCohort": "available" if cohort_rows else "not_loaded",
+            "opponentRoleCohort": (
+                "available"
+                if admitted_rows
+                else "incomplete" if _cohort_is_valid else "invalid"
+            ),
             "fixture": "available" if isinstance(live_fixture, list) and live_fixture else "not_loaded",
             "market": "available" if isinstance(live_odds, list) and live_odds else "not_loaded",
             "detailTagCounts": dict(Counter(

@@ -19,7 +19,7 @@ Immutable causal cohorts must use a versioned identity and an atomic insert-only
 
 **Why:** Provider/cache timing changed Mailson's cohort across calls and allowed the target player into the comparison sample. A duplicate-key path that returned its local candidate could still make repeated calls disagree.
 
-**How to apply:** Include fixture/player/team/opponent/prop/line in the snapshot identity, normalize venue once from the target perspective, assert target IDs are absent and opponent identity/venue match, and fail closed as EVIDENCE INVALID/PASS on persistence or purity failure.
+**How to apply:** Include fixture/player/team/opponent/prop/line in the snapshot identity, normalize venue once from the target perspective, and assert target IDs are absent and opponent identity/venue match. Fail closed as EVIDENCE INVALID/PASS only when admitted causal evidence cannot be persisted or an identity/purity assertion fails. A valid empty cohort is incomplete optional evidence, requires no immutable write, and must retain the deterministic recommendation.
 
 Calibration evidence must be rendered as a concrete rate, sample count, and time/band context in the shared live and saved prediction card; a generic action label is not sufficient.
 
