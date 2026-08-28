@@ -1039,6 +1039,12 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
   ) as PositionalReality;
   const roleLabel = [player.position, player.role].filter(Boolean).join(' · ');
   const signal = positional.propSignal ?? {};
+  const normalizedPlayerPosition = String(player.position ?? '').trim().toUpperCase();
+  const broadPositionOnly = new Set([
+    'D', 'DEF', 'DEFENDER', 'M', 'MID', 'MIDFIELDER',
+    'F', 'FW', 'FWD', 'FORWARD', 'ATTACKER',
+  ]).has(normalizedPlayerPosition);
+  const hasObservedCoordinates = positional.zoneSource === 'lineup_provider_coordinates';
 
   // Strip backend sentinel strings that carry no real information. The backend
   // sets zone="Zone Unavailable" and roleMechanism="No bounded zone-to-prop…"
@@ -1077,6 +1083,7 @@ export function renderTacticalIntelligence(data: Record<string, unknown> | null)
   const roleSource = String(
     player.roleSource ?? (data as any)?.tacticalContext?.roleSource ?? '',
   );
+  if (broadPositionOnly && !player.role && !hasObservedCoordinates) return null;
   // Suppress the entire card when the only info is a generic position category
   // with no verified role, no zone, and no prop signal. The position string is
   // already visible in the pick header and repeating it as a "POSITIONAL REALITY"

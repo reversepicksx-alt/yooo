@@ -198,8 +198,62 @@ def build_positional_reality(
     x = _num(player.get("x"))
     y = _num(player.get("y"))
     limitations: list[str] = []
+    normalized_position = target_position.upper().replace(" ", "")
+    broad_category_only = (
+        normalized_position in {"D", "DEF", "DEFENDER", "M", "MID", "MIDFIELDER", "F", "FW", "FWD", "FORWARD", "ATTACKER"}
+        and not target_role
+    )
+    has_provider_coordinates = (
+        x is not None and y is not None and 0 <= x <= 1 and 0 <= y <= 1
+    )
 
-    if x is not None and y is not None and 0 <= x <= 1 and 0 <= y <= 1:
+    # A provider-level D/M/F category cannot locate a player centrally, on a
+    # flank, or in an attacking/defensive third. Previously DEF defaulted to
+    # own_third_central, which made unrelated generic defenders produce the
+    # same "lower volume" positional card. Preserve only genuinely observed
+    # provider coordinates; otherwise report positional evidence unavailable.
+    if broad_category_only and not has_provider_coordinates:
+        return {
+            "version": "positional-reality-shadow-v1",
+            "status": "unavailable",
+            "zone": "zone_unavailable",
+            "zoneSource": "unavailable",
+            "zoneConfidence": 0.0,
+            "coordinates": {"x": None, "y": None, "attackingDirectionY": None},
+            "roleGroup": group,
+            "role": None,
+            "scriptBucket": _script_bucket(
+                match_script if isinstance(match_script, dict) else {}
+            ),
+            "roleMechanism": None,
+            "propSignal": {
+                "propType": prop_type,
+                "shadowDirection": "neutral",
+                "shadowStrength": 0.0,
+                "shadowMultiplier": 1.0,
+                "rationale": "Exact position or provider coordinates are required for a positional direction.",
+                "activationStatus": "unavailable",
+            },
+            "playerStyle": {
+                "profile": group,
+                "evidence": "broad_provider_category_only",
+                "sampleSize": 0,
+            },
+            "robustEvidence": {
+                "status": "unavailable",
+                "sampleSize": 0,
+                "median": None,
+                "weightedMean": None,
+                "outlierCount": 0,
+                "method": "median_absolute_deviation",
+            },
+            "limitations": [
+                "provider supplied only a broad position category",
+                "no exact position or provider coordinates were verified",
+            ],
+        }
+
+    if has_provider_coordinates:
         attacking_y = y if is_home else 1.0 - y
         zone = _coordinate_zone(x, attacking_y)
         zone_source = "lineup_provider_coordinates"

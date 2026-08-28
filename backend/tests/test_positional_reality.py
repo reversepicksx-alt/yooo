@@ -42,6 +42,23 @@ def test_robust_history_downweights_outlier_without_deleting_it():
     assert "never blanket-deleted" in evidence["policy"]
 
 
+def test_broad_defender_category_does_not_infer_central_zone_or_volume():
+    result = build_positional_reality(
+        player={},
+        position="DEF",
+        role=None,
+        prop_type="passes",
+        is_home=True,
+        match_script={"classification": "counter_defensive"},
+        history_values=[39, 42, 45],
+    )
+
+    assert result["status"] == "unavailable"
+    assert result["zone"] == "zone_unavailable"
+    assert result["propSignal"]["shadowDirection"] == "neutral"
+    assert result["robustEvidence"]["sampleSize"] == 0
+
+
 def test_match_script_uses_fixture_oriented_market_and_stays_shadow_only():
     packet = build_tactical_intelligence(
         prediction={

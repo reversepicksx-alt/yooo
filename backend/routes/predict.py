@@ -12327,6 +12327,20 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 else "opponent_broad_category_same_venue_plus_prior_seasons"
             )
 
+        # Broad D/M/F rows mix materially different jobs (for example CB and
+        # fullback passing volume). They are not decision evidence and were
+        # making unrelated searches look identical. Keep the unavailable
+        # provenance contract, but do not send averages, hit rates, or source
+        # rows to subscriber clients unless the target and cohort are exact.
+        if not _exact_target_for_comparison or _broad_position_fallback:
+            position_comparison = []
+            position_comparison_meta["status"] = "unavailable"
+            position_comparison_meta["unavailableReason"] = (
+                "exact_position_unavailable"
+                if not _exact_target_for_comparison
+                else "no_verified_exact_position_rows"
+            )
+
         print(
             f"[POS COMP] target={req.playerName} position={specific_position or display_position} "
             f"mode={'exact-position' if _exact_target_for_comparison else 'broad-category'} "
@@ -16294,6 +16308,21 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 ),
                 "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
             })
+            if (
+                specific_position not in _exact_comparison_positions
+                and not (display_role or player_role)
+            ):
+                # Do not present broad D/M/F history as a resolved role. This
+                # also makes older clients suppress their positional card.
+                _ti_player.update({
+                    "role": None,
+                    "roleSource": "unavailable",
+                    "roleConfidence": None,
+                    "roleEvidence": [
+                        "exact position and tactical role unavailable",
+                    ],
+                    "roleSampleSize": 0,
+                })
             # Position and its provenance are only overwritten when the
             # API-Football observation actually supplied a value.
             if display_position:

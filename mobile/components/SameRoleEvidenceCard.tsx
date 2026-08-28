@@ -250,10 +250,11 @@ export default function SameRoleEvidenceCard({
   const hasVerdict = Number.isFinite(numericLine) && Number.isFinite(numericAverage);
   const broadPositionOnly = data.positionEvidenceType === 'broad_category';
 
-  // Broad-category evidence with zero rows and no average is pure noise —
-  // it would only show "No verified broad X source-player rows were returned"
-  // which looks like an error. Suppress entirely rather than display nothing.
-  if (broadPositionOnly && sample === 0 && average == null) return null;
+  // Broad D/M/F cohorts combine different tactical jobs (CB with fullback,
+  // holding midfielder with winger, etc.). They are provenance/audit context,
+  // not subscriber decision evidence, and made unrelated searches look like
+  // the same generic result. Never render them as a player comparison.
+  if (broadPositionOnly) return null;
   const verdict = broadPositionOnly
     ? 'CONTEXT'
     : String(data.verdict?.verdict || (
