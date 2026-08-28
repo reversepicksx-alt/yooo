@@ -1221,7 +1221,7 @@ function renderLegacyTacticalIntelligence(data: Record<string, unknown> | null) 
     ? 'observed H2H lineup history'
     : roleSource === 'cached_role_resolver'
     ? 'cached role resolver'
-    : roleSource.replace(/_/g, ' ') || 'role resolver';
+    : roleSource.replace(/_/g, ' ') || 'unavailable';
   const cohortAverage = positionCohort?.average ?? positionCohort?.avgStatValue;
   const cohortSample = Number(positionCohort?.sampleSize ?? 0);
   const cohortMinimum = Number(positionCohort?.minimumRecommendedSample ?? 10);

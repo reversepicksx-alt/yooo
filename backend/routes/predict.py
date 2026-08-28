@@ -14457,6 +14457,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         }
         _position_display_value = display_position or player_position or ""
         _position_is_exact = _position_display_value.upper() in _exact_position_values
+        _resolved_role_available = bool(display_role or player_role)
         _observed_source = str((_observed_role or {}).get("source") or "").strip()
         _position_evidence_source = (
             _position_resolution_source
@@ -14534,9 +14535,21 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             "position": _position_display_value or "Unknown",
             "role": display_role or "",
             "positionSource": _position_resolution_source,
-            "roleSource": _observed_role.get("source") if _observed_role else None,
-            "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
-            "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
+            "roleSource": (
+                _observed_role.get("source")
+                if _observed_role and _resolved_role_available
+                else None
+            ),
+            "roleConfidence": (
+                _observed_role.get("confidence")
+                if _observed_role and _resolved_role_available
+                else None
+            ),
+            "roleEvidence": (
+                _observed_role.get("evidence", [])
+                if _observed_role and _resolved_role_available
+                else []
+            ),
             "roleEvidencePacket": role_evidence_packet,
             "roleIsInferred": bool(
                 display_role
@@ -15880,12 +15893,26 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             ),
             "position": _tc_position or None,
             "role": _tc_role or None,
-            "roleSource": _observed_role.get("source") if _observed_role else (
-                "position-and-role-resolver" if (_tc_position or _tc_role) else None
+            "roleSource": (
+                _observed_role.get("source")
+                if _observed_role and _tc_role
+                else "position-and-role-resolver" if _tc_role else None
             ),
-            "roleConfidence": _observed_role.get("confidence") if _observed_role else None,
-            "roleEvidence": _observed_role.get("evidence", []) if _observed_role else [],
-            "roleSampleSize": _observed_role.get("sampleSize", 0) if _observed_role else 0,
+            "roleConfidence": (
+                _observed_role.get("confidence")
+                if _observed_role and _tc_role
+                else None
+            ),
+            "roleEvidence": (
+                _observed_role.get("evidence", [])
+                if _observed_role and _tc_role
+                else []
+            ),
+            "roleSampleSize": (
+                _observed_role.get("sampleSize", 0)
+                if _observed_role and _tc_role
+                else 0
+            ),
             "observedPositionHistory": _historical_position_summary,
             "propType": req.propType,
             "playerTeam": player_team_display,
