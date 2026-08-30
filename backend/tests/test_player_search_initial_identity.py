@@ -52,3 +52,10 @@ def test_liga_mx_board_players_use_verified_identities_with_or_without_accents()
     assert andres_ascii[0]["teamId"] == 2314
     assert luis_ascii[0]["id"] == luis_accented[0]["id"] == 35536
     assert luis_ascii[0]["teamId"] == 2282
+
+
+def test_rodri_does_not_resolve_to_a_rodriguez_substring():
+    result = _verified_identity_search_override("Rodri")
+    assert len(result) == 1
+    assert result[0]["id"] == 44
+    assert result[0]["teamId"] == 50

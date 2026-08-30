@@ -105,6 +105,24 @@ _VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
             "luis alberto cárdenas lópez",
         },
     },
+    {
+        "id": 44,
+        "name": "Rodri",
+        "fullName": "Rodrigo Hernández Cascante",
+        "firstname": "Rodrigo",
+        "lastname": "Hernández Cascante",
+        "position": "Midfielder",
+        "teamId": 50,
+        "teamName": "Manchester City",
+        "leagueId": 39,
+        "aliases": {
+            "rodri",
+            "rodrigo hernandez",
+            "rodrigo hernández",
+            "rodrigo hernandez cascante",
+            "rodrigo hernández cascante",
+        },
+    },
 )
 
 
