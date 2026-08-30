@@ -71,6 +71,40 @@ _VERIFIED_IDENTITY_SEARCH_OVERRIDES = (
             "albert gudmundsson",
         },
     },
+    {
+        "id": 182656,
+        "name": "Andrés Eduardo Sánchez Rodríguez",
+        "fullName": "Andrés Eduardo Sánchez Rodríguez",
+        "firstname": "Andrés Eduardo",
+        "lastname": "Sánchez Rodríguez",
+        "position": "Goalkeeper",
+        "teamId": 2314,
+        "teamName": "Atletico San Luis",
+        "leagueId": 262,
+        "aliases": {
+            "andres sanchez",
+            "andrés sánchez",
+            "andres eduardo sanchez rodriguez",
+            "andrés eduardo sánchez rodríguez",
+        },
+    },
+    {
+        "id": 35536,
+        "name": "Luis Alberto Cárdenas López",
+        "fullName": "Luis Alberto Cárdenas López",
+        "firstname": "Luis Alberto",
+        "lastname": "Cárdenas López",
+        "position": "Goalkeeper",
+        "teamId": 2282,
+        "teamName": "Monterrey",
+        "leagueId": 262,
+        "aliases": {
+            "luis cardenas",
+            "luis cárdenas",
+            "luis alberto cardenas lopez",
+            "luis alberto cárdenas lópez",
+        },
+    },
 )
 
 

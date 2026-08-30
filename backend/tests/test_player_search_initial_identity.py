@@ -40,3 +40,15 @@ def test_albert_gudmundsson_uses_verified_fiorentina_identity():
     assert result[0]["teamId"] == 502
     assert result[0]["teamName"] == "Fiorentina"
     assert result[0]["position"] == "Attacker"
+
+
+def test_liga_mx_board_players_use_verified_identities_with_or_without_accents():
+    andres_ascii = _verified_identity_search_override("Andres Sanchez")
+    andres_accented = _verified_identity_search_override("Andrés Sánchez")
+    luis_ascii = _verified_identity_search_override("Luis Cardenas")
+    luis_accented = _verified_identity_search_override("Luis Cárdenas")
+
+    assert andres_ascii[0]["id"] == andres_accented[0]["id"] == 182656
+    assert andres_ascii[0]["teamId"] == 2314
+    assert luis_ascii[0]["id"] == luis_accented[0]["id"] == 35536
+    assert luis_ascii[0]["teamId"] == 2282
