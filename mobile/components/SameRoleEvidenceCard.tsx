@@ -27,6 +27,7 @@ type CohortPlayer = {
 };
 
 export type SameRoleEvidence = {
+  sport?: string;
   targetPosition?: string;
   targetRole?: string;
   positionShort?: string;
@@ -106,6 +107,51 @@ function positionLabel(value: unknown) {
   return labels[normalized] || String(value || 'Position unavailable');
 }
 
+const SPORT_POSITION_LABELS: Record<string, Record<string, string>> = {
+  nfl: {
+    QB: 'Quarterback', RB: 'Running back', FB: 'Fullback', WR: 'Wide receiver',
+    TE: 'Tight end', OL: 'Offensive lineman', OT: 'Offensive tackle',
+    OG: 'Offensive guard', C: 'Center', DL: 'Defensive lineman',
+    DE: 'Defensive end', DT: 'Defensive tackle', LB: 'Linebacker',
+    CB: 'Cornerback', S: 'Safety', DB: 'Defensive back', K: 'Kicker', P: 'Punter',
+  },
+  ncaaf: {
+    QB: 'Quarterback', RB: 'Running back', FB: 'Fullback', WR: 'Wide receiver',
+    TE: 'Tight end', OL: 'Offensive lineman', OT: 'Offensive tackle',
+    OG: 'Offensive guard', C: 'Center', DL: 'Defensive lineman',
+    DE: 'Defensive end', DT: 'Defensive tackle', LB: 'Linebacker',
+    CB: 'Cornerback', S: 'Safety', DB: 'Defensive back', K: 'Kicker', P: 'Punter',
+  },
+  mlb: {
+    P: 'Pitcher', SP: 'Starting pitcher', RP: 'Relief pitcher', CP: 'Closer',
+    C: 'Catcher', '1B': 'First baseman', '2B': 'Second baseman',
+    '3B': 'Third baseman', SS: 'Shortstop', IF: 'Infielder', OF: 'Outfielder',
+    LF: 'Left fielder', CF: 'Center fielder', RF: 'Right fielder', DH: 'Designated hitter',
+  },
+  cbase: {
+    P: 'Pitcher', SP: 'Starting pitcher', RP: 'Relief pitcher', C: 'Catcher',
+    '1B': 'First baseman', '2B': 'Second baseman', '3B': 'Third baseman',
+    SS: 'Shortstop', IF: 'Infielder', OF: 'Outfielder', LF: 'Left fielder',
+    CF: 'Center fielder', RF: 'Right fielder', DH: 'Designated hitter',
+  },
+  nba: { G: 'Guard', PG: 'Point guard', SG: 'Shooting guard', F: 'Forward',
+    SF: 'Small forward', PF: 'Power forward', C: 'Center' },
+  wnba: { G: 'Guard', PG: 'Point guard', SG: 'Shooting guard', F: 'Forward',
+    SF: 'Small forward', PF: 'Power forward', C: 'Center' },
+  ncaab: { G: 'Guard', F: 'Forward', C: 'Center' },
+  ncaaw: { G: 'Guard', F: 'Forward', C: 'Center' },
+  nhl: { C: 'Center', LW: 'Left wing', RW: 'Right wing', W: 'Winger',
+    D: 'Defenseman', LD: 'Left defenseman', RD: 'Right defenseman',
+    G: 'Goaltender', GK: 'Goaltender' },
+};
+
+function sportPositionLabel(value: unknown, sport: string) {
+  const raw = String(value || '').trim();
+  const key = raw.toUpperCase().replace(/[\s_-]+/g, '');
+  return SPORT_POSITION_LABELS[sport]?.[key]
+    || (sport === 'soccer' ? positionLabel(raw) : raw || 'Position unavailable');
+}
+
 function formalPositionCode(value: unknown) {
   const normalized = String(value || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
   const codes: Record<string, string> = {
@@ -143,7 +189,7 @@ function formalPositionCode(value: unknown) {
   };
   return codes[normalized] || normalized || 'POS?';
 }
-function cohortSubject(value: unknown) {
+function cohortSubject(value: unknown, sport = 'soccer') {
   const normalized = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
   const labels: Record<string, string> = {
     GK: 'Goalkeepers',
@@ -178,7 +224,8 @@ function cohortSubject(value: unknown) {
     F: 'Forwards',
     FWD: 'Forwards',
   };
-  return labels[normalized] || `${positionLabel(value)} players`;
+  if (sport === 'soccer' && labels[normalized]) return labels[normalized];
+  return `${sportPositionLabel(value, sport)} players`;
 }
 
 function cohortPropLabel(value: unknown) {
@@ -242,6 +289,7 @@ export default function SameRoleEvidenceCard({
   if (!data) return null;
 
   const sample = Number(data.sampleSize || 0);
+  const sport = String(data.sport || 'soccer').toLowerCase();
   const minimum = Number(data.minimumRecommendedSample || 15);
   const average = data.average ?? data.avgStatValue;
   const rec = String(recommendation || '').toUpperCase();
@@ -280,7 +328,10 @@ export default function SameRoleEvidenceCard({
       || '',
   ).trim();
   const role = isSamePosition ? '' : (data.targetRole || 'same role');
-  const position = positionLabel(data.targetPosition || data.positionShort || 'same position');
+  const position = sportPositionLabel(
+    data.targetPosition || data.positionShort || 'same position',
+    sport,
+  );
   const limited = sample < minimum;
   const sourcePlayers = (data.players || []).slice().sort(newestFirst).slice(0, 15);
   const hasSourcePlayers = sourcePlayers.length > 0;
@@ -304,7 +355,8 @@ export default function SameRoleEvidenceCard({
   const cohortSentence = average != null && sample > 0
     ? `Against ${data.opponent || 'this opponent'}, comparable ${cohortSubject(
         data.targetPosition || data.positionShort,
-      ).toLowerCase()} averaged ${cohortAverageText} ${cohortPropLabel(data.propType)} in ${scopeLabel}.`
+         sport,
+       ).toLowerCase()} averaged ${cohortAverageText} ${cohortPropLabel(data.propType)} in ${scopeLabel}.`
     : `No verified comparable player average is available for ${data.opponent || 'this opponent'}.`;
   const avgPossession = Number(data.avgPossession);
   const avgOpponentPossession = Number(data.avgOpponentPossession);
@@ -329,7 +381,8 @@ export default function SameRoleEvidenceCard({
   // the disclosure visible without presenting broad-category rows as a
   // failed or misleading full analysis.
   if (exactPositionUnavailable && !hasComparableCohort && !broadPositionOnly) {
-    const targetLabel = positionLabel(data.targetPosition || data.positionShort);
+     const targetLabel = sportPositionLabel(data.targetPosition || data.positionShort, sport);
+     const roleLabel = String(data.targetRole || '').trim();
     const venueFixtureCount = Number(data.comparisonVenueFixtureCount || 0);
     const statusText = String(data.comparisonUnavailableReason || '').toLowerCase();
     const evidenceDetail = statusText === 'provider_timeout' || statusText === 'provider_unavailable'
@@ -358,6 +411,11 @@ export default function SameRoleEvidenceCard({
         <Text style={{ fontSize: 11, color: Colors.text, fontWeight: '800', lineHeight: 15, marginTop: 4 }}>
           No verified comparable {targetLabel.toLowerCase()} average is available for {data.opponent || 'this opponent'}.
         </Text>
+        {roleLabel ? (
+          <Text style={{ fontSize: 10, color: Colors.textSecondary, lineHeight: 14, marginTop: 2 }}>
+            Role context: {roleLabel}. No verified same-role sample was returned.
+          </Text>
+        ) : null}
         <Text style={{ fontSize: 9.5, color: Colors.textTertiary, lineHeight: 14, marginTop: 2 }}>
           {unavailableReason && statusText !== 'no_verified_exact_position_rows'
             ? unavailableReason
@@ -421,7 +479,7 @@ export default function SameRoleEvidenceCard({
               ? `${sample} distinct ${cohortUnitLabel}${sample === 1 ? '' : 's'} in ${scopeLabel}`
             : broadPositionOnly
               ? `No verified broad ${position.toLowerCase()} source-player rows were returned`
-              : `No exact ${positionLabel(data.targetPosition || data.positionShort || 'position')} source-player rows were returned`}
+              : `No exact ${sportPositionLabel(data.targetPosition || data.positionShort || 'position', sport)} source-player rows were returned`}
         {hasVerdict ? ` · line ${numericLine.toFixed(1)} · pick ${rec}` : ''}
         {limited ? ` · limited sample (target n≥${minimum})` : ' · target sample reached'}
       </Text>
@@ -522,7 +580,7 @@ export default function SameRoleEvidenceCard({
       )}
        {!hasSourcePlayers && (
         <Text style={{ fontSize: 10, color: Colors.textTertiary, lineHeight: 15, marginTop: 8 }}>
-           Exact-position evidence is unavailable for this opponent window; broad-category rows are intentionally not relabeled as {position}.
+           Exact-position evidence is unavailable for this event window; broad-category rows are intentionally not relabeled as {position}.
         </Text>
       )}
     </View>

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import pga_client
 import pga_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("pga_routes")
 router = APIRouter(prefix="/api/pga", tags=["pga"])
@@ -97,7 +98,7 @@ async def pga_predict(req: PgaPredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "pga", "playerName": req.playerName, "playerId": player_id,
         "teamName": "", "propType": prop_type,
         "line": req.line, "venue": "neutral", "opponentName": req.tournament or "",
@@ -111,4 +112,4 @@ async def pga_predict(req: PgaPredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

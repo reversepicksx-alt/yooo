@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from config import db
 import ncaaw_client
 import ncaaw_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("ncaaw_routes")
 router = APIRouter(prefix="/api/ncaaw", tags=["ncaaw"])
@@ -131,7 +132,7 @@ async def ncaaw_predict(req: NcaawPredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "ncaaw", "playerName": req.playerName, "playerId": player_id,
         "teamName": team_name, "position": position, "propType": prop_type,
         "line": req.line, "venue": venue, "opponentName": req.opponentName or "",
@@ -145,4 +146,4 @@ async def ncaaw_predict(req: NcaawPredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

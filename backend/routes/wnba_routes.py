@@ -9,6 +9,7 @@ from typing import Optional
 from config import db
 import wnba_client
 import wnba_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("wnba_routes")
 router = APIRouter(prefix="/api/wnba", tags=["wnba"])
@@ -222,4 +223,4 @@ async def wnba_predict(req: WnbaPredictRequest):
         "rawConfidence":    result["confidenceScore"],
     }
     build_sport_deterministic_explanation(response, "wnba")
-    return response
+    return normalize_response(response)

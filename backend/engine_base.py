@@ -85,6 +85,12 @@ def normalize_response(response: dict) -> dict:
     for field, default in STANDARD_FIELDS.items():
         response.setdefault(field, default)
 
+    # All sport routes receive the same evidence fields.  Sport-specific
+    # adapters may replace these packets with verified comparable rows; the
+    # default is explicit unavailability, never borrowed soccer data.
+    from universal_evidence import ensure_universal_evidence
+    ensure_universal_evidence(response)
+
     # ── Wire confidenceScore ↔ Bayesian probabilities ────────────────────────
     # Sports that explicitly set confidenceScore keep their value.
     # Sports that never set it (e.g. soccer/Bayesian pipeline) land at the

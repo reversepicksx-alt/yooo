@@ -12,6 +12,7 @@ from typing import Optional
 from config import db
 import cs2_client
 import cs2_engine
+from engine_base import normalize_response
 
 log    = logging.getLogger("cs2_routes")
 router = APIRouter(prefix="/api/cs2", tags=["cs2"])
@@ -278,4 +279,4 @@ async def cs2_predict(req: Cs2PredictRequest):
         },
     }
     build_sport_deterministic_explanation(response, "cs2")
-    return response
+    return normalize_response(response)

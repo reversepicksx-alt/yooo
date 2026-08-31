@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from engine_base import normalize_response
 
 log = logging.getLogger("ai_sports_routes")
 router = APIRouter(prefix="/api/ai-sport", tags=["ai_sport"])
@@ -161,11 +162,11 @@ async def ai_sport_predict(req: AiSportPredictRequest):
             detail=f"Unsupported sport: {sport}. Supported: {list(SPORT_PROPS.keys())}"
         )
 
-    return {
+    return normalize_response({
         "available": False,
         "sport": sport,
         "playerName": req.playerName,
         "propType": req.propType,
         "line": req.line,
         "message": "This sport does not have a structured-data model in the current release.",
-    }
+    })

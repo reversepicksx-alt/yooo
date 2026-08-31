@@ -502,7 +502,51 @@ export function renderTacticalVerdict(
     opponentName?: string | null;
   } | null,
 ) {
-  if (!data || String((data as any)?.sport ?? 'soccer').toLowerCase() !== 'soccer') return null;
+  if (!data) return null;
+  const sport = String((data as any)?.sport ?? 'soccer').toLowerCase();
+  if (sport !== 'soccer') {
+    const packet = ((data as any)?.roleEvidencePacket ?? {}) as any;
+    const comparison = ((data as any)?.positionComparison ?? {}) as any;
+    const role = packet.role ?? (data as any)?.playerRole;
+    const position = packet.position ?? (data as any)?.playerPosition ?? (data as any)?.position;
+    const propType = String(pick?.propType ?? (data as any)?.propType ?? '');
+    const prop = PROP_LABELS[propType] ?? (propType.replace(/_/g, ' ') || 'prop');
+    const sample = Number(comparison.sampleSize ?? packet.sameRoleEvidence?.sampleSize ?? 0);
+    const status = String(packet.status ?? 'unavailable').toUpperCase();
+    const projection = Number(
+      pick?.projectedValue ?? pick?.projection
+        ?? (data as any)?.projectedValue ?? (data as any)?.projection,
+    );
+    const line = Number(pick?.line ?? (data as any)?.line);
+    if (!role && !position && sample <= 0) return null;
+    const conclusion = Number.isFinite(projection) && Number.isFinite(line)
+      ? `The deterministic model lands at ${projection.toFixed(1)} against ${line.toFixed(1)}.`
+      : 'The deterministic projection remains the source of the recommendation.';
+    return (
+      <View style={[aStyles.tacticalVerdictCard, { borderColor: '#64748B66' }]}>
+        <View style={aStyles.proCardHeader}>
+          <View style={[aStyles.proCardPill, { backgroundColor: '#64748B20' }]}>
+            <Text style={[aStyles.proCardPillText, { color: '#CBD5E1' }]}>PLAYER READ</Text>
+          </View>
+          <Text style={aStyles.proCardTitle}>ROLE + MATCHUP CONTEXT</Text>
+        </View>
+        <Text style={aStyles.tacticalVerdictLead}>
+          {role || position || 'Sport-specific role unavailable'} is the context used for this {prop.toLowerCase()} read.
+        </Text>
+        <Text style={aStyles.proCardNote}>
+          {sport.toUpperCase()} position and role evidence: {status}.
+          {sample > 0
+            ? ` ${sample} comparable observation${sample === 1 ? '' : 's'} returned.`
+            : ' No verified sport-specific comparable-player sample was returned.'}
+        </Text>
+        <Text style={aStyles.proCardNote}>
+          {packet.confidenceControl
+            || 'Comparable-player context is shadow-only and does not change the deterministic projection.'}
+        </Text>
+        <Text style={[aStyles.tacticalVerdictConclusion, { color: '#CBD5E1' }]}>{conclusion}</Text>
+      </View>
+    );
+  }
 
   const ti = ((data as any)?.tacticalIntelligence ?? {}) as any;
   const tc = ((data as any)?.tacticalContext ?? {}) as any;
@@ -617,13 +661,15 @@ export function renderTacticalVerdict(
 /** Press Intensity card. It stays visible even when the provider sample is unavailable. */
 export function renderTacticalContext(data: Record<string, unknown> | null) {
   const sport = String((data as any)?.sport ?? 'soccer').toLowerCase();
-  if (sport && sport !== 'soccer') return null;
   const pressIntensity = (
     (data as any)?.tacticalContext?.pressIntensity
     ?? (data as any)?.bayesianMetrics?.pressIntensity
     ?? (data as any)?.pressIntensity
     ?? {}
   ) as any;
+  // Press intensity is a soccer-specific signal.  Other sports use the
+  // universal role/comparison card instead of displaying soccer terminology.
+  if (sport !== 'soccer' && !pressIntensity?.status) return null;
   const available = pressIntensity?.status === 'available';
   const label = available
     ? reversePicksPressureLabel(pressIntensity)

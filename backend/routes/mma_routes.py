@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import mma_client
 import mma_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("mma_routes")
 router = APIRouter(prefix="/api/mma", tags=["mma"])
@@ -101,7 +102,7 @@ async def mma_predict(req: MmaPredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "mma", "playerName": req.playerName, "playerId": fighter_id,
         "teamName": team_name, "propType": prop_type,
         "line": req.line, "venue": "neutral", "opponentName": req.opponentName or "",
@@ -115,4 +116,4 @@ async def mma_predict(req: MmaPredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

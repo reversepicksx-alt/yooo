@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 import atp_client
 import atp_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("atp_routes")
 router = APIRouter(prefix="/api/atp", tags=["atp"])
@@ -133,7 +134,7 @@ async def atp_predict(req: AtpPredictRequest):
                        "opponent": m.get("opponent",""), "wonMatch": m.get("wonMatch")}
                       for m in match_logs[:10]]
 
-    return {
+    return normalize_response({
         "sport": "atp", "playerName": req.playerName, "playerId": player_id,
         "opponentName": req.opponentName or "", "propType": prop_type,
         "line": req.line, "surface": req.surface or "Hard", "round": req.round or "",
@@ -148,4 +149,4 @@ async def atp_predict(req: AtpPredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

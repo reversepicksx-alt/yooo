@@ -56,6 +56,7 @@ from opponent_block_profile import (
 )
 from causal_script_engine import build_causal_script_packet
 from causal_evidence_assembly import assemble_causal_evidence
+from universal_evidence import ensure_universal_evidence
 # compact_explanation (Gemini AI) removed — hit rates shown on frontend instead
 # game script intelligence removed — it distorted confidence scores for GK pass picks
 
@@ -1100,7 +1101,8 @@ async def predict(req: PredictionRequest):
 
     def _safe_prediction_fallback(reason: str) -> dict:
         """Return a neutral, renderable result when enrichment is unavailable."""
-        return {
+        fallback = {
+            "sport": req.sport,
             "player": {
                 "id": req.playerId,
                 "name": req.playerName,
@@ -1145,6 +1147,8 @@ async def predict(req: PredictionRequest):
                 "providerDataUnavailable": True,
             },
         }
+        ensure_universal_evidence(fallback)
+        return fallback
 
     # Keep the display name defined before any optional enrichment or
     # fail-open branch can run. Older deployed builds referenced this local
@@ -17906,6 +17910,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                 }
 
         prediction = _normalize_prediction_identity(prediction, req)
+        # Keep the soccer-specific pipeline authoritative while exposing the
+        # same sport-neutral role/comparison contract as every other route.
+        # Existing verified packets are preserved by the adapter.
+        ensure_universal_evidence(prediction)
         # The causal gate runs after the deterministic projection is final but
         # before a recommendation crosses the persistence/UI boundary. It can
         # only downgrade to PASS: it never invents a counter-projection.

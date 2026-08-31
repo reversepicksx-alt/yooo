@@ -9,6 +9,7 @@ from typing import Optional
 from config import db
 import nhl_client
 import nhl_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("nhl_routes")
 router = APIRouter(prefix="/api/nhl", tags=["nhl"])
@@ -214,7 +215,7 @@ async def nhl_predict(req: NhlPredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
-    return {
+    return normalize_response({
         "sport":            "nhl",
         "playerName":       req.playerName,
         "playerId":         player_id,
@@ -241,4 +242,4 @@ async def nhl_predict(req: NhlPredictRequest):
         "reasoning":         ai_result.get("reasoning", ""),
         "keyFactors":        ai_result.get("keyFactors", []),
         "rawConfidence":     result["confidenceScore"],
-    }
+    })

@@ -1237,6 +1237,7 @@ export interface PredictionResult {
     };
   };
   positionComparison?: {
+    sport?: string;
     targetPosition?: string;
     targetRole?: string;
     comparisonMode?: 'same-position' | 'same-role' | string;
@@ -1413,6 +1414,22 @@ export interface PredictionResult {
   playerRoleSource?: string;
   playerRoleConfidence?: string;
   playerRoleIsInferred?: boolean;
+  roleEvidencePacket?: {
+    version?: string;
+    sport?: string;
+    status?: 'verified' | 'partial' | 'unavailable' | string;
+    position?: string | null;
+    role?: string | null;
+    source?: string;
+    confidence?: string;
+    fixtureId?: string | number | null;
+    venue?: string | null;
+    questions?: string[];
+    opportunity?: Record<string, unknown>;
+    evidenceCounts?: Record<string, number>;
+    projectionInfluence?: string;
+    confidenceControl?: string;
+  };
   positionEvidence?: {
     genericPosition?: string | null;
     specificPosition?: string | null;
@@ -2354,12 +2371,19 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
       ?? raw.averageMinutesPerMatch
       ?? raw.playerGameLogs?.avgMinutes
     ) as number | null | undefined,
-    playerPosition: raw.player?.position || undefined,
-    playerRole: customerRole(raw.player?.position, raw.player?.role),
-    playerPositionSource: raw.player?.positionSource || undefined,
-    playerRoleSource: raw.player?.roleSource || undefined,
-    playerRoleConfidence: raw.player?.roleConfidence || undefined,
-    playerRoleIsInferred: raw.player?.roleIsInferred || undefined,
+    playerPosition: raw.player?.position || (raw as any).playerPosition
+      || (raw as any).position || undefined,
+    playerRole: customerRole(raw.player?.position, raw.player?.role)
+      || (raw as any).playerRole || (raw as any).role || undefined,
+    playerPositionSource: raw.player?.positionSource
+      || (raw as any).playerPositionSource || undefined,
+    playerRoleSource: raw.player?.roleSource
+      || (raw as any).playerRoleSource || undefined,
+    playerRoleConfidence: raw.player?.roleConfidence
+      || (raw as any).playerRoleConfidence || undefined,
+    playerRoleIsInferred: raw.player?.roleIsInferred
+      ?? (raw as any).playerRoleIsInferred ?? undefined,
+    roleEvidencePacket: (raw as any).roleEvidencePacket ?? undefined,
     positionEvidence: (raw as any).positionEvidence ?? undefined,
     leagueRoleBucket: (raw as any).leagueRoleBucket ?? undefined,
     sport: raw.sport || (request.sport as string) || undefined,
@@ -3858,6 +3882,10 @@ export async function wtaPredict(request: Record<string, unknown>, signal?: Abor
     sport:               'wta',
     playerName:          raw.playerName,
     playerId:            raw.playerId,
+    playerPosition:      raw.playerPosition ?? raw.position ?? undefined,
+    playerRole:          raw.playerRole ?? raw.role ?? undefined,
+    positionComparison:  raw.positionComparison ?? undefined,
+    roleEvidencePacket:  raw.roleEvidencePacket ?? undefined,
     teamName:            raw.opponentName ? '' : '',
     opponentName:        raw.opponentName,
     opponentId:          raw.opponentId,
@@ -3942,6 +3970,10 @@ export async function cs2Predict(request: Record<string, unknown>, signal?: Abor
 
   return {
     playerName:         raw.playerName || '',
+    playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
+    playerRole:         raw.playerRole ?? raw.role ?? undefined,
+    positionComparison: raw.positionComparison ?? undefined,
+    roleEvidencePacket: raw.roleEvidencePacket ?? undefined,
     teamName:           raw.teamName || '',
     opponentName:       raw.opponentName || '',
     propType:           raw.propType || '',
@@ -4060,6 +4092,10 @@ export async function nbaPredict(request: Record<string, unknown>, signal?: Abor
     sport:              'nba',
     playerName:         raw.playerName   || '',
     playerId:           raw.playerId,
+    playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
+    playerRole:         raw.playerRole ?? raw.role ?? undefined,
+    positionComparison: raw.positionComparison ?? undefined,
+    roleEvidencePacket: raw.roleEvidencePacket ?? undefined,
     teamName:           raw.teamName     || '',
     opponentName:       raw.opponentName || '',
     propType:           raw.propType     || '',
@@ -4083,7 +4119,6 @@ export async function nbaPredict(request: Record<string, unknown>, signal?: Abor
      gameId:             raw.gameId ?? raw.fixtureId ?? null,
      fixtureId:          raw.fixtureId ?? raw.gameId ?? null,
      fixtureDate:        raw.fixtureDate ?? raw.gameDate ?? null,
-     playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
      playerIsHome:       raw.playerIsHome ?? raw.matchupOverview?.playerIsHome,
      homeTeam:           raw.homeTeam ?? raw.matchupOverview?.homeTeam,
      awayTeam:           raw.awayTeam ?? raw.matchupOverview?.awayTeam,
@@ -4184,6 +4219,10 @@ export async function nhlPredict(request: Record<string, unknown>, signal?: Abor
     sport:              'nhl',
     playerName:         raw.playerName   || '',
     playerId:           raw.playerId,
+    playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
+    playerRole:         raw.playerRole ?? raw.role ?? undefined,
+    positionComparison: raw.positionComparison ?? undefined,
+    roleEvidencePacket: raw.roleEvidencePacket ?? undefined,
     teamName:           raw.teamName     || '',
     opponentName:       raw.opponentName || '',
     propType:           raw.propType     || '',
@@ -4310,6 +4349,10 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
     sport:              'nfl',
     playerName:         raw.playerName   || '',
     playerId:           raw.playerId,
+    playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
+    playerRole:         raw.playerRole ?? raw.role ?? undefined,
+    positionComparison: raw.positionComparison ?? undefined,
+    roleEvidencePacket: raw.roleEvidencePacket ?? undefined,
     teamName:           raw.teamName     || '',
     opponentName:       raw.opponentName || '',
     propType:           raw.propType     || '',
@@ -4456,6 +4499,10 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     sport:              'mlb',
     playerName:         raw.playerName   || '',
     playerId:           raw.playerId,
+    playerPosition:     raw.playerPosition ?? raw.position ?? undefined,
+    playerRole:         raw.playerRole ?? raw.role ?? undefined,
+    positionComparison: raw.positionComparison ?? undefined,
+    roleEvidencePacket: raw.roleEvidencePacket ?? undefined,
     teamName:           raw.teamName     || '',
     opponentName:       raw.opponentName || '',
     propType:           raw.propType     || '',

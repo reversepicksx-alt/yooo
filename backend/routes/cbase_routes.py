@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import cbase_client
 import cbase_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("cbase_routes")
 router = APIRouter(prefix="/api/cbase", tags=["cbase"])
@@ -116,7 +117,7 @@ async def cbase_predict(req: CbasePredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "cbase", "playerName": req.playerName, "playerId": player_id,
         "teamName": team_name, "position": position, "propType": prop_type,
         "line": req.line, "venue": venue, "opponentName": req.opponentName or "",
@@ -130,4 +131,4 @@ async def cbase_predict(req: CbasePredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

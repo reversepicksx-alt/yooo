@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import f1_client
 import f1_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("f1_routes")
 router = APIRouter(prefix="/api/f1", tags=["f1"])
@@ -100,7 +101,7 @@ async def f1_predict(req: F1PredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "f1", "playerName": req.playerName, "playerId": driver_id,
         "teamName": team_name, "propType": prop_type,
         "line": req.line, "venue": "neutral", "opponentName": req.raceName or "",
@@ -114,4 +115,4 @@ async def f1_predict(req: F1PredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

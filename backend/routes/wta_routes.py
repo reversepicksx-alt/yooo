@@ -12,6 +12,7 @@ from models import WtaPredictRequest
 from config import db
 import wta_client
 import wta_engine
+from engine_base import normalize_response
 
 log    = logging.getLogger("wta_routes")
 router = APIRouter(prefix="/api/wta", tags=["wta"])
@@ -242,7 +243,7 @@ async def wta_predict(req: WtaPredictRequest):
 
     prop_label = wta_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
 
-    return {
+    return normalize_response({
         "sport":           "wta",
         "playerName":      player_name,
         "playerId":        player_id,
@@ -298,4 +299,4 @@ async def wta_predict(req: WtaPredictRequest):
             "sampleSize":      result["sampleSize"],
             "tacticalMetrics": tactical_metrics,
         },
-    }
+    })

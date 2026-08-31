@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import dota2_client
 import dota2_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("dota2_routes")
 router = APIRouter(prefix="/api/dota2", tags=["dota2"])
@@ -100,7 +101,7 @@ async def dota2_predict(req: Dota2PredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "dota2", "playerName": req.playerName, "playerId": player_id,
         "teamName": team_name, "propType": prop_type,
         "line": req.line, "venue": "neutral", "opponentName": req.opponentName or "",
@@ -114,4 +115,4 @@ async def dota2_predict(req: Dota2PredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })

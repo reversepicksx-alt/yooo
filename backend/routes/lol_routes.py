@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import lol_client
 import lol_engine
+from engine_base import normalize_response
 
 log = logging.getLogger("lol_routes")
 router = APIRouter(prefix="/api/lol", tags=["lol"])
@@ -102,7 +103,7 @@ async def lol_predict(req: LolPredictRequest):
 
     ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
 
-    return {
+    return normalize_response({
         "sport": "lol", "playerName": req.playerName, "playerId": player_id,
         "teamName": team_name, "propType": prop_type,
         "line": req.line, "venue": "neutral", "opponentName": req.opponentName or "",
@@ -116,4 +117,4 @@ async def lol_predict(req: LolPredictRequest):
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
         "reasoning": ai_result.get("reasoning", ""),
         "rawConfidence": result["confidenceScore"],
-    }
+    })
