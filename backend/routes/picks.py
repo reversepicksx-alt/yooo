@@ -833,7 +833,12 @@ async def save_pick(req: SavePickRequest):
         ),
         # Role-first evidence is captured at prediction time so replay and
         # saved analysis do not need to infer a role from rotated caches.
-        "roleEvidence": pick.get("roleEvidence") or (pick.get("player") or {}).get("roleEvidencePacket") or {},
+        "roleEvidence": (
+            pick.get("roleEvidence")
+            or pick.get("roleEvidencePacket")
+            or (pick.get("player") or {}).get("roleEvidencePacket")
+            or {}
+        ),
     }
 
     # Persist the model's projected ball-possession split so we can compare

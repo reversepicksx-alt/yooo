@@ -2552,6 +2552,7 @@ export interface Pick {
   trackingId?: string;
   position?: string;
   role?: string;
+  positionComparison?: Record<string, unknown>;
   playerAge?: number | null;
   age?: number | null;
   averageMinutesPerMatch?: number | null;
@@ -2683,6 +2684,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     trackingId: p.trackingId as string,
     position: (p.position as string) || undefined,
     role: customerRole(p.position, p.role),
+    positionComparison: (p.positionComparison as Record<string, unknown>) || undefined,
     playerAge: (p.playerAge as number) ?? (p.age as number) ?? null,
     age: (p.age as number) ?? (p.playerAge as number) ?? null,
     averageMinutesPerMatch: (
