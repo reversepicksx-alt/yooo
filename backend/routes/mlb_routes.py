@@ -12,6 +12,7 @@ from config import db
 import mlb_client
 import mlb_engine
 from engine_base import normalize_response
+from saved_sport_analysis import merge_saved_analysis
 
 log = logging.getLogger("mlb_routes")
 
@@ -481,8 +482,18 @@ async def mlb_predict(req: MlbPredictRequest):
         "leagueName":     "MLB",
         "season":         req.season,
         "sport":          "mlb",
+        "position":       position,
+        "role":            "Pitcher" if prop_type in mlb_engine.PITCHER_PROPS else "Batter",
+        "playerPosition": position,
+        "playerRole":     "Pitcher" if prop_type in mlb_engine.PITCHER_PROPS else "Batter",
+        "pitcherName":    req.pitcherName or "",
+        "pitcherHandedness": pitcher_hand,
+        "batterHandedness": batter_hand,
+        "pitcherEra":     req.pitcherEra,
+        "lineupSpot":     req.lineupSpot,
         "gameTotalUsed":  effective_game_total,
         "gameTotalSource": game_total_source,
+        "gameTotal":      effective_game_total,
         "generatedAt":    datetime.now(timezone.utc).isoformat(),
     }
 
@@ -578,6 +589,53 @@ async def mlb_predict(req: MlbPredictRequest):
         pass
 
     return normalize_response(response)
+
+
+@router.get("/picks/{pick_id}/analysis")
+async def get_mlb_saved_analysis(
+    pick_id: str,
+    email: str = Query(...),
+    token: str = Query(...),
+):
+    """Return the complete durable analysis for one saved MLB pick."""
+    session = await db.sessions.find_one(
+        {"email": email.lower().strip(), "session_token": token},
+        {"_id": 0},
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    pick = await db.picks.find_one(
+        {"pickId": pick_id, "email": email.lower().strip(), "sport": "mlb"},
+        {"_id": 0},
+    )
+    if not pick:
+        raise HTTPException(status_code=404, detail="MLB pick not found")
+
+    prop_type = str(pick.get("propType") or "")
+    prediction = None
+    prediction_filter = {
+        "propType": prop_type,
+        "line": pick.get("line"),
+    }
+    if pick.get("playerId"):
+        prediction = await db.mlb_predictions.find_one(
+            {"playerId": pick["playerId"], **prediction_filter},
+            {"_id": 0},
+            sort=[("generatedAt", -1)],
+        )
+    if not prediction and pick.get("playerName"):
+        prediction = await db.mlb_predictions.find_one(
+            {
+                "playerName": {"$regex": f"^{str(pick['playerName'])}$", "$options": "i"},
+                **prediction_filter,
+            },
+            {"_id": 0},
+            sort=[("generatedAt", -1)],
+        )
+
+    analysis = merge_saved_analysis(pick, prediction, "mlb")
+    return {"found": True, "sport": "mlb", "analysis": analysis}
 
 
 async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):

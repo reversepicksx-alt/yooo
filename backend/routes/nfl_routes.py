@@ -11,6 +11,7 @@ from config import db
 import nfl_client
 import nfl_engine
 from engine_base import normalize_response
+from saved_sport_analysis import merge_saved_analysis
 
 log = logging.getLogger("nfl_routes")
 router = APIRouter(prefix="/api/nfl", tags=["nfl"])
@@ -243,6 +244,9 @@ async def nfl_predict(req: NflPredictRequest):
         "playerId":         player_id,
         "teamName":         team_name,
         "position":         position,
+        "playerPosition":   position,
+        "playerRole":       position or "Skill position",
+        "role":             position or "Skill position",
         "propType":         prop_type,
         "line":             req.line,
         "venue":            venue,
@@ -260,6 +264,10 @@ async def nfl_predict(req: NflPredictRequest):
         "gameLogs":         game_log_tiles,
         "recentValues":     result.get("recentValues", []),
         "rawConfidence":     result["confidenceScore"],
+        "gameTotal":        req.gameTotal,
+        "gameTotalUsed":    req.gameTotal,
+        "oppRankPercentile": req.oppRankPercentile,
+        "restDays":         req.restDays,
         "historyGameCount": len(history_logs),
         "historySeasons":   history_seasons,
         "historyRange": {
@@ -297,3 +305,43 @@ async def nfl_predict(req: NflPredictRequest):
             response.setdefault("safetyRating", "RISKY")
     build_sport_deterministic_explanation(response, "nfl")
     return normalize_response(response)
+
+
+@router.get("/picks/{pick_id}/analysis")
+async def get_nfl_saved_analysis(
+    pick_id: str,
+    email: str = Query(...),
+    token: str = Query(...),
+):
+    """Return the complete durable analysis for one saved NFL pick."""
+    session = await db.sessions.find_one(
+        {"email": email.lower().strip(), "session_token": token},
+        {"_id": 0},
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    pick = await db.picks.find_one(
+        {"pickId": pick_id, "email": email.lower().strip(), "sport": "nfl"},
+        {"_id": 0},
+    )
+    if not pick:
+        raise HTTPException(status_code=404, detail="NFL pick not found")
+
+    # NFL has no separate durable prediction cache. A current generic row can
+    # enrich a legacy pick, but the saved snapshot remains authoritative.
+    prediction = None
+    if pick.get("playerId"):
+        prediction = await db.predictions.find_one(
+            {
+                "sport": "nfl",
+                "playerId": pick["playerId"],
+                "propType": pick.get("propType"),
+                "line": pick.get("line"),
+            },
+            {"_id": 0},
+            sort=[("_created", -1)],
+        )
+
+    analysis = merge_saved_analysis(pick, prediction, "nfl")
+    return {"found": True, "sport": "nfl", "analysis": analysis}

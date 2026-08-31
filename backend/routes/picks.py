@@ -803,8 +803,16 @@ async def save_pick(req: SavePickRequest):
         "priorMean":       pick.get("priorMean") or (pick.get("bayesianMetrics") or {}).get("priorMean"),
         "momentumMean":    pick.get("momentumMean") or (pick.get("bayesianMetrics") or {}).get("momentumMean"),
         "venue": pick.get("venue") or pick.get("_request", {}).get("venue", "home"),
-        "position": pick.get("player", {}).get("position", ""),
-        "role": pick.get("player", {}).get("role", ""),
+        "position": (
+            pick.get("position")
+            or pick.get("playerPosition")
+            or pick.get("player", {}).get("position", "")
+        ),
+        "role": (
+            pick.get("role")
+            or pick.get("playerRole")
+            or pick.get("player", {}).get("role", "")
+        ),
         "status": "live",
         "result": "pending",
         "actualValue": None,
@@ -868,12 +876,23 @@ async def save_pick(req: SavePickRequest):
             "coachName": _mgr_ctx.get("coachName") or None,
         }
 
-    # Store structured analysis fields directly on sport picks (no separate
-    # predictions collection) for offline analysis modal access.
-    if sport in ("cs2", "soccer", "wta"):
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts", "aiSource", "playerGameLogs"):
+    # Store the complete sport analysis snapshot directly on the durable pick.
+    # MLB/NFL use their own prediction caches, so omitting these fields makes
+    # saved analysis disappear as soon as a cache row rotates.
+    if sport in ("cs2", "soccer", "wta", "mlb", "nfl"):
+        for field in (
+            "sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts",
+            "aiSource", "gameLogs", "playerGameLogs", "recentValues",
+            "hitRates", "historyGameCount", "historySeasons", "historyRange",
+            "evidenceQuality", "qualityConfidenceCapped", "safetyRating",
+            "propHistoricalRate", "propHistoricalN", "lineDeviationBand",
+            "lineDeviationPct", "lineDeviationHitRate", "lineDeviationHitRateN",
+            "gameTotalUsed", "gameTotalSource", "gameTotal",
+            "pitcherName", "pitcherHandedness", "batterHandedness", "pitcherEra",
+            "lineupSpot", "oppRankPercentile", "restDays",
+        ):
             val = pick.get(field)
-            if val:
+            if val is not None:
                 doc[field] = val
         # Store tactical metrics so the analysis modal can show them
         for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
