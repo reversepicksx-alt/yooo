@@ -484,8 +484,6 @@ async def mlb_predict(req: MlbPredictRequest):
         "sport":          "mlb",
         "position":       position,
         "role":            "Pitcher" if prop_type in mlb_engine.PITCHER_PROPS else "Batter",
-        "playerPosition": position,
-        "playerRole":     "Pitcher" if prop_type in mlb_engine.PITCHER_PROPS else "Batter",
         "pitcherName":    req.pitcherName or "",
         "pitcherHandedness": pitcher_hand,
         "batterHandedness": batter_hand,

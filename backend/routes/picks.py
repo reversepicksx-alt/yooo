@@ -897,6 +897,7 @@ async def save_pick(req: SavePickRequest):
         # Store tactical metrics so the analysis modal can show them
         for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder",
                       "analysisFactors", "modelInputSnapshot", "factorLedger",
+                      "bayesianMetrics", "matchupOverview", "roleEvidencePacket",
                        "tacticalContext", "tacticalIntelligence", "matchScript",
                         "positionalReality", "roleEvidence",
                       "factorLedgerVersion", "factorLedgerFingerprint"):

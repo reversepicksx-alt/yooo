@@ -2089,6 +2089,7 @@ export default function ScanScreen() {
       const projAwayPoss = prediction.expectedPossession?.away;
       await savePick(session.email, session.token, {
         playerName: prediction.playerName || scanResult?.playerName || playerQuery,
+        playerId: prediction.playerId || scanResult?.playerId || predictionRequest?.playerId || undefined,
         teamName: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam,
         // Keep the verified soccer context on the save request.  The backend
         // needs these top-level fields as well as the original request when
@@ -2157,6 +2158,8 @@ export default function ScanScreen() {
         gameScript: prediction.gameScript || undefined,
         analysisFactors: prediction.analysisFactors || undefined,
         modelInputSnapshot: prediction.modelInputSnapshot || undefined,
+        bayesianMetrics: (prediction as any).bayesianMetrics || undefined,
+        matchupOverview: (prediction as any).matchupOverview || undefined,
          positionComparison: (prediction as any).positionComparison
            || (prediction as any).tacticalIntelligence?.positionCohort
            || undefined,

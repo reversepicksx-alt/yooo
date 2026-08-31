@@ -233,7 +233,7 @@ const pill = StyleSheet.create({
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function OwnerPickCard({
   pick, onDelete, onManagerBadgePress, onRefreshSettlement, settlementRefreshing = false,
-  ownerMediaEnabled = false, compact = false,
+  ownerMediaEnabled = false, compact = false, onAnalysisPress,
 }: {
   pick: Pick;
   onDelete?: () => void;
@@ -242,6 +242,7 @@ export default function OwnerPickCard({
   settlementRefreshing?: boolean;
   ownerMediaEnabled?: boolean;
   compact?: boolean;
+  onAnalysisPress?: () => void;
 }) {
   const [clockNow, setClockNow] = useState(() => Date.now());
   const won = pickWon(pick);
@@ -508,6 +509,17 @@ export default function OwnerPickCard({
                     style={{ all: 'unset', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center' }}>
                     <Ionicons name="trash-outline" size={13} color={Colors.error} />
                   </button>
+                )}
+                {!captureMode && (
+                  <TouchableOpacity
+                    onPress={onAnalysisPress}
+                    style={styles.compactAnalysisBtn}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Open pick analysis"
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="analytics-outline" size={15} color={Colors.primary} />
+                  </TouchableOpacity>
                 )}
                 {!captureMode && (
                   <TouchableOpacity
@@ -911,6 +923,11 @@ const styles = StyleSheet.create({
   compactShareBtn: {
     width: 22, height: 22, borderRadius: 11,
     backgroundColor: 'rgba(57,255,20,0.08)', alignItems: 'center', justifyContent: 'center',
+  },
+  compactAnalysisBtn: {
+    width: 24, height: 24, borderRadius: 6, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(10,132,255,0.10)',
+    borderWidth: 1, borderColor: 'rgba(10,132,255,0.30)',
   },
   compactSettlementBtn: {
     width: 22, height: 22, borderRadius: 11,

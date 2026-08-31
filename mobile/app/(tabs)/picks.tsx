@@ -1505,6 +1505,15 @@ export default function PicksScreen() {
     }
   }, [session]);
 
+  const handleAnalysisPagePress = useCallback((pick: Pick) => {
+    const pickId = String(pick.pickId || pick.id || pick._id || '');
+    if (!pickId) return;
+    router.push({
+      pathname: '/pick-analysis/[pickId]',
+      params: { pickId, sport: String(pick.sport || '') },
+    });
+  }, []);
+
   const filteredPicks = useMemo(() => picks.filter((p) => {
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -1683,6 +1692,7 @@ export default function PicksScreen() {
                 onRefreshSettlement={() => handleRefreshSettlement(item)}
                 settlementRefreshing={refreshingSettlementId === String(item.pickId)}
                 onManagerBadgePress={item.managerContext?.isRecent ? () => handleManagerBadgePress(item) : undefined}
+                onAnalysisPress={() => handleAnalysisPagePress(item)}
               />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;

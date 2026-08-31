@@ -2592,6 +2592,29 @@ export interface Pick {
   analysisFactors?: AnalysisFactor[];
   modelInputSnapshot?: Record<string, unknown>;
   bayesianMetrics?: Record<string, unknown>;
+  evidenceQuality?: Record<string, unknown>;
+  safetyRating?: string;
+  propHistoricalRate?: number | null;
+  propHistoricalN?: number | null;
+  lineDeviationBand?: string;
+  lineDeviationPct?: number | null;
+  lineDeviationHitRate?: number | null;
+  lineDeviationHitRateN?: number | null;
+  recentValues?: number[];
+  hitRates?: Record<string, unknown>;
+  historyGameCount?: number;
+  historySeasons?: number[];
+  historyRange?: { min?: number; max?: number };
+  gameTotal?: number | null;
+  gameTotalUsed?: number | null;
+  gameTotalSource?: string;
+  pitcherName?: string;
+  pitcherHandedness?: string;
+  batterHandedness?: string;
+  pitcherEra?: number | null;
+  lineupSpot?: number | null;
+  oppRankPercentile?: number | null;
+  restDays?: number | null;
   // Manager / coaching change context (persisted so badge shows without re-predicting)
   managerContext?: {
     isRecent?: boolean;
@@ -2722,6 +2745,29 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     analysisFactors: (p.analysisFactors as AnalysisFactor[]) || undefined,
     modelInputSnapshot: (p.modelInputSnapshot as Record<string, unknown>) || undefined,
     bayesianMetrics: (p.bayesianMetrics as Record<string, unknown>) || undefined,
+    evidenceQuality: (p.evidenceQuality as Record<string, unknown>) || undefined,
+    safetyRating: (p.safetyRating as string) || undefined,
+    propHistoricalRate: (p.propHistoricalRate as number) ?? null,
+    propHistoricalN: (p.propHistoricalN as number) ?? null,
+    lineDeviationBand: (p.lineDeviationBand as string) || undefined,
+    lineDeviationPct: (p.lineDeviationPct as number) ?? null,
+    lineDeviationHitRate: (p.lineDeviationHitRate as number) ?? null,
+    lineDeviationHitRateN: (p.lineDeviationHitRateN as number) ?? null,
+    recentValues: (p.recentValues as number[]) || undefined,
+    hitRates: (p.hitRates as Record<string, unknown>) || undefined,
+    historyGameCount: (p.historyGameCount as number) ?? undefined,
+    historySeasons: (p.historySeasons as number[]) || undefined,
+    historyRange: (p.historyRange as Pick['historyRange']) || undefined,
+    gameTotal: (p.gameTotal as number) ?? null,
+    gameTotalUsed: (p.gameTotalUsed as number) ?? null,
+    gameTotalSource: (p.gameTotalSource as string) || undefined,
+    pitcherName: (p.pitcherName as string) || undefined,
+    pitcherHandedness: (p.pitcherHandedness as string) || undefined,
+    batterHandedness: (p.batterHandedness as string) || undefined,
+    pitcherEra: (p.pitcherEra as number) ?? null,
+    lineupSpot: (p.lineupSpot as number) ?? null,
+    oppRankPercentile: (p.oppRankPercentile as number) ?? null,
+    restDays: (p.restDays as number) ?? null,
     // Owner-only media fields pass-through
     ownerPlayerPhoto: (p.ownerPlayerPhoto as string) || undefined,
     ownerTeamLogo: (p.ownerTeamLogo as string) || undefined,
@@ -2874,6 +2920,24 @@ export async function deletePick(email: string, token: string, pickId: string) {
 export async function fetchPickAnalysis(email: string, token: string, pickId: string): Promise<{ found: boolean; analysis?: Record<string, unknown> }> {
   const params = new URLSearchParams({ email, token, pickId });
   return apiCall<{ found: boolean; analysis?: Record<string, unknown> }>(`/api/picks/analysis?${params.toString()}`);
+}
+
+export async function fetchSportPickAnalysis(
+  email: string,
+  token: string,
+  pick: Pick | { pickId?: string; sport?: string },
+): Promise<{ found: boolean; sport?: string; analysis?: Record<string, unknown> }> {
+  const pickId = String(pick.pickId || '');
+  const sport = String(pick.sport || '').toLowerCase();
+  const route = sport === 'mlb'
+    ? `/api/mlb/picks/${encodeURIComponent(pickId)}/analysis`
+    : sport === 'nfl'
+      ? `/api/nfl/picks/${encodeURIComponent(pickId)}/analysis`
+      : '/api/picks/analysis';
+  const params = new URLSearchParams({ email, token, pickId });
+  return apiCall<{ found: boolean; sport?: string; analysis?: Record<string, unknown> }>(
+    `${route}?${params.toString()}`,
+  );
 }
 
 export async function refreshPickAnalysis(
