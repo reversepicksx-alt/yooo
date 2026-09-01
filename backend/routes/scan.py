@@ -1,0 +1,906 @@
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException
+
+from config import (
+    SUPPORTED_LEAGUES, CURRENT_SEASON,
+    PROP_TYPE_ALIASES, INTERNATIONAL_LEAGUES, NATION_TO_LEAGUES,
+    TOP_5_LEAGUES, db,
+)
+from models import ScanPropRequest
+from utils import api_football_request, priority_api_football_request, strip_accents, resolve_verified_fixture
+from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info, db, COL_PLAYERS
+
+router = APIRouter(prefix="/api", tags=["scan"])
+
+# Valid prop types for normalization
+VALID_SOCCER_PROPS = {
+    "goals", "assists", "pass_attempts", "shots", "shots_on_target", "tackles",
+    "key_passes", "saves", "interceptions", "blocks", "dribbles", "fouls_drawn",
+    "fouls_committed", "shots_assisted", "crosses", "clearances", "duels_won",
+    "yellow_cards", "dribbles_success",
+}
+
+# Hardcoded team→league fallback (used when cache misses)
+TEAM_LEAGUE_MAP = {
+    "botafogo": 71, "flamengo": 71, "palmeiras": 71, "sao paulo": 71, "corinthians": 71,
+    "atletico mineiro": 71, "atletico mg": 71, "atletico paranaense": 71, "athletico": 71, "athletico pr": 71,
+    "gremio": 71, "internacional": 71, "cruzeiro": 71, "fluminense": 71, "santos": 71,
+    "vasco": 71, "bahia": 71, "fortaleza": 71, "bragantino": 71, "juventude": 71,
+    "cuiaba": 71, "goias": 71, "vitoria": 71, "sport": 71, "ceara": 71,
+    "coritiba": 71, "mirassol": 71, "sport recife": 71, "america mineiro": 71,
+    "chapecoense": 71, "criciuma": 71, "guarani": 71, "ponte preta": 71,
+    "operario": 71, "novorizontino": 71, "avai": 71, "nautico": 71,
+    "londrina": 71, "vila nova": 71, "sampaio correa": 71, "ituano": 71,
+    "botafogo sp": 71, "csa": 71, "abc": 71, "tombense": 71,
+    "paysandu": 71, "remo": 71, "santa cruz": 71, "atletico go": 71,
+    "arsenal": 39, "chelsea": 39, "liverpool": 39, "manchester city": 39, "man city": 39,
+    "manchester united": 39, "man united": 39, "tottenham": 39, "spurs": 39,
+    "newcastle": 39, "aston villa": 39, "west ham": 39, "brighton": 39, "wolves": 39,
+    "crystal palace": 39, "everton": 39, "fulham": 39, "brentford": 39, "bournemouth": 39,
+    "nottingham forest": 39, "leicester": 39, "ipswich": 39, "southampton": 39,
+    "real madrid": 140, "barcelona": 140, "atletico madrid": 140, "athletic bilbao": 140,
+    "real sociedad": 140, "betis": 140, "villarreal": 140, "sevilla": 140, "girona": 140,
+    "valencia": 140, "getafe": 140, "osasuna": 140, "celta vigo": 140, "mallorca": 140,
+    "rayo vallecano": 140, "alaves": 140, "las palmas": 140, "cadiz": 140,
+    "leganes": 140, "valladolid": 140, "real valladolid": 140, "espanyol": 140,
+    "real betis": 140,
+    # Spanish La Liga 2 (Segunda División) - league 141
+    "levante": 141, "levante ud": 141,
+    "zaragoza": 141, "real zaragoza": 141,
+    "burgos": 141, "burgos cf": 141,
+    "sd eibar": 141, "eibar": 141,
+    "racing santander": 141,
+    "huesca": 141, "sd huesca": 141,
+    "tenerife": 141, "cd tenerife": 141,
+    "eldense": 141, "cd eldense": 141,
+    "almeria": 141, "ud almeria": 141,
+    "villarreal b": 141, "villarreal ii": 141,
+    "mirandes": 141, "cd mirandes": 141,
+    "oviedo": 141, "real oviedo": 141,
+    "albacete": 141, "albacete bp": 141,
+    "sporting gijon": 141, "real sporting": 141, "gijon": 141,
+    "ferrol": 141, "racing ferrol": 141,
+    "castellon": 141, "cd castellon": 141,
+    "cartagena": 141, "fc cartagena": 141,
+    "cordoba cf": 141, "cordoba": 141,
+    # Argentine Liga Profesional - league 128
+    "independiente": 128, "boca juniors": 128, "boca": 128, "river plate": 128, "river": 128,
+    "racing": 128, "racing club": 128, "san lorenzo": 128, "huracan": 128,
+    "velez sarsfield": 128, "velez": 128, "argentinos juniors": 128, "argentinos jrs": 128,
+    "lanus": 128, "banfield": 128, "defensa y justicia": 128, "defensa": 128,
+    "tigre": 128, "platense": 128, "belgrano": 128, "talleres": 128,
+    "union": 128, "union santa fe": 128, "colon": 128, "newells": 128,
+    "newells old boys": 128, "rosario central": 128, "godoy cruz": 128,
+    "estudiantes": 128, "gimnasia": 128, "gimnasia lp": 128,
+    "atletico tucuman": 128, "central cordoba": 128, "sarmiento": 128,
+    "barracas central": 128, "instituto": 128, "aldosivi": 128,
+    "independiente rivadavia": 128, "riestra": 128,
+    # EFL Championship (England) - league 40
+    "sheffield wednesday": 40, "sheff wed": 40, "sheffield wed": 40,
+    "sheffield united": 40, "sheff utd": 40, "sheffield utd": 40,
+    "stoke": 40, "stoke city": 40, "swansea": 40, "swansea city": 40,
+    "burnley": 40, "leeds": 40, "leeds united": 40,
+    "sunderland": 40, "middlesbrough": 40, "norwich": 40, "norwich city": 40,
+    "west brom": 40, "west bromwich": 40, "west bromwich albion": 40,
+    "watford": 40, "coventry": 40, "coventry city": 40,
+    "bristol city": 40, "blackburn": 40, "blackburn rovers": 40,
+    "millwall": 40, "hull": 40, "hull city": 40,
+    "qpr": 40, "queens park rangers": 40, "preston": 40, "preston north end": 40,
+    "plymouth": 40, "plymouth argyle": 40, "luton": 40, "luton town": 40,
+    "cardiff": 40, "cardiff city": 40, "portsmouth": 40,
+    "derby": 40, "derby county": 40, "oxford united": 40,
+    # Liga Pro Ecuador - league 242
+    "barcelona sc": 242, "barcelona sporting club": 242, "emelec": 242,
+    "liga de quito": 242, "ldu quito": 242, "ldu de quito": 242,
+    "independiente del valle": 242, "delfin": 242, "aucas": 242,
+    "deportivo cuenca": 242, "mushuc runa": 242, "orense": 242,
+    "guayaquil city": 242, "tecnico universitario": 242, "el nacional": 242,
+    "libertad fc": 242, "cumbaya": 242, "macara": 242,
+    # A-League (Australia) - league 188
+    "melbourne victory": 188, "melbourne city": 188, "sydney fc": 188, "western sydney": 188,
+    "western sydney wanderers": 188, "central coast mariners": 188, "macarthur": 188,
+    "macarthur fc": 188, "wellington phoenix": 188, "perth glory": 188,
+    "adelaide united": 188, "newcastle jets": 188, "brisbane roar": 188,
+    "auckland fc": 188,
+    # MLS (USA) - league 253
+    "inter miami": 253, "la galaxy": 253, "lafc": 253, "los angeles fc": 253,
+    "new york city fc": 253, "nycfc": 253, "atlanta united": 253,
+    "seattle sounders": 253, "portland timbers": 253, "austin fc": 253,
+    "nashville sc": 253, "columbus crew": 253, "fc cincinnati": 253,
+    "philadelphia union": 253, "new england revolution": 253,
+    "toronto fc": 253, "cf montreal": 253, "vancouver whitecaps": 253,
+    "sporting kansas city": 253, "houston dynamo": 253, "real salt lake": 253,
+    "minnesota united": 253, "colorado rapids": 253, "fc dallas": 253,
+    "san jose earthquakes": 253, "charlotte fc": 253, "dc united": 253,
+    "new york red bulls": 253, "chicago fire": 253, "st louis city": 253,
+    "san diego fc": 253,
+    "bayern munich": 78, "bayern": 78, "dortmund": 78, "borussia dortmund": 78,
+    "leverkusen": 78, "bayer leverkusen": 78, "rb leipzig": 78, "leipzig": 78,
+    "stuttgart": 78, "frankfurt": 78, "wolfsburg": 78, "freiburg": 78,
+    "union berlin": 78, "hoffenheim": 78, "mainz": 78, "augsburg": 78,
+    "werder bremen": 78, "bremen": 78, "heidenheim": 78, "bochum": 78,
+    "monchengladbach": 78, "borussia monchengladbach": 78, "gladbach": 78,
+    "st pauli": 78, "holstein kiel": 78, "koln": 78, "cologne": 78,
+    "inter milan": 135, "inter": 135, "ac milan": 135, "milan": 135, "juventus": 135,
+    "napoli": 135, "roma": 135, "lazio": 135, "atalanta": 135, "fiorentina": 135,
+    "bologna": 135, "torino": 135, "monza": 135, "genoa": 135, "cagliari": 135,
+    "udinese": 135, "empoli": 135, "verona": 135, "hellas verona": 135,
+    "lecce": 135, "sassuolo": 135, "salernitana": 135, "frosinone": 135,
+    "como": 135, "venezia": 135, "parma": 135, "sampdoria": 135,
+    "psg": 61, "paris saint-germain": 61, "paris sg": 61, "marseille": 61, "lyon": 61, "monaco": 61,
+    "lille": 61, "lens": 61, "nice": 61, "rennes": 61, "strasbourg": 61,
+    "toulouse": 61, "nantes": 61, "reims": 61, "montpellier": 61, "brest": 61,
+    "le havre": 61, "clermont": 61, "metz": 61, "lorient": 61, "auxerre": 61,
+    "angers": 61, "saint-etienne": 61, "st etienne": 61, "ajaccio": 61,
+    # Saudi Pro League - league 307
+    "al hilal": 307, "al-hilal": 307, "hilal": 307,
+    "al nassr": 307, "al-nassr": 307, "nassr": 307,
+    "al ittihad": 307, "al-ittihad": 307, "ittihad": 307,
+    "al ahli": 307, "al-ahli": 307,
+    "damac": 307, "damac fc": 307,
+    "al qadsiah": 307, "al-qadsiah": 307, "qadsiah": 307, "qadisiyah": 307,
+    "al qadisiyah": 307, "al-qadisiyah": 307, "al qadisiya": 307,
+    "al ettifaq": 307, "al-ettifaq": 307, "ettifaq": 307,
+    "al taawon": 307, "al-taawon": 307, "taawon": 307,
+    "al shabab": 307, "al-shabab": 307, "shabab": 307,
+    "al fateh": 307, "al-fateh": 307, "fateh": 307,
+    "al fayha": 307, "al-fayha": 307, "fayha": 307,
+    "al raed": 307, "al-raed": 307, "raed": 307,
+    "al khaleej": 307, "al-khaleej": 307, "khaleej": 307,
+    "al tai": 307, "al-tai": 307,
+    "al wehda": 307, "al-wehda": 307, "wehda": 307,
+    "al okhdood": 307, "al-okhdood": 307, "okhdood": 307,
+    "al faisaly": 307, "al-faisaly": 307, "faisaly": 307,
+    "hajer": 307, "hajer fc": 307,
+    "al hazem": 307, "al-hazem": 307, "hazem": 307,
+    "al riyadh": 307, "al-riyadh": 307,
+    "al nassr fc": 307, "al hilal fc": 307, "al ittihad fc": 307,
+    # Egyptian Premier League - league 233
+    "al ahly": 233, "al-ahly": 233, "zamalek": 233, "pyramids": 233, "pyramids fc": 233,
+    "future fc": 233, "al masry": 233, "smouha": 233, "enppi": 233, "ceramica": 233,
+    # Turkish Super Lig - league 203
+    "galatasaray": 203, "fenerbahce": 203, "besiktas": 203, "trabzonspor": 203,
+    "basaksehir": 203, "istanbul basaksehir": 203, "sivasspor": 203, "konyaspor": 203,
+    "kasimpasa": 203, "antalyaspor": 203, "kayserispor": 203, "alanyaspor": 203,
+    "gaziantep": 203, "giresunspor": 203, "adana demirspor": 203,
+    "portland thorns": 254, "washington spirit": 254, "north carolina courage": 254,
+    "orlando pride": 254, "gotham fc": 254, "angel city": 254, "kansas city current": 254,
+    "san diego wave": 254, "wave fc": 254, "houston dash": 254, "racing louisville": 254,
+    "chicago red stars": 254, "bay fc": 254, "utah royals": 254,
+    "boston legacy": 254, "seattle reign": 254, "reign fc": 254,
+    "angel city fc": 254, "north carolina": 254, "nc courage": 254,
+    "nj/ny gotham": 254, "ny/nj gotham": 254, "portland thorns fc": 254,
+    "tampa bay sun": 254, "brooklyn fc": 254,
+    # ── Copa Libertadores / Sudamericana clubs — Colombia (Primera A: 239) ──
+    "medellin": 239, "atletico medellin": 239, "independiente medellin": 239,
+    "ind. medellin": 239, "deportivo medellin": 239, "dep. independiente medellin": 239,
+    "atletico nacional": 239, "nacional medellin": 239,
+    "junior": 239, "junior fc": 239, "atletico junior": 239, "junior barranquilla": 239,
+    "junior de barranquilla": 239,
+    "bucaramanga": 239, "atletico bucaramanga": 239, "deportivo bucaramanga": 239,
+    "santa fe": 239, "independiente santa fe": 239,
+    "america de cali": 239, "america cali": 239,
+    "millonarios": 239, "millonarios fc": 239,
+    "deportes tolima": 239, "tolima": 239,
+    "once caldas": 239,
+    "envigado": 239, "envigado fc": 239,
+    # Bolivia (División de Fútbol Profesional: 21)
+    "always ready": 21, "club always ready": 21,
+    "bolivar": 21, "club bolivar": 21, "bolívar": 21,
+    "the strongest": 21, "strongest": 21,
+    "blooming": 21, "club blooming": 21,
+    "jorge wilstermann": 21, "wilstermann": 21,
+    "nacional potosi": 21, "nacional potosí": 21,
+    "aurora": 21, "club aurora": 21,
+    "san antonio bulo bulo": 21,
+    "universitario de vinto": 21,
+    # Peru (Primera División: 281)
+    "universitario": 281, "universitario de deportes": 281, "universitario lima": 281,
+    "alianza lima": 281, "alianza": 281,
+    "sporting cristal": 281,
+    "fbc melgar": 281, "melgar": 281,
+    "cienciano": 281, "club cienciano": 281,
+    "atletico grau": 281, "atlético grau": 281,
+    "cusco fc": 281,
+    "sport huancayo": 281, "adt": 281,
+    # Chile (Primera División: 265)
+    "colo colo": 265, "colo-colo": 265,
+    "universidad de chile": 265, "u. de chile": 265,
+    "universidad catolica": 265, "u. catolica": 265, "universidad católica": 265,
+    "palestino": 265, "cd palestino": 265,
+    "deportes iquique": 265, "iquique": 265,
+    "everton de vina": 265, "everton vina": 265, "everton chile": 265,
+    "nublense": 265, "cd nublense": 265,
+    "union espanola": 265, "unión española": 265,
+    "huachipato": 265, "cd huachipato": 265,
+    # Uruguay (Primera División: 270)
+    "penarol": 270, "peñarol": 270, "club atletico penarol": 270,
+    "nacional uruguay": 270, "nacional montevideo": 270, "club nacional de football": 270,
+    "defensor sporting": 270, "defensor": 270,
+    "danubio": 270, "danubio fc": 270,
+    "boston river": 270, "club boston river": 270,
+    "montevideo wanderers": 270,
+    "cerro largo": 270, "cerro largo fc": 270,
+    "racing montevideo": 270, "racing club montevideo": 270,
+    # Paraguay (Division Profesional: 250)
+    "olimpia paraguay": 250, "club olimpia": 250,
+    "cerro porteno": 250, "cerro porteño": 250,
+    "nacional asuncion": 250, "nacional paraguay": 250,
+    "libertad": 250, "club libertad": 250, "libertad asuncion": 250, "libertad asunción": 250,
+    "guarani paraguay": 250, "guaraní": 250, "club guarani": 250,
+    "sportivo luqueno": 250, "luqueno": 250, "luqueño": 250,
+    "2 de mayo": 250, "dos de mayo": 250,
+    "sportivo ameliano": 250, "ameliano": 250,
+    "olimpia asuncion": 250,
+    # Venezuela (Primera División: 299)
+    "deportivo tachira": 299, "tachira": 299, "táchira": 299,
+    "caracas fc": 299, "caracas": 299,
+    "monagas": 299, "monagas sc": 299,
+    "deportivo la guaira": 299, "la guaira": 299,
+    "metropolitanos": 299, "metropolitanos fc": 299,
+    "puerto cabello": 299, "fc puerto cabello": 299,
+    "carabobo": 299, "carabobo fc": 299,
+    "ucv": 299,
+    # ── National / International (World Cup, EUROS, Nations League, etc.) ──
+    "italy": 5, "france": 5, "germany": 5, "spain": 5, "england": 5,
+    "portugal": 5, "brazil": 5, "argentina": 5, "netherlands": 5, "belgium": 5,
+    "croatia": 5, "usa": 5, "united states": 5, "mexico": 5, "japan": 5,
+    "south korea": 5, "turkey": 5, "serbia": 5, "poland": 5, "denmark": 5,
+    "sweden": 5, "norway": 5, "colombia": 5, "uruguay": 5, "chile": 5,
+    "nigeria": 5, "senegal": 5, "morocco": 5, "egypt": 5, "australia": 5,
+    "bosnia": 5, "bosnia & herzegovina": 5, "scotland": 5, "wales": 5,
+    "switzerland": 5, "austria": 5, "czech republic": 5, "czechia": 5, "ukraine": 5,
+    "romania": 5, "greece": 5, "costa rica": 5, "canada": 5, "iran": 5,
+    "algeria": 5, "cameroon": 5, "ghana": 5, "ivory coast": 5, "tunisia": 5,
+    "ecuador": 5, "peru": 5, "bolivia": 5, "venezuela": 5, "paraguay": 5,
+    "south africa": 5, "jordan": 5, "qatar": 5, "saudi arabia": 5, "iran": 5,
+    "new zealand": 5, "honduras": 5, "el salvador": 5, "panama": 5,
+    "czech republic": 5, "slovakia": 5, "hungary": 5, "israel": 5,
+}
+
+
+async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int) -> int:
+    """Infer league ID: check both teams for cross-country Copa/UCL detection first."""
+    # All South American domestic leagues — any two different SA leagues in the same match
+    # means Copa Libertadores (13) or Copa Sudamericana (11)
+    SOUTH_AMERICAN_LEAGUES = {
+        71,   # Brasil - Brasileirao
+        128,  # Argentina - Liga Profesional
+        242,  # Ecuador - Liga Pro
+        239,  # Colombia - Primera A
+        21,   # Bolivia - División de Fútbol Profesional
+        281,  # Peru - Primera División
+        265,  # Chile - Primera División
+        270,  # Uruguay - Primera División
+        299,  # Venezuela - Primera División
+        250,  # Paraguay - Division Profesional
+    }
+    EUROPEAN_TOP_LEAGUES = {39, 140, 135, 78, 61}  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
+
+    # Step 1: Resolve league for BOTH teams (cache + map)
+    team_league = None
+    opp_league = None
+    for name, is_team in [(team_name, True), (opponent_name, False)]:
+        if not name:
+            continue
+        found_lid = None
+        # Try cache
+        info = await get_team_info(name)
+        if info and info.get("leagueId"):
+            found_lid = info["leagueId"]
+        # Try hardcoded map
+        if not found_lid:
+            name_lower = name.lower().strip()
+            if name_lower in TEAM_LEAGUE_MAP:
+                found_lid = TEAM_LEAGUE_MAP[name_lower]
+            else:
+                for key, lid in TEAM_LEAGUE_MAP.items():
+                    if key in name_lower or name_lower in key:
+                        found_lid = lid
+                        break
+        if found_lid:
+            if is_team:
+                team_league = found_lid
+            else:
+                opp_league = found_lid
+        else:
+            # Try smart team cache for teams not in hardcoded map
+            from team_resolver import find_team
+            smart = await find_team(name.lower().strip())
+            if smart:
+                found_lid = smart["leagueId"]
+                if is_team:
+                    team_league = found_lid
+                else:
+                    opp_league = found_lid
+
+    # Step 2: Cross-country detection → Copa / Champions League
+    if team_league and opp_league and team_league != opp_league:
+        if team_league in SOUTH_AMERICAN_LEAGUES and opp_league in SOUTH_AMERICAN_LEAGUES:
+            # Copa Sudamericana (11) if AI detected it; otherwise Copa Libertadores (13)
+            copa_league = 11 if ai_league_id == 11 else 13
+            print(f"[LEAGUE INFER] Cross-SA: {team_league} vs {opp_league} → Copa {'Sudamericana' if copa_league == 11 else 'Libertadores'} ({copa_league})")
+            return copa_league
+        if team_league in EUROPEAN_TOP_LEAGUES and opp_league in EUROPEAN_TOP_LEAGUES:
+            return 2  # Champions League
+        # CRITICAL: When team and opponent leagues conflict (e.g. OCR read "Fulham" but
+        # opponent is "Qadsiah" from Saudi), the opponent's league is more reliable —
+        # on any real prop slip, both teams are always in the same competition.
+        # Trust the OPPONENT's league to correctly place the player.
+        if opp_league:
+            print(f"[LEAGUE INFER] Conflict: team_league={team_league} vs opp_league={opp_league} — trusting opponent league {opp_league}")
+            return opp_league
+        return team_league
+
+    # Step 3: Return whichever league we found
+    if team_league:
+        return team_league
+    if opp_league:
+        return opp_league
+
+    # AI guess fallback (only if not default Premier League guess)
+    if ai_league_id and ai_league_id != 39:
+        return ai_league_id
+
+    return ai_league_id or 71
+
+
+def _names_similar(query: str, candidate: str) -> bool:
+    """Check if a resolved player name is reasonably similar to the search query.
+    Prevents returning 'Kevin' from Fulham when searching for 'Kewin' from Damac."""
+    from utils import strip_accents
+    q = strip_accents(query.lower().strip())
+    c = strip_accents(candidate.lower().strip())
+    if not q or not c:
+        return False
+    if q == c:
+        return True
+    q_parts = q.split()
+    c_parts = c.split()
+    q_last = q_parts[-1] if q_parts else q
+    c_last = c_parts[-1] if c_parts else c
+    if q_last == c_last:
+        # If both have a full first name and the first initials differ, it's a different person
+        # e.g. "Álvaro Carreras" ≠ "Jofre Carreras" — same surname, different people
+        if len(q_parts) >= 2 and len(c_parts) >= 2 and q_parts[0][0] != c_parts[0][0]:
+            return False
+        return True
+    if len(q_parts) >= 2 and len(c_parts) >= 2:
+        if q_parts[0][0] == c_parts[0][0] and q_last == c_last:
+            return True
+    if len(q) >= 4 and len(c) >= 4 and (q in c or c in q):
+        return True
+    if len(q_last) >= 5 and len(c_last) >= 5 and (q_last in c_last or c_last in q_last):
+        # Require ≥ 90% character overlap to avoid false positives like "fuente" vs "fuentes"
+        longer = max(len(q_last), len(c_last))
+        shorter = min(len(q_last), len(c_last))
+        if shorter / longer >= 0.90:
+            return True
+    return False
+
+
+async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None) -> dict:
+    """Try to find a player in the MongoDB cache. Returns player doc or None.
+    Uses league_id and team_name_hint to disambiguate duplicates (e.g., J. Alvarez at Atletico vs Honduras)."""
+    _ADJACENT_LG = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
+    if team_id:
+        player = await get_player_by_name(player_name, team_id, league_id=league_id, team_name_hint=team_name_hint)
+        if player and _names_similar(player_name, player.get("name", "")):
+            # Validate that this player's league is consistent with the expected league.
+            # Prevents returning a player from a completely different country/league when
+            # the AI hallucinates a wrong team name (e.g. "Instituto Cordoba" instead of "Levante").
+            player_league = player.get("leagueId")
+            continental_cups = {2, 3, 848, 531, 480}
+            if league_id and player_league and league_id not in continental_cups:
+                valid = {league_id} | _ADJACENT_LG.get(league_id, set())
+                if player_league not in valid:
+                    print(f"[SCAN] Team-ID cache hit REJECTED: {player_name} in league {player_league} ≠ expected {league_id} (team_id={team_id})")
+                    # Don't return — fall through to name-only search below
+                else:
+                    return player
+            else:
+                return player
+
+    player = await get_player_by_name(player_name, league_id=league_id, team_name_hint=team_name_hint)
+    if not player:
+        return None
+    if not _names_similar(player_name, player.get("name", "")):
+        print(f"[SCAN] Name mismatch rejected: searched '{player_name}', found '{player.get('name')}' — too different")
+        return None
+
+    # If this player is from a national team but we're looking for a club match,
+    # search again excluding international teams
+    international_leagues = {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
+    continental_cups = {2, 3, 848, 531, 480}
+    player_league = player.get("leagueId")
+
+    if player_league in international_leagues and (not league_id or league_id not in international_leagues):
+        from cache import db, COL_PLAYERS
+        from utils import strip_accents
+        import re
+        name_clean = strip_accents(player_name.lower().strip())
+        parts = name_clean.split()
+        last_name = parts[-1] if parts else name_clean
+        club_doc = await db[COL_PLAYERS].find_one(
+            {"playerId": player["playerId"], "leagueId": {"$nin": list(international_leagues)}},
+            {"_id": 0}
+        )
+        if club_doc:
+            return club_doc
+        club_doc = await db[COL_PLAYERS].find_one(
+            {"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}, "leagueId": {"$nin": list(international_leagues)}},
+            {"_id": 0}
+        )
+        if club_doc:
+            return club_doc
+
+    # League validation for non-continental requests
+    # Accept same league OR adjacent leagues in the same country
+    ADJACENT_LEAGUES = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
+    # South American cups: Copa Libertadores (13) / Copa Sudamericana (11) players
+    # are acceptable for domestic South American league queries, because many clubs
+    # play in BOTH competitions and may be cached under the cup league instead of the
+    # domestic league (e.g. Vélez players stored under league 13 instead of 128).
+    _SA_CUPS = {13, 11}
+    _SA_DOMESTIC = {128, 71, 242, 239, 21, 281, 265, 270, 299, 250}  # All SA domestic leagues
+    if league_id and player_league:
+        if league_id in continental_cups:
+            return player
+        if player_league == league_id:
+            return player
+        if player_league in ADJACENT_LEAGUES.get(league_id, set()):
+            return player  # e.g. La Liga 2 player when La Liga is inferred
+        if player_league in _SA_CUPS and league_id in _SA_DOMESTIC:
+            return player  # Copa Libertadores/Sudamericana player for domestic SA query
+        # Always reject if league doesn't match — regardless of whether team_id is set.
+        # Previously `if not team_id: return None` was incorrect because team_id from the
+        # outer scope stays non-None even after the team-specific search already ran.
+        return None
+
+    return player
+
+
+async def _resolve_player_via_api(player_name: str, player_team_hint: str,
+                                   leagues_to_try: list, is_international: bool,
+                                   nat_team_id: int, original_team_name: str,
+                                   opponent_hint: str = "") -> tuple:
+    """Fallback: search API-Sports for a player. Returns (resolved_player, league_id, league_name) or (None, None, None)."""
+    search_clean = strip_accents(player_name.strip())
+    search_variants = [search_clean]
+    name_parts = search_clean.split()
+    if len(name_parts) > 1:
+        last = name_parts[-1]
+        if last != search_clean:
+            search_variants.append(last)
+
+    def pick_best(data_list, query, team_hint, opponent_hint=None):
+        query_lower = strip_accents(query.lower())
+        last_name = query_lower.split()[-1] if query_lower.split() else query_lower
+        team_hints = []
+        if team_hint:
+            team_hints.append(team_hint)
+            th_var = team_hint.replace("th", "t")
+            if th_var != team_hint:
+                team_hints.append(th_var)
+            team_hints.append(team_hint.split()[0])
+
+        # Pre-compute valid leagues from opponent — used for ALL candidates regardless of team match
+        _ADJ = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
+        opp_valid_leagues = set()
+        if opponent_hint:
+            _opp_key = strip_accents(opponent_hint.lower().strip())
+            if _opp_key in TEAM_LEAGUE_MAP:
+                _opp_league = TEAM_LEAGUE_MAP[_opp_key]
+                opp_valid_leagues = {_opp_league} | _ADJ.get(_opp_league, set())
+
+        import re as _re
+        candidates = []
+        for d in data_list[:20]:
+            pname = strip_accents(d["player"]["name"].lower())
+            team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
+            player_league_id = d.get("statistics", [{}])[0].get("league", {}).get("id")
+            # Use word-boundary for last_name to avoid "fuente" matching "fuentes"
+            last_name_match = bool(_re.search(rf'\b{_re.escape(last_name)}\b', pname))
+            name_match = query_lower in pname or pname in query_lower or last_name_match
+            # If query has a first name, require candidate's first word to start with the same letter.
+            # Prevents "K. de La Fuente" matching search for "Adrián Fuente".
+            q_parts_local = query_lower.split()
+            if name_match and len(q_parts_local) >= 2 and pname.split():
+                q_first_char = q_parts_local[0][0]
+                pname_first_char = pname.split()[0][0]
+                if q_first_char != pname_first_char:
+                    name_match = False
+            team_match = any(th in team_name or team_name in th for th in team_hints) if team_hints else False
+            # League match: opponent's known league overrides hallucinated team names
+            # Evaluated for ALL candidates — not just those without a team match
+            league_match = bool(opp_valid_leagues and player_league_id and player_league_id in opp_valid_leagues)
+            if name_match:
+                candidates.append((d, team_match, league_match))
+
+        if candidates:
+            # Priority 1: both team match AND league match (most confident)
+            both = [c for c in candidates if c[1] and c[2]]
+            if both:
+                return both[0][0]
+            # Priority 2: league match via opponent (reliable even when team hint is wrong/hallucinated)
+            league_matched = [c for c in candidates if c[2]]
+            if league_matched:
+                return league_matched[0][0]
+            # Priority 3: team match only — use but don't trust blindly
+            team_matched = [c for c in candidates if c[1]]
+            if team_matched:
+                return team_matched[0][0]
+            # No confident signal — don't return a random wrong player if a team hint was given
+            if team_hint:
+                return None
+            return candidates[0][0]
+        return None
+
+    resolved = None
+    found_league_id = None
+    found_league_name = None
+
+    for variant in search_variants:
+        if resolved:
+            break
+        if len(variant) < 3:
+            continue
+        for try_league in leagues_to_try:
+            if resolved:
+                break
+            for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                try:
+                    data = await api_football_request("players", {"search": variant, "league": try_league, "season": season})
+                    if not data:
+                        continue
+                    best = pick_best(data, player_name, player_team_hint, opponent_hint)
+                    if not best and (not player_team_hint or is_international):
+                        best = data[0]
+                    if best:
+                        resolved = {
+                            "playerId": best["player"]["id"],
+                            "playerName": best["player"]["name"],
+                            "photo": "",
+                            "teamId": nat_team_id if is_international and nat_team_id else best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                            "teamName": (original_team_name or player_team_hint.title()) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                        }
+                        if not is_international:
+                            actual_league = best.get("statistics", [{}])[0].get("league", {})
+                            if actual_league.get("id"):
+                                found_league_id = actual_league["id"]
+                                found_league_name = actual_league.get("name")
+                        break
+                except Exception:
+                    continue
+
+    # Broader search without league filter
+    if not resolved:
+        for variant in search_variants:
+            if resolved:
+                break
+            if len(variant) < 3:
+                continue
+            for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                try:
+                    data = await api_football_request("players", {"search": variant, "season": season})
+                    if not data:
+                        continue
+                    best = pick_best(data, player_name, player_team_hint, opponent_hint)
+                    if not best and (not player_team_hint or is_international):
+                        best = data[0]
+                    if best:
+                        resolved = {
+                            "playerId": best["player"]["id"],
+                            "playerName": best["player"]["name"],
+                            "photo": "",
+                            "teamId": nat_team_id if is_international and nat_team_id else best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                            "teamName": (original_team_name or player_team_hint.title()) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                        }
+                        if not is_international:
+                            actual_league = best.get("statistics", [{}])[0].get("league", {})
+                            if actual_league.get("id"):
+                                found_league_id = actual_league["id"]
+                                found_league_name = actual_league.get("name")
+                        break
+                except Exception:
+                    continue
+
+    return resolved, found_league_id, found_league_name
+
+
+async def _resolve_opponent(opponent_name: str, is_international: bool, league_id: int) -> dict:
+    """Resolve opponent team: smart cache first, then API-Sports fallback."""
+    if not opponent_name:
+        return None
+
+    # Strip common prefixes from scan output: "@ M'gladbach" → "M'gladbach", "vs Arsenal" → "Arsenal"
+    clean_name = opponent_name.strip()
+    for prefix in ["@", "vs", "vs.", "v"]:
+        if clean_name.lower().startswith(prefix + " "):
+            clean_name = clean_name[len(prefix):].strip()
+            break
+
+    opp_lower = strip_accents(clean_name.lower().strip())
+
+    # 1. For international matches, try national team cache
+    if is_international:
+        opp_nat_id, opp_canonical = await get_national_team_id(opp_lower)
+        if opp_nat_id:
+            return {"teamId": opp_nat_id, "teamName": opp_canonical or opponent_name.strip()}
+
+    # 2. Smart team resolver (auto-cached from all supported leagues)
+    from team_resolver import find_team
+    smart_match = await find_team(opp_lower, league_id if not is_international else None)
+    if smart_match:
+        print(f"[OPP RESOLVE] Smart cache hit: '{opponent_name}' → {smart_match['teamName']} (ID: {smart_match['teamId']})")
+        return {"teamId": smart_match["teamId"], "teamName": smart_match["teamName"]}
+
+    # 3. Try legacy club team cache
+    club_id, club_name = await get_team_by_name(strip_accents(opponent_name), league_id if not is_international else None)
+    if club_id:
+        return {"teamId": club_id, "teamName": club_name}
+
+    # 3. API-Sports fallback — search and prefer teams from same league
+    opp_searches = [strip_accents(opponent_name.strip())]
+    # Expand common abbreviations
+    TEAM_ABBREV_MAP = {
+        "mg": "mineiro", "sp": "sao paulo", "pr": "paranaense",
+        "rj": "rio de janeiro", "go": "goianiense", "ba": "bahia",
+    }
+    # Full team name expansions for common short names
+    TEAM_NAME_EXPANSIONS = {
+        "sheff wed": "Sheffield Wednesday", "sheff utd": "Sheffield Utd",
+        "sheffield utd": "Sheffield Utd",
+        "man utd": "Manchester United", "man city": "Manchester City",
+        "west brom": "West Bromwich", "west ham": "West Ham",
+        "qpr": "Queens Park Rangers", "wolves": "Wolverhampton",
+        "spurs": "Tottenham", "stoke": "Stoke City",
+        "swansea": "Swansea City", "norwich": "Norwich City",
+        "burnley": "Burnley", "leeds": "Leeds United",
+        "hull": "Hull City", "derby": "Derby County",
+        "cardiff": "Cardiff City", "luton": "Luton Town",
+        "coventry": "Coventry City", "plymouth": "Plymouth Argyle",
+        "preston": "Preston North End", "blackburn": "Blackburn Rovers",
+        "portsmouth": "Portsmouth", "middlesbrough": "Middlesbrough",
+    }
+    # Check full name expansion first
+    if opp_lower in TEAM_NAME_EXPANSIONS:
+        expanded = TEAM_NAME_EXPANSIONS[opp_lower]
+        opp_searches = [expanded] + opp_searches
+    opp_words = opp_lower.split()
+    if len(opp_words) >= 2:
+        last_word = opp_words[-1]
+        if last_word in TEAM_ABBREV_MAP:
+            expanded = " ".join(opp_words[:-1]) + " " + TEAM_ABBREV_MAP[last_word]
+            opp_searches.append(expanded)
+    variant_th = opp_searches[0].replace("th", "t").replace("Th", "T")
+    if variant_th != opp_searches[0]:
+        opp_searches.append(variant_th)
+
+    first_word = strip_accents(opp_lower.split()[0])
+    first_word_variant = first_word.replace("th", "t")
+
+    # Map league IDs to their country for disambiguation
+    LEAGUE_COUNTRY = {
+        39: "england", 40: "england", 61: "france", 71: "brazil", 78: "germany",
+        135: "italy", 140: "spain", 188: "australia", 253: "usa",
+        254: "usa", 262: "mexico", 128: "argentina", 169: "china",
+        242: "ecuador", 203: "turkey", 233: "egypt",
+        292: "south-korea", 307: "saudi-arabia", 332: "japan",
+    }
+    target_country = LEAGUE_COUNTRY.get(league_id, "")
+
+    for opp_query in opp_searches:
+        try:
+            teams_data = await api_football_request("teams", {"search": opp_query})
+            if not teams_data:
+                continue
+
+            # Filter valid matches
+            valid = []
+            # For women's leagues (NWSL=254), don't exclude women's teams
+            is_womens_league = league_id in (254,)
+            for t in teams_data[:15]:
+                tname = t.get("team", {}).get("name", "")
+                tname_lower = strip_accents(tname.lower())
+                tcountry = (t.get("team", {}).get("country") or "").lower()
+                is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
+                is_women = tname_lower.endswith(" w") or "women" in tname_lower
+                name_match = first_word in tname_lower or first_word_variant in tname_lower
+                # For women's leagues, prefer women's teams. For men's leagues, exclude them.
+                if name_match and not is_youth:
+                    if is_womens_league:
+                        # Prefer women's variants for NWSL
+                        pass  # Allow all (women and non-women)
+                    elif is_women:
+                        continue  # Skip women's teams for men's leagues
+                    country_match = target_country and target_country in tcountry
+                    valid.append({"teamId": t["team"]["id"], "teamName": tname, "country_match": country_match})
+
+            if valid:
+                # Prefer teams from the same country as the league
+                country_matched = [v for v in valid if v["country_match"]]
+                if country_matched:
+                    print(f"[OPP RESOLVE] Country-matched: {country_matched[0]['teamName']} (league {league_id})")
+                    return {"teamId": country_matched[0]["teamId"], "teamName": country_matched[0]["teamName"]}
+                # Otherwise return first valid match
+                return {"teamId": valid[0]["teamId"], "teamName": valid[0]["teamName"]}
+
+        except Exception:
+            continue
+
+    # Strategy: If we have a partial match from SCAN_ALIASES, try it
+    norm_opp = strip_accents(opp_lower)
+    # Remove punctuation for matching
+    import re as _re
+    clean_opp = _re.sub(r"[^a-z0-9\s]", "", norm_opp).strip()
+    if clean_opp:
+        from team_resolver import SCAN_ALIASES, _normalize
+        if clean_opp in SCAN_ALIASES:
+            canonical = _normalize(SCAN_ALIASES[clean_opp])
+            from team_resolver import find_team as ft
+            result = await ft(canonical, league_id if not is_international else None)
+            if result:
+                print(f"[OPP RESOLVE] SCAN_ALIAS hit: '{opponent_name}' → {result['teamName']}")
+                return {"teamId": result["teamId"], "teamName": result["teamName"]}
+
+    return None
+
+
+def _build_soccer_scan_prompt(leagues_list: str) -> str:
+    return f"""Analyze this screenshot of a player prop card.
+
+LAYOUT GUIDE:
+- The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
+- Below the name: "SOCCER • [Team Name] • [Position]"
+- Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
+- The prop line number (e.g., 48.5) is shown prominently with the stat type below it (e.g., "Passes Attempted")
+- "Less" and "More" buttons are just selection options — IGNORE them.
+
+CRITICAL EXTRACTION RULES:
+1. If the screenshot shows ONE player with MULTIPLE stat types listed (e.g., Passes Attempted, Saves, Goals Allowed all on the same page) → ONLY extract the PRIMARY prop. The primary prop is the one that is EXPANDED (has a bar chart, detailed stats, or is visually the largest/most prominent). Ignore collapsed/minimized stat rows.
+2. If the screenshot shows MULTIPLE DIFFERENT PLAYERS (a grid/board of player cards) → Extract ALL of them. This is a multi-player board.
+3. NEVER return multiple entries for the same player with different stat types. One player = one prop.
+
+COMBO PROPS (TWO players combined):
+- The card shows TWO player names joined by " + "
+- Teams shown as "Team1/Team2"
+- The stat label includes "(Combo)"
+- The line number is the COMBINED total for both players
+
+ADDITIONAL RULES:
+- Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
+- Read playerTeam EXACTLY as shown in the image. Do NOT guess or infer team names from your training knowledge — only use what is visually present in the screenshot.
+- If you see " + " between two names, this is a COMBO prop — set isCombo to true.
+- IGNORE any "Less"/"More" buttons.
+
+Extract for EACH prop:
+1. playerName — Full name as displayed. For combos: "Player A + Player B"
+2. propType — Map to: goals, assists, shots_assisted, pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, dribbles_success, fouls_drawn, fouls_committed, crosses, clearances, duels_won, yellow_cards
+3. line — The numerical line (e.g., 48.5, 6, 5.5)
+4. opponentName — The opposing team
+5. league — Best guess league name
+6. leagueId — Match to one of: {leagues_list}
+7. playerTeam — The player's team
+8. isCombo — true if combo, false otherwise
+9. players — ONLY for combos: array of 2 objects with "name" and "team"
+
+PROP TYPE MAPPING:
+- "Goals" / "Anytime Goalscorer" → goals
+- "Assists" / "Goal Assists" → assists
+- "Shots Assisted" / "Shot Assists" → shots_assisted
+- "Passes Attempted" / "Pass Attempts" / "Passes" → pass_attempts
+- "Shots" / "Shots Taken" / "Total Shots" → shots
+- "Shots on Target" / "SOT" → shots_on_target
+- "Tackles" → tackles
+- "Key Passes" / "Chances Created" → key_passes
+- "Saves" / "Goalkeeper Saves" / "Goalie Saves" → saves
+- "Interceptions" → interceptions
+- "Blocks" → blocks
+- "Dribble Attempts" / "Dribbles" → dribbles
+- "Successful Dribbles" / "Dribbles Completed" → dribbles_success
+- "Fouls Drawn" → fouls_drawn
+- "Fouls Committed" / "Fouls" → fouls_committed
+- "Crosses" / "Cross Attempts" → crosses
+- "Clearances" → clearances
+- "Duels Won" / "Duels" → duels_won
+- "Yellow Cards" / "Cards" → yellow_cards
+
+CRITICAL: "Shots Assisted" is shots_assisted (NOT shots or assists). "Goals" is goals (NOT shots_on_target).
+
+RETURN FORMAT (JSON array):
+For SINGLE: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}
+For COMBO: {{"playerName":"Player A + Player B","propType":"...","line":0.0,"opponentName":null,"playerTeam":"Team1/Team2","venue":null,"league":"...","leagueId":0,"isCombo":true,"players":[{{"name":"Player A","team":"Team1"}},{{"name":"Player B","team":"Team2"}}]}}
+
+VENUE: "@ [Team]" → away, "vs [Team]" → home
+If unknown, use null. Return JSON array of ALL props found."""
+
+
+
+
+def _fuzzy_prop_match(raw_prop: str) -> str:
+    """Fuzzy match unknown prop types to valid ones using keyword detection."""
+    raw = raw_prop.lower().replace("_", " ").replace("-", " ")
+    # Keyword → valid prop type (ordered by specificity)
+    keyword_map = [
+        (["shots on target", "shot on target", "sot", "shots on goal"], "shots_on_target"),
+        (["shots assisted", "shot assist"], "shots_assisted"),
+        (["shot", "shots"], "shots"),
+        (["pass attempt", "passes attempted", "passes att", "total pass", "pass att"], "pass_attempts"),
+        (["key pass", "chance creat", "chances"], "key_passes"),
+        (["pass"], "pass_attempts"),
+        (["save", "goalkeeper", "goalie", "gk save"], "saves"),
+        (["tackle"], "tackles"),
+        (["intercept"], "interceptions"),
+        (["block"], "blocks"),
+        (["dribble success", "dribbles completed", "successful dribble"], "dribbles_success"),
+        (["dribble"], "dribbles"),
+        (["cross"], "crosses"),
+        (["clearance"], "clearances"),
+        (["foul drawn", "fouls drawn"], "fouls_drawn"),
+        (["foul"], "fouls_committed"),
+        (["goal", "scorer", "anytime"], "goals"),
+        (["assist"], "assists"),
+        (["duel"], "duels_won"),
+        (["yellow", "card"], "yellow_cards"),
+    ]
+    for keywords, prop_type in keyword_map:
+        if any(kw in raw for kw in keywords):
+            return prop_type
+    return None
+
+
+def _validate_extraction(entry: dict) -> tuple:
+    """
+    Validate OCR extraction quality. Returns (is_valid, issues_list).
+    Auto-corrects prop types instead of rejecting. Only fails on truly invalid data.
+    """
+    issues = []
+    valid_props = VALID_SOCCER_PROPS
+    prop_aliases = PROP_TYPE_ALIASES
+
+    # 1. Player name sanity
+    name = (entry.get("playerName") or "").strip()
+    if not name:
+        issues.append("MISSING_NAME")
+    elif len(name) < 2:
+        issues.append("NAME_TOO_SHORT")
+    elif not any(c.isalpha() for c in name):
+        issues.append("NAME_NO_LETTERS")
+    elif name.lower() in {"less", "more", "vs", "at", "home", "away"}:
+        issues.append("NAME_IS_UI_ELEMENT")
+
+    # 2. Line sanity
+    line = entry.get("line")
+    if line is None:
+        issues.append("MISSING_LINE")
+    else:
+        try:
+            line_val = float(line)
+            if line_val <= 0:
+                issues.append("LINE_ZERO_OR_NEGATIVE")
+            elif line_val > 500:
+                issues.append("LINE_IMPOSSIBLY_HIGH")
+        except (ValueError, TypeError):
+            issues.append("LINE_NOT_A_NUMBER")
+
+    # 3. Prop type — auto-correct unknown types instead of rejecting
+    raw_prop = (entry.get("propType") or "").lower().strip()
+    if not raw_prop:
+        issues.append("MISSING_PROP_TYPE")
+    else:
+        normalized = prop_aliases.get(raw_prop, raw_prop)
+        if normalized not in valid_props:
+            # Try fuzzy match before giving up
+            fuzzy = _fuzzy_prop_match(raw_prop)
+            if fuzzy:
+                entry["propType"] = fuzzy
+                print(f"[OCR VALIDATE] Auto-corrected prop: '{raw_prop}' → '{fuzzy}'")
+            else:
+                issues.append(f"UNKNOWN_PROP_TYPE:{raw_prop}")
+
+    is_valid = len(issues) == 0
+    if issues:
+        print(f"[OCR VALIDATE] Issues for '{name}': {', '.join(issues)}")
+
+    return is_valid, issues

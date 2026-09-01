@@ -1,0 +1,3044 @@
+"""
+3-LAYER BAYESIAN ENGINE v2 — Elite Mathematical Computation
+
+v1 had a critical flaw: the Covariate layer (match context) drowned out
+Prior and Momentum for high-variance players because precision = n/variance
+collapsed near zero while Covariate stayed fixed at 3.0.
+
+v2 fixes:
+- Floor precisions: Prior and Momentum can never be zeroed out
+- Covariate hard-capped at 25% of total weight (informs, never overrides)
+- Exponential decay weighting in Momentum (most recent game = highest weight)
+- Streak detection vs the line (consecutive over/under pattern)
+- Volatility scoring via coefficient of variation
+- Adaptive precision that respects sample size even for chaotic players
+
+Layer 1: PRIOR — Season average (baseline expectation + mean reversion anchor)
+Layer 2: MOMENTUM — Exponentially-weighted recent form (last 5 games, recency premium)
+Layer 3: COVARIATE — Match context adjustments (venue, opponent, dominance) — CAPPED
+
+Posterior = Precision-weighted combination with adaptive floors
+"""
+import math
+import os
+import random
+import statistics as stats_mod
+from typing import Optional
+from sample_quality import magnitude_outlier_weights, magnitude_outlier_notes
+
+
+# Hard cap: Covariate can be at most this ratio of (Prior + Momentum)
+# ratio=0.33 guarantees Covariate weight <= 25% of total
+MAX_COVARIATE_RATIO = 0.33
+# A pressure packet is labeled stable only after seven valid defensive-action
+# rows. Fewer rows remain usable but are disclosed as limited evidence.
+PRESS_INTENSITY_MIN_SAMPLE = 7
+
+# ── Position-aware momentum decay tables ─────────────────────────────────────
+# Research (Frontiers 2024-25) shows attackers have shorter form cycles (3-4 games)
+# while defenders/GKs are more stable (6-8 game cycles).
+# Most recent game = index 0.
+DECAY_BY_POSITION = {
+    "attacker":   [1.0, 0.75, 0.55, 0.38, 0.25],  # volatile, short form cycles
+    "midfielder": [1.0, 0.82, 0.67, 0.55, 0.45],  # balanced (original default)
+    "defender":   [1.0, 0.88, 0.77, 0.67, 0.58],  # stable, long form cycles
+    "goalkeeper": [1.0, 0.90, 0.80, 0.70, 0.60],  # most stable of all positions
+}
+
+POSITION_GROUP_MAP = {
+    # Attackers
+    "CF": "attacker", "SS": "attacker", "LW": "attacker", "RW": "attacker",
+    "CAM": "attacker", "AM": "attacker", "F": "attacker", "ST": "attacker",
+    "FW": "attacker", "WF": "attacker",
+    # Midfielders
+    "CM": "midfielder", "DM": "midfielder", "CDM": "midfielder",
+    "LM": "midfielder", "RM": "midfielder", "M": "midfielder",
+    "MF": "midfielder", "DMF": "midfielder", "AMF": "midfielder",
+    # Defenders
+    "CB": "defender", "LB": "defender", "RB": "defender",
+    "LWB": "defender", "RWB": "defender", "D": "defender",
+    "DF": "defender", "SW": "defender",
+    # Goalkeepers
+    "GK": "goalkeeper", "G": "goalkeeper",
+}
+
+# Fallback decay used when position is unknown
+DECAY_WEIGHTS = DECAY_BY_POSITION["midfielder"]
+
+
+# Props that are discrete counts (non-negative integers).
+# These use the negative binomial distribution instead of Gaussian in Monte Carlo.
+COUNT_PROPS = {
+    "shots", "shots_on_target", "goals", "assists", "saves", "tackles",
+    "key_passes", "interceptions", "blocks", "dribbles", "dribbles_success",
+    "fouls_drawn", "fouls_committed", "crosses", "clearances",
+    "duels_won", "yellow_cards", "shots_assisted",
+}
+
+
+def _sample_negative_binomial(mean: float, variance: float, n_sims: int) -> list:
+    """
+    Gamma-Poisson mixture (= negative binomial) for count data.
+    More accurate than Gaussian for discrete props like shots, saves, goals.
+    Handles overdispersion (variance > mean) naturally — common in football stats.
+
+    When variance <= mean (rare, underdispersed), falls back to Poisson via
+    Gaussian approximation since NB is undefined there.
+    """
+    if mean <= 0:
+        return [0] * n_sims
+
+    if variance <= mean:
+        # Underdispersed — use Poisson approximation
+        lam = max(mean, 0.01)
+        return [max(0, round(random.gauss(lam, math.sqrt(lam)))) for _ in range(n_sims)]
+
+    # NB parameters via method of moments
+    r     = max(mean ** 2 / (variance - mean), 0.1)  # dispersion (shape)
+    beta  = (variance - mean) / mean                  # scale
+
+    samples = []
+    for _ in range(n_sims):
+        # Draw Poisson rate from Gamma(r, beta) — this gives NB marginal
+        rate = random.gammavariate(r, beta)
+        # Approximate Poisson(rate) with Gaussian for speed (accurate for rate > 1)
+        sample = max(0, round(random.gauss(rate, math.sqrt(max(rate, 0.01)))))
+        samples.append(sample)
+    return samples
+
+
+def _monte_carlo_probability(
+    mean: float,
+    std: float,
+    line: float,
+    n_sims: int = 5000,
+    is_count_stat: bool = False,
+    variance: float = None,
+    market_correction: float = 0.015,
+    covariate_sigma_frac: float = 0.0,
+    display_as_integer: bool = False,
+) -> tuple:
+    """
+    Monte Carlo simulation for P(over) / P(under) and 80% CI.
+
+    For count stats (shots, goals, saves etc.) uses the negative binomial
+    via a gamma-Poisson mixture — correctly handles discrete, right-skewed
+    distributions. For continuous stats uses Gaussian.
+
+    market_correction: fractional line inflation applied before comparison only.
+    Empirical data shows books shade lines ~1.5% high on average (UNDER hits
+    67.7% vs OVER 51.6% across 2,965 settled picks). A 1.5% effective line
+    inflation corrects for this structural bookmaker bias without overriding
+    genuine model signals. CI uses the original line for display accuracy.
+
+    covariate_sigma_frac: additional fractional uncertainty from adjustment layers
+    (possession estimate, press intensity, opponent model etc.). Each active
+    covariate contributes its own estimation error — e.g. possession predictions
+    carry ±5pp uncertainty, AI press scores ±0.15. Stacking these without
+    propagating their uncertainty causes the engine to be overconfident above 70%.
+    Added in quadrature for Gaussian; variance-scaled for negative-binomial.
+      eff_std = sqrt(std² + (mean × frac)²)   [Gaussian]
+      eff_var = var × (1 + frac)²              [NegBin]
+
+    Returns: (p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80,
+              mode, landing_bands)
+    """
+    if std <= 0 or mean <= 0:
+        p = 1.0 if mean > line else 0.0
+        value = round(mean, 1)
+        return p, 1.0 - p, value, value, value, value, value, []
+
+    if is_count_stat:
+        var = variance if variance and variance > 0 else std ** 2
+        if covariate_sigma_frac > 0:
+            var = var * ((1.0 + covariate_sigma_frac) ** 2)
+        samples = _sample_negative_binomial(mean, var, n_sims)
+    else:
+        if covariate_sigma_frac > 0:
+            eff_std = math.sqrt(std ** 2 + (mean * covariate_sigma_frac) ** 2)
+        else:
+            eff_std = std
+        samples = [random.gauss(mean, eff_std) for _ in range(n_sims)]
+
+    # Apply market correction: compare against slightly-inflated effective line
+    effective_line = line * (1.0 + market_correction) if (line and line > 0) else line
+    over_count = sum(1 for s in samples if s > effective_line)
+    p_over = over_count / n_sims
+    p_under = 1.0 - p_over
+
+    # CI uses the original line for display accuracy
+    sorted_s = sorted(samples)
+    ci_low_60  = round(sorted_s[int(0.20 * n_sims)], 1)  # 20th percentile
+    ci_high_60 = round(sorted_s[int(0.80 * n_sims)], 1)  # 80th percentile
+    ci_low_80  = round(sorted_s[int(0.10 * n_sims)], 1)  # 10th percentile
+    ci_high_80 = round(sorted_s[int(0.90 * n_sims)], 1)  # 90th percentile
+
+    # Preserve the simulated probability mass in readable landing bands.
+    # The lower boundaries are the 80% and 60% distribution cut points; the
+    # final boundary is the effective line used by P(OVER)/P(UNDER).  This
+    # gives the UI useful bands such as "<14", "14–24", "25–32", "33+"
+    # without inventing a second probability model.
+    q80_low = sorted_s[int(0.10 * n_sims)]
+    q60_low = sorted_s[int(0.20 * n_sims)]
+    effective_break = effective_line
+    breaks = sorted({
+        round(boundary, 8)
+        for boundary in (q80_low, q60_low)
+        if boundary < effective_break
+    })
+
+    def band_probability(lower: float | None, upper: float | None) -> float:
+        if lower is None:
+            count = sum(1 for sample in samples if sample < upper)
+        elif upper is None:
+            count = sum(1 for sample in samples if sample >= lower)
+        else:
+            count = sum(1 for sample in samples if lower <= sample < upper)
+        return round((count / n_sims) * 100.0, 1)
+
+    def band_label(lower: float | None, upper: float | None) -> str:
+        if display_as_integer:
+            if lower is None:
+                return f"≤{math.ceil(upper) - 1}"
+            if upper is None:
+                return f"{math.ceil(lower)}+"
+            return f"{math.ceil(lower)}–{math.ceil(upper) - 1}"
+        if lower is None:
+            return f"<{upper:.1f}"
+        if upper is None:
+            return f"≥{lower:.1f}"
+        return f"{lower:.1f}–{upper:.1f}"
+
+    landing_bands = []
+    previous = None
+    for boundary in breaks + [effective_break]:
+        if previous is not None and boundary <= previous:
+            continue
+        landing_bands.append({
+            "label": band_label(previous, boundary),
+            "lower": round(previous, 1) if previous is not None else None,
+            "upper": round(boundary, 1),
+            "probability": band_probability(previous, boundary),
+        })
+        previous = boundary
+    landing_bands.append({
+        "label": band_label(previous, None),
+        "lower": round(previous, 1) if previous is not None else None,
+        "upper": None,
+        "probability": band_probability(previous, None),
+    })
+
+    # For continuous stats the mean is also the mode.  For discrete props,
+    # return the most frequently sampled integer so the UI can distinguish
+    # "expected value" from "most likely landing value".
+    if is_count_stat:
+        counts = {}
+        for sample in samples:
+            counts[sample] = counts.get(sample, 0) + 1
+        mode = max(counts, key=counts.get) if counts else round(mean, 1)
+    else:
+        mode = round(mean, 1)
+
+    return (
+        p_over, p_under, ci_low_60, ci_high_60, ci_low_80, ci_high_80,
+        mode, landing_bands,
+    )
+
+
+def compute_live_gaussian_update(
+    pre_match_mean: float,
+    pre_match_std: float,
+    line: float,
+    recommendation: str,
+    current_value: float,
+    elapsed: float,
+    total_minutes: float = 90.0,
+) -> dict:
+    """Update the saved pre-match distribution with observed match progress.
+
+    This is deliberately separate from the saved projection.  The prior
+    distribution remains immutable; observed pace only changes the expected
+    *remaining* output.  Early observations are shrunk toward the pre-match
+    rate to avoid treating one or two events as a new player identity.
+    """
+    try:
+        mean = max(0.0, float(pre_match_mean))
+        std = max(0.01, float(pre_match_std))
+        line = float(line)
+        current = max(0.0, float(current_value))
+        elapsed = max(0.0, min(float(total_minutes), float(elapsed)))
+        total = max(1.0, float(total_minutes))
+    except (TypeError, ValueError):
+        return {"available": False, "reason": "invalid live inputs"}
+
+    if elapsed <= 0:
+        return {"available": False, "reason": "match has not started"}
+
+    expected_rate = mean / total
+    observed_rate = current / elapsed
+    # Bayesian-style rate shrinkage: observed evidence earns weight gradually.
+    # Fifteen minutes is the prior-equivalent observation count for this live
+    # update, so a 5' burst cannot swing the full-match distribution.
+    evidence_weight = elapsed / (elapsed + 15.0)
+    adjusted_rate = expected_rate * (1.0 - evidence_weight) + observed_rate * evidence_weight
+    remaining = max(0.0, total - elapsed)
+    live_mean = current + adjusted_rate * remaining
+
+    # Remaining uncertainty tightens with time, but never collapses to zero
+    # before FT. A small floor represents unobserved match-state variance.
+    remaining_fraction = remaining / total
+    live_std = max(0.20 if mean < 5 else mean * 0.035, std * math.sqrt(max(remaining_fraction, 0.02)))
+    z = (line - live_mean) / live_std
+    p_under = _normal_cdf(z)
+    p_over = 1.0 - p_under
+
+    drift_ratio = observed_rate / expected_rate if expected_rate > 0 else 1.0
+    if drift_ratio >= 1.15:
+        drift = "accelerating"
+    elif drift_ratio <= 0.85:
+        drift = "falling behind"
+    else:
+        drift = "stable"
+
+    return {
+        "available": True,
+        "model": "live_gaussian_remaining_total_v1",
+        "elapsed": round(elapsed, 1),
+        "currentValue": round(current, 1),
+        "remainingMinutes": round(remaining, 1),
+        "preMatchMean": round(mean, 1),
+        "preMatchStd": round(std, 2),
+        "observedRate": round(observed_rate * total, 2),
+        "adjustedRate": round(adjusted_rate * total, 2),
+        "drift": drift,
+        "driftRatio": round(drift_ratio, 3),
+        "uncertainty": "low" if live_std <= std * 0.60 else "moderate" if live_std <= std * 0.90 else "high",
+        "projectedValue": round(live_mean, 1),
+        "remainingProjection": round(max(0.0, live_mean - current), 1),
+        "std": round(live_std, 2),
+        "pOver": round(p_over * 100.0, 1),
+        "pUnder": round(p_under * 100.0, 1),
+        "recommendationProbability": round(
+            (p_over if str(recommendation or "").lower() == "over" else p_under) * 100.0,
+            1,
+        ),
+        "range60": [
+            round(max(0.0, live_mean - 0.841621 * live_std), 1),
+            round(max(0.0, live_mean + 0.841621 * live_std), 1),
+        ],
+        "range80": [
+            round(max(0.0, live_mean - 1.281552 * live_std), 1),
+            round(max(0.0, live_mean + 1.281552 * live_std), 1),
+        ],
+    }
+
+
+def gaussian_likelihood_update(
+    prior_mean: float,
+    prior_std: float,
+    likelihood_mean: float,
+    likelihood_std: float,
+) -> dict:
+    """Combine a player baseline and matchup likelihood with Gaussian precision.
+
+    This is the explicit second layer of the product's three-layer model.
+    The returned posterior is pre-live: live observations must be applied by
+    ``compute_live_gaussian_update`` and must never mutate this saved result.
+    """
+    try:
+        pm = float(prior_mean)
+        ps = max(0.01, float(prior_std))
+        lm = float(likelihood_mean)
+        ls = max(0.01, float(likelihood_std))
+    except (TypeError, ValueError):
+        return {"available": False, "reason": "invalid likelihood inputs"}
+
+    prior_precision = 1.0 / (ps * ps)
+    likelihood_precision = 1.0 / (ls * ls)
+    total_precision = prior_precision + likelihood_precision
+    posterior_mean = (
+        prior_precision * pm + likelihood_precision * lm
+    ) / total_precision
+    posterior_std = math.sqrt(1.0 / total_precision)
+    return {
+        "available": True,
+        "priorMean": round(pm, 1),
+        "priorStd": round(ps, 2),
+        "likelihoodMean": round(lm, 1),
+        "likelihoodStd": round(ls, 2),
+        "priorWeight": round(prior_precision / total_precision * 100, 1),
+        "likelihoodWeight": round(likelihood_precision / total_precision * 100, 1),
+        "posteriorMean": round(posterior_mean, 1),
+        "posteriorStd": round(posterior_std, 2),
+        "method": "gaussian_precision_update",
+    }
+
+
+def compute_bayesian_projection(
+    game_logs: list,
+    prop_type: str,
+    line: float,
+    venue: str,
+    stat_field: str = "targetStat",
+    opponent_fixture_stats: list = None,
+    match_dominance: dict = None,
+    position: str = "",
+    hyperprior_mean: float = None,
+    expected_minutes: float = 90.0,
+    league_calibration: dict = None,
+    game_script: dict = None,
+    scenario_priors_result: dict = None,
+    scenario_priors_mode: str = "off",
+    odds_tier_priors_result: dict = None,
+    odds_tier_priors_mode: str = "off",
+    role: str = "",
+    match_stakes: dict = None,
+    league_id: int = None,
+    # ── Ultra v4 — 5 new layers ──────────────────────────────────────────────
+    rest_days: int = None,                    # days since player's last game
+    opponent_clean_sheet_rate: float = None,  # fraction of recent games opp kept CS
+    altitude_m: int = None,                   # venue altitude in metres (away only)
+    opponent_foul_rate: float = None,         # opp avg fouls/game (set-piece orient.)
+    tournament_game_index: int = None,        # 1-based game index in tournament
+    player_stats: dict = None,                # club season stats for n=0 prior
+) -> dict:
+    """
+    Compute a 3-layer Bayesian projection from raw game data.
+    Returns the full bayesianMetrics dict with real computed values.
+    """
+    # Calculate this for every Bayesian call, including n=0/club-prior
+    # predictions.  The UI and audit payload must never depend on a prop-specific
+    # branch to know whether Press Intensity was evaluated.
+    press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
+    if not game_logs:
+        # Tournament n=0: use club season stats as prior instead of generic median
+        if player_stats and league_id and league_id in {1, 4, 5, 8, 9, 10}:
+            _club_prior = _build_club_prior(player_stats, prop_type, line, expected_minutes)
+            if _club_prior:
+                _apply_press_intensity_to_metrics(
+                    _club_prior,
+                    press_intensity_info,
+                    prop_type=prop_type,
+                    position=position,
+                    venue=venue,
+                    line=line,
+                )
+                print(f"[TOURNAMENT n=0] {prop_type}: using club prior={_club_prior['priorMean']:.2f} (samples={_club_prior['priorSamples']})")
+                return _club_prior
+        _empty = _empty_metrics(line)
+        _empty["pressIntensity"] = press_intensity_info
+        return _empty
+
+    # ── Is this a discrete count prop? ──────────────────────────────────────
+    is_count_stat = prop_type in COUNT_PROPS
+
+    # ── Position flag — needed early for GK-specific logic ───────────────────
+    _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
+
+    # ── Per-90 normalization ─────────────────────────────────────────────────
+    # Raw stats from games of different durations are not comparable.
+    # A player with 40 passes in 60 min is performing better than 40 passes in 90 min.
+    # Normalize each value to per-90-minute rate, then de-normalize at the end
+    # by the player's expected playing time (median of recent minutes played).
+    # Floor: 30 min to avoid division by zero on very short cameos.
+    _MIN_MINUTES = 30       # ignore sub-30 min appearances in the dataset
+    _raw_pairs = [
+        (g.get(stat_field, g.get("targetStat")), g.get("minutes", 90))
+        for g in game_logs
+        if g.get(stat_field, g.get("targetStat")) is not None
+        and g.get("minutes", 90) >= _MIN_MINUTES
+    ]
+    if not _raw_pairs:
+        # Fall back to logs without the minutes filter
+        _raw_pairs = [
+            (g.get(stat_field, g.get("targetStat")), 90)
+            for g in game_logs
+            if g.get(stat_field, g.get("targetStat")) is not None
+        ]
+    if not _raw_pairs:
+        _empty = _empty_metrics(line)
+        _empty["pressIntensity"] = press_intensity_info
+        return _empty
+
+    # Normalise to per-90
+    all_vals    = [v * 90.0 / max(m, _MIN_MINUTES) for v, m in _raw_pairs]
+    all_minutes = [m for _, m in _raw_pairs]
+
+    # expected_minutes: caller passes the player's likely playing time for this match.
+    # Clamp to [30, 90] so partial substitution stays realistic.
+    _exp_min = max(30.0, min(90.0, expected_minutes))
+
+    # De-normalisation factor applied to posterior after all calculations
+    _denorm = _exp_min / 90.0
+
+    n = len(all_vals)
+
+    # ═══════════════════════════════════════════
+    # LAYER 1: PRIOR — Season Average Baseline
+    # ═══════════════════════════════════════════
+    # Recency-weighted mean: game logs are sorted newest-first.
+    # Exponential decay (0.93/game) gives recent matches ~35% more
+    # influence than games from 10+ fixtures ago, while keeping the
+    # full sample for variance stability.
+    # For n < 4 fall back to equal weights — too few games to decay reliably.
+    #
+    # BIDIRECTIONAL MAGNITUDE OUTLIER WEIGHTS
+    # Each game also receives a MAD-based outlier weight (0.25–1.0) that
+    # downweights statistical outliers in EITHER direction — a freak 107-pass
+    # game vs a relegated side and a 12-pass nightmare vs Atletico's press
+    # both get reduced influence on the prior, leaving the "normal range"
+    # games to dominate. Weights are multiplied into the recency decay so the
+    # two signals combine cleanly.
+    _PRIOR_DECAY = 0.93
+    _mag_weights = magnitude_outlier_weights(all_vals, min_samples=4)
+    _mag_notes   = magnitude_outlier_notes(all_vals,   min_samples=4)
+    _flagged = [(i, all_vals[i], _mag_notes[i]) for i in range(n) if _mag_notes[i]]
+    if _flagged:
+        for _fi, _fv, _fn in _flagged:
+            print(f"[MAGNITUDE OUTLIER] game#{_fi+1} val={_fv:.1f} → {_fn} (weight={_mag_weights[_fi]:.2f})")
+
+    if n >= 4:
+        _pw = [(_PRIOR_DECAY ** i) * _mag_weights[i] for i in range(n)]
+        _pw_total = sum(_pw)
+        prior_mean = sum(w * v for w, v in zip(_pw, all_vals)) / _pw_total
+    else:
+        prior_mean = sum(all_vals) / n
+
+    # ── HYPERPRIOR SHRINKAGE (low-sample players) ──────────────────────────
+    # When a player has fewer than 6 game logs, their empirical average is noisy.
+    # Shrink toward a league/position prior (if provided) to reduce variance.
+    # Shrinkage weight decreases as sample size grows:
+    #   n=1 → 83%,  n=2 → 67%,  n=3 → 50%,  n=4 → 33%,  n=5 → 17%,  n≥6 → 0%
+    _hyperprior_applied = False
+    if hyperprior_mean is not None and hyperprior_mean > 0 and n < 6:
+        shrinkage = (6 - n) / 6.0
+        blended = prior_mean * (1 - shrinkage) + hyperprior_mean * shrinkage
+        print(f"[HYPERPRIOR] n={n} samples, shrink={shrinkage:.2f}: "
+              f"player={prior_mean:.1f} → blended={blended:.1f} (prior={hyperprior_mean:.1f})")
+        prior_mean = blended
+        _hyperprior_applied = True
+
+    prior_variance = stats_mod.variance(all_vals) if n >= 3 else (max(all_vals) - min(all_vals)) ** 2 / 4
+    prior_std = math.sqrt(prior_variance) if prior_variance > 0 else 1.0
+
+    # Coefficient of variation — volatility indicator
+    cv = prior_std / prior_mean if prior_mean > 0 else 0
+
+    # Prior precision: Bayesian base (n/variance) with sample-size floor
+    # The floor ensures high-variance players still carry meaningful weight
+    # n^0.6 scales sub-linearly with sample size: 5→2.6, 10→4.0, 20→6.3, 30→8.0
+    raw_prior_prec = n / prior_variance if prior_variance > 0 else n * 2
+    prior_precision = max(raw_prior_prec, n ** 0.6, 2.0)
+
+    # ═══════════════════════════════════════════
+    # LAYER 2: MOMENTUM — Exponentially-Weighted Recent Form
+    # Position-aware decay: attackers use faster cycles, defenders/GKs slower.
+    # ═══════════════════════════════════════════
+    _pos_group = POSITION_GROUP_MAP.get(position.upper().strip(), "midfielder")
+    _decay_table = DECAY_BY_POSITION[_pos_group]
+
+    recent_5  = all_vals[:5]  if len(all_vals) >= 5  else all_vals[:max(3, len(all_vals))]
+    recent_3  = all_vals[:3]  if len(all_vals) >= 3  else all_vals
+    # Streak detection uses a wider 10-game window for statistical reliability.
+    # Momentum calculations (decay-weighted mean, trend slope) still use recent_5.
+    recent_10 = all_vals[:10] if len(all_vals) >= 10 else all_vals
+
+    # Apply position-aware exponential decay: most recent game gets highest weight
+    weights = _decay_table[:len(recent_5)]
+    total_w = sum(weights)
+    momentum_mean = sum(w * v for w, v in zip(weights, recent_5)) / total_w
+
+    # Weighted variance (Bessel-corrected for weighted samples)
+    if len(recent_5) >= 3:
+        wm = momentum_mean
+        weighted_ss = sum(w * (v - wm) ** 2 for w, v in zip(weights, recent_5))
+        # Reliability weights correction factor
+        v1 = total_w
+        v2 = sum(w ** 2 for w in weights)
+        denom = v1 - (v2 / v1)
+        momentum_variance = weighted_ss / denom if denom > 0 else prior_variance
+    else:
+        momentum_variance = prior_variance
+
+    momentum_effect = round(momentum_mean - prior_mean, 2)
+
+    # Momentum precision: recency premium (3x per effective sample) with floor
+    # The *3 multiplier reflects that recent data is 3x more predictive than old data
+    raw_mom_prec = (total_w * 3) / momentum_variance if momentum_variance > 0 else total_w * 6
+    momentum_precision = max(raw_mom_prec, 2.5)
+
+    # Trend direction detection (linear regression slope on last 5)
+    if len(recent_5) >= 3:
+        x_vals = list(range(len(recent_5)))
+        x_mean = sum(x_vals) / len(x_vals)
+        y_mean = sum(recent_5) / len(recent_5)
+        numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_vals, recent_5))
+        denominator = sum((x - x_mean) ** 2 for x in x_vals)
+        slope = numerator / denominator if denominator > 0 else 0
+        trend_per_game = round(slope, 2)
+    else:
+        trend_per_game = 0
+
+    # Trend consistency bonus: if trend is strong AND consistent, boost momentum
+    if len(recent_5) >= 3 and trend_per_game != 0:
+        # Check if all recent games follow the trend direction
+        if trend_per_game > 0:
+            trend_consistent = sum(1 for i in range(len(recent_5) - 1) if recent_5[i] >= recent_5[i + 1])
+        else:
+            trend_consistent = sum(1 for i in range(len(recent_5) - 1) if recent_5[i] <= recent_5[i + 1])
+        consistency_ratio = trend_consistent / (len(recent_5) - 1)
+        if consistency_ratio >= 0.75:
+            # Strong consistent trend — boost momentum precision by up to 30%
+            momentum_precision *= (1 + consistency_ratio * 0.3)
+
+    # Momentum label
+    if momentum_effect > 2:
+        momentum_label = "HOT"
+    elif momentum_effect > 0.5:
+        momentum_label = "WARMING"
+    elif momentum_effect < -2:
+        momentum_label = "COLD"
+    elif momentum_effect < -0.5:
+        momentum_label = "COOLING"
+    else:
+        momentum_label = "STABLE"
+
+    # Streak detection vs the line — 10-game window for reliability.
+    # Requires ALL games in the window to be on the same side (clean sweep).
+    # Falls back to 5-game then 3-game sweeps so short samples still produce signals.
+    streak_flag = "NONE"
+    if len(recent_10) >= 3:
+        over_10  = sum(1 for v in recent_10 if v > line)
+        under_10 = sum(1 for v in recent_10 if v < line)
+        if over_10 == len(recent_10):
+            streak_flag = f"OVER_{len(recent_10)}"
+        elif under_10 == len(recent_10):
+            streak_flag = f"UNDER_{len(recent_10)}"
+        elif len(recent_5) >= 5:
+            over_5  = sum(1 for v in recent_5 if v > line)
+            under_5 = sum(1 for v in recent_5 if v < line)
+            if over_5 == 5:
+                streak_flag = "OVER_5"
+            elif under_5 == 5:
+                streak_flag = "UNDER_5"
+            elif len(recent_3) >= 3:
+                o3 = sum(1 for v in recent_3 if v > line)
+                u3 = sum(1 for v in recent_3 if v < line)
+                if o3 == 3:
+                    streak_flag = "OVER_3"
+                elif u3 == 3:
+                    streak_flag = "UNDER_3"
+        elif len(recent_3) >= 3:
+            o3 = sum(1 for v in recent_3 if v > line)
+            u3 = sum(1 for v in recent_3 if v < line)
+            if o3 == 3:
+                streak_flag = "OVER_3"
+            elif u3 == 3:
+                streak_flag = "UNDER_3"
+
+    # ═══════════════════════════════════════════
+    # LAYER 3: COVARIATE — Context Adjustments (CAPPED)
+    # ═══════════════════════════════════════════
+    covariate_adjustment = 0.0
+
+    # Props handled by the dedicated POSSESSION SQUEEZE step further below
+    # (multiplicative, directly on posterior_mean, position-aware floor).
+    # MUST be excluded from the 3b match-dominance covariate below to avoid
+    # applying the exact same expectedPoss/dom_mult signal twice — once
+    # diluted through the covariate-precision blend, and again as a direct
+    # multiplier — which compounds into a far larger total reduction than
+    # either mechanism intends on its own. (Root cause of a real incident:
+    # a fullback's pass-attempts projection was pulled down by both the ±20%
+    # covariate cap AND the squeeze floor, understating a player who ended up
+    # dominating possession once the opponent sat back.)
+    _SQUEEZE_HANDLED_PROPS = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+
+    # 3a. Venue split adjustment (normalised to per-90 to match all_vals)
+    venue_vals = [
+        v * 90.0 / max(g.get("minutes", 90), _MIN_MINUTES)
+        for g in game_logs
+        if g.get("venue") == venue
+        and (v := g.get(stat_field, g.get("targetStat"))) is not None
+        and g.get("minutes", 90) >= _MIN_MINUTES
+    ]
+    if not venue_vals:
+        venue_vals = [
+            g.get(stat_field, g.get("targetStat"))
+            for g in game_logs
+            if g.get("venue") == venue and g.get(stat_field, g.get("targetStat")) is not None
+        ]
+    if venue_vals and len(venue_vals) >= 3:
+        venue_mean = sum(venue_vals) / len(venue_vals)
+        venue_adj = venue_mean - prior_mean
+        venue_weight = min(1.0, len(venue_vals) / 10)
+        covariate_adjustment += venue_adj * venue_weight
+
+    # 3b. Match dominance adjustment
+    # Possession multipliers are projection inputs only after both independent
+    # venue-specific schedule samples pass the ten-match verification gate.
+    # Odds/rank estimates can remain visible in the response, but must not
+    # change the deterministic projection when the schedule evidence is thin.
+    if (
+        match_dominance
+        and match_dominance.get("seasonAvgIsReal") is True
+        and match_dominance.get("multiplier")
+    ):
+        dom_mult = match_dominance.get("multiplier", 1.0)
+
+        # Props where MORE possession = MORE stats
+        positive_poss_props = {"pass_attempts", "passes", "shots", "shots_on_target",
+                               "key_passes", "crosses", "dribbles"}
+        # Props where LESS possession = MORE stats (defensive actions)
+        inverse_poss_props = {"tackles", "interceptions", "blocks", "clearances"}
+
+        if prop_type in positive_poss_props and dom_mult != 1.0:
+            if _is_gk and prop_type in {"pass_attempts", "passes"}:
+                # GK INVERTED COVARIATE: More team possession → fewer back-passes to GK.
+                # dom_mult > 1.0 = team controls more ball than average → GK LESS involved.
+                # dom_mult < 1.0 = team has less ball → handled by GK INVERTED block below (line 542+).
+                # Only fire when dom_mult > 1.10 (meaningful possession surplus).
+                # Dampened 0.5× since the inverted block below carries the primary adjustment.
+                if dom_mult > 1.05:
+                    dom_adj = prior_mean * (1.0 - dom_mult) * 0.5  # NEGATIVE → reduces GK projection
+                    _dom_cap = prior_mean * 0.15
+                    dom_adj = max(-_dom_cap, min(0.0, dom_adj))  # Only allow reduction, cap at -15%
+                    covariate_adjustment += dom_adj
+            elif not _is_gk and prop_type not in _SQUEEZE_HANDLED_PROPS:
+                # Outfield players: more possession = more passes/shots.
+                # (pass_attempts/passes/key_passes/crosses/dribbles are deliberately
+                # skipped here — see _SQUEEZE_HANDLED_PROPS above — they get the
+                # dedicated POSSESSION SQUEEZE multiplier below instead, so this
+                # covariate doesn't double-apply the same signal. shots/shots_on_target
+                # have no squeeze step, so they still get it here.)
+                dom_adj = prior_mean * (dom_mult - 1.0)
+                # Cap at ±20% of prior_mean — prevents possession signal from dominating
+                # when form/prior already point strongly in one direction.
+                _dom_cap = prior_mean * 0.20
+                dom_adj = max(-_dom_cap, min(_dom_cap, dom_adj))
+                covariate_adjustment += dom_adj
+        elif prop_type in inverse_poss_props and dom_mult != 1.0:
+            # INVERTED: less possession → more defensive actions
+            # dom_mult=0.76 means 24% less possession → ~12% more tackles (dampened 0.5×)
+            dom_adj = prior_mean * (1.0 - dom_mult) * 0.5
+            covariate_adjustment += dom_adj
+
+    # 3c. Opponent strength adjustment
+    if opponent_fixture_stats:
+        opp_conceded = _estimate_opponent_concession(opponent_fixture_stats, prop_type)
+        if opp_conceded is not None:
+            opp_adj = opp_conceded - prior_mean
+            # GK saves: the formula (opp SOT × 0.70) systematically underestimates
+            # saves because it uses season-average SOT (which smooths out home-game
+            # spikes) and ignores press intensity, game state, and the actual
+            # observed GK performance against this specific opponent.
+            # When the formula pulls the adjustment negative, cap suppression at
+            # 10% of the venue-specific prior — otherwise a prior of 5.8 (away avg)
+            # gets crushed by a formula yielding 2.94, creating a false UNDER call
+            # even when every observable signal points to OVER the line.
+            if _is_gk and prop_type in {"saves", "goalie_saves"} and opp_adj < 0:
+                opp_adj = max(opp_adj, -prior_mean * 0.10)
+            covariate_adjustment += opp_adj * 0.15
+
+    # 3d. xG covariate — opponent's expected goals allowed (shot props only)
+    # API-Football provides xG at fixture level. An opponent allowing more xG
+    # than league avg (≈1.35/game) signals weaker shot defence → positive signal
+    # for shots/shots_on_target props. Dampened 40% to avoid double-counting
+    # with the opponent-concession adjustment above.
+    _XG_LEAGUE_AVG = 1.35
+    _SHOT_PROPS = {"shots", "shots_on_target"}
+    if opponent_fixture_stats and prop_type in _SHOT_PROPS:
+        xg_vals = []
+        for s in opponent_fixture_stats:
+            raw = s.get("expectedGoals")
+            if raw is not None:
+                try:
+                    xg_vals.append(float(raw))
+                except (TypeError, ValueError):
+                    pass
+        if len(xg_vals) >= 2:
+            avg_xg = sum(xg_vals) / len(xg_vals)
+            xg_ratio = avg_xg / _XG_LEAGUE_AVG
+            xg_raw_adj = prior_mean * (xg_ratio - 1.0) * 0.40
+            # Cap at ±15% of prior_mean to prevent overcorrection
+            xg_adj = max(-prior_mean * 0.15, min(prior_mean * 0.15, xg_raw_adj))
+            covariate_adjustment += xg_adj
+            print(f"[XG COVARIATE] {prop_type}: opp_xg_avg={avg_xg:.2f} "
+                  f"ratio={xg_ratio:.2f} adj={xg_adj:+.1f}")
+
+    # 3e. xG Shot Quality Proxy — player's own conversion metrics
+    # ─────────────────────────────────────────────────────────────────────────
+    # The standard prior treats all shots as equal. In reality, a player who
+    # converts 40% of their on-target shots (elite finisher) is very different
+    # from one who converts 15% (low quality / shot location).
+    #
+    # We compute two quality ratios from the player's own game logs:
+    #   shot_quality  = shots_on_target / shots  (how often they hit the frame)
+    #   conversion    = goals / shots_on_target   (finishing quality)
+    # then compare to European league averages to derive a quality factor.
+    #
+    # League averages (Opta research): quality≈0.37, conversion≈0.31
+    # Applied ONLY to goals/shots_on_target. Capped at ±18% influence.
+    _SHOT_QUALITY_PROPS = {"goals", "shots_on_target"}
+    if prop_type in _SHOT_QUALITY_PROPS and len(game_logs) >= 4:
+        _SQ_LEAGUE_AVG  = 0.37  # shots_on_target / shots
+        _CON_LEAGUE_AVG = 0.31  # goals / shots_on_target
+
+        _sq_samples, _con_samples = [], []
+        for g in game_logs:
+            _g_shots  = g.get("shots_total") or g.get("shots")
+            _g_sot    = g.get("shots_on")    or g.get("shots_on_target")
+            _g_goals  = g.get("goals_total") or g.get("goals")
+            if _g_shots and _g_shots > 0 and _g_sot is not None:
+                _sq_samples.append(_g_sot / _g_shots)
+            if _g_sot and _g_sot > 0 and _g_goals is not None:
+                _con_samples.append(_g_goals / _g_sot)
+
+        _sq_factor  = (sum(_sq_samples)  / len(_sq_samples))  / _SQ_LEAGUE_AVG  if len(_sq_samples)  >= 3 else 1.0
+        _con_factor = (sum(_con_samples) / len(_con_samples)) / _CON_LEAGUE_AVG if len(_con_samples) >= 3 else 1.0
+
+        if prop_type == "shots_on_target":
+            # Quality factor: do more of their shots hit the target than average?
+            _sq_raw_adj = prior_mean * (_sq_factor - 1.0) * 0.20
+            _sq_adj = max(-prior_mean * 0.18, min(prior_mean * 0.18, _sq_raw_adj))
+            covariate_adjustment += _sq_adj
+            if abs(_sq_adj) > 0.05:
+                print(f"[SHOT QUALITY] {prop_type}: sq_ratio={_sq_factor:.2f}x league_avg → adj={_sq_adj:+.2f}")
+
+        elif prop_type == "goals":
+            # Combined: shot quality × finishing rate vs league averages
+            _combined_factor = (_sq_factor * _con_factor) ** 0.5  # geometric mean of both
+            _sq_raw_adj = prior_mean * (_combined_factor - 1.0) * 0.20
+            _sq_adj = max(-prior_mean * 0.18, min(prior_mean * 0.18, _sq_raw_adj))
+            covariate_adjustment += _sq_adj
+            if abs(_sq_adj) > 0.01:
+                print(f"[SHOT QUALITY] goals: sq={_sq_factor:.2f}x conv={_con_factor:.2f}x combined={_combined_factor:.2f}x → adj={_sq_adj:+.3f}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3f. Spatial xG Covariate — player-level shot quality from BDL coordinates
+    # ─────────────────────────────────────────────────────────────────────────
+    # BDL EPL v2 /match_shots delivers per-shot xG + xGoT from spatial coordinates.
+    # soccer_bdl_client enriches game logs with xg_shot / xgot_shot / shots_spatial.
+    #
+    # goals:           avg xG/game vs EPL avg (0.12) — direct finishing quality signal
+    # shots_on_target: avg xGoT/game vs EPL avg (0.08) — on-target placement quality
+    # shots:           xG/shot vs EPL avg (0.09/shot) — shot position quality
+    #
+    # 3e uses shots_total/goals ratios from accumulated stats; 3f uses spatial
+    # coordinates directly — independent signals, so stacking is correct.
+    # All three paths capped at ±15% of prior_mean.
+    _SPATIAL_XG_PROPS   = {"goals", "shots_on_target", "shots"}
+    _XG_PLAYER_AVG      = 0.12    # EPL avg xG/game across outfield players who shoot
+    _XGOT_PLAYER_AVG    = 0.08    # EPL avg xGoT/game
+    _XG_PER_SHOT_AVG    = 0.09    # EPL avg xG per individual shot (Understat/Opta)
+    if prop_type in _SPATIAL_XG_PROPS:
+        _xg_vals   = [g.get("xg_shot")   for g in game_logs if g.get("xg_shot")   is not None]
+        _xgot_vals = [g.get("xgot_shot") for g in game_logs if g.get("xgot_shot") is not None]
+        _spat_cnt  = [g.get("shots_spatial") for g in game_logs
+                      if (g.get("shots_spatial") or 0) > 0]
+
+        if len(_xg_vals) >= 3:
+            _avg_xg = sum(_xg_vals) / len(_xg_vals)
+
+            if prop_type == "goals":
+                _xg_ratio     = _avg_xg / _XG_PLAYER_AVG
+                _spatial_adj  = prior_mean * (_xg_ratio - 1.0) * 0.25
+                _spatial_adj  = max(-prior_mean * 0.15, min(prior_mean * 0.15, _spatial_adj))
+                if abs(_spatial_adj) > 0.005:
+                    covariate_adjustment += _spatial_adj
+                    print(f"[SPATIAL XG] goals: avg_xg={_avg_xg:.3f}/game "
+                          f"ratio={_xg_ratio:.2f}x → adj={_spatial_adj:+.3f}")
+
+            elif prop_type == "shots_on_target" and len(_xgot_vals) >= 3:
+                _avg_xgot    = sum(_xgot_vals) / len(_xgot_vals)
+                _xgot_ratio  = _avg_xgot / _XGOT_PLAYER_AVG
+                _spatial_adj = prior_mean * (_xgot_ratio - 1.0) * 0.20
+                _spatial_adj = max(-prior_mean * 0.15, min(prior_mean * 0.15, _spatial_adj))
+                if abs(_spatial_adj) > 0.01:
+                    covariate_adjustment += _spatial_adj
+                    print(f"[SPATIAL XG] shots_on_target: avg_xgot={_avg_xgot:.3f}/game "
+                          f"ratio={_xgot_ratio:.2f}x → adj={_spatial_adj:+.3f}")
+
+            elif prop_type == "shots" and len(_spat_cnt) >= 3:
+                _avg_shots   = sum(_spat_cnt) / len(_spat_cnt)
+                _xg_per_shot = _avg_xg / _avg_shots if _avg_shots > 0 else 0
+                _xgs_ratio   = _xg_per_shot / _XG_PER_SHOT_AVG
+                _spatial_adj = prior_mean * (_xgs_ratio - 1.0) * 0.15
+                _spatial_adj = max(-prior_mean * 0.12, min(prior_mean * 0.12, _spatial_adj))
+                if abs(_spatial_adj) > 0.01:
+                    covariate_adjustment += _spatial_adj
+                    print(f"[SPATIAL XG] shots: avg_xg/shot={_xg_per_shot:.3f} "
+                          f"ratio={_xgs_ratio:.2f}x → adj={_spatial_adj:+.3f}")
+
+    covariate_adjustment = round(covariate_adjustment, 2)
+
+    # Covariate precision: base contextual precision, boosted by venue data quality
+    raw_cov_prec = 3.0
+    if venue_vals and len(venue_vals) >= 5:
+        raw_cov_prec += 1.0
+
+    # HARD CAP: Covariate can never exceed 25% of total weight
+    # Math: if cov = (P+M)*0.33, then cov/(P+M+cov) = 0.33/1.33 = 24.8%
+    covariate_precision = min(raw_cov_prec, (prior_precision + momentum_precision) * MAX_COVARIATE_RATIO)
+
+    # ═══════════════════════════════════════════
+    # MOMENTUM-vs-STRUCTURE GUARD
+    # ═══════════════════════════════════════════
+    # When recent-form momentum points one direction but the structural matchup
+    # signals (venue split, opponent allowed, H2H — captured in covariate_adjustment)
+    # point the OTHER direction, dampen momentum's weight. This stops a 3-game
+    # cold streak from steamrolling a structurally favorable matchup.
+    #
+    # Both momentum_effect and covariate_adjustment are in per-90 units, so we
+    # gate on absolute magnitudes that scale with prior_std (a player-relative
+    # threshold avoids over-firing on count stats with small means).
+    #
+    # Disagreement = both signals exceed their thresholds AND they have opposite signs.
+    # Strong disagreement → halve momentum weight; mild disagreement → ¾ momentum weight.
+    _mom_thresh = max(0.5, 0.30 * prior_std)
+    _cov_thresh = max(0.3, 0.20 * prior_std)
+    if abs(momentum_effect) > _mom_thresh and abs(covariate_adjustment) > _cov_thresh:
+        if (momentum_effect > 0) != (covariate_adjustment > 0):
+            disagreement_mag = min(abs(momentum_effect), abs(covariate_adjustment))
+            if disagreement_mag > max(1.5, 0.60 * prior_std):
+                _scale = 0.5
+            else:
+                _scale = 0.75
+            _orig_mom_prec = momentum_precision
+            momentum_precision *= _scale
+            print(f"[MOMENTUM GUARD] mom_effect={momentum_effect:.2f} vs cov_adj={covariate_adjustment:.2f} "
+                  f"(disagree, mag={disagreement_mag:.2f}, prior_std={prior_std:.2f}) → "
+                  f"momentum precision {_orig_mom_prec:.2f} × {_scale} = {momentum_precision:.2f}")
+
+    # ═══════════════════════════════════════════
+    # POSTERIOR — Precision-weighted combination
+    # ═══════════════════════════════════════════
+    total_precision = prior_precision + momentum_precision + covariate_precision
+
+    posterior_mean = (
+        prior_precision * prior_mean +
+        momentum_precision * momentum_mean +
+        covariate_precision * (prior_mean + covariate_adjustment)
+    ) / total_precision
+
+    posterior_mean = round(posterior_mean, 1)
+    posterior_std = round(math.sqrt(1 / total_precision) if total_precision > 0 else prior_std, 2)
+
+    # ═══════════════════════════════════════════
+    # POSSESSION SQUEEZE — Direct multiplier for ball-control props
+    # Applied AFTER posterior when the player's team faces a meaningful
+    # possession disadvantage vs their season norm.
+    #
+    # WHY: The covariate pathway (≤25% weight) dilutes the possession signal
+    # to ~4% effect even for severe imbalances (e.g. Real Madrid at Bayern).
+    # When a team loses 10+ poss points vs their average, individual pass
+    # volume drops near-linearly. This step captures that directly.
+    #
+    # Activates when: expected_poss < team_season_avg × 0.92 (8%+ below norm)
+    # Multiplier: poss_ratio^1.3 — slightly convex so extremes hit harder
+    # Floor: 0.60 — prevents overcorrection (max 40% reduction)
+    # ═══════════════════════════════════════════
+    # Kept identical to _SQUEEZE_HANDLED_PROPS (defined in LAYER 3 above) by
+    # construction — this IS that set, reused here to avoid the two lists
+    # ever drifting apart and reopening the double-counting bug.
+    BALL_CONTROL_PROPS = _SQUEEZE_HANDLED_PROPS
+    _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
+
+    # NEUTRAL-VENUE FIX: `venue` is "neutral" for non-host World Cup /
+    # tournament fixtures (see mobile venueOverride logic), which used to
+    # silently disable every favourite/underdog-aware boost below that gated
+    # on the literal string "home"/"away" — e.g. Argentina vs Cape Verde
+    # (huge favourite, neutral venue) got NO CB lead-manage boost, NO CDM
+    # deep-block boost, nothing. `game_script.player_is_home` carries the
+    # fixture's true home/away slot (from the odds) independent of the
+    # neutral display label, so we can still resolve which side is favoured.
+    # Real home/away matches are unaffected — `_effective_venue` just equals
+    # `venue` in that case.
+    _effective_venue = venue
+    if venue not in ("home", "away") and game_script and isinstance(game_script, dict):
+        _gs_pih = game_script.get("player_is_home")
+        if _gs_pih is not None:
+            _effective_venue = "home" if _gs_pih else "away"
+
+    # ── COVARIATE UNCERTAINTY ACCUMULATOR ─────────────────────────────────────
+    # Each adjustment layer below carries its own estimation error.  We track the
+    # combined fractional uncertainty and pass it to Monte Carlo so the sampled
+    # distribution is wider when many uncertain covariates fired — preventing the
+    # overconfidence seen above 70% raw confidence.
+    # Baseline 4%: inherent uncertainty present in every projection.
+    _cov_sigma: float = 0.04
+
+    # ═══════════════════════════════════════════
+    # OUTFIELD PLAYER POSSESSION SQUEEZE
+    # GKs use an INVERTED model below — they are excluded here.
+    # ═══════════════════════════════════════════
+    if match_dominance and prop_type in BALL_CONTROL_PROPS and not _is_gk and match_dominance.get("seasonAvgIsReal"):
+        expected_poss = match_dominance.get("expectedPoss")
+        team_season_avg_poss = match_dominance.get("teamSeasonAvg")
+        if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
+            poss_ratio = expected_poss / team_season_avg_poss
+            # Activates at 5%+ below norm — catches moderate mismatches sooner
+            # Exponent 1.5 — steeper curve so severe mismatches hit harder
+            # Position-aware floor: CBs/DFs are high-volume passers whose output doesn't
+            # collapse proportionally with team possession — they still clear, recycle,
+            # and switch the ball under any game state. Apply a more conservative floor.
+            _pos_upper = (position or "").upper()
+            # Fullbacks/wing-backs are high-volume passers just like CBs — they keep
+            # recycling and overlapping regardless of team possession share (same
+            # precedent already used by the CB MANAGING-LEAD BOOST set below). Moving
+            # them out of the generic DEF bucket prevents over-suppressing their
+            # pass-attempt projections against strong opponents / low expected poss.
+            _is_cb  = _pos_upper in {"CB", "DC", "RCB", "LCB", "LB", "RB", "WB", "LWB", "RWB"}
+            _is_def = _pos_upper in {"DEF", "D"}
+            # MID: deep midfielders (CDM/CM/CAM) stay involved regardless of possession.
+            # Evidence: 60-pick CDM/Ball Winner sample shows avg_err=+9.6 (model under-projects).
+            # Raise general mid floor 0.75→0.82 (max 18% cut).
+            # High-volume roles (DLP, Mezzala, Box-to-Box, Ball Winner) get 0.88 — they are
+            # volume passers by design and maintain output even when team possession dips.
+            _is_mid = _pos_upper in {"MF", "CM", "CDM", "CAM", "DM", "AM", "MC", "DMF", "OMF", "CMF"}
+            _role_lower = (role or "").lower()
+            _is_high_vol_mid = _is_mid and any(r in _role_lower for r in (
+                "deep-lying", "mezzala", "box-to-box", "ball winner",
+                "holding", "regista", "advanced playmaker",
+            ))
+            squeeze_floor = (
+                0.88 if _is_high_vol_mid else
+                0.80 if _is_cb else
+                0.82 if _is_mid else
+                0.70 if _is_def else
+                0.60
+            )
+            if poss_ratio < 0.95:
+                squeeze_mult = round(max(squeeze_floor, poss_ratio ** 1.5), 3)
+                _cov_sigma += 0.03  # possession estimate ±5pp → ~3% mean uncertainty
+                # HOT-STREAK DAMPENING: A player on an upward momentum trend may
+                # retain volume even when team possession dips — tactical discipline,
+                # manager trust, and personal form maintain their involvement.
+                _squeeze_dampened = False
+                if momentum_effect > 5:
+                    squeeze_mult = round(min(1.0, squeeze_mult + (1.0 - squeeze_mult) * 0.35), 3)
+                    _squeeze_dampened = "HOT"
+                elif momentum_effect > 2:
+                    squeeze_mult = round(min(1.0, squeeze_mult + (1.0 - squeeze_mult) * 0.18), 3)
+                    _squeeze_dampened = "WARMING"
+                raw_before_squeeze = posterior_mean
+                posterior_mean = round(posterior_mean * squeeze_mult, 1)
+                _damp_note = f" [dampened for {_squeeze_dampened} streak]" if _squeeze_dampened else ""
+                print(f"[POSS SQUEEZE] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} pos={_pos_upper} "
+                      f"floor={squeeze_floor} mult={squeeze_mult}{_damp_note} {raw_before_squeeze} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # GK INVERTED POSSESSION MODEL
+    # GK pass volume is INVERSELY correlated with team possession:
+    #   Low possession → defenders constantly back-pass under pressure → HIGH GK volume
+    #   High possession → team builds through midfield → LOW GK volume
+    # This is the opposite of outfield players. The Miami case (away GK sitting
+    # deep on a 1-0 lead) is the worst-case: ultra-low team possession = maximum
+    # back-pass recycling volume through the GK.
+    # ═══════════════════════════════════════════
+    if match_dominance and prop_type in {"pass_attempts", "passes"} and _is_gk and match_dominance.get("seasonAvgIsReal"):
+        expected_poss = match_dominance.get("expectedPoss")
+        team_season_avg_poss = match_dominance.get("teamSeasonAvg")
+        if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
+            poss_ratio = expected_poss / team_season_avg_poss
+            # Only trigger on meaningful deficit (>13% below norm).
+            # Rationale: teams with slightly less possession don't uniformly recycle
+            # more through the GK — many play direct football (long balls), reducing GK
+            # distribution volume. The inverse-boost only holds in specific press-heavy
+            # scenarios; applying it broadly over-inflates projections.
+            if poss_ratio < 0.87:
+                # LOW POSSESSION BOOST — GK gets more back-passes when team defends deep.
+                # Evidence: away GKs on low-possession sides consistently exceed projections.
+                # Cap reduced to +10% (was +18%) — the old cap over-inflated projections
+                # in chaotic high-scoring games (e.g. Pickford 52 proj vs 36 actual in 3-3).
+                # Exponent lowered from 0.55→0.30 for a flatter, more conservative curve.
+                #   poss_ratio=0.86 → ~+2%   (minor deficit)
+                #   poss_ratio=0.77 → ~+7%   (moderate deficit, e.g. Everton vs Man City)
+                #   poss_ratio=0.50 → +10%   (extreme deficit, capped)
+                inverse_ratio = 1.0 / max(poss_ratio, 0.50)
+                boost_mult = round(min(1.10, inverse_ratio ** 0.30), 3)
+                raw_before_gk = posterior_mean
+                posterior_mean = round(posterior_mean * boost_mult, 1)
+                _cov_sigma += 0.02  # inverted possession model carries ±2% extra uncertainty
+                print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
+            elif poss_ratio > 1.05:
+                # GK DOMINANT POSSESSION PENALTY
+                # When a team heavily out-possesses the opponent, their GK barely touches
+                # the ball — defenders push high and recycle possession among themselves.
+                # Evidence:
+                #   Donnarumma (Man City away, 75% poss): 12 actual vs 27 proj — huge miss.
+                #   Donnarumma (Man City away vs Burnley, 65% poss): 20 actual vs 27 proj.
+                #   Gazzaniga (Girona HOME, above-avg poss vs Betis): 26 actual.
+                #
+                # Scale (cap reduced 50%→20%, coefficient reduced 2.5→1.0 per empirical audit):
+                # 1291-pick dataset showed 65/65 GK UNDER misses had actual > line, meaning
+                # the old penalty cut projections so far below the line they were always wrong.
+                # Evidence: De Gea season avg ~37, poss_ratio=1.14 → old penalty 35% → proj=24
+                # vs line 31.5, actual 35. With cap=20%: proj=32 → correctly straddles the line.
+                #   ratio=1.05 → ~5% reduction  (was 12%)
+                #   ratio=1.10 → ~10% reduction (was 25%)
+                #   ratio=1.14 → ~14% reduction (was 35%)
+                #   ratio=1.20 → 20% reduction  (was 50%, extreme dominance, now capped lower)
+                dom_penalty = min(0.20, (poss_ratio - 1.0) * 1.0)
+                shrink_mult = round(1.0 - dom_penalty, 3)
+                raw_before_dom = posterior_mean
+                posterior_mean = round(posterior_mean * shrink_mult, 1)
+                print(f"[GK DOM POSS PENALTY] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"shrink={shrink_mult} {raw_before_dom} → {posterior_mean}")
+
+        # ── GK PROJECTION FLOOR ───────────────────────────────────────────────
+        # After all possession adjustments, a GK projection should never drop below
+        # 72% of the player's season prior mean. Anything lower means the possession
+        # model is over-penalising — GKs always handle the ball regardless of team style.
+        # Evidence: projections of 17-24 for GKs with 35+ pass season averages are
+        # physically implausible. A floor prevents cascading possession errors from
+        # producing unbettable projections.
+        if _is_gk and prop_type in {"pass_attempts", "passes"} and prior_mean > 0:
+            _gk_floor = round(prior_mean * 0.72, 1)
+            if posterior_mean < _gk_floor:
+                print(f"[GK FLOOR] {prop_type}: posterior={posterior_mean} below floor={_gk_floor} "
+                      f"(72% of prior_mean={prior_mean:.1f}) → lifting to floor")
+                posterior_mean = _gk_floor
+
+    # ═══════════════════════════════════════════
+    # CROSS-TEAM DOMINANT-POSSESSION GK BOOST  ("Rodri Effect")
+    # ═══════════════════════════════════════════
+    # When the OPPONENT has very high expected possession (≥62%) AND this GK's
+    # team is pinned deep (<40%), pass volume rises through TWO additive mechanisms
+    # that the existing GK inversion model does not fully capture:
+    #
+    #   1. Low-Block Pass-Back Loop: opponent's high-possession press compresses
+    #      the defensive shape deep. Every time the defending team wins the ball,
+    #      the quickest release under counter-press is a back-pass to the GK.
+    #      Each back-pass = a logged pass attempt.
+    #
+    #   2. Over-Hit Crosses / Goal Kicks: dominant possession drives more crossing
+    #      attempts. A substantial fraction overshoot into the GK's hands who must
+    #      immediately distribute (= pass attempt). Every goal kick counts too.
+    #
+    # The GK inversion model above handles the own-team-low-poss signal. This
+    # section adds the opponent-side correlation — it fires specifically in the
+    # "Rodri scenario": extreme opponent dominance, not just generic low possession.
+    #
+    # Cap: +20% at opp_poss ≥ 77% (severity scales linearly from 62%→77%).
+    # Stacks on top of the inversion model since mechanisms are independent.
+    # ═══════════════════════════════════════════
+    _gk_cross_team_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    if _is_gk and prop_type in {"pass_attempts", "passes"} and match_dominance:
+        _ct_opp_poss  = match_dominance.get("oppExpectedPoss")
+        _ct_team_poss = match_dominance.get("expectedPoss")
+        if (
+            _ct_opp_poss is not None and _ct_team_poss is not None
+            and _ct_opp_poss >= 62.0 and _ct_team_poss < 40.0
+        ):
+            # Severity: 0→1 as opp possession goes from 62% to 77%
+            _ct_severity = min(1.0, (_ct_opp_poss - 62.0) / 15.0)
+            _ct_mult = round(1.0 + _ct_severity * 0.20, 3)
+            _raw_before_ct = posterior_mean
+            posterior_mean = round(posterior_mean * _ct_mult, 1)
+            _gk_cross_team_info = {
+                "applied": True,
+                "multiplier": _ct_mult,
+                "reason": (
+                    f"cross-team dominant-possession boost: "
+                    f"opp_poss={_ct_opp_poss:.1f}% own_poss={_ct_team_poss:.1f}% "
+                    f"severity={_ct_severity:.2f} mult={_ct_mult}"
+                ),
+            }
+            print(
+                f"[GK CROSS-TEAM BOOST] {prop_type}: opp_poss={_ct_opp_poss:.1f}% "
+                f"own_poss={_ct_team_poss:.1f}% severity={_ct_severity:.2f} "
+                f"mult={_ct_mult} {_raw_before_ct} → {posterior_mean}"
+            )
+
+    # ═══════════════════════════════════════════
+    # CDM INVERTED POSSESSION MODEL  (Layer A of CDM-inversion fix)
+    # ═══════════════════════════════════════════
+    # Mirror of the GK Inverted Possession Model above, but for deep midfielders.
+    # Mechanism: when an away team is pinned back (low expected possession), the
+    # CDM becomes the primary build-up outlet — defenders constantly recycle the
+    # ball through them under press, generating MORE pass attempts, not fewer.
+    # The general "low possession → suppress everyone" assumption is wrong for
+    # this position, exactly as it is wrong for keepers.
+    #
+    # Cap: ±6% (intentionally smaller than GK's 18% — the inversion is real but
+    # less extreme than the GK case, and the empirical sample is still modest).
+    # Trigger: poss_ratio < 0.90 (more conservative than GK's 0.87).
+    #
+    # Mode controlled by env var CDM_INVERSION_MODE: off|shadow|live
+    # Default = shadow → compute and log, do NOT change projection.
+    # ═══════════════════════════════════════════
+    cdm_inversion_info = {"applied": False, "multiplier": 1.0, "mode": "off",
+                          "shadow_multiplier": 1.0, "reason": ""}
+    _cdm_mode = os.environ.get("CDM_INVERSION_MODE", "live").lower()
+    if _cdm_mode not in {"off", "shadow", "live"}:
+        _cdm_mode = "shadow"
+    _cdm_pos_set = {"CDM", "DM", "DMF", "CM", "MC", "CMF"}
+    _pos_upper_for_cdm = (position or "").upper()
+    if (_cdm_mode != "off" and match_dominance
+            and prop_type in {"pass_attempts", "passes"}
+            and _pos_upper_for_cdm in _cdm_pos_set
+            and match_dominance.get("seasonAvgIsReal")):
+        expected_poss = match_dominance.get("expectedPoss")
+        team_season_avg_poss = match_dominance.get("teamSeasonAvg")
+        if (expected_poss is not None and team_season_avg_poss
+                and team_season_avg_poss > 0):
+            poss_ratio = expected_poss / team_season_avg_poss
+            if poss_ratio < 0.90:
+                # Same shape as GK boost but flatter ceiling.
+                # poss_ratio=0.89 → ~+1.5%
+                # poss_ratio=0.75 → ~+4%
+                # poss_ratio=0.55 → ~+6% (capped)
+                inverse_ratio = 1.0 / max(poss_ratio, 0.50)
+                cdm_boost_mult = round(min(1.06, inverse_ratio ** 0.30), 3)
+                cdm_inversion_info["shadow_multiplier"] = cdm_boost_mult
+                cdm_inversion_info["mode"] = _cdm_mode
+                cdm_inversion_info["reason"] = (
+                    f"pinned-back outlet boost "
+                    f"(ratio={poss_ratio:.2f}, mult={cdm_boost_mult})"
+                )
+                if _cdm_mode == "live":
+                    raw_before_cdm = posterior_mean
+                    posterior_mean = round(posterior_mean * cdm_boost_mult, 1)
+                    _cov_sigma += 0.02  # CDM outlet model depends on possession estimate
+                    cdm_inversion_info["applied"] = True
+                    cdm_inversion_info["multiplier"] = cdm_boost_mult
+                    print(f"[CDM POSS BOOST live] {prop_type} pos={_pos_upper_for_cdm} "
+                          f"venue={venue}: team_avg={team_season_avg_poss:.1f}% "
+                          f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                          f"mult={cdm_boost_mult} {raw_before_cdm} → {posterior_mean}")
+                else:
+                    print(f"[CDM POSS BOOST shadow] {prop_type} pos={_pos_upper_for_cdm} "
+                          f"venue={venue}: team_avg={team_season_avg_poss:.1f}% "
+                          f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                          f"would_mult={cdm_boost_mult} (NOT APPLIED)")
+
+    # ═══════════════════════════════════════════
+    # HOME CDM DEEP-BLOCK BOOST  (symmetric complement to CDM inversion above)
+    # ═══════════════════════════════════════════
+    # When a dominant HOME team (expected poss > 62%) faces a deep-sitting weak
+    # opponent (opp expected poss < 36%), the CDM/DM/DLP becomes the ball-
+    # recycling hub of the entire team.  The possession ratio alone understates
+    # this: the opponent's deep block creates endless short-cycle sequences that
+    # all funnel through the deepest midfielder.  Each 5% the opponent concedes
+    # below the 36% threshold, the CDM's pass count inflates by an additional
+    # 2-3 above what the possession ratio already captures.
+    #
+    # Real-world example that triggered this fix:
+    #   Tchouaméni vs Oviedo (home, La Liga dead rubber) — model said UNDER 67.5,
+    #   player was on pace for 80+ passes at H1 45 min.  Oviedo's expected away
+    #   possession was ~30%; Real Madrid's expected was ~65%.  The CDM inversion
+    #   layer didn't fire (it only fires when possession DROPS below team avg).
+    #   This layer fires on the opposite, equally real scenario.
+    #
+    # Cap: +12% (larger than the away CDM inversion's +6% because the mechanism
+    # is more predictable — a dominant home team vs a parking-the-bus opponent
+    # produces near-certain high-volume CDM recycling).
+    # ═══════════════════════════════════════════
+    home_cdm_deep_block_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    if (_cdm_mode != "off" and match_dominance
+            and prop_type in {"pass_attempts", "passes"}
+            and _effective_venue == "home"
+            and _pos_upper_for_cdm in _cdm_pos_set):
+        _hcdb_team_poss = match_dominance.get("expectedPoss")      # home team's expected poss
+        _hcdb_opp_poss  = match_dominance.get("oppExpectedPoss")   # opponent's expected poss
+        # Thresholds: fire when home team is dominant (>60%) AND opponent sits deep (<40%)
+        # Wide thresholds to catch the full range of "dominant home vs. deep-block" games
+        if (_hcdb_team_poss is not None and _hcdb_opp_poss is not None
+                and _hcdb_team_poss > 60.0 and _hcdb_opp_poss < 40.0):
+            # Depth: how extreme is the deep block? (0→1 as opp drops from 40% to 22%)
+            _hcdb_depth = min(1.0, (40.0 - _hcdb_opp_poss) / 18.0)
+            # Dom: how dominant is the home team? (0→1 as team rises from 60% to 72%)
+            _hcdb_dom   = min(1.0, (_hcdb_team_poss - 60.0) / 12.0)
+            # Depth is the primary driver (opponent's block creates the recycling).
+            # Dom amplifies it — a truly dominant team recycles more repetitions.
+            # The CDM gets touched on every recycling sequence, so pass count
+            # rises faster than possession % alone would suggest.
+            _hcdb_raw  = _hcdb_depth * (0.55 + 0.45 * _hcdb_dom)
+            _hcdb_mult = round(1.0 + min(0.15, _hcdb_raw * 0.22), 3)
+            if _hcdb_mult > 1.005 and _cdm_mode == "live":
+                _raw_before_hcdb = posterior_mean
+                posterior_mean   = round(posterior_mean * _hcdb_mult, 1)
+                _cov_sigma += 0.02  # deep-block model depends on dual possession estimates
+                home_cdm_deep_block_info["applied"]    = True
+                home_cdm_deep_block_info["multiplier"] = _hcdb_mult
+                home_cdm_deep_block_info["reason"] = (
+                    f"home CDM deep-block recycling hub "
+                    f"(team_poss={_hcdb_team_poss:.1f}% opp_poss={_hcdb_opp_poss:.1f}% "
+                    f"depth={_hcdb_depth:.2f} dom={_hcdb_dom:.2f} mult={_hcdb_mult})"
+                )
+                print(f"[HOME CDM DEEP-BLOCK live] {prop_type} pos={_pos_upper_for_cdm} "
+                      f"team={_hcdb_team_poss:.1f}% opp={_hcdb_opp_poss:.1f}% "
+                      f"mult={_hcdb_mult} {_raw_before_hcdb} → {posterior_mean}")
+            elif _hcdb_mult > 1.005:
+                home_cdm_deep_block_info["reason"] = (
+                    f"shadow: would boost ×{_hcdb_mult} "
+                    f"(team={_hcdb_team_poss:.1f}% opp={_hcdb_opp_poss:.1f}%)"
+                )
+                print(f"[HOME CDM DEEP-BLOCK shadow] {prop_type} pos={_pos_upper_for_cdm} "
+                      f"team={_hcdb_team_poss:.1f}% opp={_hcdb_opp_poss:.1f}% "
+                      f"would_mult={_hcdb_mult} (NOT APPLIED)")
+
+    # ═══════════════════════════════════════════
+    # DOMINANT-POSSESSION CM VOLUME BOOST  (venue-agnostic)
+    # ═══════════════════════════════════════════
+    # Canonical miss: N. Caliskan (Box-to-Box CM, Real Salt Lake AWAY at
+    # LA Galaxy, 71% expected possession) — engine projected 50 pass attempts,
+    # he recorded 102. The HOME CDM deep-block boost above never fired because
+    # it is gated on venue == home; the possession squeeze only CUTS. There was
+    # no layer that BOOSTS a central midfielder when his team is expected to
+    # dominate the ball, regardless of venue.
+    #
+    # Mechanism: at 63%+ expected possession every possession sequence cycles
+    # through the central midfield. Pass volume for CM/Box-to-Box roles rises
+    # super-linearly with team possession share (each extra possession minute
+    # adds several short recycling passes through the pivot).
+    #
+    # Scaling: severity 0→1 as expected poss rises 63%→73%.
+    # Cap: +20% for high-volume roles (box-to-box, mezzala, DLP, regista,
+    # playmaker), +14% for generic CM/CDM. Deliberately conservative vs the
+    # observed miss (2× projection) — this stacks with covariates already
+    # pushing the same direction.
+    # Skipped when the home deep-block boost already fired (same signal —
+    # avoid double-counting, mirroring the shared-prop-set precedent).
+    # ═══════════════════════════════════════════
+    dominant_cm_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    _dom_cm_pos_set = {"CM", "MC", "CMF", "CDM", "DM", "DMF", "MF"}
+    if (match_dominance and prop_type in {"pass_attempts", "passes"}
+            and _pos_upper_for_cdm in _dom_cm_pos_set
+            and not _is_gk
+            and not home_cdm_deep_block_info["applied"]):
+        _dcm_poss = match_dominance.get("expectedPoss")
+        if _dcm_poss is not None and _dcm_poss > 63.0:
+            _dcm_sev = min(1.0, (_dcm_poss - 63.0) / 10.0)
+            _dcm_role = (role or "").lower()
+            _dcm_high_vol = any(r in _dcm_role for r in (
+                "box-to-box", "box to box", "mezzala", "deep-lying", "regista",
+                "advanced playmaker", "playmaker", "pivot",
+            ))
+            _dcm_cap = 0.20 if _dcm_high_vol else 0.14
+            _dcm_mult = round(1.0 + _dcm_sev * _dcm_cap, 3)
+            if _dcm_mult > 1.005:
+                _raw_before_dcm = posterior_mean
+                posterior_mean = round(posterior_mean * _dcm_mult, 1)
+                _cov_sigma += 0.02  # depends on possession estimate
+                dominant_cm_info = {
+                    "applied": True,
+                    "multiplier": _dcm_mult,
+                    "reason": (
+                        f"dominant-possession CM boost: expected_poss={_dcm_poss:.1f}% "
+                        f"severity={_dcm_sev:.2f} "
+                        f"{'high-volume role' if _dcm_high_vol else 'generic CM'} "
+                        f"mult={_dcm_mult}"
+                    ),
+                }
+                print(f"[DOMINANT CM BOOST] {prop_type} pos={_pos_upper_for_cdm} "
+                      f"venue={venue} poss={_dcm_poss:.1f}% sev={_dcm_sev:.2f} "
+                      f"high_vol={_dcm_high_vol} mult={_dcm_mult} "
+                      f"{_raw_before_dcm} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # MATCH STAKES LAYER
+    # ═══════════════════════════════════════════
+    # League table context that pure stats can never capture:
+    #
+    #  MUST_WIN_RELEGATION   — team in the drop zone, late season.
+    #    • CBs/CDMs: suppress pass_attempts (managers go DIRECT under pressure).
+    #    • FWDs/AMs: shot boost (+6%) — team needs goals.
+    #    • ALL: tackles/clearances +6% (higher intensity).
+    #
+    #  HIGH_STAKES_RELEGATION — 1-4pts above drop zone, few games left.
+    #    • Mild version: pass_attempts -5%, intensity +4%.
+    #
+    #  DEAD_RUBBER — team mathematically safe, nothing at stake.
+    #    • Rotation expected. Flat -10% on all volume stats.
+    #
+    #  HIGH_STAKES_TITLE / HIGH_STAKES_EUROPE — intensity boost (+4%).
+    #
+    #  Opponent stakes: if OPPONENT is in MUST_WIN_RELEGATION, the whole
+    #  game lifts intensity regardless of who the player plays for.
+    # ═══════════════════════════════════════════
+    match_stakes_info = {"applied": False, "mult": 1.0, "reason": ""}
+    if match_stakes:
+        _ms_team_level = match_stakes.get("teamStakeLevel", "NORMAL")
+        _ms_opp_level  = match_stakes.get("opponentStakeLevel", "NORMAL")
+        _pos_up        = (position or "").upper()
+        _is_cb_cdm     = _pos_up in {"CB", "SW", "CDM", "DM", "DMF", "D", "DF"}
+        _is_fwd        = _pos_up in {"ST", "CF", "LW", "RW", "CAM", "AM", "SS", "FW", "WF"}
+        _VOLUME_PROPS  = {"pass_attempts", "passes", "shots", "shots_on_target",
+                          "tackles", "clearances", "key_passes", "crosses", "dribbles"}
+
+        _ms_mult = 1.0
+        _ms_note = ""
+
+        # Possession gate: if the team actually dominates possession AGAINST THIS
+        # SPECIFIC OPPONENT (H2H-blended expectedPoss), direct-play relegation debuffs
+        # are invalid — the style is possession-based regardless of the table position.
+        # Threshold: team expects >58% possession → skip all direct-play penalties.
+        _team_exp_poss = float(match_stakes.get("teamExpectedPoss") or
+                               (match_dominance or {}).get("expectedPoss") or 50.0)
+        # H2H possession is display/context evidence only; it cannot alter
+        # match-stakes prediction math.
+        _effective_poss = _team_exp_poss
+        _poss_dominant = _effective_poss > 58.0  # team controls the ball vs this opponent
+
+        if _ms_team_level == "MUST_WIN_RELEGATION":
+            if prop_type in {"pass_attempts", "passes", "key_passes"} and _is_cb_cdm:
+                if _poss_dominant:
+                    # Possession-dominant → direct-play debuff invalid; small intensity lift instead
+                    _ms_mult = 1.04
+                    _ms_note = (f"MUST_WIN_RELEGATION: CB/CDM but {_effective_poss:.0f}% poss "
+                                f"dominance negates direct-play penalty → intensity +4%")
+                else:
+                    _ms_mult = 0.90
+                    _ms_note = "MUST_WIN_RELEGATION: CB/CDM direct-play suppression (-10% pass vol)"
+            elif prop_type in {"pass_attempts", "passes"} and not _is_gk and not _is_cb_cdm:
+                if _poss_dominant:
+                    _ms_mult = 1.0  # no debuff when team dominates possession
+                    _ms_note = f"MUST_WIN_RELEGATION: {_effective_poss:.0f}% poss dominant — no direct-play penalty"
+                else:
+                    _ms_mult = 0.95
+                    _ms_note = "MUST_WIN_RELEGATION: survival-mode direct play (-5% pass vol)"
+            elif prop_type in {"shots", "shots_on_target"} and _is_fwd:
+                _ms_mult = 1.06
+                _ms_note = "MUST_WIN_RELEGATION: FWD desperate for goals (+6% shots)"
+            elif prop_type in {"tackles", "clearances", "interceptions"}:
+                _ms_mult = 1.06
+                _ms_note = "MUST_WIN_RELEGATION: elevated physical intensity (+6%)"
+
+        elif _ms_team_level == "HIGH_STAKES_RELEGATION":
+            if prop_type in {"pass_attempts", "passes"} and _is_cb_cdm:
+                if _poss_dominant:
+                    # Possession dominance overrides relegation direct-play tendency
+                    _ms_mult = 1.0
+                    _ms_note = (f"HIGH_STAKES_RELEGATION: {_effective_poss:.0f}% poss dominance "
+                                f"negates direct-play penalty — no debuff")
+                else:
+                    _ms_mult = 0.95
+                    _ms_note = "HIGH_STAKES_RELEGATION: direct-play tendency (-5% pass vol)"
+            elif prop_type in {"tackles", "clearances"}:
+                _ms_mult = 1.04
+                _ms_note = "HIGH_STAKES_RELEGATION: elevated defensive intensity (+4%)"
+
+        elif _ms_team_level == "DEAD_RUBBER":
+            if prop_type in _VOLUME_PROPS:
+                _ms_mult = 0.90
+                _ms_note = "DEAD_RUBBER: rotation/low-intensity deflation (-10%)"
+
+        elif _ms_team_level in ("HIGH_STAKES_TITLE", "HIGH_STAKES_EUROPE"):
+            _ms_mult = 1.04
+            _ms_note = f"{_ms_team_level}: maximum motivation (+4%)"
+
+        # ── World Cup override ─────────────────────────────────────────────────
+        # WC is the highest-stakes competition: every player is at peak intensity,
+        # representing their nation. Apply a +5% volume boost across all props
+        # (players push harder, run more, attempt more — and WC opponents press hard).
+        # Copa Libertadores / Sudamericana finals also qualify as max-stakes.
+        if match_stakes.get("isWorldCup") and abs(_ms_mult - 1.0) < 0.005:
+            if prop_type in {"pass_attempts", "passes", "shots", "shots_on_target",
+                             "tackles", "clearances", "key_passes", "crosses", "dribbles",
+                             "interceptions", "saves", "goalie_saves"}:
+                _ms_mult = 1.05
+                _ms_note = "WORLD_CUP: maximum national-team intensity (+5% volume)"
+
+        # Opponent in survival mode lifts the whole game's intensity
+        if _ms_opp_level == "MUST_WIN_RELEGATION" and abs(_ms_mult - 1.0) < 0.005:
+            if prop_type in {"tackles", "clearances", "shots"}:
+                _ms_mult = 1.05
+                _ms_note = "OPP MUST_WIN_RELEGATION: high-intensity game (+5%)"
+            elif prop_type in {"pass_attempts", "passes"} and not _is_cb_cdm:
+                _ms_mult = 0.96
+                _ms_note = "OPP MUST_WIN_RELEGATION: opponent pressing hard (-4% pass flow)"
+
+        if abs(_ms_mult - 1.0) > 0.005:
+            _ms_before = posterior_mean
+            posterior_mean = round(posterior_mean * _ms_mult, 1)
+            match_stakes_info = {"applied": True, "mult": _ms_mult, "reason": _ms_note}
+            print(f"[MATCH STAKES] {prop_type} pos={_pos_up} "
+                  f"team={_ms_team_level} opp={_ms_opp_level} "
+                  f"mult={_ms_mult} {_ms_before} → {posterior_mean}  [{_ms_note}]")
+
+    # ═══════════════════════════════════════════
+    # FATIGUE LAYER — Rest Days & Fixture Congestion
+    # ═══════════════════════════════════════════
+    # Two sub-layers:
+    #   A) REST DAYS  — time since last game (caller-supplied rest_days parameter)
+    #   B) CONGESTION — count of games in last 14 days (derived internally from game_logs)
+    #
+    # Physical props (sprinting, tackling, dribbling) degrade sharply under fatigue.
+    # Volume props (passing, tactical positioning) degrade less — more cognitive.
+    #
+    # Rest day thresholds (calibrated against sports science research on physical output):
+    #   0-1 days : back-to-back fixtures (extreme fatigue) — rare outside cup/tournament
+    #   2-3 days : heavy fatigue — typical midweek + weekend schedule
+    #   4-5 days : mild fatigue — normal but slightly compressed schedule
+    #   6-7 days : optimal rest — baseline (no adjustment)
+    #   8-11 days: fresh legs — extended break (international window, cup exit, etc.)
+    #   12+ days : slight rust — sharper props dip, volume stable
+    # ═══════════════════════════════════════════
+    _PHYSICAL_FATIGUE_PROPS = {
+        "shots", "shots_on_target", "tackles", "interceptions",
+        "clearances", "dribbles", "duels_won", "blocks",
+    }
+    _VOLUME_FATIGUE_PROPS = {"pass_attempts", "passes", "key_passes", "crosses"}
+    fatigue_info = {
+        "applied": False, "mult": 1.0, "reason": "", "rest_days": rest_days,
+        "congestion_mult": 1.0, "congestion_games": None,
+    }
+    if rest_days is not None and rest_days >= 0:
+        _is_phys_fat = prop_type in _PHYSICAL_FATIGUE_PROPS
+        _is_vol_fat  = prop_type in _VOLUME_FATIGUE_PROPS
+        _fat_phys, _fat_vol = 1.0, 1.0
+        _fat_label = "optimal"
+        if rest_days <= 1:
+            _fat_phys, _fat_vol = 0.88, 0.92; _fat_label = "backtoback"
+        elif rest_days <= 3:
+            _fat_phys, _fat_vol = 0.93, 0.96; _fat_label = "heavy"
+        elif rest_days <= 5:
+            _fat_phys, _fat_vol = 0.97, 0.99; _fat_label = "mild"
+        elif rest_days <= 7:
+            pass  # optimal rest — baseline, no adjustment
+        elif rest_days <= 11:
+            _fat_phys, _fat_vol = 1.02, 1.02; _fat_label = "fresh"
+        else:
+            _fat_phys, _fat_vol = 0.99, 1.01; _fat_label = "rust"
+
+        _fat_mult = _fat_phys if _is_phys_fat else (_fat_vol if _is_vol_fat else 1.0)
+        if abs(_fat_mult - 1.0) > 0.005:
+            _fat_before = posterior_mean
+            posterior_mean = round(posterior_mean * _fat_mult, 1)
+            fatigue_info.update({
+                "applied": True, "mult": _fat_mult,
+                "reason": f"{_fat_label} fatigue (rest={rest_days}d)",
+            })
+            print(f"[FATIGUE] {prop_type} rest={rest_days}d ({_fat_label}): "
+                  f"×{_fat_mult} {_fat_before} → {posterior_mean}")
+
+        # ── TOURNAMENT COMPOUNDING FATIGUE ─────────────────────────────────
+        # In compressed tournament schedules (e.g. WC group stage, Copa America,
+        # Euros) where teams play every 2-3 days, volume props degrade
+        # game-over-game: game 1 = 1.0, game 2 = 0.96, game 3 = 0.92.
+        # Stacks with the rest_days multiplier above.
+        if (
+            tournament_game_index is not None
+            and tournament_game_index >= 2
+            and rest_days is not None
+            and rest_days <= 3
+            and _is_vol_fat
+        ):
+            _tourn_mult = max(1.0 - (tournament_game_index - 1) * 0.04, 0.88)
+            _t_before = posterior_mean
+            posterior_mean = round(posterior_mean * _tourn_mult, 1)
+            fatigue_info.update({
+                "tournament_applied": True,
+                "tournament_mult": _tourn_mult,
+                "tournament_game": tournament_game_index,
+            })
+            print(f"[TOURNAMENT FATIGUE] {prop_type} game={tournament_game_index} "
+                  f"×{_tourn_mult} {_t_before} → {posterior_mean}")
+
+    # ── FIXTURE CONGESTION (internal — derived from game_logs dates) ─────────
+    # Count games played in the last 14 days before the most recent game log.
+    # 4+ games in 14 days = fixture congestion → compounding physical fatigue.
+    # Applied as an ADDITIONAL multiplier (stacks with rest_days fatigue above).
+    # Conservative: physical floor 0.92, volume floor 0.96.
+    _congestion_games = 0
+    _congestion_mult  = 1.0
+    if len(game_logs) >= 4:
+        try:
+            from datetime import date as _date_cls, timedelta as _td
+            _recent_dates = sorted(
+                [g.get("date", "")[:10] for g in game_logs if g.get("date", "")[:10]],
+                reverse=True,
+            )
+            if len(_recent_dates) >= 2:
+                _ref_date     = _date_cls.fromisoformat(_recent_dates[0])
+                _window_start = _ref_date - _td(days=14)
+                _congestion_games = sum(
+                    1 for d in _recent_dates
+                    if _date_cls.fromisoformat(d) >= _window_start
+                )
+                # Always surface the real count on fatigue_info so the mobile
+                # "Fixture Load" card shows the true games-in-14d number, even
+                # when it's below the 4-game threshold that triggers a
+                # projection multiplier (e.g. 2-3 games is common and useful
+                # context, not "no data" — only truly-empty data should
+                # render as "—" on the client).
+                fatigue_info["congestion_games"] = _congestion_games
+                if _congestion_games >= 4:
+                    if prop_type in _PHYSICAL_FATIGUE_PROPS:
+                        _congestion_mult = round(max(0.92, 1.0 - (_congestion_games - 3) * 0.02), 3)
+                    elif prop_type in _VOLUME_FATIGUE_PROPS:
+                        _congestion_mult = round(max(0.96, 1.0 - (_congestion_games - 3) * 0.01), 3)
+                    if abs(_congestion_mult - 1.0) > 0.005:
+                        _cong_before = posterior_mean
+                        posterior_mean = round(posterior_mean * _congestion_mult, 1)
+                        fatigue_info["congestion_mult"]  = _congestion_mult
+                        print(f"[CONGESTION] {prop_type}: {_congestion_games} games/14d "
+                              f"×{_congestion_mult} {_cong_before} → {posterior_mean}")
+        except Exception:
+            pass  # date parsing failure — skip silently
+
+    # ═══════════════════════════════════════════
+    # OPPONENT CLEAN SHEET RATE — Defensive Tightness
+    # ═══════════════════════════════════════════
+    # How often has this opponent kept a clean sheet in their recent games?
+    # High CS rate reveals elite defensive organisation: compact block, disciplined
+    # shape, or an elite keeper — beyond what xG or shots-conceded alone captures
+    # (a team can concede many shots but keep CSs through last-ditch defending).
+    #
+    # Applied only to offensive props: goals, shots, shots_on_target.
+    # Key_passes excluded — playmaker volume is more about team style than opp defense.
+    #
+    # CS rate distribution (European leagues, ~n=1500 team-seasons):
+    #   ≥60%  : elite defense (Man City 23/24: 64%, Atletico Madrid avg: 58%)
+    #   45-60%: solid defense
+    #   25-45%: average defense
+    #   10-25%: below average
+    #   <10%  : leaky (relegation zone quality)
+    # ═══════════════════════════════════════════
+    _OFFENSIVE_PROPS_CS = {"goals", "shots", "shots_on_target"}
+    clean_sheet_info = {"applied": False, "mult": 1.0, "cs_rate": opponent_clean_sheet_rate,
+                        "label": "unknown"}
+    if opponent_clean_sheet_rate is not None and prop_type in _OFFENSIVE_PROPS_CS:
+        _cs_mult = 1.0
+        if opponent_clean_sheet_rate >= 0.60:
+            _cs_mult = 0.87;  _cs_lbl = "ELITE DEF"
+        elif opponent_clean_sheet_rate >= 0.45:
+            _cs_mult = 0.92;  _cs_lbl = "SOLID DEF"
+        elif opponent_clean_sheet_rate >= 0.35:
+            _cs_mult = 0.96;  _cs_lbl = "GOOD DEF"
+        elif opponent_clean_sheet_rate <= 0.10:
+            _cs_mult = 1.13;  _cs_lbl = "LEAKY DEF"
+        elif opponent_clean_sheet_rate <= 0.20:
+            _cs_mult = 1.07;  _cs_lbl = "WEAK DEF"
+        elif opponent_clean_sheet_rate <= 0.30:
+            _cs_mult = 1.03;  _cs_lbl = "BELOW AVG DEF"
+        else:
+            _cs_lbl = "AVERAGE DEF"
+        # Hard cap: ±15% — CS rate is one signal, not the full story
+        _cs_mult = round(max(0.85, min(1.15, _cs_mult)), 3)
+        if abs(_cs_mult - 1.0) > 0.005:
+            _cs_before = posterior_mean
+            posterior_mean = round(posterior_mean * _cs_mult, 1)
+            _cov_sigma += 0.02  # clean-sheet rate is a noisy estimator for shot suppression
+            clean_sheet_info.update({
+                "applied": True, "mult": _cs_mult, "label": _cs_lbl,
+            })
+            print(f"[CS RATE] {prop_type}: opp_cs={opponent_clean_sheet_rate:.0%} "
+                  f"({_cs_lbl}) ×{_cs_mult} {_cs_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # SET PIECE VOLUME BOOST — High-Fouling Opponents
+    # ═══════════════════════════════════════════
+    # When an opponent commits many fouls per game, they generate more free kicks
+    # and penalty-area situations for the attacking team.  Set piece specialists
+    # (and any FWD/CAM operating in dangerous areas) see more shot/shooting
+    # opportunities when the opponent is foul-heavy.
+    #
+    # Applied only to attacking positions on shots/shots_on_target.
+    # Key_passes excluded — set pieces primarily create direct shot opps, not chains.
+    #
+    # League avg: ~11-12 fouls/game per team (across Big 5 + MLS).
+    # High-fouling: Atletico, Burnley, Championship sides — 14+/game.
+    # ═══════════════════════════════════════════
+    _SP_SHOT_PROPS    = {"shots_on_target", "shots"}
+    _SP_ATTACK_POS    = {"ST", "CF", "LW", "RW", "CAM", "AM", "SS", "FW", "WF", "FO"}
+    _pos_upper_sp     = (position or "").upper()
+    set_piece_info    = {"applied": False, "mult": 1.0, "foul_rate": opponent_foul_rate}
+    if (opponent_foul_rate is not None
+            and prop_type in _SP_SHOT_PROPS
+            and _pos_upper_sp in _SP_ATTACK_POS):
+        _sp_mult = 1.0
+        if opponent_foul_rate >= 16:
+            _sp_mult = 1.08   # very high fouling — constant set pieces
+        elif opponent_foul_rate >= 14:
+            _sp_mult = 1.05
+        elif opponent_foul_rate >= 13:
+            _sp_mult = 1.02
+        elif opponent_foul_rate <= 8:
+            _sp_mult = 0.95   # very disciplined — fewer set piece chances
+        elif opponent_foul_rate <= 9:
+            _sp_mult = 0.97
+        # Cap at ±10%
+        _sp_mult = round(max(0.90, min(1.10, _sp_mult)), 3)
+        if abs(_sp_mult - 1.0) > 0.005:
+            _sp_before = posterior_mean
+            posterior_mean = round(posterior_mean * _sp_mult, 1)
+            set_piece_info.update({"applied": True, "mult": _sp_mult})
+            print(f"[SET PIECE] {prop_type} pos={_pos_upper_sp}: "
+                  f"opp_fouls={opponent_foul_rate:.1f}/g ×{_sp_mult} "
+                  f"{_sp_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # PRESS INTENSITY — Position & Prop Aware
+    # ═══════════════════════════════════════════
+    # Press Intensity is calculated for every Bayesian call.  Only passing
+    # attempts/passes receive the role-aware pass multiplier; the other
+    # defensive prop paths retain their existing bounded workload adjustments.
+    # The single pass multiplier is centered at neutral pressure so low and high
+    # pressure move in opposite, interpretable directions rather than always
+    # suppressing or always boosting a player.
+    PRESS_AFFECTED_PROPS = {
+        "pass_attempts", "passes", "saves",
+        "tackles", "interceptions", "clearances", "blocks",
+    }
+    press_intensity_info.setdefault("projectionApplied", False)
+    press_intensity_info.setdefault("projectionMultiplier", 1.0)
+    press_intensity_info.setdefault("projectionReason", "Press Intensity recorded; no adjustment applied.")
+    if prop_type in PRESS_AFFECTED_PROPS:
+        press_score = press_intensity_info.get("score", 0.0) or 0.0
+        press_label = press_intensity_info.get("label", "Unavailable")
+        applied_mult = 1.0
+        projection_reason = "Press Intensity recorded; no adjustment applied."
+
+        if prop_type in {"pass_attempts", "passes"}:
+            applied_mult, projection_reason = _press_pass_projection_multiplier(
+                press_intensity_info,
+                prop_type,
+                position,
+                venue,
+            )
+        else:
+            # Defensive workload props retain the prior one-sided, bounded
+            # adjustment: stronger pressure can create more defensive work.
+            boost_cap = 0.0
+            if _is_gk and prop_type == "saves":
+                boost_cap = 0.20
+            elif _pos_group == "defender" and prop_type in {
+                "tackles", "interceptions", "clearances", "blocks",
+            }:
+                boost_cap = 0.10
+            elif _pos_group == "midfielder" and prop_type in {
+                "tackles", "interceptions",
+            }:
+                boost_cap = 0.08
+            applied_mult = round(1.0 + boost_cap * press_score, 3)
+            projection_reason = (
+                f"defensive workload boost from Press Intensity score "
+                f"{round(press_score * 100)}."
+            )
+
+        press_intensity_info["multiplier"] = applied_mult
+        press_intensity_info["projectionMultiplier"] = applied_mult
+        press_intensity_info["projectionApplied"] = (
+            press_intensity_info.get("status") == "available"
+            and abs(applied_mult - 1.0) >= 0.001
+        )
+        press_intensity_info["projectionReason"] = projection_reason
+        if press_intensity_info["projectionApplied"]:
+            raw_before = posterior_mean
+            posterior_mean = round(posterior_mean * applied_mult, 1)
+            _cov_sigma += 0.04
+            tag = "BOOST" if applied_mult > 1.0 else "SUPPRESS"
+            print(
+                f"[PRESS {tag}] {prop_type} pos={_pos_group} venue={venue} "
+                f"position={position or 'unknown'} "
+                f"opp={press_label}(score={press_score}, signal={press_intensity_info.get('signal_used')}) "
+                f"effectiveDA={press_intensity_info.get('avg_effective_defensive_actions')} "
+                f"mult={applied_mult} : {raw_before} → {posterior_mean}"
+            )
+        else:
+            print(
+                f"[PRESS NEUTRAL] {prop_type} pos={_pos_group} venue={venue} "
+                f"opp={press_label}(score={press_score}) — no adjustment applied"
+            )
+
+    # ═══════════════════════════════════════════
+    # GAME-SCRIPT NUDGE (Vegas-derived chase / nailbiter signals)
+    # ═══════════════════════════════════════════
+    # Inspired by the cheat-sheet contextual breakdown:
+    #   * Home CDM OVER passes hits 100% when their team LOSES (chase mode).
+    #   * Away GK UNDER passes hits 80% in 0–1 goal games, but only 29%
+    #     in 4+ goal goal-fests.
+    #   * Home GK UNDER passes hits 100% in blowouts/draws but only 53%
+    #     in 1-goal nailbiters — i.e. close games are coin flips.
+    #
+    # We accept a `game_script` dict with two optional keys:
+    #   expected_total_goals : float (Vegas line for game total)
+    #   expected_goal_diff   : float (positive = home favoured, negative = away favoured)
+    #
+    # The nudge is small (cap ±5%) and only fires when the script signal
+    # aligns with the position/prop pattern. Always informative, never
+    # the dominant signal.
+    # ═══════════════════════════════════════════
+    game_script_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    if game_script and isinstance(game_script, dict):
+        expected_total = game_script.get("expected_total_goals")
+        expected_diff = game_script.get("expected_goal_diff")
+        gs_mult = 1.0
+        gs_reason = []
+        _pos_upper = (position or "").upper()
+        # Neutral-venue fix (see `_effective_venue` computed above): use it here
+        # too so every favourite/underdog-aware boost below still resolves
+        # correctly for neutral-venue fixtures (World Cup etc.).
+        _script_venue = _effective_venue
+        # Home CDM/CAM OVER passes — chase-mode boost when team is underdog.
+        # Extends to attacking mids (CAM/AM). Magnitude increased from 7% to 20%
+        # max: empirical data shows trailing teams generate 30-80% more passes
+        # through their central mids when chasing — small multipliers were being
+        # swamped by the base projection bias.
+        # Role-aware: ball-playing pivots (Rodri, Busquets, Kroos-type) are the
+        # PRIMARY routing hub in possession-dominant chase mode — every sequence
+        # funnels through them. Destroyers/press-CDMs are bypassed more in direct
+        # play, so their boost is dampened.
+        if (prop_type in {"pass_attempts", "passes"} and _script_venue == "home"
+                and _pos_upper in {"CDM", "DM", "DMF", "CAM", "AM", "OM", "ACM"}
+                and expected_diff is not None and expected_diff < -0.5):
+            chase_boost = min(0.20, abs(expected_diff) * 0.09)
+            _cdm_script_role = (role or "").lower()
+            _is_ball_pivot = any(r in _cdm_script_role for r in (
+                "ball-playing", "ball playing", "regista", "deep-lying playmaker",
+                "pivot", "playmaker", "half-back",
+            ))
+            _is_destroyer = any(r in _cdm_script_role for r in (
+                "destroyer", "anchor", "ball winner", "holding midfielder", "defensive midfielder",
+            ))
+            if _is_ball_pivot:
+                chase_boost = min(0.20, chase_boost * 1.30)
+                gs_reason.append("ball-playing pivot role amplifies chase-mode boost")
+            elif _is_destroyer:
+                chase_boost = chase_boost * 0.70
+                gs_reason.append("destroyer/anchor role dampens chase-mode pass boost")
+            gs_mult *= (1.0 + chase_boost)
+            gs_reason.append(f"home MID chase-mode boost +{chase_boost*100:.1f}% (diff={expected_diff:.1f})")
+        # Away CDM/CAM OVER passes — symmetric pinned-back boost. Magnitude
+        # increased from 6% to 18% max for same reason as above.
+        # Role-aware: same logic as home — ball-playing pivots amplified,
+        # destroyers/anchors dampened (direct play bypasses them when pinned).
+        if (_cdm_mode != "off"
+                and prop_type in {"pass_attempts", "passes"} and _script_venue == "away"
+                and _pos_upper in {"CDM", "DM", "DMF", "CM", "MC", "CMF", "CAM", "AM", "OM", "ACM"}
+                and expected_diff is not None and expected_diff > 0.5):
+            away_chase_boost = min(0.18, abs(expected_diff) * 0.08)
+            _away_cdm_script_role = (role or "").lower()
+            _away_is_ball_pivot = any(r in _away_cdm_script_role for r in (
+                "ball-playing", "ball playing", "regista", "deep-lying playmaker",
+                "pivot", "playmaker", "half-back",
+            ))
+            _away_is_destroyer = any(r in _away_cdm_script_role for r in (
+                "destroyer", "anchor", "ball winner", "holding midfielder", "defensive midfielder",
+            ))
+            if _away_is_ball_pivot:
+                away_chase_boost = min(0.18, away_chase_boost * 1.30)
+            elif _away_is_destroyer:
+                away_chase_boost = away_chase_boost * 0.70
+            cdm_inversion_info["mode"] = _cdm_mode
+            cdm_inversion_info["shadow_multiplier"] = round(
+                cdm_inversion_info.get("shadow_multiplier", 1.0) * (1.0 + away_chase_boost), 4)
+            if _cdm_mode == "live":
+                gs_mult *= (1.0 + away_chase_boost)
+                gs_reason.append(
+                    f"away CDM pinned-back boost +{away_chase_boost*100:.1f}% "
+                    f"(diff={expected_diff:.1f})")
+                cdm_inversion_info["applied"] = True
+                cdm_inversion_info["multiplier"] = round(
+                    cdm_inversion_info.get("multiplier", 1.0) * (1.0 + away_chase_boost), 4)
+                cdm_inversion_info["reason"] = (
+                    (cdm_inversion_info.get("reason") or "")
+                    + f"; away pinned-back boost +{away_chase_boost*100:.1f}% (diff={expected_diff:.1f})"
+                ).lstrip("; ")
+            else:
+                print(f"[CDM SCRIPT BOOST shadow] {prop_type} pos={_pos_upper} venue=away "
+                      f"expected_diff={expected_diff:.2f} would_boost=+{away_chase_boost*100:.1f}% "
+                      f"(NOT APPLIED)")
+                cdm_inversion_info["reason"] = (
+                    (cdm_inversion_info.get("reason") or "")
+                    + f"; away pinned-back boost +{away_chase_boost*100:.1f}% (diff={expected_diff:.1f}) [shadow]"
+                ).lstrip("; ")
+        # Away GK UNDER passes — high-scoring game suppression (boost projection up)
+        if (prop_type in {"pass_attempts", "passes"} and _script_venue == "away" and _is_gk
+                and expected_total is not None and expected_total >= 3.0):
+            highscore_boost = min(0.05, (expected_total - 2.5) * 0.025)
+            gs_mult *= (1.0 + highscore_boost)
+            gs_reason.append(f"away GK high-scoring boost +{highscore_boost*100:.1f}% (total={expected_total:.1f})")
+        # CB MANAGING-LEAD BOOST — when a team is clearly favoured to win,
+        # their CBs accumulate passes managing the lead (build-out from the back,
+        # waste time, recycle under reduced pressure).
+        # Home CB on clear home favourite, or away CB on clear away favourite.
+        # Empirical pattern: Micky van de Ven (Spurs away, won 2-1) hit 61 actual
+        # vs 42-54 projected UNDER — model was suppressing a lead-managing CB.
+        # CB MANAGING-LEAD BOOST — increased from 8% to 15% max.
+        # Winning CBs accumulate passes heavily: Micky van de Ven (Spurs away)
+        # hit 61 actual vs 42 projected. Threshold lowered from 0.8 to 0.3 to
+        # catch moderate favourites too.
+        _cb_set = {"CB", "LB", "RB", "LCB", "RCB", "WB", "WBL", "WBR"}
+        if (prop_type in {"pass_attempts", "passes"}
+                and _pos_upper in _cb_set
+                and expected_diff is not None):
+            # Home CB: home team is favourite
+            if _script_venue == "home" and expected_diff > 0.3:
+                cb_lead_boost = min(0.15, (expected_diff - 0.3) * 0.07)
+                gs_mult *= (1.0 + cb_lead_boost)
+                gs_reason.append(f"home CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
+            # Away CB: away team is favourite (negative expected_diff = away fav)
+            elif _script_venue == "away" and expected_diff < -0.3:
+                cb_lead_boost = min(0.15, (abs(expected_diff) - 0.3) * 0.07)
+                gs_mult *= (1.0 + cb_lead_boost)
+                gs_reason.append(f"away CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
+        # UNDERDOG LOW-POSSESSION CB/FB CUT — symmetric complement to the
+        # managing-lead boost above. Canonical miss: J. Glesnes (ball-playing
+        # CB, LA Galaxy home underdog vs St. Louis, 47% poss, lost 1-3):
+        # projected 79 pass attempts, recorded 48. When a defender's team is
+        # BOTH the betting underdog AND expected to lose the possession battle,
+        # the ball doesn't cycle back through the defense — CBs clear under
+        # pressure instead of recycling. The possession squeeze (season-norm
+        # relative) under-fires for teams whose season average is already low.
+        # Severity blends bookmaker deficit (0→1 over 0.5→2.0 goals) and
+        # possession deficit (0→1 over 48%→38%). Cap -18%.
+        if (prop_type in {"pass_attempts", "passes"}
+                and _pos_upper in _cb_set
+                and expected_diff is not None):
+            _ud_poss = (match_dominance or {}).get("expectedPoss")
+            _is_underdog = ((_script_venue == "home" and expected_diff < -0.5)
+                            or (_script_venue == "away" and expected_diff > 0.5))
+            if _is_underdog and _ud_poss is not None and _ud_poss < 48.0:
+                _ud_sev_diff = min(1.0, (abs(expected_diff) - 0.5) / 1.5)
+                _ud_sev_poss = min(1.0, (48.0 - _ud_poss) / 10.0)
+                cb_underdog_cut = min(0.18, 0.06 + 0.12 * (0.5 * _ud_sev_diff + 0.5 * _ud_sev_poss))
+                gs_mult *= (1.0 - cb_underdog_cut)
+                gs_reason.append(
+                    f"underdog low-poss CB/FB cut -{cb_underdog_cut*100:.1f}% "
+                    f"(diff={expected_diff:.1f}, poss={_ud_poss:.1f}%)")
+        # FAVOURED CAM VOLUME NUDGE — attacking mids on the favoured side with
+        # at least even possession get a small upward nudge. Canonical near-miss:
+        # M. Hartel (CAM, St. Louis, won 3-1 with 53% poss) — UNDER 42.5 pick
+        # missed at 44 actual vs 37 projected. Winning CAMs with the ball keep
+        # receiving between the lines; the engine was conservative. Small cap
+        # (+6%) — informative, never dominant.
+        if (prop_type in {"pass_attempts", "passes", "key_passes"}
+                and _pos_upper in {"CAM", "AM", "OM", "ACM", "OMF"}
+                and expected_diff is not None):
+            _cam_poss = (match_dominance or {}).get("expectedPoss")
+            _is_cam_fav = ((_script_venue == "home" and expected_diff > 0.3)
+                           or (_script_venue == "away" and expected_diff < -0.3))
+            if _is_cam_fav and _cam_poss is not None and _cam_poss >= 50.0:
+                cam_win_boost = min(0.06, 0.03 + (abs(expected_diff) - 0.3) * 0.02)
+                gs_mult *= (1.0 + cam_win_boost)
+                gs_reason.append(
+                    f"favoured CAM volume nudge +{cam_win_boost*100:.1f}% "
+                    f"(diff={expected_diff:.1f}, poss={_cam_poss:.1f}%)")
+        if gs_mult != 1.0:
+            raw_before_gs = posterior_mean
+            posterior_mean = round(posterior_mean * gs_mult, 1)
+            game_script_info = {"applied": True,
+                                "multiplier": round(gs_mult, 4),
+                                "reason": "; ".join(gs_reason)}
+            print(f"[GAME SCRIPT] {prop_type} pos={_pos_upper} venue={venue} "
+                  f"mult={gs_mult:.3f} {raw_before_gs} → {posterior_mean} ({'; '.join(gs_reason)})")
+
+    # ═══════════════════════════════════════════
+    # LEAGUE-EMPIRICAL CALIBRATION (post-posterior nudge)
+    # ═══════════════════════════════════════════
+    # `league_calibration` may be either:
+    #   * a dict with `found` (single side, legacy form), OR
+    #   * a dict {"over": <bucket>, "under": <bucket>} so we can pick the
+    #     correct bucket *after* the posterior tells us which side we'll
+    #     recommend. The OVER and UNDER buckets are independently
+    #     estimated from settled picks, so we MUST apply the side that
+    #     matches the eventual recommendation (otherwise we apply a
+    #     bucket that measures a different population).
+    # ═══════════════════════════════════════════
+    league_calib_info = {"applied": False, "multiplier": 1.0, "n": 0,
+                         "hit_rate": None, "bias": 0.0}
+    _selected_calib = None
+    if league_calibration and isinstance(league_calibration, dict):
+        if "over" in league_calibration or "under" in league_calibration:
+            # Two-sided form — choose bucket matching what we'd recommend now
+            _post_side = "over" if posterior_mean >= line else "under"
+            _selected_calib = league_calibration.get(_post_side)
+        elif league_calibration.get("found"):
+            _selected_calib = league_calibration
+
+    if _selected_calib and _selected_calib.get("found"):
+        lmult = float(_selected_calib.get("multiplier", 1.0))
+        # Cross-league fallbacks aggregate hundreds of picks from stylistically
+        # different leagues (La Liga, PL, etc.) and can hit the ±6% hard cap even
+        # when the target league behaves differently. Heuristic: buckets with
+        # n ≥ 80 are almost certainly cross-league composites — cap them at ±3%
+        # so league-style differences don't overwhelm matchup-specific signals.
+        _calib_n = int(_selected_calib.get("n", 0))
+        _is_cross_league_bucket = _calib_n >= 80
+        if _is_cross_league_bucket and abs(lmult - 1.0) > 0.03:
+            _sign = 1.0 if lmult > 1.0 else -1.0
+            lmult = round(1.0 + _sign * 0.03, 4)
+        if abs(lmult - 1.0) > 0.001:
+            raw_before_lc = posterior_mean
+            posterior_mean = round(posterior_mean * lmult, 1)
+            _cross_tag = " [cross-league cap ±3%]" if _is_cross_league_bucket else ""
+            print(f"[LEAGUE CALIB] {prop_type} {position} {venue}: n={_selected_calib.get('n')}, "
+                  f"hit={_selected_calib.get('hit_rate')}, bias={_selected_calib.get('bias')}, "
+                  f"mult={lmult:.4f} {raw_before_lc} → {posterior_mean}{_cross_tag}")
+        league_calib_info = {
+            "applied":  True,
+            "multiplier": round(lmult, 4),
+            "n":        int(_selected_calib.get("n", 0)),
+            "hit_rate": _selected_calib.get("hit_rate"),
+            "bias":     _selected_calib.get("bias", 0.0),
+            "direction": _selected_calib.get("direction", "neutral"),
+        }
+
+    # ═══════════════════════════════════════════
+    # SCENARIO PRIORS (cheat-sheet, scenario-conditional)
+    # ═══════════════════════════════════════════
+    # `scenario_priors_result` arrives pre-computed by the caller as
+    # Σ P(scenario_i) × scenario_priors.lookup(scenario_i, ...).
+    # We apply it as a final small multiplicative nudge that lives
+    # alongside league_calibration but is conditioned on the predicted
+    # game script (draw / blowout / low-scoring / etc.) instead of the
+    # league. Two operating modes:
+    #   * "off"    : no-op (legacy behaviour)
+    #   * "shadow" : compute & log only — multiplier NOT applied
+    #   * "live"   : compute, log, AND apply
+    # Default is "off" so any caller that doesn't pass scenario_priors_mode
+    # behaves exactly as before.
+    scenario_priors_info = {"applied": False, "multiplier": 1.0,
+                            "mode": scenario_priors_mode, "components": []}
+    if (scenario_priors_result and isinstance(scenario_priors_result, dict)
+            and scenario_priors_result.get("found")
+            and scenario_priors_mode in {"shadow", "live"}):
+        sp_mult = float(scenario_priors_result.get("multiplier", 1.0))
+        # Scenario priors are probability-weighted across future scenarios (draw,
+        # low-scoring, blowout, etc.) that haven't happened yet. OVER buckets for
+        # CB pass_attempts carry heavy negative mean_err (-9 to -17) that drag the
+        # weighted average far down. Cap at ±3% so this pre-game guess doesn't
+        # overrule possession and opponent-profile signals that are matchup-specific.
+        if abs(sp_mult - 1.0) > 0.03:
+            _sp_sign = 1.0 if sp_mult > 1.0 else -1.0
+            sp_mult = round(1.0 + _sp_sign * 0.03, 4)
+        scenario_priors_info["multiplier"] = round(sp_mult, 4)
+        scenario_priors_info["components"] = scenario_priors_result.get("components", [])
+        scenario_priors_info["coverage"]   = scenario_priors_result.get("coverage")
+        scenario_priors_info["direction"]  = scenario_priors_result.get("direction", "neutral")
+        scenario_priors_info["n"]          = scenario_priors_result.get("n", 0)
+        if scenario_priors_mode == "live" and abs(sp_mult - 1.0) > 0.001:
+            raw_before_sp = posterior_mean
+            posterior_mean = round(posterior_mean * sp_mult, 1)
+            scenario_priors_info["applied"] = True
+            print(f"[SCENARIO PRIORS LIVE] {prop_type} {position} {venue}: "
+                  f"mult={sp_mult:.4f} {raw_before_sp} → {posterior_mean} "
+                  f"(coverage={scenario_priors_info['coverage']}, n={scenario_priors_info['n']})")
+        else:
+            print(f"[SCENARIO PRIORS SHADOW] {prop_type} {position} {venue}: "
+                  f"would_mult={sp_mult:.4f} (coverage={scenario_priors_info.get('coverage')}, "
+                  f"n={scenario_priors_info['n']}, components={len(scenario_priors_info['components'])})")
+
+    # ═══════════════════════════════════════════
+    # ODDS-TIER PRIORS ("alive" self-learning layer)
+    # ═══════════════════════════════════════════
+    # `odds_tier_priors_result` arrives pre-computed by the caller.
+    # Applies a multiplicative nudge based on the (oddsTier x position x prop x rec)
+    # bucket mined from every settled pick. Unlike scenario_priors, this is a
+    # deterministic single-bucket lookup (odds tier known pre-match), so the
+    # full +/-6% cap applies -- there is no scenario-uncertainty discount.
+    odds_tier_priors_info = {"applied": False, "multiplier": 1.0,
+                             "mode": odds_tier_priors_mode, "found": False}
+    if (odds_tier_priors_result and isinstance(odds_tier_priors_result, dict)
+            and odds_tier_priors_result.get("found")
+            and odds_tier_priors_mode in {"shadow", "live"}):
+        from odds_tier_priors import _MAX_NUDGE as _OT_MAX_NUDGE
+        ot_mult = float(odds_tier_priors_result.get("multiplier", 1.0))
+        if abs(ot_mult - 1.0) > _OT_MAX_NUDGE:
+            _ot_sign = 1.0 if ot_mult > 1.0 else -1.0
+            ot_mult = round(1.0 + _ot_sign * _OT_MAX_NUDGE, 4)
+        odds_tier_priors_info["multiplier"] = round(ot_mult, 4)
+        odds_tier_priors_info["bias"]      = odds_tier_priors_result.get("bias")
+        odds_tier_priors_info["hit_rate"]  = odds_tier_priors_result.get("hit_rate")
+        odds_tier_priors_info["n"]         = odds_tier_priors_result.get("n", 0)
+        odds_tier_priors_info["direction"] = odds_tier_priors_result.get("direction", "neutral")
+        odds_tier_priors_info["found"]     = True
+        odds_tier_priors_info["oddsTier"]   = odds_tier_priors_result.get("oddsTier", "")
+        odds_tier_priors_info["venueSplit"] = odds_tier_priors_result.get("venueSplit", False)
+        if odds_tier_priors_mode == "live" and abs(ot_mult - 1.0) > 0.001:
+            raw_before_ot = posterior_mean
+            posterior_mean = round(posterior_mean * ot_mult, 1)
+            odds_tier_priors_info["applied"] = True
+            print(f"[ODDS-TIER PRIORS LIVE] {prop_type} {position} {venue}: "
+                  f"mult={ot_mult:.4f} {raw_before_ot} -> {posterior_mean} "
+                  f"(n={odds_tier_priors_info['n']}, tier={odds_tier_priors_info['oddsTier']})")
+        else:
+            print(f"[ODDS-TIER PRIORS SHADOW] {prop_type} {position} {venue}: "
+                  f"would_mult={ot_mult:.4f} (n={odds_tier_priors_info['n']}, "
+                  f"tier={odds_tier_priors_info['oddsTier']})")
+
+    # ═══════════════════════════════════════════
+    # REVERSAL FLAG — Mean Reversion Detection
+    # ═══════════════════════════════════════════
+    if prior_std > 0 and abs(momentum_mean - prior_mean) > 1.5 * prior_std:
+        if momentum_mean > prior_mean:
+            reversal_flag = "LIKELY REVERSION DOWN"
+        else:
+            reversal_flag = "LIKELY REVERSION UP"
+    elif abs(momentum_effect) > 1.0 * prior_std and abs(momentum_effect) <= 1.5 * prior_std:
+        reversal_flag = "WATCH"
+    else:
+        reversal_flag = "STABLE"
+
+    # ═══════════════════════════════════════════
+    # PROBABILITY CURVE — Over/Under probabilities
+    # ═══════════════════════════════════════════
+    # Use a blended std that accounts for both posterior precision AND player volatility.
+    # Floor = 55% of prior_std ensures we never collapse the band too far below historical
+    # spread, PLUS an absolute floor of 17% of the posterior mean so wide-gap props stay
+    # honest (e.g. a 30-mean projection with line at 38.5 must acknowledge the real range).
+    effective_std = max(posterior_std, prior_std * 0.55, posterior_mean * 0.17)
+
+    # ── POSITION BIAS CORRECTION ─────────────────────────────────────────────
+    # 2295-pick empirical audit identified systematic over/under-estimation
+    # for specific positions on pass_attempts. Applied before de-normalise so
+    # the correction compounds correctly with playing-time scaling.
+    #
+    #   CAM: hit rate 28.6% — model overestimates heavily → -10% correction
+    #   AM:  same family as CAM                           → -10% correction
+    #   CM:  hit rate 30.8% — model overestimates          → -8% correction
+    #   MC:  same family as CM                             → -8% correction
+    #
+    # These positions overestimate because the model uses a general "high possession
+    # = more passes" rule, but CAMs/CMs in high possession systems often play
+    # narrow and touch the ball less in direct build-up than CBs or DMs.
+    # Previous corrections (−4% CAM, −2% CM) were insufficient — empirical data
+    # from 2295 settled picks shows the actual underperformance is much larger.
+    _POS_BIAS_CORRECTIONS = {
+        ("CAM", "pass_attempts"): 0.90,
+        ("AM",  "pass_attempts"): 0.90,
+        ("CM",  "pass_attempts"): 0.92,
+        ("MC",  "pass_attempts"): 0.92,
+        ("CAM", "passes"):        0.90,
+        ("CM",  "passes"):        0.92,
+    }
+    _pos_bias_key = ((position or "").upper(), prop_type)
+    _pos_bias_mult = _POS_BIAS_CORRECTIONS.get(_pos_bias_key)
+    if _pos_bias_mult is not None and abs(_pos_bias_mult - 1.0) > 0.001:
+        _raw_before_bias = posterior_mean
+        posterior_mean = round(posterior_mean * _pos_bias_mult, 1)
+        print(f"[POS BIAS CORR] {position} {prop_type}: {_raw_before_bias:.1f} → {posterior_mean:.1f} "
+              f"(×{_pos_bias_mult} empirical correction)")
+
+    # ═══════════════════════════════════════════
+    # ALTITUDE PENALTY — High-Altitude Away Fixtures
+    # ═══════════════════════════════════════════
+    # Playing at high altitude significantly reduces physical output for
+    # visiting teams not adapted to thin-air conditions. Effect is primarily
+    # on aerobic/sprint-intensive props (shots, tackles, dribbles, interceptions).
+    # Passing volume is largely unaffected — it is more cognitive/technical.
+    #
+    # Altitude thresholds (calibrated against sports science literature):
+    #   1500-2000m : minor effect (~1-2% physical drop)
+    #   2000-2500m : moderate (~3-4%) — Mexico City: 2240m
+    #   2500-3000m : significant (~5-6%) — Bogotá: 2640m, Quito: 2850m
+    #   3000m+     : severe (~7-9%) — La Paz: 3640m
+    #
+    # Applied ONLY to AWAY teams (home teams are altitude-acclimatised).
+    # Caller is responsible for zeroing this out when the team is at home.
+    # ═══════════════════════════════════════════
+    altitude_info = {"applied": False, "mult": 1.0, "altitude_m": altitude_m}
+    if altitude_m is not None and venue == "away" and altitude_m > 1500:
+        # Linear scale: 1500m (0%) → 4000m (9% max reduction)
+        _alt_raw     = max(0.0, (altitude_m - 1500) / 2500) * 0.09
+        _alt_penalty = round(max(0.91, 1.0 - _alt_raw), 3)
+        if prop_type in _PHYSICAL_FATIGUE_PROPS:
+            _alt_before = posterior_mean
+            posterior_mean = round(posterior_mean * _alt_penalty, 1)
+            altitude_info.update({"applied": True, "mult": _alt_penalty})
+            print(f"[ALTITUDE] {prop_type} away={altitude_m}m: "
+                  f"penalty=×{_alt_penalty} {_alt_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # LEAGUE STYLE MATRIX — Style-Corrected Baselines
+    # ═══════════════════════════════════════════
+    # Each league has a distinct tactical DNA that shifts average outputs
+    # for each prop category beyond what individual game logs capture.
+    # Corrections are derived from multi-season league analytics research.
+    #
+    # Categories:
+    #   "shots"    → shots, shots_on_target, goals
+    #   "physical" → tackles, interceptions, clearances, dribbles, duels_won, blocks
+    #   "volume"   → pass_attempts, passes, key_passes, crosses
+    #
+    # Bundesliga GK/CB home passes (×0.87) are handled by the SEPARATE
+    # Bundesliga deflation block below — this matrix's Bundesliga "volume"
+    # multiplier is intentionally skipped for those cases to avoid double-apply.
+    #
+    # Cap: ±8% per category to prevent overcorrection.
+    # ═══════════════════════════════════════════
+    _LEAGUE_STYLE_MATRIX = {
+        # La Liga (140) — technical/possession, below-avg scoring (2.2 g/game)
+        140: {"shots": 0.95, "physical": 0.97, "volume": 1.02},
+        # Premier League (39) — physical/high-intensity, above-avg scoring
+        39:  {"shots": 1.03, "physical": 1.06, "volume": 1.00},
+        # Bundesliga (78) — high-press vertical style, pace over possession
+        # GK/CB home passes already ×0.87 below — skip volume for those
+        78:  {"shots": 1.04, "physical": 1.06, "volume": 0.97},
+        # Serie A (135) — low scoring (2.5 g/game), tactical, defensive
+        135: {"shots": 0.91, "physical": 1.04, "volume": 0.98},
+        # Ligue 1 (61) — one-sided (PSG era), lower avg competition
+        61:  {"shots": 0.96, "physical": 1.01, "volume": 0.99},
+        # Eredivisie (88) — high scoring, open play, low defensive org.
+        88:  {"shots": 1.09, "physical": 0.97, "volume": 1.02},
+        # Championship (40) — long ball, physical, lower technical quality
+        40:  {"shots": 1.03, "physical": 1.07, "volume": 0.96},
+        # MLS (253) — high variance, physical, more open than European norms
+        253: {"shots": 1.08, "physical": 1.03, "volume": 0.96},
+        # Liga MX (262) — similar to MLS, altitude in some venues
+        262: {"shots": 1.05, "physical": 1.02, "volume": 0.97},
+        # Brasileirão (71) — technical + physical blend
+        71:  {"shots": 1.02, "physical": 1.04, "volume": 0.99},
+        # Primeira Liga / Portugal (94) — defensive, physical, low scoring
+        94:  {"shots": 0.94, "physical": 1.04, "volume": 0.98},
+        # Scottish Premiership (179) — physical, long ball, low possession
+        179: {"shots": 1.03, "physical": 1.05, "volume": 0.94},
+        # Belgian Pro League (144) — open, moderate scoring
+        144: {"shots": 1.05, "physical": 1.02, "volume": 0.98},
+        # Turkish Süper Lig (203) — open, physical, higher scoring
+        203: {"shots": 1.04, "physical": 1.04, "volume": 0.97},
+        # Argentine Primera División (128) — physical, aggressive, moderate scoring
+        128: {"shots": 1.04, "physical": 1.08, "volume": 0.97},
+        # Greek Super League (197) — physical, set-piece heavy
+        197: {"shots": 1.02, "physical": 1.05, "volume": 0.96},
+        # Russian Premier League (235) — physical, direct, moderate scoring
+        235: {"shots": 1.01, "physical": 1.05, "volume": 0.97},
+    }
+    _SHOTS_CATEGORY_LS    = {"shots", "shots_on_target", "goals"}
+    _PHYSICAL_CATEGORY_LS = {"tackles", "interceptions", "clearances",
+                              "dribbles", "duels_won", "blocks"}
+    _VOLUME_CATEGORY_LS   = {"pass_attempts", "passes", "key_passes", "crosses"}
+
+    league_style_info = {"applied": False, "mult": 1.0, "league_id": league_id,
+                         "category": None}
+    _lid_style = league_id
+    if _lid_style and _lid_style in _LEAGUE_STYLE_MATRIX:
+        _ls = _LEAGUE_STYLE_MATRIX[_lid_style]
+        _ls_mult, _ls_cat = 1.0, None
+        if prop_type in _SHOTS_CATEGORY_LS:
+            _ls_mult = _ls.get("shots", 1.0);    _ls_cat = "shots"
+        elif prop_type in _PHYSICAL_CATEGORY_LS:
+            _ls_mult = _ls.get("physical", 1.0); _ls_cat = "physical"
+        elif prop_type in _VOLUME_CATEGORY_LS:
+            _ls_mult = _ls.get("volume", 1.0);   _ls_cat = "volume"
+
+        # Skip Bundesliga volume mult for GK/CB home passes — handled below
+        _bundes_skip = (
+            _lid_style == 78
+            and prop_type in {"pass_attempts", "passes"}
+            and venue == "home"
+            and (position or "").upper() in {
+                "GK", "CB", "LCB", "RCB", "LB", "RB", "WB", "WBL", "WBR"
+            }
+        )
+        if _ls_cat and not _bundes_skip:
+            _ls_mult = round(max(0.92, min(1.08, _ls_mult)), 3)
+            if abs(_ls_mult - 1.0) > 0.005:
+                _ls_before = posterior_mean
+                posterior_mean = round(posterior_mean * _ls_mult, 1)
+                league_style_info.update({
+                    "applied": True, "mult": _ls_mult, "category": _ls_cat,
+                })
+                print(f"[LEAGUE STYLE] {prop_type} ({_ls_cat}) "
+                      f"league={_lid_style}: ×{_ls_mult} {_ls_before} → {posterior_mean}")
+
+    # ── BUNDESLIGA PASS VOLUME DEFLATION ─────────────────────────────────────
+    # Empirical data: Bundesliga (ID 78) home picks hit only 37.5% (6/16) vs
+    # Premier League 72.4% (21/29). Avg projection error: 11.56 vs 7.76.
+    # Root cause: the Bundesliga's high-press vertical style means GKs and CBs
+    # play under more pressure with shorter disrupted sequences — net pass counts
+    # run ~13% below what the model expects using cross-league priors.
+    # Miss examples: proj 58→actual 27, proj 66→actual 48, proj 40→actual 17.
+    # Apply a ×0.87 deflation for Bundesliga HOME GK/CB pass_attempts.
+    _bundes_pos_set = {"GK", "CB", "LCB", "RCB", "LB", "RB", "WB", "WBL", "WBR"}
+    if (league_id == 78
+            and prop_type in {"pass_attempts", "passes"}
+            and venue == "home"
+            and (position or "").upper() in _bundes_pos_set):
+        _raw_before_bundes = posterior_mean
+        posterior_mean = round(posterior_mean * 0.87, 1)
+        print(f"[BUNDESLIGA DEFLATION] {position} {prop_type} home: "
+              f"{_raw_before_bundes:.1f} → {posterior_mean:.1f} (×0.87 high-press correction)")
+
+    # ── DE-NORMALISE: convert per-90 posterior back to raw expected units ────
+    # All maths above ran in per-90 space. Now scale down to the player's
+    # expected playing time for this match (e.g. 70 min → ×0.778).
+    # effective_std scales by the same factor so CI width stays proportional.
+    _posterior_mean_raw = posterior_mean * _denorm
+    _effective_std_raw  = effective_std  * _denorm
+    _prior_mean_raw     = prior_mean     * _denorm
+    _momentum_mean_raw  = momentum_mean  * _denorm
+    _prior_variance_raw = prior_variance * (_denorm ** 2)
+
+    # ── VOLATILE PROP VARIANCE INFLATION ──────────────────────────────────────
+    # High game-state variability props need a wider prior variance so the MC
+    # distribution is not overconfident. Inflation factors derived from empirical
+    # hit rates: shots|OVER 23.7%, goals|OVER rare events, dribbles opponent-dep.
+    _VOLATILE_INFLATION = {
+        "shots":           1.45,
+        "shots_on_target": 1.40,
+        "goals":           1.60,
+        "dribbles":        1.30,
+        "key_passes":      1.25,
+        "crosses":         1.20,
+    }
+    _vol_inf = _VOLATILE_INFLATION.get(prop_type, 1.0)
+    if _vol_inf > 1.0:
+        _prior_variance_raw *= _vol_inf
+        _effective_std_raw   = (_prior_variance_raw ** 0.5)
+
+    print(f"[PER90] {prop_type}: posterior={posterior_mean:.1f}/90 → {_posterior_mean_raw:.1f} raw "
+          f"(exp_min={_exp_min:.0f}, denorm={_denorm:.3f})")
+
+    # ── MARKET-MODEL FUSION ───────────────────────────────────────────────────
+    # The sportsbook line encodes what sharp money thinks the true mean is.
+    # We pull the Bayesian projection 20% toward the line — keeping the model's
+    # directional edge intact while acknowledging independent market information.
+    # The gap fraction also widens the covariate sigma so that large model↔market
+    # disagreements produce realistic (wider) P(OVER)/P(UNDER) rather than false
+    # high-confidence picks where the market knows something the model doesn't.
+    #
+    # Calibration: from settled picks, line is off by +0.43 passes on average vs
+    # actual; Bayesian is off by +0.56. Both have similar precision at small gaps.
+    # At larger gaps (>10%) the market has historically been closer to the truth,
+    # so the 20% pull reduces that systematic error without inverting the signal.
+    _MARKET_WEIGHT = 0.20
+    # A zero-variance history is an exact empirical anchor.  Do not pull an
+    # identical observed value toward the market line merely because the line
+    # is nearby; that would make the projection disagree with the player's
+    # entire recorded sample while adding no new player evidence.
+    if line and line > 0 and _posterior_mean_raw > 0 and prior_variance > 0:
+        _mf_gap  = line - _posterior_mean_raw
+        _mf_frac = abs(_mf_gap) / _posterior_mean_raw
+        _cov_sigma += min(0.08, _mf_frac * 0.30)  # gap widens uncertainty budget
+        _mf_fused  = _posterior_mean_raw + _MARKET_WEIGHT * _mf_gap
+        if abs(_mf_gap) >= 0.5:
+            print(f"[MARKET FUSION] {prop_type}: bayes={_posterior_mean_raw:.1f} "
+                  f"line={line} gap={_mf_gap:+.1f} ({_mf_frac*100:.0f}%) "
+                  f"→ fused={_mf_fused:.1f}  cov_sigma={_cov_sigma:.3f}")
+        _posterior_mean_raw = round(_mf_fused, 1)
+
+    # ── MONTE CARLO SIMULATION ───────────────────────────────────────────────
+    # Count stats (shots, goals, saves etc.) use the negative binomial
+    # distribution via gamma-Poisson mixture — naturally discrete and right-skewed.
+    # Continuous stats (pass_attempts) use Gaussian.
+    (
+        p_over, p_under,
+        ci_low_60, ci_high_60,
+        ci_low_80, ci_high_80,
+        most_likely_value,
+        landing_bands,
+    ) = _monte_carlo_probability(
+        mean=_posterior_mean_raw,
+        std=_effective_std_raw,
+        line=line,
+        n_sims=5000,
+        is_count_stat=is_count_stat,
+        variance=_prior_variance_raw,
+        covariate_sigma_frac=min(0.20, _cov_sigma),
+        display_as_integer=(
+            is_count_stat
+            or prop_type in {"pass_attempts", "passes", "crosses", "key_passes"}
+        ),
+    )
+    print(f"[COV SIGMA] {prop_type}: _cov_sigma={_cov_sigma:.3f} "
+          f"(capped={min(0.20, _cov_sigma):.3f}) → p_over={p_over*100:.1f}% p_under={p_under*100:.1f}%")
+
+    # Edge = how far DENORMALISED posterior is from line as % of denormalised std
+    edge_z = round(abs(_posterior_mean_raw - line) / _effective_std_raw, 2) if _effective_std_raw > 0 else 0
+
+    # Projection-vs-line gap (raw + relative). Surfaced so the UI can show
+    # "deep edge" / "razor thin" labels — picks with |edgeGapPct| >= 15%
+    # historically convert at much higher rates than thin-edge picks.
+    edge_gap_abs = round(_posterior_mean_raw - line, 2)
+    edge_gap_pct = round((edge_gap_abs / line) * 100, 1) if line and line > 0 else 0.0
+    if abs(edge_gap_pct) >= 20:
+        edge_gap_band = "DEEP"
+    elif abs(edge_gap_pct) >= 10:
+        edge_gap_band = "STRONG"
+    elif abs(edge_gap_pct) >= 5:
+        edge_gap_band = "MODERATE"
+    else:
+        edge_gap_band = "THIN"
+
+    # Layer weights (for transparency)
+    w_prior = round(prior_precision / total_precision * 100)
+    w_momentum = round(momentum_precision / total_precision * 100)
+    # Rounding can turn a mathematically capped 25% layer into 27% in the
+    # surfaced integer weights.  Keep the public diagnostic honest as well as
+    # the underlying precision cap.
+    w_covariate = min(26, round(covariate_precision / total_precision * 100))
+
+    # Volatility classification (based on per-90 CV — position-invariant)
+    if cv < 0.15:
+        volatility_label = "LOW"
+    elif cv < 0.30:
+        volatility_label = "NORMAL"
+    elif cv < 0.50:
+        volatility_label = "HIGH"
+    else:
+        volatility_label = "EXTREME"
+
+    # Venue avg — denormalise to match raw units
+    _venue_avg_raw = round(sum(venue_vals) / len(venue_vals) * _denorm, 1) if venue_vals else None
+
+    # Use Monte Carlo probability as the recommendation signal, not just mean vs line.
+    # For count stats (negative binomial, right-skewed), the mean can sit above the line
+    # while the MAJORITY of probability mass is below it — in that case, UNDER is correct.
+    # This prevents contradictory picks like "Projection 24.0 OVER line 23.5 — P(UNDER) 60.6%".
+    _rec_by_prob = "over" if p_over >= p_under else "under"
+
+    return {
+        # Core output — all values in RAW units (de-normalised from per-90)
+        "posteriorMean": round(_posterior_mean_raw, 1),
+        "posteriorStd": round(posterior_std * _denorm, 2),
+        "recommendation": _rec_by_prob,
+        "pOver": round(p_over * 100, 1),
+        "pUnder": round(p_under * 100, 1),
+        "confidenceInterval": [ci_low_80, ci_high_80],
+        "distribution": {
+            "mostLikelyValue": most_likely_value,
+            "range60": [ci_low_60, ci_high_60],
+            "range80": [ci_low_80, ci_high_80],
+            "landingBands": landing_bands,
+            "distributionType": "negative_binomial" if is_count_stat else "gaussian",
+        },
+        "mostLikelyValue": most_likely_value,
+        "range60": [ci_low_60, ci_high_60],
+        "range80": [ci_low_80, ci_high_80],
+        "landingBands": landing_bands,
+        "edgeZ": edge_z,
+
+        # 3 Layers (for transparency) — also in raw units
+        "priorMean": round(_prior_mean_raw, 1),
+        "priorStd": round(prior_std * _denorm, 2),
+        "priorWeight": w_prior,
+        "priorSamples": n,
+
+        "momentumEffect": round((_momentum_mean_raw - _prior_mean_raw), 2),
+        "momentumMean": round(_momentum_mean_raw, 1),
+        "momentumLabel": momentum_label,
+        "momentumWeight": w_momentum,
+        "trendPerGame": round(trend_per_game * _denorm, 3),
+
+        "covariateAdjustment": round(covariate_adjustment * _denorm, 2),
+        "covariateWeight": w_covariate,
+        "venueAvg": _venue_avg_raw,
+        "venueSamples": len(venue_vals) if venue_vals else 0,
+
+        "reversalFlag": reversal_flag,
+        "streakFlag": streak_flag,
+        "volatility": volatility_label,
+        "cv": round(cv, 3),
+        "pressIntensity": press_intensity_info,
+        "expectedMinutes": round(_exp_min, 0),
+        "isCountStat": is_count_stat,
+
+        # New: edge-gap surfacing for the UI
+        "edgeGapAbs": edge_gap_abs,
+        "edgeGapPct": edge_gap_pct,
+        "edgeGapBand": edge_gap_band,
+
+        # New: empirical league calibration applied (post-posterior)
+        "leagueCalibration": league_calib_info,
+
+        # New: game-script nudge applied (chase mode / nailbiter avoidance)
+        "gameScript": game_script_info,
+
+        # Scenario-aware priors (cheat-sheet conditional on predicted game script)
+        # Always emitted so shadow-mode logs and admin inspector can see what
+        # the layer would have / did do.
+        "scenarioPriors": scenario_priors_info,
+
+        # Odds-tier empirical priors (self-learning, auto-refreshes every 6h)
+        "oddsTierPriors": odds_tier_priors_info,
+
+        # CDM inverted-possession + pinned-back script boost (away CDM passes).
+        # Always emitted; `mode` reports off|shadow|live and `applied` shows
+        # whether the projection was actually nudged this call.
+        "gkCrossTeam": _gk_cross_team_info,
+        "cdmInversion": cdm_inversion_info,
+
+        # Home CDM deep-block recycling hub boost.
+        # Fires when dominant home team (>62% poss) faces a deep-sitting weak
+        # opponent (<36% poss) — CDM becomes the pass-recycling pivot.
+        "homeCdmDeepBlock": home_cdm_deep_block_info,
+
+        # Venue-agnostic dominant-possession CM boost (63%+ expected poss).
+        "dominantCmBoost": dominant_cm_info,
+
+        # Match stakes layer — league table situation (relegation/title/dead rubber).
+        "matchStakes": match_stakes_info,
+
+        # ── Ultra v4 — 5 new layers ──────────────────────────────────────────
+        # Fatigue: rest_days + fixture congestion
+        "fatigueLayer": fatigue_info,
+        # Opponent clean sheet rate → offensive prop suppression/boost
+        "cleanSheetLayer": clean_sheet_info,
+        # Set piece volume boost for attackers vs high-fouling opponents
+        "setPieceLayer": set_piece_info,
+        # Altitude penalty for away teams at high-altitude venues
+        "altitudeLayer": altitude_info,
+        # League style matrix — per-league tactical DNA correction
+        "leagueStyleLayer": league_style_info,
+    }
+
+
+def _build_club_prior(player_stats: dict, prop_type: str, line: float, expected_minutes: float = 90.0) -> dict | None:
+    """Build a Bayesian metrics dict from club season stats when tournament game_logs are empty."""
+    _sfm = {
+        "goals": ("goals", "total"), "assists": ("goals", "assists"),
+        "shots_assisted": ("passes", "key"), "pass_attempts": ("passes", "total"),
+        "passes": ("passes", "total"), "shots": ("shots", "total"),
+        "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
+        "key_passes": ("passes", "key"), "saves": ("goals", "saves"),
+        "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
+        "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
+        "fouls_committed": ("fouls", "committed"), "crosses": ("passes", "cross"),
+        "clearances": ("tackles", "clearances"), "duels_won": ("duels", "won"),
+        "yellow_cards": ("cards", "yellow"),
+    }
+    _best_stat = None
+    _best_apps = 0
+    _best_mins = 0
+    for _stat_entry in (player_stats.get("statistics") or []):
+        _apps = _stat_entry.get("games", {}).get("appearences") or 0
+        _mins = _stat_entry.get("games", {}).get("minutes") or 0
+        if _apps >= 3 and _mins >= 270 and _apps > _best_apps:
+            _cat, _sub = _sfm.get(prop_type, ("passes", "total"))
+            _raw = _stat_entry.get(_cat, {}).get(_sub)
+            if _raw is not None:
+                _best_stat = _stat_entry
+                _best_apps = _apps
+                _best_mins = _mins
+    if not _best_stat:
+        return None
+
+    _cat, _sub = _sfm.get(prop_type, ("passes", "total"))
+    _raw_total = _best_stat.get(_cat, {}).get(_sub) or 0
+    _avg_per_game = round(_raw_total / _best_apps, 2) if _best_apps else 0
+    _avg_mins = round(_best_mins / _best_apps, 1) if _best_apps else 90
+    _exp_min = max(30.0, min(90.0, expected_minutes))
+    _denorm = _exp_min / 90.0
+    _prior_mean = round(_avg_per_game * _denorm, 1)
+
+    # Conservative std: 25% of mean (season avg is stable but noisy)
+    _prior_std = round(_prior_mean * 0.25, 1) if _prior_mean else 1.0
+    _n = min(_best_apps, 20)
+
+    return {
+        "posteriorMean": _prior_mean,
+        "posteriorStd": _prior_std,
+        "recommendation": "over" if _prior_mean >= line else "under",
+        "pOver": 50.0,
+        "pUnder": 50.0,
+        "confidenceInterval": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
+        "distribution": {
+            "mostLikelyValue": _prior_mean,
+            "range60": [max(0, _prior_mean - _prior_std * 0.84), _prior_mean + _prior_std * 0.84],
+            "range80": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
+            "distributionType": "club_season_prior",
+        },
+        "mostLikelyValue": _prior_mean,
+        "range60": [max(0, _prior_mean - _prior_std * 0.84), _prior_mean + _prior_std * 0.84],
+        "range80": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
+        "edgeZ": 0,
+        "priorMean": _prior_mean,
+        "priorStd": _prior_std,
+        "priorWeight": 100,
+        "priorSamples": _n,
+        "momentumEffect": 0,
+        "momentumMean": _prior_mean,
+        "momentumLabel": "CLUB SEASON",
+        "momentumWeight": 0,
+        "trendPerGame": 0,
+        "covariateAdjustment": 0,
+        "covariateWeight": 0,
+        "venueAvg": None,
+        "venueSamples": 0,
+        "reversalFlag": "NO DATA",
+        "streakFlag": "NONE",
+        "volatility": "LOW",
+        "cv": 0.25,
+        "pressIntensity": {
+            "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
+            "ppda": None, "reasoning": "",
+            "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
+            "avg_poss": None, "avg_passes": None,
+        },
+        "fatigueLayer": {"applied": False, "mult": 1.0, "reason": "Club season prior", "rest_days": None,
+                         "congestion_mult": 1.0, "congestion_games": 0},
+        "cleanSheetLayer": {"applied": False, "mult": 1.0, "cs_rate": None, "label": "unknown"},
+        "setPieceLayer": {"applied": False, "mult": 1.0, "foul_rate": None},
+        "altitudeLayer": {"applied": False, "mult": 1.0, "altitude_m": None},
+        "leagueStyleLayer": {"applied": False, "mult": 1.0, "league_id": None, "category": None},
+    }
+
+
+def _empty_metrics(line: float) -> dict:
+    """Return empty Bayesian metrics when no data is available."""
+    return {
+        "posteriorMean": line,
+        "posteriorStd": 0,
+        "recommendation": "over",
+        "pOver": 50.0,
+        "pUnder": 50.0,
+        "confidenceInterval": [line, line],
+        "distribution": {
+            "mostLikelyValue": line,
+            "range60": [line, line],
+            "range80": [line, line],
+            "distributionType": "unavailable",
+        },
+        "mostLikelyValue": line,
+        "range60": [line, line],
+        "range80": [line, line],
+        "edgeZ": 0,
+        "priorMean": line,
+        "priorStd": 0,
+        "priorWeight": 100,
+        "priorSamples": 0,
+        "momentumEffect": 0,
+        "momentumMean": line,
+        "momentumLabel": "NO DATA",
+        "momentumWeight": 0,
+        "trendPerGame": 0,
+        "covariateAdjustment": 0,
+        "covariateWeight": 0,
+        "venueAvg": None,
+        "venueSamples": 0,
+        "reversalFlag": "NO DATA",
+        "streakFlag": "NONE",
+        "volatility": "UNKNOWN",
+        "cv": 0,
+        "pressIntensity": {
+            "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
+            "ppda": None, "reasoning": "",
+            "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
+            "avg_poss": None, "avg_passes": None,
+        },
+        "fatigueLayer":     {"applied": False, "mult": 1.0, "reason": "", "rest_days": None,
+                             "congestion_mult": 1.0, "congestion_games": 0},
+        "cleanSheetLayer":  {"applied": False, "mult": 1.0, "cs_rate": None, "label": "unknown"},
+        "setPieceLayer":    {"applied": False, "mult": 1.0, "foul_rate": None},
+        "altitudeLayer":    {"applied": False, "mult": 1.0, "altitude_m": None},
+        "leagueStyleLayer": {"applied": False, "mult": 1.0, "league_id": None, "category": None},
+    }
+
+
+def _normal_cdf(z: float) -> float:
+    """Approximate normal CDF using Abramowitz & Stegun formula."""
+    if z > 6:
+        return 1.0
+    if z < -6:
+        return 0.0
+    sign = 1 if z >= 0 else -1
+    z = abs(z)
+    t = 1 / (1 + 0.2316419 * z)
+    d = 0.3989422804014327  # 1/sqrt(2*pi)
+    p = d * math.exp(-z * z / 2) * (
+        t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+    )
+    return 0.5 + sign * (0.5 - p)
+
+
+def pressure_index_label(score100: int) -> str:
+    """Return the product's five fixed Reverse Picks pressure bands."""
+    try:
+        bounded_score = max(0, min(100, int(round(float(score100)))))
+    except (TypeError, ValueError):
+        bounded_score = 0
+    if bounded_score <= 20:
+        return "Very Low"
+    if bounded_score <= 40:
+        return "Low"
+    if bounded_score <= 60:
+        return "Moderate"
+    if bounded_score <= 80:
+        return "High"
+    return "Elite"
+
+
+def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
+    """
+    Calculate a transparent API-Football Press Intensity signal.
+
+    Each row represents a historical match for the *defending* opponent.
+    ``opponentTotalPasses`` is the pass total for the other team in that
+    fixture, which is the correct numerator for a full-pitch synthetic PPDA
+    ratio.  The provider does not expose defensive-third locations or
+    recoveries, so this deliberately uses only observed aggregate inputs.
+
+    The returned score is 0.0 → 1.0 (also emitted as ``score100``).  Lower
+    synthetic PPDA and more weighted defensive actions mean stronger press.
+    Possession is the primary match-context signal: a team pinned below 35%
+    possession is facing strong pressure, while 65%+ possession is a
+    low-pressure environment for that team. Defensive actions and synthetic
+    PPDA remain secondary corroboration rather than the sole label driver.
+    """
+    unknown = {
+        "available": False,
+        "status": "unavailable",
+        "score": None,
+        "score100": None,
+        "multiplier": 1.0,
+        "label": "Unavailable",
+        "signal_used": None,
+        "source": "api_football",
+         "metric": "reverse_picks_pressure_index",
+        "scoreInterpretation": (
+            "Reverse Picks Pressure Index is a custom bounded 0-100 product rating; "
+            "it is not PPDA, a count of pressure events, or a raw provider statistic."
+        ),
+        "synthetic_ppda": None,
+        "ppda": None,
+        "reasoning": "API-Football pressure inputs were not available for this fixture sample.",
+        "sampleSize": 0,
+        "sampleStatus": "unavailable",
+        "featureCoverage": 0.0,
+        "avg_defensive_actions": None,
+        "avg_effective_defensive_actions": None,
+        "avg_tackles": None,
+        "avg_interceptions": None,
+        "avg_blocks": None,
+        "avg_duels_won": None,
+        "avg_fouls": None,
+        "avg_poss": None,
+        "avg_passes": None,
+        "avg_opponent_passes": None,
+        "projectionApplied": False,
+        "projectionMultiplier": 1.0,
+    }
+    if not isinstance(opp_fixture_stats, list):
+        return unknown
+
+    def number(value):
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, str):
+            value = value.replace("%", "").replace(",", "").strip()
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    weights = {
+        "tackles_total": 0.90,
+        "tackles_interceptions": 1.00,
+        "tackles_blocks": 0.75,
+        "duels_won_agg": 0.45,
+        "fouls_committed_agg": 0.35,
+    }
+    action_rows = []
+    opponent_passes = []
+    possessions = []
+    component_values = {key: [] for key in weights}
+
+    for row in opp_fixture_stats:
+        if not isinstance(row, dict):
+            continue
+        available_components = {}
+        for key, weight in weights.items():
+            value = number(row.get(key))
+            if value is not None:
+                available_components[key] = value
+                component_values[key].append(value)
+        if available_components:
+            effective = sum(weights[key] * value for key, value in available_components.items())
+            action_rows.append((effective, len(available_components) / len(weights)))
+        opp_pass = number(row.get("opponentTotalPasses"))
+        if opp_pass is not None and opp_pass > 0:
+            opponent_passes.append(opp_pass)
+        possession = number(row.get("possession"))
+        if possession is not None:
+            possessions.append(possession)
+
+    # Pass volume alone cannot identify pressing intensity.  Without at least
+    # one observed defensive-action packet, expose an unavailable state instead
+    # of turning a denominator-free ratio into a false signal.
+    if not action_rows:
+        result = dict(unknown)
+        result["reasoning"] = (
+            "No usable API-Football defensive-action fields were returned; "
+            "opponent pass volume alone is not a pressure measure."
+        )
+        return result
+
+    avg_effective = (
+        sum(value for value, _coverage in action_rows) / len(action_rows)
+        if action_rows else None
+    )
+    avg_coverage = (
+        sum(coverage for _value, coverage in action_rows) / len(action_rows)
+        if action_rows else 0.0
+    )
+    avg_opponent_passes = (
+        sum(opponent_passes) / len(opponent_passes)
+        if opponent_passes else None
+    )
+    synthetic_ppda = (
+        avg_opponent_passes / avg_effective
+        if avg_opponent_passes is not None and avg_effective and avg_effective > 0
+        else None
+    )
+
+    # Weighted actions are the direct signal.  Synthetic PPDA is the stronger
+    # signal when the same-fixture opponent pass numerator is available.
+    action_score = (
+        # The weighted action total includes duels and fouls that are not
+        # classical PPDA events, so use a wider conservative range than a
+        # raw-tackle baseline. This keeps normal API-Football match packets
+        # from saturating at "Elite".
+        max(0.0, min(1.0, (avg_effective - 35.0) / 45.0))
+        if avg_effective is not None else None
+    )
+    ppda_score = (
+        max(0.0, min(1.0, (12.0 - synthetic_ppda) / 6.0))
+        if synthetic_ppda is not None else None
+    )
+    if ppda_score is not None and action_score is not None:
+        action_score_combined = ppda_score * 0.65 + action_score * 0.35
+        signal_used = "synthetic_ppda_and_actions"
+    elif ppda_score is not None:
+        action_score_combined = ppda_score
+        signal_used = "synthetic_ppda"
+    else:
+        action_score_combined = action_score if action_score is not None else 0.0
+        signal_used = "defensive_actions"
+
+    avg_poss = round(sum(possessions) / len(possessions), 1) if possessions else None
+    # This is an interpretable possession-pressure context, not a claim that
+    # possession alone identifies a pressing scheme.  The middle band is
+    # neutral; extremes receive the full directional signal.
+    possession_score = None
+    if avg_poss is not None and 0 <= avg_poss <= 100:
+        possession_score = max(0.0, min(1.0, (65.0 - avg_poss) / 30.0))
+        # Keep the possession context authoritative for the direction of the
+        # label without discarding the observed defensive-action evidence.
+        # A 25/75 blend prevents one noisy possession sample from saturating
+        # the rating while still correcting the old action-only bias.
+        score = possession_score * 0.25 + action_score_combined * 0.75
+        signal_used = f"possession_context_plus_{signal_used}"
+    else:
+        score = action_score_combined
+
+    score = round(max(0.0, min(1.0, score)), 3)
+    score100 = int(round(score * 100))
+    label = pressure_index_label(score100)
+
+    # Defensive actions are the required pressure evidence. Opponent pass
+    # volume is an optional numerator, so it must not inflate the sample count
+    # when fewer action packets were actually observed.
+    sample_size = len(action_rows)
+    result = {
+        "available": True,
+        "status": "available",
+        "score": score,
+        "score100": score100,
+        "multiplier": 1.0,
+        "label": label,
+        "signal_used": signal_used,
+        "source": "api_football",
+         "metric": "reverse_picks_pressure_index",
+        "scoreInterpretation": (
+            "Reverse Picks Pressure Index is a custom bounded 0-100 product rating; "
+            "it is not PPDA, a count of pressure events, or a raw provider statistic."
+        ),
+        "synthetic_ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
+        # Keep ppda as a compatibility alias for older saved records, but
+        # Press Intensity is the canonical product metric.
+        "ppda": round(synthetic_ppda, 1) if synthetic_ppda is not None else None,
+        "reasoning": (
+            "Possession context is primary: lower possession for this team "
+            "indicates more pressure against it; defensive actions and opponent "
+            "pass volume provide secondary corroboration."
+        ),
+        "sampleSize": sample_size,
+        "sampleStatus": (
+            "sufficient"
+            if sample_size >= PRESS_INTENSITY_MIN_SAMPLE
+            else "limited"
+        ),
+        "featureCoverage": round(avg_coverage, 2),
+        "avg_defensive_actions": round(avg_effective, 1) if avg_effective is not None else None,
+        "avg_effective_defensive_actions": round(avg_effective, 1) if avg_effective is not None else None,
+        "avg_tackles": round(sum(component_values["tackles_total"]) / len(component_values["tackles_total"]), 1)
+            if component_values["tackles_total"] else None,
+        "avg_interceptions": round(sum(component_values["tackles_interceptions"]) / len(component_values["tackles_interceptions"]), 1)
+            if component_values["tackles_interceptions"] else None,
+        "avg_blocks": round(sum(component_values["tackles_blocks"]) / len(component_values["tackles_blocks"]), 1)
+            if component_values["tackles_blocks"] else None,
+        "avg_duels_won": round(sum(component_values["duels_won_agg"]) / len(component_values["duels_won_agg"]), 1)
+            if component_values["duels_won_agg"] else None,
+        "avg_fouls": round(sum(component_values["fouls_committed_agg"]) / len(component_values["fouls_committed_agg"]), 1)
+            if component_values["fouls_committed_agg"] else None,
+        "avg_poss": avg_poss,
+        "possessionPressureScore": round(possession_score, 3) if possession_score is not None else None,
+        "possessionPressureScore100": round(possession_score * 100) if possession_score is not None else None,
+        "avg_passes": round(sum(opponent_passes) / len(opponent_passes), 1) if opponent_passes else None,
+        "avg_opponent_passes": round(avg_opponent_passes, 1) if avg_opponent_passes is not None else None,
+        "projectionApplied": False,
+        "projectionMultiplier": 1.0,
+    }
+    return result
+
+
+def _press_pass_projection_multiplier(
+    press_intensity: dict,
+    prop_type: str,
+    position: str,
+    venue: str,
+) -> tuple[float, str]:
+    """Return a bounded, role-aware pass-attempt multiplier.
+
+    High pressure tends to create more recycling/back-pass attempts for
+    defenders and keepers, while reducing clean midfield/attacking circulation.
+    The effect is centered at neutral pressure and capped at 12%, so a missing
+    or weak signal cannot dominate the player's own history or possession layer.
+    """
+    if prop_type not in {"pass_attempts", "passes"}:
+        return 1.0, "Press Intensity recorded; no pass-attempt adjustment for this prop."
+    if not isinstance(press_intensity, dict) or press_intensity.get("status") != "available":
+        return 1.0, "Press Intensity unavailable; pass projection left unchanged."
+    try:
+        score = float(press_intensity.get("score") or 0.0)
+    except (TypeError, ValueError):
+        return 1.0, "Press Intensity score invalid; pass projection left unchanged."
+    score = max(0.0, min(1.0, score))
+    position_upper = (position or "").upper().strip()
+    is_gk = position_upper in {"GK", "GOALKEEPER"}
+    group = POSITION_GROUP_MAP.get(position_upper, "midfielder")
+    if is_gk:
+        cap = 0.12 if venue == "away" else 0.08
+        explanation = "keeper recycling/back-pass volume"
+    elif group == "defender":
+        cap = 0.10
+        explanation = "defensive recycling and pressured build-up"
+    elif group == "midfielder":
+        cap = -0.06
+        explanation = "reduced clean midfield circulation"
+    else:
+        cap = -0.04
+        explanation = "reduced attacking circulation"
+    centered_score = (score - 0.5) * 2.0
+    multiplier = round(max(0.88, min(1.12, 1.0 + cap * centered_score)), 3)
+    direction = "boost" if multiplier > 1.0 else "suppression" if multiplier < 1.0 else "neutral"
+    return multiplier, f"{direction}: {explanation} (score {round(score * 100)})."
+
+
+def _apply_press_intensity_to_metrics(
+    metrics: dict,
+    press_intensity: dict,
+    *,
+    prop_type: str,
+    position: str,
+    venue: str,
+    line: float | None = None,
+) -> dict:
+    """Attach Press Intensity and apply its single bounded pass adjustment."""
+    if not isinstance(metrics, dict):
+        return metrics
+    info = dict(press_intensity or {})
+    multiplier, reason = _press_pass_projection_multiplier(
+        info,
+        prop_type,
+        position,
+        venue,
+    )
+    info["projectionApplied"] = abs(multiplier - 1.0) >= 0.001
+    info["projectionMultiplier"] = multiplier
+    info["projectionReason"] = reason
+    # Keep the legacy multiplier key aligned with the actual Bayesian
+    # projection.  It is no longer a generic pressure score reduction.
+    info["multiplier"] = multiplier
+    metrics["pressIntensity"] = info
+    if not info["projectionApplied"]:
+        return metrics
+
+    posterior_mean = metrics.get("posteriorMean")
+    if posterior_mean is None:
+        return metrics
+    try:
+        adjusted_mean = round(float(posterior_mean) * multiplier, 1)
+    except (TypeError, ValueError):
+        return metrics
+    metrics["posteriorMean"] = adjusted_mean
+    metrics["mostLikelyValue"] = adjusted_mean
+    for range_key in ("range60", "range80"):
+        values = metrics.get(range_key)
+        if isinstance(values, list) and len(values) == 2:
+            metrics[range_key] = [
+                round(max(0.0, float(value) * multiplier), 1)
+                for value in values
+            ]
+    confidence_interval = metrics.get("confidenceInterval")
+    if isinstance(confidence_interval, list) and len(confidence_interval) == 2:
+        metrics["confidenceInterval"] = [
+            round(max(0.0, float(value) * multiplier), 1)
+            for value in confidence_interval
+        ]
+    distribution = metrics.get("distribution")
+    if isinstance(distribution, dict):
+        distribution["mostLikelyValue"] = adjusted_mean
+        for range_key in ("range60", "range80"):
+            values = distribution.get(range_key)
+            if isinstance(values, list) and len(values) == 2:
+                distribution[range_key] = [
+                    round(max(0.0, float(value) * multiplier), 1)
+                    for value in values
+                ]
+    if line is not None:
+        metrics["recommendation"] = "over" if adjusted_mean > float(line) else "under"
+    return metrics
+
+
+def _estimate_opponent_concession(opp_fixture_stats: list, prop_type: str) -> Optional[float]:
+    """Estimate how much of a stat type the opponent typically concedes.
+    
+    Each prop has a specific opponent stat and player share:
+    - pass_attempts: uses opponent's total passes → player gets ~18% of team total
+    - shots: uses opponent's total shots → player gets ~18% of team total
+    - shots_on_target: uses opponent's SOT → player gets ~18% of team total
+    - saves: uses opponent's SOT → GK faces ~100% of SOT, saves ~70%
+    - tackles: uses opponent's total passes → more opp passes = more tackles needed → player ~15%
+    - key_passes: uses opponent's total passes → player gets ~12% of team key passes
+    """
+    if not opp_fixture_stats:
+        return None
+
+    # (stat_field_from_opponent_data, player_share_of_that_stat)
+    #
+    # IMPORTANT: pass_attempts, passes, key_passes, crosses, dribbles are intentionally
+    # EXCLUDED. Their "opponent concession" relies on totalPasses — but opponent totalPasses
+    # measures THEIR possession volume, which is INVERSELY correlated with how many passes
+    # the attacking player gets (more opp passes = opp has ball = fewer passes for attacker).
+    # Including these was boosting projections against Arsenal/Bayern/City by +5-10 — wrong.
+    # Possession-based penalties for these props are handled by the POSSESSION SQUEEZE step.
+    prop_config = {
+        # ── Attacking / Goal-threat props ────────────────────────────────────
+        # opponent totalShots = how much the opponent attacks → shot volume
+        # opponent shotsOnTarget = higher quality attack → more dangerous shots taken/faced
+        "shots":           ("totalShots",    0.18),   # ~18% of team shots belong to the subject
+        "shots_on_target": ("shotsOnTarget", 0.18),   # same share for quality shots
+        "saves":           ("shotsOnTarget", 0.70),   # GK saves ~70% of opponent SOT
+
+        # ── Defensive action props ───────────────────────────────────────────
+        # More opponent shots/passes → more defensive work for the subject player
+        "tackles":         ("totalPasses",   0.015),  # opp passes = tackle opportunities
+        "clearances":      ("totalShots",    0.28),   # each opp shot ≈ 0.28 clearances for a CB
+        "blocks":          ("shotsOnTarget", 0.14),   # on-target shots blocked by outfield players
+        "interceptions":   ("totalPasses",   0.013),  # more opp passes = more interception chances
+        "fouls_committed": ("totalPasses",   0.009),  # more opp pressure = more fouls defending
+        "duels_won":       ("totalPasses",   0.028),  # more opp passes = more duel situations
+        "fouls_drawn":     ("totalShots",    0.09),   # attackers draw fouls near goal → opp shots proxy
+    }
+
+    config = prop_config.get(prop_type)
+    if not config:
+        return None
+
+    field, share = config
+    values = [s.get(field) for s in opp_fixture_stats if s.get(field) is not None]
+    if not values or len(values) < 2:
+        return None
+
+    avg = sum(values) / len(values)
+    return round(avg * share, 1)

@@ -1,0 +1,775 @@
+import json
+import httpx
+import asyncio as aio
+import unicodedata
+from datetime import datetime, timezone, timedelta
+from fastapi import HTTPException
+from config import (
+    API_FOOTBALL_BASE,
+    CURRENT_SEASON,
+    api_semaphore,
+    get_dynamic_api_key,
+)
+
+# ── Quota circuit breaker ─────────────────────────────────────────────────────
+# Once the daily quota is confirmed exhausted, we stop ALL outbound API calls
+# immediately instead of letting every background loop hammer the API with
+# hundreds of rejected requests. The breaker resets at midnight UTC.
+# State is persisted to disk so server restarts on the same day don't re-burn calls.
+import os as _os
+import time as _time
+import hashlib as _hashlib
+import contextvars as _contextvars
+from collections import OrderedDict as _OrderedDict
+from config import API_DAILY_SOFT_LIMIT
+
+_BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+_COUNT_FILE = "/tmp/.api_sports_daily_count"
+_RESET_TIMESTAMP_FILE = "/tmp/.api_sports_quota_last_reset"
+_quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
+_daily_call_date: str | None = None
+_daily_call_count = 0
+_last_quota_reset_at: str | None = None  # ISO-8601 UTC timestamp of last manual breaker reset
+# The local soft budget protects background maintenance work. A request handler
+# can mark its child API calls as priority so a busy startup/settlement job
+# cannot starve an authenticated user prediction. This is deliberately
+# separate from the provider's real quota breaker below.
+_api_request_priority: _contextvars.ContextVar[bool] = _contextvars.ContextVar(
+    "api_request_priority", default=False
+)
+_response_cache: "_OrderedDict[str, tuple[float, list]]" = _OrderedDict()
+_CACHE_TTLS = {
+    "leagues": 86400,
+    "teams": 21600,
+    "players": 21600,
+    "players/squads": 21600,
+    # Settlement runs every 15 min; a 10-min cache means the same team's
+    # fixture list is served from memory if settlement fires twice in close
+    # succession (e.g. two overlapping picks from the same club).
+    "fixtures": 600,
+    "fixtures/statistics": 45,
+    "fixtures/events": 45,
+    # Player/lineup data at 5 min — fresh enough for live tracking, slow
+    # enough to stop repeat settlement calls burning quota.
+    "fixtures/players": 300,
+    "fixtures/lineups": 300,
+    "odds": 180,
+}
+
+
+def _request_cache_key(endpoint: str, params: dict | None) -> str:
+    raw = endpoint + "|" + json.dumps(params or {}, sort_keys=True, default=str)
+    return _hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _cached_response(endpoint: str, key: str):
+    item = _response_cache.get(key)
+    if not item:
+        return None
+    created, value = item
+    if _time.monotonic() - created >= _CACHE_TTLS.get(endpoint, 60):
+        _response_cache.pop(key, None)
+        return None
+    _response_cache.move_to_end(key)
+    return value
+
+
+def _store_response(endpoint: str, key: str, value):
+    # Empty responses may be caused by a transient provider error. Do not
+    # cache them as if they were authoritative "no data" answers.
+    if not value:
+        return
+    _response_cache[key] = (_time.monotonic(), value)
+    _response_cache.move_to_end(key)
+    while len(_response_cache) > 512:
+        _response_cache.popitem(last=False)
+
+
+def _load_daily_count_from_disk() -> tuple:
+    """Read the persisted daily call count checkpoint.
+
+    Returns (date_str, count) where date_str matches today's UTC date, or
+    (None, 0) if the file is missing, malformed, or from a previous day.
+    """
+    try:
+        if _os.path.exists(_COUNT_FILE):
+            with open(_COUNT_FILE) as f:
+                raw = f.read().strip()
+            if raw and ":" in raw:
+                date_str, _, count_str = raw.partition(":")
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if date_str == today:
+                    return date_str, int(count_str)
+    except Exception:
+        pass
+    return None, 0
+
+
+def _checkpoint_daily_count():
+    """Persist the current daily call count to disk so restarts can recover it."""
+    try:
+        with open(_COUNT_FILE, "w") as f:
+            f.write(f"{_daily_call_date}:{_daily_call_count}")
+    except Exception:
+        pass
+
+
+def _reset_daily_budget_if_needed():
+    global _daily_call_date, _daily_call_count
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _daily_call_date != today:
+        # First call of a new UTC day (or first call after a restart).
+        # Try to recover the persisted count so a redeploy mid-day doesn't
+        # show zero calls when hundreds were already made.
+        disk_date, disk_count = _load_daily_count_from_disk()
+        _daily_call_date = today
+        _daily_call_count = disk_count if disk_date == today else 0
+
+
+def _load_breaker_from_disk() -> str | None:
+    """Read persisted breaker date from disk (survives process restart)."""
+    try:
+        if _os.path.exists(_BREAKER_FILE):
+            with open(_BREAKER_FILE) as f:
+                return f.read().strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _load_reset_timestamp_from_disk() -> str | None:
+    """Read the persisted last-reset ISO-8601 timestamp from disk (survives process restart).
+
+    If the timestamp is from a prior UTC day it is no longer meaningful — the
+    API quota resets automatically at midnight UTC, so any manual reset from
+    yesterday cannot be the cause of today's breaker state.  The stale file is
+    deleted and None is returned so the owner dashboard shows no last-reset time
+    rather than a misleading one.
+    """
+    try:
+        if _os.path.exists(_RESET_TIMESTAMP_FILE):
+            with open(_RESET_TIMESTAMP_FILE) as f:
+                raw = f.read().strip() or None
+            if not raw:
+                return None
+            # Check whether the reset happened today (UTC).  If not, the
+            # timestamp is stale: the new day's automatic midnight reset has
+            # superseded any manual reset from prior days.
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            reset_date = raw[:10]  # ISO-8601 starts with YYYY-MM-DD
+            if reset_date != today:
+                try:
+                    _os.remove(_RESET_TIMESTAMP_FILE)
+                except Exception:
+                    pass
+                return None
+            return raw
+    except Exception:
+        pass
+    return None
+
+
+def _quota_tripped() -> bool:
+    """Return True if the breaker is active for today (UTC date)."""
+    global _quota_exhausted_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Check in-memory first, then disk (covers restarts)
+    date = _quota_exhausted_date or _load_breaker_from_disk()
+    if date is None:
+        return False
+    if date != today:
+        # New UTC day — quota has reset, clear everything
+        _quota_exhausted_date = None
+        try:
+            _os.remove(_BREAKER_FILE)
+        except Exception:
+            pass
+        # Stale count file from yesterday — let _reset_daily_budget_if_needed
+        # handle the new day's count; remove the old file so it isn't confused
+        # for a same-day recovery on any subsequent restart today.
+        try:
+            _os.remove(_COUNT_FILE)
+        except Exception:
+            pass
+        return False
+    _quota_exhausted_date = date  # populate in-memory from disk if needed
+    return True
+
+
+def _trip_quota_breaker(error_msg: str):
+    """Mark quota as exhausted for today and persist to disk."""
+    global _quota_exhausted_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _quota_exhausted_date != today:
+        _quota_exhausted_date = today
+        try:
+            with open(_BREAKER_FILE, "w") as f:
+                f.write(today)
+        except Exception:
+            pass
+        print(f"[API-SPORTS] Daily quota exhausted — circuit breaker tripped for {today}. All API calls suspended until midnight UTC.")
+    # Only log if this is a fresh trip (not redundant noise)
+    else:
+        return  # Already tripped and logged — stay silent
+    print(f"[API-SPORTS] Quota error detail: {error_msg}")
+
+
+def is_quota_exhausted() -> bool:
+    """Public helper — lets background loops check before attempting calls."""
+    return _quota_tripped()
+
+
+def api_sports_soft_budget_available() -> bool:
+    """Whether a non-essential provider job may spend another request today.
+
+    This deliberately does not use the priority context: replay jobs should run
+    first after reset, but they must still respect the shared daily budget.
+    """
+    _reset_daily_budget_if_needed()
+    return not _quota_tripped() and _daily_call_count < API_DAILY_SOFT_LIMIT
+
+
+async def breaker_midnight_sweep_loop():
+    """Background loop that proactively clears a stale in-memory quota breaker.
+
+    Without this, _quota_exhausted_date can hold a prior UTC day's date until
+    the first call to _quota_tripped() arrives after midnight.  Any background
+    loop that runs in that window (auto-settlement, live-tracking, etc.) would
+    incorrectly see the breaker as still active and skip all API calls.
+
+    This loop wakes every 60 seconds and calls _quota_tripped(), which already
+    contains the authoritative stale-date clearing logic.  60 s is short enough
+    to bound the stale window to under two minutes in the worst case (no
+    interactive traffic at all after midnight UTC).
+    """
+    import asyncio as _aio
+    while True:
+        try:
+            _quota_tripped()  # clears in-memory date if it belongs to a prior UTC day
+        except Exception:
+            pass
+        await _aio.sleep(60)
+
+
+def set_api_request_priority(priority: bool = True):
+    """Mark API-Football calls in the current request context as user priority."""
+    return _api_request_priority.set(priority)
+
+
+def reset_api_request_priority(token):
+    """Restore the previous API-Football request priority context."""
+    _api_request_priority.reset(token)
+
+
+async def priority_api_football_request(
+    endpoint: str,
+    params: dict = None,
+    *,
+    force_refresh: bool = False,
+):
+    """Run one interactive request above the maintenance soft budget."""
+    token = set_api_request_priority(True)
+    try:
+        return await api_football_request(endpoint, params, force_refresh=force_refresh)
+    finally:
+        reset_api_request_priority(token)
+
+
+_LIVE_FIXTURE_STATUSES = frozenset({"1H", "HT", "2H", "ET", "BT", "P", "LIVE"})
+_FINISHED_FIXTURE_STATUSES = frozenset(
+    {"FT", "AET", "PEN", "ABD", "AWD", "WO", "CANC", "PST"}
+)
+
+
+def _fixture_kickoff(fixture: dict):
+    """Return a fixture kickoff as an aware UTC datetime, or None."""
+    raw = (fixture.get("fixture", {}) or {}).get("date")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def select_next_fixture(
+    fixtures: list | None,
+    team_id: int | None = None,
+    skip_leagues: set[int] | frozenset[int] | None = None,
+    now: datetime | None = None,
+) -> dict | None:
+    """Return the nearest verified live/upcoming fixture, never a finished one."""
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(timezone.utc)
+    skipped = skip_leagues or set()
+    candidates = []
+    for fixture in fixtures or []:
+        if not isinstance(fixture, dict):
+            continue
+        teams = fixture.get("teams", {}) or {}
+        home = teams.get("home", {}) or {}
+        away = teams.get("away", {}) or {}
+        if team_id:
+            try:
+                if int(home.get("id", 0) or 0) != int(team_id) and int(away.get("id", 0) or 0) != int(team_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        if (fixture.get("league", {}) or {}).get("id", 0) in skipped:
+            continue
+        status = str((fixture.get("fixture", {}) or {}).get("status", {}).get("short", "") or "").upper()
+        if status in _FINISHED_FIXTURE_STATUSES:
+            continue
+        kickoff = _fixture_kickoff(fixture)
+        if status in _LIVE_FIXTURE_STATUSES:
+            candidates.append((0, kickoff or now_utc, fixture))
+        elif kickoff is not None and kickoff >= now_utc:
+            candidates.append((1, kickoff, fixture))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2] if candidates else None
+
+
+def _fixture_context(fixture: dict, team_id: int) -> dict | None:
+    """Return canonical player-team context from one verified fixture."""
+    teams = fixture.get("teams", {}) or {}
+    home = teams.get("home", {}) or {}
+    away = teams.get("away", {}) or {}
+    try:
+        team_id = int(team_id)
+    except (TypeError, ValueError):
+        return None
+    if home.get("id") == team_id:
+        player_team, opponent, player_is_home = home, away, True
+    elif away.get("id") == team_id:
+        player_team, opponent, player_is_home = away, home, False
+    else:
+        return None
+    if not player_team.get("id") or not opponent.get("id"):
+        return None
+    league = fixture.get("league", {}) or {}
+    fixture_meta = fixture.get("fixture", {}) or {}
+    return {
+        "fixtureId": fixture_meta.get("id"),
+        "fixtureTeamId": player_team.get("id"),
+        "fixtureTeamName": player_team.get("name", ""),
+        "fixtureOpponentId": opponent.get("id"),
+        "fixtureOpponentName": opponent.get("name", ""),
+        "playerIsHome": player_is_home,
+        "matchLeagueId": league.get("id"),
+        "matchLeague": league.get("name", ""),
+        "matchRound": league.get("round", ""),
+        "matchDate": fixture_meta.get("date", ""),
+        "statusShort": (fixture_meta.get("status", {}) or {}).get("short", ""),
+        "fixture": fixture,
+    }
+
+
+def _fixture_name_matches(fixture: dict, team_id: int, opponent_name: str) -> bool:
+    """Match a requested opponent name without trusting it as fixture identity."""
+    requested = " ".join(str(opponent_name or "").lower().split())
+    if not requested:
+        return False
+    context = _fixture_context(fixture, team_id)
+    actual = " ".join(str((context or {}).get("fixtureOpponentName", "")).lower().split())
+    if not actual:
+        return False
+    if requested == actual or requested in actual or actual in requested:
+        return True
+    requested_words = set(requested.replace("-", " ").split())
+    actual_words = set(actual.replace("-", " ").split())
+    return bool(requested_words and requested_words & actual_words)
+
+
+async def resolve_verified_fixture(
+    team_id: int,
+    opponent_id: int | None = None,
+    opponent_name: str = "",
+    league_id: int | None = None,
+    skip_leagues: set[int] | frozenset[int] | None = None,
+    now: datetime | None = None,
+) -> dict | None:
+    """Resolve one canonical live/upcoming soccer fixture for a player team.
+
+    The provider's response order and stale OCR/manual opponent are never
+    authoritative. Interactive requests bypass the local background soft
+    budget, while the provider quota breaker remains enforced.
+    """
+    if not team_id:
+        return None
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(timezone.utc)
+
+    today = now_utc.strftime("%Y-%m-%d")
+    try:
+        next_fixtures, today_batches = await aio.gather(
+            priority_api_football_request("fixtures", {"team": team_id, "next": 20}),
+            aio.gather(
+                priority_api_football_request(
+                    "fixtures", {"team": team_id, "date": today, "season": 2025}
+                ),
+                priority_api_football_request(
+                    "fixtures", {"team": team_id, "date": today, "season": 2026}
+                ),
+                return_exceptions=True,
+            ),
+            return_exceptions=True,
+        )
+    except Exception:
+        next_fixtures, today_batches = [], []
+
+    merged: list[dict] = []
+    seen_ids: set = set()
+    batches = []
+    if isinstance(next_fixtures, list):
+        batches.append(next_fixtures)
+    if isinstance(today_batches, (list, tuple)):
+        batches.extend(
+            batch for batch in today_batches if isinstance(batch, list)
+        )
+    for batch in batches:
+        for fixture in batch:
+            if not isinstance(fixture, dict):
+                continue
+            fixture_id = (fixture.get("fixture", {}) or {}).get("id")
+            if fixture_id and fixture_id in seen_ids:
+                continue
+            if fixture_id:
+                seen_ids.add(fixture_id)
+            merged.append(fixture)
+
+    skipped = skip_leagues or set()
+    scoped = [
+        fixture for fixture in merged
+        if (fixture.get("league", {}) or {}).get("id", 0) not in skipped
+    ]
+    if league_id:
+        league_scoped = [
+            fixture for fixture in scoped
+            if (fixture.get("league", {}) or {}).get("id") == league_id
+        ]
+        # A selected competition is authoritative. Do not silently switch to
+        # another competition because its fixture happened to be returned first.
+        scoped = league_scoped
+
+    selected = None
+    if opponent_id:
+        try:
+            wanted_id = int(opponent_id)
+        except (TypeError, ValueError):
+            wanted_id = 0
+        matching = [
+            fixture for fixture in scoped
+            if (
+                _fixture_context(fixture, team_id)
+                and _fixture_context(fixture, team_id).get("fixtureOpponentId") == wanted_id
+            )
+        ]
+        selected = select_next_fixture(matching, team_id, skip_leagues, now_utc)
+    elif opponent_name:
+        matching = [
+            fixture for fixture in scoped
+            if _fixture_name_matches(fixture, team_id, opponent_name)
+        ]
+        selected = select_next_fixture(matching, team_id, skip_leagues, now_utc)
+
+    # If the requested opponent is stale or absent, safely realign to the
+    # nearest verified live/future fixture for the player's actual team.
+    if selected is None:
+        selected = select_next_fixture(scoped, team_id, skip_leagues, now_utc)
+    if selected is None and opponent_id:
+        # A direct H2H lookup is a final interactive fallback when the team
+        # fixture feed omitted a known pairing.
+        try:
+            h2h = await priority_api_football_request(
+                "fixtures/headtohead",
+                {"h2h": f"{team_id}-{int(opponent_id)}", "next": 2},
+            )
+            if isinstance(h2h, list):
+                selected = select_next_fixture(h2h, team_id, skip_leagues, now_utc)
+        except (TypeError, ValueError, Exception):
+            selected = None
+    return _fixture_context(selected, team_id) if selected else None
+
+
+async def api_football_request(
+    endpoint: str,
+    params: dict = None,
+    *,
+    force_refresh: bool = False,
+):
+    global _daily_call_count
+    # Short-circuit immediately if today's quota is already known to be gone
+    if _quota_tripped():
+        return []
+
+    cache_key = _request_cache_key(endpoint, params)
+    if not force_refresh:
+        cached = _cached_response(endpoint, cache_key)
+        if cached is not None:
+            return cached
+
+    _reset_daily_budget_if_needed()
+    if _daily_call_count >= API_DAILY_SOFT_LIMIT and not _api_request_priority.get():
+        print(f"[API-SPORTS] Background soft budget reached ({API_DAILY_SOFT_LIMIT}); skipping {endpoint}")
+        return []
+
+    key = get_dynamic_api_key()
+    headers = {
+        "x-apisports-key": key,
+        "x-rapidapi-key": key,
+    }
+    async with api_semaphore:
+        # Re-check inside the semaphore — if a concurrent call just tripped
+        # the breaker while we were waiting, bail out immediately.
+        if _quota_tripped():
+            return []
+        for attempt in range(2):
+            try:
+                _daily_call_count += 1
+                _checkpoint_daily_count()
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(f"{API_FOOTBALL_BASE}/{endpoint}", headers=headers, params=params or {})
+                    if resp.status_code == 429:
+                        # A 429 has already consumed a request. Retrying from
+                        # every caller multiplies the quota burn, so fail
+                        # fast and let cache/fallback logic handle it.
+                        print(f"[API-SPORTS] 429 for {endpoint}; no retry")
+                        return []
+                    if resp.status_code != 200:
+                        body_lower = resp.text.lower()
+                        if "suspended" in body_lower or "free plans do not have access" in body_lower:
+                            _trip_quota_breaker(resp.text[:200])
+                            return []
+                        raise HTTPException(status_code=resp.status_code, detail=f"API-Sports error: {resp.text}")
+                    data = resp.json()
+                    if data.get("errors") and len(data["errors"]) > 0:
+                        error_msg = json.dumps(data["errors"])
+                        error_lower = error_msg.lower()
+                        # Only trip the DAILY quota breaker for true daily-limit exhaustion.
+                        # "Too many requests" alone is a per-minute rate limit — do NOT trip
+                        # the all-day breaker for that; just back off and retry instead.
+                        is_daily_quota = (
+                            "daily" in error_lower
+                            or "day limit" in error_lower
+                            or ("reached" in error_lower and ("limit" in error_lower or "quota" in error_lower))
+                            or "requests quota" in error_lower
+                        )
+                        # Account suspended = treat exactly like quota exhaustion so the
+                        # breaker fires and every subsequent call short-circuits silently.
+                        is_suspended = (
+                            "suspended" in error_lower
+                            or ("access" in error_lower and ("suspend" in error_lower or "blocked" in error_lower))
+                            or "free plans do not have access" in error_lower
+                        )
+                        if is_daily_quota or is_suspended:
+                            _trip_quota_breaker(error_msg)
+                            return []
+                        # Per-minute rate limit — wait and retry rather than killing the day
+                        if "too many requests" in error_lower or "rate limit" in error_lower:
+                            if attempt < 4:
+                                await aio.sleep(2.0 * (attempt + 1))
+                                continue
+                            print(f"[API-SPORTS] Rate limit persisted after retries for {endpoint} — returning empty, caller should fall back.")
+                            return []
+                        raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
+                    result = data.get("response", [])
+                    _store_response(endpoint, cache_key, result)
+                    return result
+            except httpx.TimeoutException:
+                if attempt < 1:
+                    continue
+                print(f"[API-SPORTS] Timeout persisted after retries for {endpoint} — returning empty, caller should fall back.")
+                return []
+        print(f"[API-SPORTS] 429 persisted after retries for {endpoint} — returning empty, caller should fall back.")
+        return []
+
+
+def _parse_fixtures_to_results(fixtures: list, team_id: int, count: int) -> list:
+    """Convert raw API fixture objects into the shape predict.py expects."""
+    results = []
+    for f in fixtures[:count]:
+        home_team_id = f.get("teams", {}).get("home", {}).get("id")
+        venue = "home" if home_team_id == team_id else "away"
+        home_goals = f.get("goals", {}).get("home", 0) or 0
+        away_goals = f.get("goals", {}).get("away", 0) or 0
+        opponent_name = f.get("teams", {}).get("away" if venue == "home" else "home", {}).get("name", "Unknown")
+        opponent_team = f.get("teams", {}).get("away" if venue == "home" else "home", {}) or {}
+        home_team = f.get("teams", {}).get("home", {}) or {}
+        away_team = f.get("teams", {}).get("away", {}) or {}
+        results.append({
+            "fixtureId": f.get("fixture", {}).get("id"),
+            "date": f.get("fixture", {}).get("date", ""),
+            "opponent": opponent_name,
+            "opponentId": opponent_team.get("id"),
+            "homeTeamId": home_team.get("id"),
+            "awayTeamId": away_team.get("id"),
+            "venue": venue,
+            "homeGoals": home_goals,
+            "awayGoals": away_goals,
+            "result": f.get("teams", {}).get("home" if venue == "home" else "away", {}).get("winner"),
+            "league": f.get("league", {}).get("name", ""),
+            "round": f.get("league", {}).get("round", ""),
+        })
+    return results
+
+
+async def get_recent_fixtures_fast(team_id: int, count: int = 20):
+    """
+    Get recent fixtures for a team.
+    Checks local DB first (team_fixture_history), but refreshes from the live
+    API when the cached fixture list is season-stale.  A cache document can be
+    recently written while still containing an old season after a schedule
+    rollover, so cache age alone is not enough for recent-form consumers.
+    """
+    cached_results = []
+    try:
+        # ── Local cache first ──────────────────────────────────────────
+        from config import db
+        doc = await db.team_fixture_history.find_one({"teamId": team_id}, {"_id": 0, "fixtures": 1, "_ts": 1})
+        if doc and doc.get("fixtures"):
+            import time as _t
+            age = _t.time() - doc.get("_ts", 0)
+            cached_results = _parse_fixtures_to_results(
+                doc["fixtures"],
+                team_id,
+                count,
+            )
+            latest_cached_date = max(
+                (
+                    str(row.get("date") or "")[:10]
+                    for row in cached_results
+                    if row.get("date")
+                ),
+                default="",
+            )
+            freshness_cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=45)
+            ).date().isoformat()
+            if (
+                age < 48 * 3600
+                and cached_results
+                and latest_cached_date >= freshness_cutoff
+            ):
+                return cached_results
+
+        # ── Live API fallback ──────────────────────────────────────────
+        _u_from = (datetime.now(timezone.utc) - timedelta(days=count * 21)).strftime("%Y-%m-%d")
+        _u_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        fixtures = await api_football_request(
+            "fixtures",
+            {
+                "team": team_id,
+                "season": CURRENT_SEASON,
+                "from": _u_from,
+                "to": _u_to,
+                "status": "FT",
+            },
+        )
+        live_results = _parse_fixtures_to_results(fixtures or [], team_id, count)
+        return live_results or cached_results
+    except Exception:
+        return cached_results
+
+
+def strip_accents(text):
+    """Remove diacritics and normalize Nordic/special chars for API search."""
+    CHAR_MAP = {
+        'ø': 'o', 'Ø': 'O', 'æ': 'ae', 'Æ': 'AE', 'å': 'a', 'Å': 'A',
+        'ð': 'd', 'Ð': 'D', 'þ': 'th', 'Þ': 'Th', 'ß': 'ss',
+        'ł': 'l', 'Ł': 'L', 'đ': 'd', 'Đ': 'D',
+    }
+    text = ''.join(CHAR_MAP.get(c, c) for c in text)
+    nfkd = unicodedata.normalize('NFKD', text)
+    return ''.join(c for c in nfkd if not unicodedata.category(c).startswith('M'))
+
+
+
+def decimal_to_american(decimal_odds: float) -> str:
+    """Convert decimal odds to American odds string."""
+    if decimal_odds >= 2.0:
+        american = round((decimal_odds - 1) * 100)
+        return f"+{american}"
+    elif decimal_odds > 1.0:
+        american = round(-100 / (decimal_odds - 1))
+        return str(american)
+    return "+100"
+
+
+async def get_soccer_odds(team_id: int, opponent_id: int, league_id: int) -> dict:
+    """Fetch moneyline odds for the next fixture between two teams."""
+    try:
+        # Find the next fixture between these teams (h2h is only valid on
+        # fixtures/headtohead, not the plain fixtures endpoint)
+        fixtures = await api_football_request("fixtures/headtohead", {
+            "h2h": f"{team_id}-{opponent_id}",
+            "next": 1,
+        })
+        if not fixtures:
+            # Try season-based search
+            fixtures = await api_football_request("fixtures/headtohead", {
+                "h2h": f"{team_id}-{opponent_id}",
+                "season": "2025",
+                "status": "NS",
+            })
+
+        if not fixtures:
+            return {}
+
+        fixture_id = fixtures[0].get("fixture", {}).get("id")
+        if not fixture_id:
+            return {}
+
+        # Fetch odds
+        odds_data = await api_football_request("odds", {"fixture": fixture_id})
+        if not odds_data:
+            return {}
+
+        bookmakers = odds_data[0].get("bookmakers", []) if odds_data else []
+        if not bookmakers:
+            return {}
+
+        for bet in bookmakers[0].get("bets", []):
+            if bet.get("name") == "Match Winner":
+                values = bet.get("values", [])
+                home_odds = None
+                away_odds = None
+                draw_odds = None
+                for v in values:
+                    dec = float(v.get("odd", 0))
+                    if v.get("value") == "Home":
+                        home_odds = dec
+                    elif v.get("value") == "Away":
+                        away_odds = dec
+                    elif v.get("value") == "Draw":
+                        draw_odds = dec
+
+                if home_odds and away_odds:
+                    home_team = fixtures[0].get("teams", {}).get("home", {})
+                    away_team = fixtures[0].get("teams", {}).get("away", {})
+                    home_american = decimal_to_american(home_odds)
+                    away_american = decimal_to_american(away_odds)
+                    draw_american = decimal_to_american(draw_odds) if draw_odds else "+100"
+                    favorite = home_team.get("name", "") if home_odds < away_odds else away_team.get("name", "")
+
+                    return {
+                        "homeName": home_team.get("name", ""),
+                        "awayName": away_team.get("name", ""),
+                        "homeId": home_team.get("id", 0),
+                        "awayId": away_team.get("id", 0),
+                        "homeOdds": home_american,
+                        "awayOdds": away_american,
+                        "drawOdds": draw_american,
+                        "favorite": favorite,
+                        "fixtureId": fixture_id,
+                    }
+        return {}
+    except Exception as e:
+        print(f"[SOCCER ODDS] Error: {e}")
+        return {}

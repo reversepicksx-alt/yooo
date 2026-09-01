@@ -1,0 +1,152 @@
+"""
+ATP Tennis prediction routes — /api/atp/*
+Mirrors WTA routes for men's ATP tour.
+"""
+import logging
+import asyncio
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+import atp_client
+import atp_engine
+from engine_base import normalize_response
+
+log = logging.getLogger("atp_routes")
+router = APIRouter(prefix="/api/atp", tags=["atp"])
+
+ATP_SURFACES = ["Hard", "Clay", "Grass", "Indoor Hard"]
+ATP_ROUNDS   = ["F", "SF", "QF", "R16", "R32", "R64", "R128", "RR"]
+
+
+@router.get("/players/search")
+async def search_atp_players(q: str = Query("", min_length=2), limit: int = Query(15)):
+    try:
+        players = await atp_client.search_players(q, limit=limit)
+        return [{"id": p.get("id"),
+                 "fullName": p.get("full_name") or p.get("name") or f"{p.get('first_name','')} {p.get('last_name','')}".strip(),
+                 "firstName": p.get("first_name"), "lastName": p.get("last_name"),
+                 "ranking": p.get("ranking"), "country": p.get("country")}
+                for p in players]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ATP player search failed: {e}")
+
+
+class AtpPredictRequest(BaseModel):
+    playerName:    str
+    playerId:      Optional[int]  = None
+    opponentName:  Optional[str]  = ""
+    opponentId:    Optional[int]  = None
+    propType:      str
+    line:          float
+    surface:       Optional[str]  = "Hard"
+    round:         Optional[str]  = None
+    restDays:      Optional[int]  = None
+    subjectRank:   Optional[int]  = None
+    opponentRank:  Optional[int]  = None
+
+
+@router.post("/predict")
+async def atp_predict(req: AtpPredictRequest):
+    from routes.auth import verify_session
+    sess = await verify_session(req)
+    if not sess.get("valid"):
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    access = sess.get("access_type", "")
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
+
+    prop_type = req.propType.lower().strip()
+    if prop_type not in atp_engine.ATP_PROPS:
+        raise HTTPException(status_code=400, detail=f"Unknown ATP prop: {prop_type}")
+    if req.line <= 0:
+        raise HTTPException(status_code=400, detail="Line must be positive.")
+
+    player_id = req.playerId
+    subject_rank = req.subjectRank
+    opp_rank = req.opponentRank
+    opp_id = req.opponentId
+
+    if not player_id and req.playerName:
+        results = await atp_client.search_players(req.playerName, limit=3)
+        if results:
+            player_id = results[0].get("id")
+            subject_rank = subject_rank or results[0].get("ranking")
+
+    if not player_id:
+        raise HTTPException(status_code=404, detail=f"Player '{req.playerName}' not found in ATP database.")
+
+    if not opp_id and req.opponentName:
+        opp_results = await atp_client.search_players(req.opponentName, limit=3)
+        if opp_results:
+            opp_id = opp_results[0].get("id")
+            opp_rank = opp_rank or opp_results[0].get("ranking")
+
+    try:
+        tasks = [atp_client.get_player_match_logs(player_id, limit=30)]
+        if opp_id:
+            tasks.append(atp_client.get_h2h(player_id, opp_id))
+        if not subject_rank:
+            tasks.append(atp_client.get_player_ranking(player_id))
+        if not opp_rank and opp_id:
+            tasks.append(atp_client.get_player_ranking(opp_id))
+        results_gathered = await asyncio.gather(*tasks, return_exceptions=True)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ATP data fetch failed: {e}")
+
+    match_logs = results_gathered[0] if not isinstance(results_gathered[0], Exception) else []
+    h2h = None
+    if len(results_gathered) > 1 and not isinstance(results_gathered[1], Exception):
+        h2h = results_gathered[1]
+
+    if not match_logs:
+        raise HTTPException(status_code=404, detail=f"No ATP match logs found for {req.playerName}.")
+
+    # Filter by surface if requested
+    surface_logs = [m for m in match_logs if m.get("surface", "").lower() == (req.surface or "Hard").lower()]
+    engine_logs = surface_logs if len(surface_logs) >= 4 else match_logs
+
+    result = atp_engine.compute_atp_projection(
+        match_logs=engine_logs, prop_type=prop_type, line=req.line,
+        surface=req.surface, round_name=req.round,
+        opp_rank=opp_rank, subject_rank=subject_rank,
+        h2h=h2h, rest_days=req.restDays,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
+
+    p_over = result["pOver"]
+    p_under = result["pUnder"]
+    result["recommendation"] = "over" if p_over >= p_under else "under"
+    result["confidenceScore"] = round(max(p_over, p_under))
+    conf = result["confidenceScore"]
+    result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
+    if result["recommendation"] == "under" and result["projection"] > req.line:
+        result["projection"] = round(req.line - 0.5, 1)
+    elif result["recommendation"] == "over" and result["projection"] < req.line:
+        result["projection"] = round(req.line + 0.5, 1)
+
+    ai_result = {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+
+    field = atp_engine.ATP_PROPS.get(prop_type, prop_type)
+    game_log_tiles = [{"date": m.get("date",""), "venue": "", "value": m.get(field),
+                       "surface": m.get("surface",""), "round": m.get("round",""),
+                       "opponent": m.get("opponent",""), "wonMatch": m.get("wonMatch")}
+                      for m in match_logs[:10]]
+
+    return normalize_response({
+        "sport": "atp", "playerName": req.playerName, "playerId": player_id,
+        "opponentName": req.opponentName or "", "propType": prop_type,
+        "line": req.line, "surface": req.surface or "Hard", "round": req.round or "",
+        "projection": result["projection"], "pOver": p_over, "pUnder": p_under,
+        "recommendation": result["recommendation"], "confidenceScore": result["confidenceScore"],
+        "confidenceLevel": result["confidenceLevel"], "priorMean": result["priorMean"],
+        "momentum": result["momentum"], "sampleSize": result["sampleSize"],
+        "streakFlag": result["streakFlag"], "gameLogs": game_log_tiles,
+        "subjectRank": subject_rank, "opponentRank": opp_rank,
+        "h2h": h2h,
+        "sharpSummary": ai_result.get("sharpSummary", ""),
+        "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
+        "reasoning": ai_result.get("reasoning", ""),
+        "rawConfidence": result["confidenceScore"],
+    })

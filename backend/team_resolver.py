@@ -1,0 +1,809 @@
+"""
+Systematic team resolver — auto-caches ALL teams from supported leagues
+and provides smart fuzzy matching for any team name/abbreviation.
+
+Fixes: "Paris SG", "Sheff Wed", "Atletico MG", "Man Utd", etc.
+"""
+import re
+import unicodedata
+from datetime import datetime, timezone
+from config import db, SUPPORTED_LEAGUES, CURRENT_SEASON
+from utils import api_football_request
+
+COL_TEAMS_MASTER = "teams_master"
+CACHE_TTL = 7 * 24 * 3600  # 7 days
+
+# Higher priority = preferred when two teams share the same alias (e.g. "Sporting")
+# Top 5 European → 100, UEFA club comps + Portugal/Turkey/Championship → 80,
+# Other domestic → 60, International → 50, everything else → 30
+LEAGUE_PRIORITY: dict = {
+    39: 100,   # Premier League
+    140: 100,  # La Liga
+    135: 100,  # Serie A
+    78: 100,   # Bundesliga
+    61: 100,   # Ligue 1
+    2: 90,     # Champions League
+    3: 90,     # Europa League
+    848: 90,   # Conference League
+    94: 85,    # Primeira Liga (Portugal)
+    203: 85,   # Süper Lig (Turkey)
+    40: 80,    # Championship
+    71: 70,    # Brasileirao
+    128: 70,   # Argentina
+    307: 65,   # Saudi Pro League
+    262: 65,   # Liga MX
+    253: 60,   # MLS
+    254: 60,   # NWSL
+    188: 55,   # A-League
+    667: 50,   # Singapore Premier League
+}
+
+
+def _strip_accents(s: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+    )
+
+
+def _normalize(name: str) -> str:
+    """Lowercase, strip accents, remove punctuation."""
+    s = _strip_accents(name.lower().strip())
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _generate_aliases(name: str) -> list:
+    """Generate all possible search aliases for a team name."""
+    norm = _normalize(name)
+    words = norm.split()
+    aliases = set()
+
+    # Full normalized name
+    aliases.add(norm)
+
+    # Each meaningful word (3+ chars)
+    for w in words:
+        if len(w) >= 3:
+            aliases.add(w)
+
+    # First word + abbreviation of rest (e.g., "paris sg" from "Paris Saint Germain")
+    if len(words) >= 2:
+        abbrev = "".join(w[0] for w in words[1:])
+        aliases.add(f"{words[0]} {abbrev}")
+        # Also just the abbreviation letters (e.g., "psg")
+        full_abbrev = "".join(w[0] for w in words)
+        if len(full_abbrev) >= 2:
+            aliases.add(full_abbrev)
+
+    # Handle common patterns
+    # "FC Barcelona" → "barcelona"
+    # "Real Madrid CF" → "real madrid"
+    STRIP_PREFIXES = ("fc", "cf", "sc", "ac", "as", "us", "ss", "cd", "ca", "rc",
+                      "sv", "vfb", "vfl", "rb", "tsg", "fsv", "1")
+    filtered = [w for w in words if w not in STRIP_PREFIXES]
+    if filtered and filtered != words:
+        aliases.add(" ".join(filtered))
+        # Also add just the city part if there's a compound like "eintracht frankfurt" → "frankfurt"
+        for w in filtered:
+            if len(w) >= 4:
+                aliases.add(w)
+
+    # Strip common team prefixes to get city names
+    # "Borussia Mönchengladbach" → "monchengladbach", "gladbach"
+    # "Eintracht Frankfurt" → "frankfurt"
+    # "Bayer Leverkusen" → "leverkusen"
+    COMMON_PREFIXES = ("borussia", "eintracht", "bayer", "deportivo", "atletico",
+                       "sporting", "real", "racing", "dynamo", "cska",
+                       "al", "al-")
+    if len(words) >= 2 and words[0] in COMMON_PREFIXES:
+        city_part = " ".join(words[1:])
+        aliases.add(city_part)
+        for w in words[1:]:
+            if len(w) >= 4:
+                aliases.add(w)
+
+    # Handle "Al-Hilal Saudi FC" → "hilal", "al hilal"
+    # Handle "Al Taawon" → "taawon", "al taawon"
+    joined = " ".join(words)
+    if joined.startswith("al-") or joined.startswith("al "):
+        without_al = joined[3:] if joined.startswith("al-") else joined[3:]
+        without_al = without_al.strip()
+        aliases.add(without_al)
+        # Also strip trailing qualifiers like "saudi fc", "fc", "jeddah"
+        STRIP_SUFFIXES = ("saudi fc", "fc", "jeddah", "saihat")
+        for sfx in STRIP_SUFFIXES:
+            if without_al.endswith(sfx):
+                core = without_al[:-len(sfx)].strip()
+                if core and len(core) >= 3:
+                    aliases.add(core)
+
+    # "Sheffield Utd" → "sheff utd", "sheffield utd"
+    # "Manchester United" → "man utd", "man united"
+    SHORT_PREFIXES = {
+        "sheffield": "sheff", "manchester": "man",
+        "wolverhampton": "wolves", "nottingham": "notts",
+        "tottenham": "spurs", "newcastle": "newc",
+        "monchengladbach": "gladbach",
+    }
+    if words and words[0] in SHORT_PREFIXES:
+        short = SHORT_PREFIXES[words[0]]
+        rest = " ".join(words[1:])
+        if rest:
+            aliases.add(f"{short} {rest}")
+        aliases.add(short)
+
+    # Also check if any word in the name has a known short form
+    for w in words:
+        if w in SHORT_PREFIXES:
+            aliases.add(SHORT_PREFIXES[w])
+
+    # Handle "United" ↔ "Utd", "Wednesday" ↔ "Wed", "City" stays "City"
+    WORD_ABBREVS = {"united": "utd", "wednesday": "wed", "athletic": "ath", "albion": "alb", "forest": "for"}
+    expanded_aliases = set()
+    for alias in list(aliases):
+        alias_words = alias.split()
+        for full_form, short_form in WORD_ABBREVS.items():
+            if full_form in alias_words:
+                new_alias = alias.replace(full_form, short_form)
+                expanded_aliases.add(new_alias)
+            if short_form in alias_words:
+                new_alias = alias.replace(short_form, full_form)
+                expanded_aliases.add(new_alias)
+    aliases.update(expanded_aliases)
+
+    return list(aliases)
+
+
+# Known scan abbreviations that AI vision models commonly output
+SCAN_ALIASES = {
+    "mgladbach": "borussia monchengladbach",
+    "gladbach": "borussia monchengladbach",
+    "monchengladbach": "borussia monchengladbach",
+    "b dortmund": "borussia dortmund",
+    "dortmund": "borussia dortmund",
+    "leverkusen": "bayer leverkusen",
+    "frankfurt": "eintracht frankfurt",
+    "hoffenheim": "tsg hoffenheim",
+    "heidenheim": "1 fc heidenheim 1846",
+    "freiburg": "sc freiburg",
+    "mainz": "1 fsv mainz 05",
+    "augsburg": "fc augsburg",
+    "st pauli": "fc st pauli",
+    "union berlin": "1 fc union berlin",
+    "hertha": "hertha bsc",
+    "koln": "1 fc koln",
+    "cologne": "1 fc koln",
+    "schalke": "fc schalke 04",
+    "wolfsburg": "vfl wolfsburg",
+    "bremen": "werder bremen",
+    "bochum": "vfl bochum",
+    "stuttgart": "vfb stuttgart",
+    "atletico": "atletico madrid",
+    "betis": "real betis",
+    "sociedad": "real sociedad",
+    "villarreal": "villarreal",
+    "bilbao": "athletic club",
+    "getafe": "getafe",
+    "osasuna": "ca osasuna",
+    "vallecano": "rayo vallecano",
+    "celta": "celta vigo",
+    "lyon": "olympique lyonnais",
+    "marseille": "olympique de marseille",
+    "monaco": "as monaco",
+    "psg": "paris saint germain",
+    "paris sg": "paris saint germain",
+    "saint etienne": "as saint etienne",
+    "lens": "rc lens",
+    "nice": "ogc nice",
+    "rennes": "stade rennais fc 1901",
+    "strasbourg": "rc strasbourg alsace",
+    "lille": "lille",
+    "nantes": "fc nantes",
+    "brest": "stade brestois 29",
+    "inter": "inter",
+    "napoli": "napoli",
+    "atalanta": "atalanta",
+    "lazio": "lazio",
+    "fiorentina": "fiorentina",
+    "roma": "as roma",
+    "juventus": "juventus",
+    "milan": "ac milan",
+    "torino": "torino",
+    "genoa": "genoa",
+    "udinese": "udinese",
+    "bologna": "bologna",
+    "empoli": "empoli",
+    "lecce": "lecce",
+    "verona": "hellas verona",
+    "parma": "parma",
+    "cagliari": "cagliari",
+    "como": "como",
+    "venezia": "venezia",
+    "monza": "monza",
+    # Primeira Liga (Portugal)
+    "sporting cp": "sporting cp",
+    "sporting": "sporting cp",
+    "benfica": "sl benfica",
+    "sl benfica": "sl benfica",
+    "porto": "fc porto",
+    "fc porto": "fc porto",
+    "braga": "sc braga",
+    "guimaraes": "vitoria sc",
+    "vitoria": "vitoria sc",
+    "estoril": "estoril",
+    "famalicao": "fc famalicao",
+    "moreirense": "moreirense",
+    "boavista": "boavista",
+    # Süper Lig (Turkey)
+    "galatasaray": "galatasaray",
+    "galata": "galatasaray",
+    "fenerbahce": "fenerbahce",
+    "fener": "fenerbahce",
+    "besiktas": "besiktas jk",
+    "trabzon": "trabzonspor",
+    "trabzonspor": "trabzonspor",
+    "istanbul": "istanbul basaksehir",
+    "basaksehir": "istanbul basaksehir",
+    "sivasspor": "sivasspor",
+    "konyaspor": "konyaspor",
+    "kayserispor": "kayserispor",
+    "antalyaspor": "antalyaspor",
+    "alanyaspor": "alanyaspor",
+    "kasimpasa": "kasimpasa",
+    # Premier League common abbreviations
+    "man utd": "manchester united",
+    "man united": "manchester united",
+    "man city": "manchester city",
+    "spurs": "tottenham",
+    "wolves": "wolves",
+    "sheff utd": "sheffield utd",
+    "newcastle": "newcastle",
+    "newcastle utd": "newcastle",
+    "west ham": "west ham united",
+    "west brom": "west bromwich",
+    "nottm forest": "nottingham forest",
+    "nott forest": "nottingham forest",
+    "nottingham": "nottingham forest",
+    "crystal palace": "crystal palace",
+    "aston villa": "aston villa",
+    "leeds": "leeds united",
+    "leeds utd": "leeds united",
+    "leicester": "leicester city",
+    "everton": "everton",
+    "burnley": "burnley",
+    "southampton": "southampton",
+    "brighton": "brighton",
+    "brentford": "brentford",
+    "fulham": "fulham",
+    "bournemouth": "bournemouth",
+    "ipswich": "ipswich town",
+    "luton": "luton town",
+    # MLS common
+    "lafc": "los angeles fc",
+    "la galaxy": "los angeles galaxy",
+    "nycfc": "new york city fc",
+    "nyrb": "new york red bulls",
+    "red bulls": "new york red bulls",
+    "atlanta utd": "atlanta united",
+    "atlanta united": "atlanta united",
+    "columbus": "columbus crew",
+    "portland": "portland timbers",
+    "seattle": "seattle sounders",
+    "miami": "inter miami",
+    "inter miami": "inter miami",
+    # Liga MX common
+    "america": "club america",
+    "guadalajara": "guadalajara",
+    "chivas": "guadalajara",
+    "monterrey": "monterrey",
+    "tigres": "tigres uanl",
+    "cruz azul": "cruz azul",
+    "pumas": "pumas unam",
+    "santos": "santos laguna",
+    "toluca": "toluca",
+    "leon": "club leon",
+    "pachuca": "pachuca",
+    "atlas": "atlas",
+    "mazatlan": "mazatlan",
+    "necaxa": "necaxa",
+    "puebla": "puebla",
+    "queretaro": "queretaro",
+    "juarez": "fc juarez",
+    "tijuana": "club tijuana",
+    # NWSL common
+    "houston dash": "houston dash w",
+    "racing louisville": "racing louisville w",
+    "racing": "racing louisville w",
+    "angel city": "angel city w",
+    "portland thorns": "portland thorns w",
+    "thorns": "portland thorns w",
+    "chicago stars": "chicago red stars w",
+    "red stars": "chicago red stars w",
+    "kansas city": "kansas city current w",
+    "kc current": "kansas city current w",
+    "orlando pride": "orlando pride w",
+    "pride": "orlando pride w",
+    "gotham": "gotham fc w",
+    "gotham fc": "gotham fc w",
+    "north carolina": "north carolina courage w",
+    "nc courage": "north carolina courage w",
+    "courage": "north carolina courage w",
+    "washington spirit": "washington spirit w",
+    "spirit": "washington spirit w",
+    "san diego wave": "san diego wave w",
+    "wave": "san diego wave w",
+    "bay fc": "bay fc w",
+    "boston legacy": "boston legacy w",
+    "utah royals": "utah royals w",
+    "royals": "utah royals w",
+    "seattle reign": "seattle reign w",
+    "reign": "seattle reign w",
+    # Saudi Pro League common
+    "hilal": "al-hilal saudi fc",
+    "al hilal": "al-hilal saudi fc",
+    "al-hilal": "al-hilal saudi fc",
+    "alhilal": "al-hilal saudi fc",
+    "nassr": "al-nassr",
+    "al nassr": "al-nassr",
+    "al-nassr": "al-nassr",
+    "alnassr": "al-nassr",
+    "ittihad": "al-ittihad fc",
+    "al ittihad": "al-ittihad fc",
+    "al-ittihad": "al-ittihad fc",
+    "alittihad": "al-ittihad fc",
+    "ahli": "al-ahli jeddah",
+    "al ahli": "al-ahli jeddah",
+    "al-ahli": "al-ahli jeddah",
+    "alahli": "al-ahli jeddah",
+    "al ahli jeddah": "al-ahli jeddah",
+    "ettifaq": "al-ettifaq",
+    "al ettifaq": "al-ettifaq",
+    "al-ettifaq": "al-ettifaq",
+    "alettifaq": "al-ettifaq",
+    "taawon": "al taawon",
+    "taawoun": "al taawon",
+    "al taawon": "al taawon",
+    "al taawoun": "al taawon",
+    "al-taawon": "al taawon",
+    "al-taawoun": "al taawon",
+    "altaawon": "al taawon",
+    "altaawoun": "al taawon",
+    "fateh": "al-fateh",
+    "al fateh": "al-fateh",
+    "al-fateh": "al-fateh",
+    "alfateh": "al-fateh",
+    "shabab": "al shabab",
+    "al shabab": "al shabab",
+    "alshabab": "al shabab",
+    "fayha": "al-fayha",
+    "al fayha": "al-fayha",
+    "al-fayha": "al-fayha",
+    "alfayha": "al-fayha",
+    "qadisiyah": "al-qadisiyah fc",
+    "al qadisiyah": "al-qadisiyah fc",
+    "al-qadisiyah": "al-qadisiyah fc",
+    "alqadisiyah": "al-qadisiyah fc",
+    "damac": "damac",
+    "khaleej": "al khaleej saihat",
+    "al khaleej": "al khaleej saihat",
+    "alkhaleej": "al khaleej saihat",
+    "okhdood": "al okhdood",
+    "al okhdood": "al okhdood",
+    "alokhdood": "al okhdood",
+    "kholood": "al kholood",
+    "al kholood": "al kholood",
+    "alkholood": "al kholood",
+    "neom": "neom",
+    "riyadh": "al riyadh",
+    "al riyadh": "al riyadh",
+    "alriyadh": "al riyadh",
+    "najma": "al najma",
+    "al najma": "al najma",
+    "alnajma": "al najma",
+    # Argentine Liga Profesional — disambiguation aliases
+    # "Córdoba SdE" = Central Córdoba de Santiago del Estero (NOT Belgrano or Instituto)
+    "cordoba sde": "central cordoba de santiago",
+    "córdoba sde": "central cordoba de santiago",
+    "central cordoba sde": "central cordoba de santiago",
+    "central córdoba": "central cordoba de santiago",
+    "sde": "central cordoba de santiago",
+    "atletico tucuman": "atletico tucuman",
+    "atletico tu": "atletico tucuman",
+    "tucuman": "atletico tucuman",
+    "defensa": "defensa y justicia",
+    "defensa y justicia": "defensa y justicia",
+    "union sf": "union santa fe",
+    "union santa fe": "union santa fe",
+    "gimnasia lp": "gimnasia la plata",
+    # "gimnasia" alone is ambiguous (La Plata vs Mendoza) — DO NOT add generic alias
+    # Use "gimnasia lp" for La Plata, "gim mendoza"/"gimnasia mendoza" for Mendoza
+    "gim mendoza": "gimnasia mendoza",
+    "gimnasia mendoza": "gimnasia mendoza",
+    "gimnasia de mendoza": "gimnasia mendoza",
+    "gimnasia m": "gimnasia mendoza",
+    "gim m": "gimnasia mendoza",
+    "argentinos": "argentinos juniors",
+    "argentinos jrs": "argentinos juniors",
+    "arg jrs": "argentinos juniors",
+    "barracas": "barracas central",
+    "ind rivadavia": "independiente rivadavia",
+    "riestra": "deportivo riestra",
+    "platense": "platense",
+    "belgrano": "belgrano cordoba",
+    "belgrano cordoba": "belgrano cordoba",
+    "instituto": "instituto cordoba",
+    "instituto cordoba": "instituto cordoba",
+    "talleres": "talleres cordoba",
+    "talleres cordoba": "talleres cordoba",
+    # ── PrizePicks-style short abbreviations ──────────────────────────────────
+    # PrizePicks uses 3-4 letter team codes; map them to canonical names.
+    # La Liga
+    "ath": "athletic club",
+    "bil": "athletic club",
+    "gir": "girona",
+    "bet": "real betis",
+    "beti": "real betis",
+    "get": "getafe",
+    "vill": "villarreal",
+    "osas": "ca osasuna",
+    "sev": "sevilla",
+    "sevi": "sevilla",
+    "vale": "valencia",
+    "val": "valencia",
+    "alav": "deportivo alaves",
+    "espa": "espanyol",
+    "rsoc": "real sociedad",
+    "rval": "rayo vallecano",
+    "vall": "rayo vallecano",
+    "celt": "celta vigo",
+    "mad": "real madrid",
+    "bar": "barcelona",
+    "atm": "atletico madrid",
+    # Premier League abbreviations
+    "ars": "arsenal",
+    "bri": "brighton",
+    "bha": "brighton",
+    "bou": "bournemouth",
+    "afc": "bournemouth",
+    "bre": "brentford",
+    "che": "chelsea",
+    "cry": "crystal palace",
+    "cpa": "crystal palace",
+    "eve": "everton",
+    "ful": "fulham",
+    "ips": "ipswich town",
+    "itch": "ipswich town",
+    "lei": "leicester city",
+    "leic": "leicester city",
+    "liv": "liverpool",
+    "mci": "manchester city",
+    "mun": "manchester united",
+    "not": "nottingham forest",
+    "nfo": "nottingham forest",
+    "sou": "southampton",
+    "tot": "tottenham",
+    "whu": "west ham united",
+    "wol": "wolverhampton wanderers",
+    "avl": "aston villa",
+    "vil": "aston villa",
+    # MLS abbreviations (PrizePicks-specific)
+    "inte": "inter miami",
+    "int": "inter miami",
+    "atl": "atlanta united",
+    "char": "charlotte fc",
+    "clt": "charlotte fc",
+    "cinc": "fc cincinnati",
+    "cin": "fc cincinnati",
+    "col": "colorado rapids",
+    "dal": "fc dallas",
+    "hou": "houston dynamo",
+    "la": "los angeles galaxy",
+    "lag": "los angeles galaxy",
+    "mon": "cf montreal",
+    "mtl": "cf montreal",
+    "montreal": "cf montreal",
+    "cf montreal": "cf montreal",
+    "ne": "new england revolution",
+    "nwr": "new england revolution",
+    "nyc": "new york city fc",
+    "ny": "new york red bulls",
+    "nyrb": "new york red bulls",
+    "phi": "philadelphia union",
+    "sea": "seattle sounders",
+    "por": "portland timbers",
+    "ptfc": "portland timbers",
+    "rslt": "real salt lake",
+    "rsl": "real salt lake",
+    "sj": "san jose earthquakes",
+    "van": "vancouver whitecaps",
+    "whi": "vancouver whitecaps",
+    "wfc": "vancouver whitecaps",
+    "whitecaps": "vancouver whitecaps",
+    "dcu": "dc united",
+    "chi": "chicago fire fc",
+    "clb": "columbus crew",
+    "stl": "st. louis city sc",
+    "stlc": "st. louis city sc",
+    "st louis": "st. louis city sc",
+    "nsc": "nashville sc",
+    "nas": "nashville sc",
+    "nashville": "nashville sc",
+    "orl": "orlando city",
+    "orlando": "orlando city",
+    "min": "minnesota united",
+    "mnu": "minnesota united",
+    "minnesota": "minnesota united",
+    "skc": "sporting kc",
+    "sporting": "sporting kc",
+    "kc": "sporting kc",
+    "nex": "new england revolution",
+    "slc": "real salt lake",
+    # A-League
+    "mac": "macarthur fc",
+    "wpu": "wellington phoenix",
+    "wel": "wellington phoenix",
+    "wsw": "western sydney wanderers",
+    "mel": "melbourne city",
+    "mev": "melbourne victory",
+    "ccm": "central coast mariners",
+    "adl": "adelaide united",
+    "per": "perth glory",
+    "bri": "brisbane roar",
+    "syd": "sydney fc",
+    "nmp": "north melbourne",
+    # Singapore Premier League (SPL)
+    "tpu": "tanjong pagar united",
+    "tpg": "tanjong pagar united",
+    "tanjong": "tanjong pagar united",
+    "lcs": "lion city sailors",
+    "lion city": "lion city sailors",
+    "sailors": "lion city sailors",
+    "tam": "tampines rovers",
+    "tampines": "tampines rovers",
+    "alb": "albirex niigata",
+    "albirex": "albirex niigata",
+    "gey": "geylang international",
+    "geylang": "geylang international",
+    "hou": "hougang united",
+    "hougang": "hougang united",
+    "bal": "balestier khalsa",
+    "balestier": "balestier khalsa",
+    "ylo": "young lions",
+    "dpmm": "brunei dpmm",
+    # Bundesliga short
+    "fcb": "fc bayern munchen",
+    "bay": "fc bayern munchen",
+    "bvb": "borussia dortmund",
+    "rbl": "rb leipzig",
+    "lei": "rb leipzig",
+    "sgf": "eintracht frankfurt",
+    "tsg": "tsg hoffenheim",
+    "vfb": "vfb stuttgart",
+    "m05": "1 fsv mainz 05",
+    "fca": "fc augsburg",
+    # Champions League group codes / common
+    "rm": "real madrid",
+    "barca": "barcelona",
+    "psg": "paris saint germain",
+    "juv": "juventus",
+    "acm": "ac milan",
+    "int": "inter",
+    "bmu": "fc bayern munchen",
+    "bor": "borussia dortmund",
+}
+
+
+
+async def build_teams_cache(force: bool = False):
+    """Fetch all teams from supported domestic leagues and cache them."""
+    # Check if cache is fresh
+    if not force:
+        meta = await db["cache_meta"].find_one({"_key": "teams_master_built"}, {"_id": 0})
+        if meta and meta.get("ts"):
+            ts = meta["ts"]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            if age < CACHE_TTL:
+                count = await db[COL_TEAMS_MASTER].count_documents({})
+                if count > 100:
+                    return count
+
+    print("[TEAM CACHE] Building master team cache from all supported leagues...")
+    all_teams = []
+    domestic_leagues = [lg for lg in SUPPORTED_LEAGUES if lg.get("type") == "Domestic"]
+
+    for league in domestic_leagues:
+        lid = league["id"]
+        try:
+            data = await api_football_request("teams", {"league": lid, "season": CURRENT_SEASON})
+            if not data:
+                # Try previous season
+                data = await api_football_request("teams", {"league": lid, "season": CURRENT_SEASON - 1})
+            if data:
+                for t in data:
+                    team = t.get("team", {})
+                    team_id = team.get("id")
+                    name = team.get("name", "")
+                    country = (team.get("country") or "").lower()
+                    if not team_id or not name:
+                        continue
+                    # Skip youth teams
+                    name_lower = name.lower()
+                    # For women's leagues (NWSL=254), keep women's teams
+                    if lid not in (254,):
+                        if name_lower.endswith(" w") or "women" in name_lower:
+                            continue
+                    if any(s in name_lower for s in ["u20", "u23", "u21", "u19", "u18", " ii", " b "]):
+                        continue
+                    aliases = _generate_aliases(name)
+                    all_teams.append({
+                        "teamId": team_id,
+                        "name": name,
+                        "nameNormalized": _normalize(name),
+                        "aliases": list(aliases),
+                        "leagueId": lid,
+                        "leagueName": league["name"],
+                        "country": country,
+                        "leaguePriority": LEAGUE_PRIORITY.get(lid, 30),
+                    })
+                print(f"  [TEAM CACHE] League {lid} ({league['name']}): {len(data)} teams")
+        except Exception as e:
+            print(f"  [TEAM CACHE] League {lid} error: {e}")
+
+    if all_teams:
+        # Upsert all teams
+        for team in all_teams:
+            await db[COL_TEAMS_MASTER].update_one(
+                {"teamId": team["teamId"]},
+                {"$set": team},
+                upsert=True,
+            )
+        # Update meta
+        await db["cache_meta"].update_one(
+            {"_key": "teams_master_built"},
+            {"$set": {"ts": datetime.now(timezone.utc), "count": len(all_teams)}},
+            upsert=True,
+        )
+        # Create text search index
+        try:
+            await db[COL_TEAMS_MASTER].create_index("aliases")
+            await db[COL_TEAMS_MASTER].create_index("nameNormalized")
+            await db[COL_TEAMS_MASTER].create_index("leagueId")
+        except Exception:
+            pass
+
+    print(f"[TEAM CACHE] Done: {len(all_teams)} teams cached")
+    return len(all_teams)
+
+
+def _pick_best(candidates: list) -> dict | None:
+    """Return the highest-priority team from a list of candidates."""
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c.get("leaguePriority", 30))
+
+
+async def find_team(query: str, league_id: int = None) -> dict:
+    """
+    Smart fuzzy search for a team name. Handles abbreviations, accents, etc.
+    When multiple teams share an alias (e.g. "Sporting" → Sporting CP vs Sporting KC),
+    the team in the higher-priority league wins.
+    Returns: {"teamId": int, "teamName": str, "leagueId": int} or None
+    """
+    # Ensure cache exists
+    count = await db[COL_TEAMS_MASTER].count_documents({})
+    if count == 0:
+        await build_teams_cache()
+
+    norm = _normalize(query)
+    if not norm:
+        return None
+
+    def _to_result(doc):
+        return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+
+    # Strategy -1: National teams exact match — ALWAYS checked first.
+    # Prevents "Mexico" → "New Mexico United" and "South Africa" → "Club Africain".
+    # National teams are stored in cache_national with key=lowercase country name.
+    try:
+        from cache import COL_NATIONAL
+        nat = await db[COL_NATIONAL].find_one(
+            {"$or": [{"key": norm}, {"name": {"$regex": f"^{re.escape(query)}$", "$options": "i"}}]},
+            {"_id": 0}
+        )
+        if nat and nat.get("teamId"):
+            return {"teamId": nat["teamId"], "teamName": nat.get("name", query), "leagueId": 0}
+    except Exception:
+        pass
+
+    # Strategy 0: Known scan aliases (AI vision model abbreviations)
+    if norm in SCAN_ALIASES:
+        canonical = _normalize(SCAN_ALIASES[norm])
+        for field in ("nameNormalized", "aliases"):
+            filt = {field: canonical}
+            if league_id:
+                filt["leagueId"] = league_id
+            candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+            best = _pick_best(candidates)
+            if best:
+                return _to_result(best)
+        # Without league filter
+        for field in ("nameNormalized", "aliases"):
+            candidates = await db[COL_TEAMS_MASTER].find({field: canonical}, {"_id": 0}).to_list(10)
+            best = _pick_best(candidates)
+            if best:
+                return _to_result(best)
+
+    # Strategy 0b: Expand common abbreviations
+    QUERY_EXPANSIONS = {"utd": "united", "wed": "wednesday", "ath": "athletic", "alb": "albion", "for": "forest"}
+    expanded_norms = [norm]
+    for abbr, full in QUERY_EXPANSIONS.items():
+        if abbr in norm.split():
+            expanded_norms.append(norm.replace(abbr, full))
+        if full in norm.split():
+            expanded_norms.append(norm.replace(full, abbr))
+
+    # Strategy 1: Exact normalized name match (prefer league_id if provided)
+    for n in expanded_norms:
+        filt = {"nameNormalized": n}
+        if league_id:
+            filt["leagueId"] = league_id
+        candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+    # Retry without league filter
+    for n in expanded_norms:
+        candidates = await db[COL_TEAMS_MASTER].find({"nameNormalized": n}, {"_id": 0}).to_list(10)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+
+    # Strategy 2: Alias match — fetch ALL matches, return highest-priority league
+    for n in expanded_norms:
+        filt = {"aliases": n}
+        if league_id:
+            filt["leagueId"] = league_id
+        candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(20)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+    # Retry without league filter
+    for n in expanded_norms:
+        candidates = await db[COL_TEAMS_MASTER].find({"aliases": n}, {"_id": 0}).to_list(20)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+
+    # Strategy 3: Substring match on normalized name
+    for n in expanded_norms:
+        filt = {"nameNormalized": {"$regex": re.escape(n)}}
+        if league_id:
+            filt["leagueId"] = league_id
+        candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+
+    # Strategy 4: Any word from query appears in any alias
+    words = norm.split()
+    if words:
+        longest_word = max(words, key=len)
+        if len(longest_word) >= 3:
+            filt = {"aliases": {"$regex": re.escape(longest_word)}}
+            if league_id:
+                filt["leagueId"] = league_id
+            candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(20)
+            if candidates:
+                # Score by word coverage AND league priority
+                scored = []
+                for c in candidates:
+                    word_score = sum(1 for w in words if any(w in a for a in c.get("aliases", [])))
+                    priority = c.get("leaguePriority", 30)
+                    scored.append((word_score * 1000 + priority, c))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                if scored:
+                    return _to_result(scored[0][1])
+
+    return None

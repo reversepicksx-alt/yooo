@@ -1,0 +1,5 @@
+This branch contains the current frontend and backend application source.
+- mobile/: Expo frontend
+- backend/: FastAPI backend
+- root config: Expo, EAS, Replit, Python, and Node runtime files
+- excluded: databases, logs, screenshots, uploads, archives, secrets, and agent memory

@@ -1,0 +1,46 @@
+{
+  "cli": {
+    "version": ">= 15.0.0",
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "enterpriseProvisioning": "adhoc"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "enterpriseProvisioning": "adhoc"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://reversepicks.com",
+        "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY": "appl_zQjVghGLoFUYWqbpqaPBwrNGJxF",
+        "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY": "goog_hXbMoUvTLCUyHEnIyyFqLkOmFmB",
+        "EXPO_PUBLIC_REVENUECAT_TEST_API_KEY": "test_MBqWVmRraEPFVrADaxWrEaRvvzV"
+      },
+      "ios": {
+        "image": "latest"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleTeamId": "FDC3LJRAC7",
+        "ascAppId": "6781092173",
+        "ascApiKeyIssuerId": "99dd3749-4916-4568-adca-d61efdc38fe6",
+        "ascApiKeyId": "9NSAR9532S",
+        "ascApiKeyPath": "/home/runner/.eas/asc_key_fixed.p8"
+      }
+    }
+  }
+}

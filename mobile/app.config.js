@@ -1,0 +1,85 @@
+export default {
+  expo: {
+    name: "Reverse Picks",
+    slug: "reversepicks",
+    version: "1.22",
+    orientation: "portrait",
+    icon: "./assets/rp-icon.png",
+    userInterfaceStyle: "dark",
+    newArchEnabled: true,
+    scheme: "reversepicks",
+    splash: { backgroundColor: "#050505" },
+    ios: {
+      supportsTablet: false,
+      bundleIdentifier: "com.reversepicks.app",
+      icon: "./assets/rp-icon.png",
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+        NSCameraUsageDescription: "Reverse Picks needs camera access to scan prop slips.",
+        NSPhotoLibraryUsageDescription: "Reverse Picks needs access to your photos to scan prop slips.",
+        NSPhotoLibraryAddUsageDescription: "Reverse Picks needs access to save images.",
+        NSUserNotificationsUsageDescription: "Reverse Picks sends you pick alerts and result notifications.",
+        NSFaceIDUsageDescription: "Reverse Picks uses Face ID to sign you in quickly and securely.",
+        NSMicrophoneUsageDescription: "Lissa uses the microphone when you activate voice mode.",
+        NSSpeechRecognitionUsageDescription: "Lissa uses speech recognition when you activate voice mode.",
+        CFBundleURLTypes: [{ CFBundleURLSchemes: ["reversepicks"] }],
+      },
+    },
+    android: {
+      adaptiveIcon: { foregroundImage: "./assets/rp-icon.png", backgroundColor: "#050505" },
+      package: "com.reversepicks.app",
+      edgeToEdgeEnabled: true,
+      permissions: [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+      ],
+    },
+    web: {
+      bundler: "metro",
+      htmlTemplate: "./web/index.html",
+    },
+    updates: {
+      url: "https://u.expo.dev/cb70df32-f8c3-4bbd-9190-fb9cfd8b1599",
+    },
+    runtimeVersion: {
+      policy: "appVersion",
+    },
+    plugins: [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          photosPermission: "Reverse Picks needs access to your photos to scan prop slips.",
+          cameraPermission: "Reverse Picks needs camera access to scan prop slips.",
+        },
+      ],
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/rp-icon.png",
+          color: "#39FF14",
+          sounds: [],
+        },
+      ],
+      "expo-font",
+      [
+        "expo-speech-recognition",
+        {
+          microphonePermission: "Lissa uses the microphone when you activate voice mode.",
+          speechRecognitionPermission: "Lissa uses speech recognition when you activate voice mode.",
+        },
+      ],
+      [
+        "expo-local-authentication",
+        {
+          faceIDPermission: "Reverse Picks uses Face ID to sign you in quickly and securely.",
+        },
+      ],
+    ],
+    extra: { router: {}, eas: { projectId: "cb70df32-f8c3-4bbd-9190-fb9cfd8b1599" } },
+    owner: "josselgoateds-organization"
+  }
+};

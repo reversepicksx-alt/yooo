@@ -1,0 +1,23 @@
+# EAS is invoked with EAS_PROJECT_ROOT set to this mobile app directory.
+# Exclude generated and local-only files while retaining all app source/assets.
+node_modules/
+.git/
+.cache/
+.config/
+*.log
+build/
+dist/
+coverage/
+.DS_Store
+.pythonlibs/
+.local/
+attached_assets/
+mongodb_data/
+artifacts/
+frontend/
+screenshots/
+test_reports/
+memory/
+scripts/
+backend/__pycache__/
+backend/*.pyc
